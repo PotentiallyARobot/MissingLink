@@ -42,9 +42,31 @@
       </div>
 
       <h1>You're in.</h1>
-      <p class="success-sub">
+      <p class="success-sub" id="successSub">
         Your token and install instructions are on the way. Check your inbox for an email from <strong>Missing Link</strong>.
       </p>
+
+      <!-- TOKEN DISPLAY (populated from session_id) -->
+      <div id="tokenDisplay" style="display: none;">
+        <div class="token-card">
+          <div class="token-card-header">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="8" width="16" height="10" rx="2" stroke="#E8A917" stroke-width="1.5"/><path d="M6 8V5a4 4 0 118 0v3" stroke="#E8A917" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span>Your token</span>
+          </div>
+          <div class="token-value-row">
+            <code id="tokenValue" class="token-value"></code>
+            <button class="copy-btn" onclick="copyToken()">Copy</button>
+          </div>
+          <p class="token-note">This is your personal access token. It's also been emailed to you. Keep it safe — it's your key to all your wheels.</p>
+        </div>
+      </div>
+
+      <!-- Loading state while fetching token -->
+      <div id="tokenLoading" style="display: none;">
+        <div class="token-loading">
+          <span class="spinner"></span> Retrieving your token…
+        </div>
+      </div>
 
       <!-- STEPS -->
       <div class="success-steps">
@@ -223,7 +245,7 @@
       </div>
 
       <div class="success-footer">
-        Didn't get the email? <a href="#" onclick="event.preventDefault(); openResend()">Resend your token</a> · <a href="mailto:support@missinglink.build">Contact support</a>
+        Didn't get the email? <a href="#" onclick="event.preventDefault(); openResend()">Resend your token</a> · <a href="/cdn-cgi/l/email-protection#9eedebeeeef1eceadef3f7ededf7f0f9f2f7f0f5b0fcebf7f2fa">Contact support</a>
       </div>
 
     </div>
@@ -238,7 +260,7 @@
       <div class="footer-links">
         <a href="#" onclick="event.preventDefault(); openResend()">Resend token</a>
         <a href="#" onclick="event.preventDefault(); openPortal()">Manage subscription</a>
-        <a href="mailto:support@missinglink.build">Support</a>
+        <a href="/cdn-cgi/l/email-protection#b1c2c4c1c1dec3c5f1dcd8c2c2d8dfd6ddd8dfda9fd3c4d8ddd5">Support</a>
         <a href="/terms.html">Terms</a>
         <a href="/privacy.html">Privacy</a>
       </div>
@@ -270,7 +292,7 @@
   </div>
 </div>
 
-<script src="shared.js"></script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="shared.js"></script>
 <script>
 /* GPU wheel filenames */
 const GPU_WHEELS = {
@@ -335,6 +357,108 @@ function copyCode(elementId) {
     }
   });
 }
+
+/* Copy the token value */
+function copyToken() {
+  const el = document.getElementById('tokenValue');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(function() {
+    const btn = el.closest('.token-value-row').querySelector('.copy-btn');
+    if (btn) {
+      var orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = orig; }, 2000);
+    }
+  });
+}
+
+/* Replace {TOKEN} placeholders in all install commands with the real token */
+function injectTokenIntoCommands(token) {
+  document.querySelectorAll('.install-code').forEach(function(el) {
+    el.innerHTML = el.innerHTML.replace(/\{TOKEN\}/g, token);
+  });
+  // Update the switchGpu / switchPkgGpu functions to use real token too
+  window._realToken = token;
+
+  // Also update the description text
+  var desc = document.querySelector('.success-code-desc');
+  if (desc) {
+    desc.innerHTML = 'Pick the command for your GPU. Your token is already filled in — just copy and paste.';
+  }
+}
+
+/* Patch the switch functions to use the real token once loaded */
+var _origSwitchGpu = switchGpu;
+switchGpu = function(btn, gpu) {
+  _origSwitchGpu(btn, gpu);
+  if (window._realToken) {
+    var el = document.getElementById('gpu-install-code');
+    if (el) el.innerHTML = el.innerHTML.replace(/\{TOKEN\}/g, window._realToken);
+  }
+};
+
+var _origSwitchPkgGpu = switchPkgGpu;
+switchPkgGpu = function(btn, pkg, gpu) {
+  _origSwitchPkgGpu(btn, pkg, gpu);
+  if (window._realToken) {
+    var codeId = pkg === 'flex_gemm' ? 'pkg-flex-gemm' : 'pkg-' + pkg;
+    var el = document.getElementById(codeId);
+    if (el) el.innerHTML = el.innerHTML.replace(/\{TOKEN\}/g, window._realToken);
+  }
+};
+
+/* Fetch token from session_id on page load */
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var sessionId = params.get('session_id');
+  if (!sessionId || !sessionId.startsWith('cs_')) return;
+
+  var loading = document.getElementById('tokenLoading');
+  var display = document.getElementById('tokenDisplay');
+  var tokenEl = document.getElementById('tokenValue');
+  var subEl = document.getElementById('successSub');
+
+  if (loading) loading.style.display = 'block';
+
+  var attempts = 0;
+  var maxAttempts = 5;
+  var delay = 2000; // start at 2s
+
+  function tryFetch() {
+    attempts++;
+    fetch('https://missinglink.build/session-token?session_id=' + encodeURIComponent(sessionId))
+      .then(function(resp) { return resp.json(); })
+      .then(function(data) {
+        if (data.ok && data.token) {
+          // Success — show the token
+          if (loading) loading.style.display = 'none';
+          if (tokenEl) tokenEl.textContent = data.token;
+          if (display) display.style.display = 'block';
+          if (subEl) subEl.innerHTML = 'Your token is ready! It\'s also been emailed to you from <strong>Missing Link</strong>.';
+
+          // Inject into all install commands
+          injectTokenIntoCommands(data.token);
+        } else if (attempts < maxAttempts) {
+          // Webhook might not have fired yet — retry with backoff
+          setTimeout(tryFetch, delay);
+          delay = Math.min(delay * 1.5, 8000);
+        } else {
+          // Give up — user can still get token from email
+          if (loading) loading.style.display = 'none';
+        }
+      })
+      .catch(function() {
+        if (attempts < maxAttempts) {
+          setTimeout(tryFetch, delay);
+          delay = Math.min(delay * 1.5, 8000);
+        } else {
+          if (loading) loading.style.display = 'none';
+        }
+      });
+  }
+
+  tryFetch();
+})();
 </script>
 
 <style>
@@ -580,18 +704,88 @@ function copyCode(elementId) {
   color: var(--gold);
 }
 
-@media (max-width: 600px) {
-  .success-section {
-    padding: 100px 0 60px;
-  }
-  .success-step {
-    padding: 16px 18px;
-  }
-  .gpu-tab {
-    padding: 6px 14px;
-    font-size: 12px;
-  }
+/* Token display card */
+.token-card {
+  background: var(--dark-card);
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 32px;
+  text-align: left;
+  box-shadow: 0 0 40px rgba(232, 169, 23, 0.08);
+  animation: fadeUp 0.4s ease-out both;
 }
-</style>
-</body>
-</html>
+
+.token-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 12px;
+}
+
+.token-value-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.token-value {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--white);
+  background: var(--off-black);
+  border: 1px solid var(--dark-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  word-break: break-all;
+  user-select: all;
+}
+
+.token-note {
+  font-size: 12px;
+  color: var(--gray);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.token-loading {
+  text-align: center;
+  color: var(--gray);
+  font-size: 13px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.token-loading .spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--dark-border);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* When token is displayed, also inject it into install commands */
+.token-injected .str { color: #4CE870; }
+
+@media (ma
