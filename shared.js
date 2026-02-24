@@ -134,6 +134,63 @@ async function submitPortal() {
   }
 }
 
+
+/* ===== SUBSCRIBE MODAL (trial-gated) ===== */
+function openSubscribe() {
+  const modal = document.getElementById('subscribeModal');
+  if (modal) modal.classList.add('active');
+}
+
+function closeSubscribe() {
+  const modal = document.getElementById('subscribeModal');
+  if (modal) modal.classList.remove('active');
+  const msg = document.getElementById('subscribeMsg');
+  if (msg) { msg.textContent = ''; msg.className = 'modal-msg'; }
+}
+
+async function submitSubscribe() {
+  const emailInput = document.getElementById('subscribeEmail');
+  const msg = document.getElementById('subscribeMsg');
+  const btn = document.getElementById('subscribeBtn');
+  if (!emailInput || !msg) return;
+
+  const email = emailInput.value.trim();
+  if (!email) {
+    msg.textContent = 'Please enter your email.';
+    msg.className = 'modal-msg error';
+    return;
+  }
+
+  msg.textContent = 'Checking…';
+  msg.className = 'modal-msg';
+  if (btn) btn.disabled = true;
+
+  try {
+    const resp = await fetch('https://missinglink.build/check-trial', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await resp.json();
+
+    if (data.eligible) {
+      msg.textContent = 'Starting your 7-day free trial…';
+      msg.className = 'modal-msg success';
+    } else {
+      msg.textContent = 'Redirecting to subscribe (trial already used)…';
+      msg.className = 'modal-msg';
+    }
+
+    setTimeout(() => {
+      window.location.href = 'https://missinglink.build/create-checkout-session?email=' + encodeURIComponent(email);
+    }, 600);
+  } catch (e) {
+    window.location.href = 'https://missinglink.build/create-checkout-session?email=' + encodeURIComponent(email);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ===== CLOSE MODALS ON OVERLAY CLICK ===== */
 document.addEventListener('click', (e) => {
   if (e.target.classList.contains('modal-overlay')) {
