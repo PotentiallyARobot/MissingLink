@@ -378,7 +378,6 @@ const ML_API='https://missinglink.build';
 let MODAL_URL='';
 let mlToken=localStorage.getItem('ml_token')||'';
 let mlCredits=0; // remaining seconds
-let mlUnlimited=false;
 let sessionActive=false;
 let heartbeatInterval=null;
 let blockTimer=null;
@@ -395,7 +394,6 @@ async function authLogin(){
     mlToken=token;
     localStorage.setItem('ml_token',token);
     mlCredits=d.credits;
-    mlUnlimited=d.status==='active';
     showCredits();
     $('authOverlay').style.display='none';
     // Reconnect to existing session
@@ -419,7 +417,7 @@ function authBuy(){
 }
 
 function formatTime(secs){
-  if(secs<0)return '∞';
+  if(secs<=0)return '0m';
   const h=Math.floor(secs/3600);
   const m=Math.floor((secs%3600)/60);
   if(h>0)return h+'h '+m+'m';
@@ -427,7 +425,7 @@ function formatTime(secs){
 }
 
 function showCredits(){
-  $('creditCount').textContent=mlUnlimited?'∞':formatTime(mlCredits);
+  $('creditCount').textContent=formatTime(mlCredits);
   $('creditsDisplay').style.display='flex';
 }
 
@@ -462,7 +460,7 @@ function updateBlockDisplay(){
 async function startSession(){
   if(sessionActive)return true;
   if(!mlToken){toast('Please sign in first',1);$('authOverlay').style.display='flex';return false}
-  if(!mlUnlimited&&mlCredits<600){toast('Not enough GPU time — need at least 10 min',1);authBuy();return false}
+  if(mlCredits<600){toast('Not enough GPU time — need at least 10 min',1);authBuy();return false}
 
   updateStatus('waking','Starting your GPU instance (10 min block)...');
   $('keepOn').className='keep-on active';
@@ -521,8 +519,7 @@ function startHeartbeat(){
           refreshCredits();
         }
       } else {
-        if(d.unlimited)mlUnlimited=true;
-        else if(d.credits>=0){mlCredits=d.credits;mlUnlimited=false}
+        if(d.credits>=0){mlCredits=d.credits}
         showCredits();
       }
     }catch(e){}
@@ -536,7 +533,7 @@ async function refreshCredits(){
   try{
     const resp=await fetch(ML_API+'/api/credits',{headers:{'x-api-key':mlToken}});
     const d=await resp.json();
-    if(d.ok){mlCredits=d.credits;mlUnlimited=d.status==='active';showCredits()}
+    if(d.ok){mlCredits=d.credits;showCredits()}
     else if(d.error==='invalid_token'){mlToken='';localStorage.removeItem('ml_token');$('authOverlay').style.display='flex'}
   }catch(e){}
 }
@@ -555,7 +552,7 @@ function authLogout(){
       const resp=await fetch(ML_API+'/api/credits',{headers:{'x-api-key':mlToken}});
       const d=await resp.json();
       if(d.ok){
-        mlCredits=d.credits;mlUnlimited=d.status==='active';showCredits();
+        mlCredits=d.credits;showCredits();
         $('authOverlay').style.display='none';
         if(d.active_session&&d.active_session.tunnel_url){
           MODAL_URL=d.active_session.tunnel_url;sessionActive=true;
