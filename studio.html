@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Image Edit Studio — Missing Link</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&family=Barlow:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#070709;--surface:#111114;--surface2:#1a1a1f;--border:#28282f;--gold:#d4a017;--text:#e8e8ec;--dim:#888;--radius:8px;--accent:#c8961a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow:hidden}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+input,textarea,select{font-family:inherit;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;font-size:.85rem}
+input:focus,textarea:focus{outline:none;border-color:var(--gold)}
+.btn{cursor:pointer;border:none;border-radius:var(--radius);padding:6px 14px;font-family:'Barlow',sans-serif;font-weight:500;font-size:.8rem;transition:.15s}
+.bg{background:var(--surface2);color:var(--text)}.bg:hover{background:#222228}
+.bp{background:var(--gold);color:#0a0a0a;font-weight:600}.bp:hover{filter:brightness(1.15)}
+.bd{background:#c0392b;color:#fff}.bd:hover{filter:brightness(1.15)}
+.bs{font-size:.7rem;padding:4px 8px}
+
+/* LAYOUT */
+.wrap{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+
+/* TOP BAR */
+.topbar{display:flex;align-items:center;padding:0 12px;height:48px;min-height:48px;background:var(--surface);border-bottom:1px solid var(--border);gap:8px}
+.topbar .logo{height:28px;width:auto;flex-shrink:0}
+.topbar .divider{width:1px;height:22px;background:var(--border);flex-shrink:0}
+.topbar .app-title{font-family:'Oswald',sans-serif;font-size:.9rem;font-weight:600;color:var(--text);letter-spacing:.5px;white-space:nowrap}
+.topbar .tagline{margin-left:auto;font-family:'Barlow',sans-serif;font-size:.75rem;color:var(--dim);letter-spacing:.3px;white-space:nowrap}
+.topbar .tagline b{color:var(--gold);font-weight:600}
+.topbar .back-link{font-size:.65rem;color:var(--dim);text-decoration:none;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius);transition:.15s;white-space:nowrap;flex-shrink:0}
+.topbar .back-link:hover{color:var(--gold);border-color:var(--gold)}
+.topbar .pill{font-size:.5rem;padding:2px 7px;border-radius:10px;background:#1a2a1a;color:#4a4;white-space:nowrap;transition:all .3s;letter-spacing:.5px;text-transform:uppercase;font-weight:600;flex-shrink:0}
+.topbar .pill.run{background:#2a1a1a;color:#d44;animation:pulse 1.2s infinite}
+.topbar .pill.loading{background:#2a2a1a;color:#da4;animation:pulse 1.2s infinite}
+.topbar .pill.offline{background:#1a1a1a;color:#666}
+.topbar .keep-on{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;flex-shrink:0}
+.topbar .keep-on .keep-label{font-size:.6rem;color:var(--dim);white-space:nowrap;font-family:'JetBrains Mono',monospace}
+.topbar .keep-on .keep-switch{position:relative;width:32px;height:18px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);transition:.2s;flex-shrink:0}
+.topbar .keep-on .keep-switch::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;background:var(--dim);border-radius:50%;transition:.2s}
+.topbar .keep-on.active .keep-switch{background:rgba(74,170,74,.25);border-color:#4a4}
+.topbar .keep-on.active .keep-switch::after{left:16px;background:#4a4}
+.topbar .keep-on.active .keep-label{color:#4a4}
+.topbar .credits{display:flex;align-items:center;gap:4px;font-size:.6rem;color:var(--dim);padding:2px 7px;background:var(--surface2);border-radius:10px;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.topbar .credits:hover{color:var(--text)}
+.topbar .credits b{color:var(--gold)}
+
+/* STATUS BANNER */
+.status-banner{display:flex;padding:4px 12px;background:linear-gradient(90deg,var(--surface) 0%,var(--surface2) 100%);border-bottom:1px solid var(--border);font-size:.68rem;color:var(--dim);align-items:center;gap:6px;height:28px;min-height:28px}
+.status-banner .spinner{width:11px;height:11px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+.status-banner .status-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.status-banner .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.status-banner .status-dot.green{background:#4a4}
+.status-banner .status-dot.yellow{background:#da4}
+.status-banner .status-dot.red{background:#a44}
+.status-banner .progress-bar{height:3px;background:var(--surface2);border-radius:2px;flex:1;max-width:200px;overflow:hidden}
+.status-banner .progress-fill{height:100%;background:var(--gold);width:0%;transition:width .5s;border-radius:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* MAIN BODY */
+.main{display:flex;flex:1;overflow:hidden}
+
+/* LEFT PANEL */
+.L{width:360px;min-width:300px;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.sec{padding:10px 14px}
+.sec h3{font-family:'Oswald',sans-serif;font-size:.85rem;color:var(--gold);margin-bottom:6px;cursor:pointer;user-select:none}
+.sec h3::before{content:'▸ ';font-size:.7rem}
+.sec h3.open::before{content:'▾ '}
+.sec .body{display:none}.sec .body.show{display:block}
+.prompt-area{width:100%;height:80px;resize:vertical;font-size:.85rem}
+.neg-area{width:100%;height:40px;resize:vertical;font-size:.8rem}
+.fg{display:flex;gap:6px;align-items:center;margin:4px 0}
+.fg label{font-size:.72rem;color:var(--dim);min-width:70px}
+.fg input[type=range]{flex:1;accent-color:var(--gold)}
+.fg .rv{font-size:.72rem;color:var(--gold);min-width:28px;text-align:right;font-family:'JetBrains Mono',monospace}
+
+/* IMAGE SLOTS */
+.slots-area{padding:6px 0}
+.slots-grid{display:flex;flex-direction:column;gap:6px}
+.slot{width:100%;aspect-ratio:16/9;max-height:120px;border:1px solid var(--border);border-radius:var(--radius);position:relative;cursor:pointer;overflow:hidden;background:var(--surface);transition:all .2s}
+.slot:hover{border-color:var(--accent)}
+.slot.filled{border-color:var(--gold)}
+.slot.drag-over{border-color:var(--gold);background:rgba(212,160,23,0.1)}
+.slot img{width:100%;height:100%;object-fit:cover;display:block}
+.slot .sl{position:absolute;bottom:4px;left:6px;font-size:.6rem;color:#fff;font-weight:600;background:rgba(0,0,0,.6);padding:1px 6px;border-radius:3px}
+.slot .sx{position:absolute;top:4px;right:4px;width:20px;height:20px;border:none;background:rgba(0,0,0,.7);color:#aaa;font-size:.75rem;cursor:pointer;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transition:.15s;line-height:1}
+.slot:hover .sx{opacity:1}
+.slot .sx:hover{color:#e74c3c;background:rgba(0,0,0,.9)}
+.slot .sr{position:absolute;top:4px;right:28px;width:20px;height:20px;border:none;background:rgba(0,0,0,.7);color:#aaa;font-size:.65rem;cursor:pointer;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transition:.15s;line-height:1}
+.slot:hover .sr{opacity:1}
+.slot .sr:hover{color:var(--gold);background:rgba(0,0,0,.9)}
+.slot-add-btn{width:100%;padding:10px;border:2px dashed var(--border);border-radius:var(--radius);background:transparent;color:var(--dim);font-size:.75rem;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Barlow',sans-serif}
+.slot-add-btn:hover{border-color:var(--gold);color:var(--gold)}
+.slots-hint{font-size:.65rem;color:var(--dim);margin-top:6px;opacity:.7}
+
+/* GENERATE BAR */
+.gbar{padding:10px 14px;border-top:1px solid var(--border);margin-top:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.gp{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;flex:1;min-width:80px}
+.gpf{height:100%;background:linear-gradient(90deg,var(--gold),#e8b828);width:0%;transition:width .3s;border-radius:3px}
+.gsl{font-size:.7rem;color:var(--dim);font-family:'JetBrains Mono',monospace;white-space:nowrap}
+
+/* CENTER */
+.C{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow-y:auto;background:radial-gradient(ellipse at center,#0d0d12 0%,var(--bg) 70%);padding:20px}
+.ce{text-align:center;color:var(--dim)}.ce svg{width:64px;height:64px;fill:var(--border);margin-bottom:12px}
+.ce h3{font-family:'Oswald',sans-serif;color:var(--text);font-size:1.1rem}
+.og{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;max-width:600px}
+.og-main{position:relative;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);background:var(--surface);width:100%;cursor:pointer;transition:border-color .2s}
+.og-main:hover{border-color:var(--accent)}
+.og-main img{display:block;max-width:100%;max-height:65vh;margin:0 auto}
+.og-thumbs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.og-thumb{width:64px;height:64px;border-radius:var(--radius);overflow:hidden;border:2px solid var(--border);cursor:pointer;transition:all .15s;opacity:.6}
+.og-thumb:hover{opacity:1;border-color:var(--accent)}
+.og-thumb.active{border-color:var(--gold);opacity:1}
+.og-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.og-bar{display:flex;gap:6px;padding:0;align-items:center;flex-wrap:wrap;justify-content:center}
+.og-bar button{border:none;background:var(--surface2);color:var(--dim);font-size:.65rem;padding:5px 10px;cursor:pointer;transition:.15s;border-radius:4px;white-space:nowrap}
+.og-bar button:hover{color:var(--text);background:var(--border)}
+.og-bar .oc-sep{width:1px;height:20px;background:var(--border);margin:0 2px}
+.og-bar .oc-slot-btn{display:flex;align-items:center;gap:4px;border:1px solid var(--border);background:var(--surface2);color:var(--dim);font-size:.6rem;padding:3px 6px;cursor:pointer;border-radius:4px;transition:.15s;white-space:nowrap}
+.og-bar .oc-slot-btn:hover{border-color:var(--gold);color:var(--gold)}
+.og-bar .oc-slot-btn img{width:20px;height:20px;border-radius:2px;object-fit:cover}
+.og-bar .oc-new-btn{border:1px dashed var(--gold);background:transparent;color:var(--gold);font-size:.6rem;padding:3px 8px;cursor:pointer;border-radius:4px;transition:.15s;white-space:nowrap}
+.og-bar .oc-new-btn:hover{background:rgba(212,160,23,.15)}
+
+/* LASSO */
+.lasso-bar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:20;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.lasso-bar label{margin:0;font-size:.7rem}
+.lasso-bar input[type="range"]{width:80px;accent-color:var(--gold)}
+.lasso-wrap{position:relative;display:inline-block}
+.lasso-canvas{position:absolute;top:0;left:0;cursor:crosshair;z-index:15}
+.lasso-mask-preview{position:absolute;top:0;left:0;pointer-events:none;z-index:14;opacity:.45}
+
+/* RIGHT PANEL */
+.R{width:220px;min-width:180px;border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.rh{font-family:'Oswald',sans-serif;font-size:.85rem;color:var(--gold);padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.rh svg{width:14px;height:14px;fill:var(--gold)}
+.rs{flex:1;overflow-y:auto;padding:6px}
+.he{padding:8px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;position:relative;transition:.2s}
+.he:hover{border-color:var(--gold);background:var(--surface2)}
+.he .hp{font-size:.7rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;font-weight:500}
+.he .hm{font-size:.6rem;color:var(--dim);margin-bottom:4px}
+.he .ht{display:flex;gap:3px;flex-wrap:wrap}
+.he .ht img{width:36px;height:36px;border-radius:4px;object-fit:cover;border:1px solid var(--border)}
+.he .ht img.inp{border-color:var(--gold)}
+.he .ht img.out{border-color:#4a8a4a}
+.he .hx{position:absolute;top:4px;right:6px;font-size:.65rem;color:var(--dim);cursor:pointer;opacity:0;transition:.15s;background:var(--surface);padding:1px 4px;border-radius:3px}
+.he:hover .hx{opacity:1}
+.he .hx:hover{color:#c0392b}
+
+/* LIGHTBOX */
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:100;display:none;align-items:center;justify-content:center;cursor:zoom-out}
+.lb.open{display:flex}
+.lb img{max-width:95vw;max-height:95vh;border-radius:var(--radius)}
+
+/* TOAST */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface2);color:var(--text);padding:8px 18px;border-radius:var(--radius);font-size:.8rem;opacity:0;transition:opacity .3s;pointer-events:none;z-index:200;border:1px solid var(--border);box-shadow:0 4px 12px rgba(0,0,0,.4);max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+.toast.err{border-color:#c0392b;color:#e74c3c}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* AUTH MODAL */
+.auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:999;display:flex;align-items:center;justify-content:center;padding:16px}
+.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px 28px;max-width:380px;width:100%;text-align:center}
+.auth-box .auth-logo{height:36px;margin-bottom:16px}
+.auth-box h2{font-family:'Oswald',sans-serif;color:var(--gold);font-size:1.15rem;margin-bottom:2px;letter-spacing:.5px}
+.auth-box .auth-sub{font-family:'Barlow',sans-serif;font-size:.7rem;color:var(--dim);margin-bottom:16px;letter-spacing:.3px}
+.auth-box p{font-size:.78rem;color:var(--dim);margin-bottom:16px;line-height:1.4}
+.auth-box input{width:100%;padding:11px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:.82rem;margin-bottom:8px;box-sizing:border-box;font-family:'JetBrains Mono',monospace}
+.auth-box input::placeholder{color:#555}
+.auth-box .auth-btn{width:100%;padding:11px;border:none;border-radius:var(--radius);font-family:'Oswald',sans-serif;font-size:.88rem;cursor:pointer;margin-bottom:6px;transition:.15s;letter-spacing:.5px}
+.auth-box .auth-primary{background:var(--gold);color:#000}
+.auth-box .auth-primary:hover{background:#e8b828}
+.auth-box .auth-secondary{background:var(--surface2);color:var(--dim);border:1px solid var(--border)}
+.auth-box .auth-secondary:hover{color:var(--text);border-color:var(--accent)}
+.auth-box .auth-err{color:#d44;font-size:.72rem;margin-top:4px;min-height:1em}
+.auth-box .auth-or{color:var(--dim);font-size:.65rem;margin:10px 0;text-transform:uppercase;letter-spacing:1px}
+
+/* ===================== MOBILE ===================== */
+/* Mobile nav tabs for panel switching */
+.mobile-nav{display:none}
+
+@media(max-width:768px){
+  body{overflow:auto}
+  .wrap{height:auto;min-height:100vh;min-height:100dvh}
+  .topbar{height:44px;min-height:44px;padding:0 10px;gap:6px}
+  .topbar .tagline{display:none}
+  .topbar .back-link{font-size:.6rem;padding:2px 6px}
+  .topbar .app-title{font-size:.8rem}
+  .topbar .logo{height:24px}
+  .topbar .pill{font-size:.45rem;padding:2px 5px}
+  .topbar .credits{font-size:.55rem;padding:2px 5px}
+  .topbar .keep-on .keep-label{font-size:.55rem}
+  .topbar .keep-on .keep-switch{width:28px;height:16px}
+  .topbar .keep-on .keep-switch::after{width:10px;height:10px}
+  .topbar .keep-on.active .keep-switch::after{left:14px}
+
+  .status-banner{height:24px;min-height:24px;padding:2px 10px;font-size:.62rem}
+
+  /* Stack vertically */
+  .main{flex-direction:column;overflow-y:auto;overflow-x:hidden}
+  .L{width:100%;min-width:0;border-right:none;border-bottom:1px solid var(--border);overflow-y:visible;max-height:none}
+  .R{width:100%;min-width:0;border-left:none;border-top:1px solid var(--border);overflow-y:visible;max-height:none}
+  .C{min-height:50vh;padding:12px}
+
+  /* Mobile nav tabs */
+  .mobile-nav{display:flex;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .mobile-nav button{flex:1;padding:10px 0;border:none;background:transparent;color:var(--dim);font-family:'Oswald',sans-serif;font-size:.75rem;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;min-width:0;letter-spacing:.5px}
+  .mobile-nav button.active{color:var(--gold);border-bottom-color:var(--gold)}
+
+  /* Hide panels by default on mobile, show via JS */
+  .main>.L,.main>.C,.main>.R{display:none}
+  .main>.L.mob-active,.main>.C.mob-active,.main>.R.mob-active{display:flex}
+
+  .slot{max-height:100px}
+  .prompt-area{height:60px}
+  .neg-area{height:32px}
+  .gbar{padding:8px 10px}
+
+  .og-main img{max-height:50vh}
+  .og-thumb{width:48px;height:48px}
+
+  .lasso-bar{flex-wrap:wrap;gap:4px;padding:4px 8px;top:4px}
+  .lasso-bar label{font-size:.6rem}
+  .lasso-bar input[type="range"]{width:60px}
+
+  .ce svg{width:48px;height:48px}
+  .ce h3{font-size:.95rem}
+  .ce p{font-size:.75rem}
+
+  /* Touch: always show action buttons */
+  .slot .sx,.slot .sr{opacity:.7}
+  .he .hx{opacity:.7}
+
+  /* Larger touch targets */
+  .btn{padding:8px 16px;font-size:.82rem}
+  .auth-box{padding:24px 20px}
+}
+</style>
+</head>
+<body>
+
+<!-- Auth Modal -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-box">
+    <img class="auth-logo" src="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink/main/missing_link_logo_final_crop_small.png" alt="Missing Link"/>
+    <h2>AI Image Edit Studio</h2>
+    <div class="auth-sub">by Missing Link</div>
+    <p>Sign in with your Missing Link token, or purchase GPU time to start editing images with AI.</p>
+    <input type="text" id="authToken" placeholder="ml_xxxxxxxxxxxxxxxx" autocomplete="off"/>
+    <div class="auth-err" id="authErr">&nbsp;</div>
+    <button class="auth-btn auth-primary" onclick="authLogin()">Sign In</button>
+    <div class="auth-or">or</div>
+    <button class="auth-btn auth-secondary" onclick="authBuy()">Buy 5 Hours GPU Time — $10</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- Global top bar -->
+<div class="topbar">
+  <img class="logo" src="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink/main/missing_link_logo_final_crop_small.png" alt="Missing Link"/>
+  <div class="divider"></div>
+  <span class="app-title">AI Image Edit Studio</span>
+  <a href="https://www.missinglink.build" class="back-link" title="Back to Missing Link">← missinglink.build</a>
+  <span class="tagline">Stop Compiling. <b>Start Building.</b></span>
+  <div class="credits" id="creditsDisplay" onclick="authBuy()" title="Click to buy more GPU time" style="display:none">
+    GPU: <b id="creditCount">0</b>
+  </div>
+  <div class="pill" id="pill">OFFLINE</div>
+  <div class="keep-on" id="keepOn" onclick="toggleSession()" title="Start or stop your GPU instance">
+    <span class="keep-label" id="keepLabel">GPU Off</span>
+    <div class="keep-switch"></div>
+  </div>
+</div>
+
+<!-- Status banner -->
+<div class="status-banner" id="statusBanner">
+  <div class="spinner" id="statusSpinner"></div>
+  <div class="status-dot" id="statusDot"></div>
+  <span class="status-text" id="statusText">Sign in to connect</span>
+  <div class="progress-bar" id="statusProgressBar" style="display:none"><div class="progress-fill" id="statusProgressFill"></div></div>
+</div>
+
+<!-- Mobile navigation tabs -->
+<div class="mobile-nav" id="mobileNav">
+  <button class="active" onclick="mobTab('edit')">Edit</button>
+  <button onclick="mobTab('output')">Output</button>
+  <button onclick="mobTab('history')">History</button>
+</div>
+
+<div class="main">
+<div class="L mob-active">
+
+  <!-- Slots -->
+  <div class="sec">
+    <h3 class="open" onclick="togSec(this)">Input Images</h3>
+    <div class="body show">
+      <div class="slots-area">
+        <div class="slots-grid" id="slots"></div>
+        <div class="slots-hint">Drop, paste (Ctrl+V), or click to add images</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt -->
+  <div class="sec">
+    <h3 class="open" onclick="togSec(this)">Prompt</h3>
+    <div class="body show">
+      <textarea class="prompt-area" id="prompt" placeholder="Describe the edit you want..."></textarea>
+      <textarea class="neg-area" id="neg" placeholder="Negative prompt (optional)" style="margin-top:6px"></textarea>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="sec">
+    <h3 onclick="togSec(this)">Settings</h3>
+    <div class="body">
+      <div class="fg"><label>True CFG</label><input type="range" id="cfg" min="1" max="10" step=".5" value="4" oninput="rv('cfgV',this.value)"/><span class="rv" id="cfgV">4</span></div>
+      <div class="fg"><label>Guidance</label><input type="range" id="gs" min="0" max="10" step=".5" value="1" oninput="rv('gsV',this.value)"/><span class="rv" id="gsV">1</span></div>
+      <div class="fg"><label>Steps</label><input type="range" id="steps" min="1" max="80" step="1" value="25" oninput="rv('stV',this.value)"/><span class="rv" id="stV">25</span></div>
+      <div class="fg"><label>Batch</label><input type="range" id="batch" min="1" max="4" step="1" value="1" oninput="rv('baV',this.value)"/><span class="rv" id="baV">1</span></div>
+      <div class="fg"><label>Width</label><input type="number" id="w" value="0" min="0" step="64" style="width:70px"/><span style="font-size:.65rem;color:var(--dim)">0=auto</span></div>
+      <div class="fg"><label>Height</label><input type="number" id="h" value="0" min="0" step="64" style="width:70px"/><span style="font-size:.65rem;color:var(--dim)">0=auto</span></div>
+      <div class="fg"><label>Seed</label><input type="number" id="seed" value="-1" style="width:100px"/><span style="font-size:.65rem;color:var(--dim)">-1=random</span></div>
+      <div class="fg"><label>Max Seq Len</label><input type="number" id="msl" value="0" min="0" max="1024" style="width:70px"/></div>
+    </div>
+  </div>
+
+  <!-- Generate bar -->
+  <div class="gbar">
+    <button class="btn bp" id="genBtn" onclick="gen()" style="min-width:120px">⚡ Generate</button>
+    <button class="btn bd" id="stopBtn" onclick="stopGen()" style="min-width:60px;display:none">■ Stop</button>
+    <div class="gp" id="gp"><div class="gpf" id="gpf"></div></div>
+    <div class="gsl" id="gsl"></div>
+  </div>
+</div>
+
+<div class="C" id="C">
+  <div class="lasso-bar" id="lassoBar" style="display:none">
+    <button class="btn bg bs" id="lassoToggle" onclick="toggleLasso()" title="Draw mask region">✎ Lasso</button>
+    <label>Blur:</label>
+    <input type="range" id="maskBlur" min="0" max="50" step="1" value="10" oninput="rv('mbV',this.value)"/>
+    <span class="rv" id="mbV" style="min-width:24px">10</span>
+    <button class="btn bg bs" onclick="clearMask()">Clear</button>
+    <button class="btn bg bs" onclick="undoLasso()">Undo</button>
+  </div>
+  <div class="ce" id="ce">
+    <svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+    <h3>Ready to Edit</h3>
+    <p style="margin-top:6px;font-size:.85rem">Add images, write a prompt, hit Generate.<br/>Use Lasso to mask regions for targeted edits.</p>
+  </div>
+  <div class="og" id="og" style="display:none"></div>
+  <div class="lasso-wrap" id="lassoWrap" style="display:none">
+    <img id="lassoImg"/>
+    <canvas id="lassoMaskPreview" class="lasso-mask-preview"></canvas>
+    <canvas id="lassoDraw" class="lasso-canvas"></canvas>
+  </div>
+</div>
+
+<div class="R">
+  <div class="rh"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>History</div>
+  <div class="rs" id="hs"></div>
+</div>
+
+</div><!-- /main -->
+</div><!-- /wrap -->
+
+<div class="lb" id="lb" onclick="this.classList.remove('open')"><img id="lbi"/></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const rv=(id,v)=>$(id).textContent=v;
+
+/* ========== AUTH & GPU SESSION (Block-Based) ========== */
+const ML_API='https://missinglink.build';
+let MODAL_URL='';
+let mlToken=localStorage.getItem('ml_token')||'';
+let mlCredits=0; // remaining seconds
+let mlUnlimited=false;
+let sessionActive=false;
+let heartbeatInterval=null;
+let blockTimer=null;
+let blockSecondsLeft=600; // 10 min per block
+
+async function authLogin(){
+  const token=$('authToken').value.trim();
+  if(!token){$('authErr').textContent='Please enter a token';return}
+  $('authErr').textContent='Checking...';
+  try{
+    const resp=await fetch(ML_API+'/api/credits',{headers:{'x-api-key':token}});
+    const d=await resp.json();
+    if(!d.ok){$('authErr').textContent=d.error==='invalid_token'?'Invalid token':'Error: '+(d.error||'unknown');return}
+    mlToken=token;
+    localStorage.setItem('ml_token',token);
+    mlCredits=d.credits;
+    mlUnlimited=d.status==='active';
+    showCredits();
+    $('authOverlay').style.display='none';
+    // Reconnect to existing session
+    if(d.active_session&&d.active_session.tunnel_url){
+      MODAL_URL=d.active_session.tunnel_url;
+      sessionActive=true;
+      startHeartbeat();
+      startPolling();
+      $('keepOn').className='keep-on active';
+      $('keepLabel').textContent='GPU On';
+    }
+  }catch(e){
+    $('authErr').textContent='Network error — check connection';
+  }
+}
+
+function authBuy(){
+  const email=prompt('Enter your email for the receipt:');
+  if(!email)return;
+  window.open(ML_API+'/buy/generation-credits?credits=18000&email='+encodeURIComponent(email),'_blank');
+}
+
+function formatTime(secs){
+  if(secs<0)return '∞';
+  const h=Math.floor(secs/3600);
+  const m=Math.floor((secs%3600)/60);
+  if(h>0)return h+'h '+m+'m';
+  return m+'m';
+}
+
+function showCredits(){
+  $('creditCount').textContent=mlUnlimited?'∞':formatTime(mlCredits);
+  $('creditsDisplay').style.display='flex';
+}
+
+function startBlockCountdown(){
+  stopBlockCountdown();
+  blockSecondsLeft=600;
+  updateBlockDisplay();
+  blockTimer=setInterval(()=>{
+    blockSecondsLeft--;
+    updateBlockDisplay();
+    if(blockSecondsLeft<=0){
+      // Block expired
+      stopBlockCountdown();
+      sessionActive=false;MODAL_URL='';
+      stopPolling();stopHeartbeat();
+      updateStatus('offline','10-min block expired');
+      $('keepOn').className='keep-on';
+      $('keepLabel').textContent='GPU Off';
+      toast('GPU block expired — start a new session to continue',1);
+    }
+  },1000);
+}
+
+function stopBlockCountdown(){if(blockTimer){clearInterval(blockTimer);blockTimer=null}}
+
+function updateBlockDisplay(){
+  const m=Math.floor(blockSecondsLeft/60);
+  const s=blockSecondsLeft%60;
+  $('keepLabel').textContent='GPU '+m+':'+(s<10?'0':'')+s;
+}
+
+async function startSession(){
+  if(sessionActive)return true;
+  if(!mlToken){toast('Please sign in first',1);$('authOverlay').style.display='flex';return false}
+  if(!mlUnlimited&&mlCredits<600){toast('Not enough GPU time — need at least 10 min',1);authBuy();return false}
+
+  updateStatus('waking','Starting your GPU instance (10 min block)...');
+  $('keepOn').className='keep-on active';
+  $('keepLabel').textContent='Starting...';
+  try{
+    const resp=await fetch(ML_API+'/api/session/start',{method:'POST',headers:{'x-api-key':mlToken,'Content-Type':'application/json'}});
+    const d=await resp.json();
+    if(!d.ok){
+      if(d.error==='no_time'){toast('Not enough GPU time — purchase more',1);authBuy()}
+      else toast('Failed to start: '+(d.detail||d.error||'unknown'),1);
+      updateStatus('offline','Session failed');
+      $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+      return false;
+    }
+    MODAL_URL=d.tunnel_url;
+    sessionActive=true;
+    if(d.credits>=0){mlCredits=d.credits;showCredits()}
+    startHeartbeat();
+    startPolling();
+    startBlockCountdown();
+    if(d.already_running)toast('Reconnected to your GPU');
+    else toast('GPU starting — 10 min block deducted');
+    return true;
+  }catch(e){
+    toast('Network error',1);
+    updateStatus('offline','Connection failed');
+    $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+    return false;
+  }
+}
+
+async function stopSession(){
+  if(!sessionActive)return;
+  try{await fetch(ML_API+'/api/session/stop',{method:'POST',headers:{'x-api-key':mlToken,'Content-Type':'application/json'}})}catch(e){}
+  sessionActive=false;MODAL_URL='';
+  stopHeartbeat();stopPolling();stopBlockCountdown();
+  updateStatus('offline','Session stopped');
+  $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+  toast('GPU shutting down');
+  refreshCredits();
+}
+
+function startHeartbeat(){
+  stopHeartbeat();
+  heartbeatInterval=setInterval(async()=>{
+    if(!sessionActive||!mlToken)return;
+    try{
+      const resp=await fetch(ML_API+'/api/session/heartbeat',{method:'POST',headers:{'x-api-key':mlToken,'Content-Type':'application/json'}});
+      const d=await resp.json();
+      if(!d.ok){
+        if(d.error==='session_expired'||d.error==='no_active_session'){
+          sessionActive=false;MODAL_URL='';stopHeartbeat();stopPolling();stopBlockCountdown();
+          updateStatus('offline','Session ended');
+          $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+          toast('GPU session ended',1);
+          refreshCredits();
+        }
+      } else {
+        if(d.unlimited)mlUnlimited=true;
+        else if(d.credits>=0){mlCredits=d.credits;mlUnlimited=false}
+        showCredits();
+      }
+    }catch(e){}
+  },30000);
+}
+
+function stopHeartbeat(){if(heartbeatInterval){clearInterval(heartbeatInterval);heartbeatInterval=null}}
+
+async function refreshCredits(){
+  if(!mlToken)return;
+  try{
+    const resp=await fetch(ML_API+'/api/credits',{headers:{'x-api-key':mlToken}});
+    const d=await resp.json();
+    if(d.ok){mlCredits=d.credits;mlUnlimited=d.status==='active';showCredits()}
+    else if(d.error==='invalid_token'){mlToken='';localStorage.removeItem('ml_token');$('authOverlay').style.display='flex'}
+  }catch(e){}
+}
+
+function authLogout(){
+  if(sessionActive)stopSession();
+  mlToken='';localStorage.removeItem('ml_token');
+  $('creditsDisplay').style.display='none';
+  $('authOverlay').style.display='flex';
+}
+
+// Init
+(async function(){
+  if(mlToken){
+    try{
+      const resp=await fetch(ML_API+'/api/credits',{headers:{'x-api-key':mlToken}});
+      const d=await resp.json();
+      if(d.ok){
+        mlCredits=d.credits;mlUnlimited=d.status==='active';showCredits();
+        $('authOverlay').style.display='none';
+        if(d.active_session&&d.active_session.tunnel_url){
+          MODAL_URL=d.active_session.tunnel_url;sessionActive=true;
+          startHeartbeat();startPolling();startBlockCountdown();
+          $('keepOn').className='keep-on active';$('keepLabel').textContent='GPU On';
+        }
+        return;
+      }
+    }catch(e){}
+    mlToken='';localStorage.removeItem('ml_token');
+  }
+  $('authOverlay').style.display='flex';
+})();
+
+/* ========== APP ========== */
+let generating=false;
+let toastT;
+let S=[],nid=0;
+let lassoActive=false,lassoDrawing=false;
+let lassoPolygons=[],currentPoly=[];
+let maskDataUrl=null;
+
+function toast(m,err){const t=$('toast');t.textContent=m;t.className='toast show'+(err?' err':'');clearTimeout(toastT);toastT=setTimeout(()=>t.className='toast',3000)}
+function togSec(el){el.classList.toggle('open');el.nextElementSibling.classList.toggle('show')}
+
+/* === IMAGE SLOTS === */
+function addSlot(dataUrl){
+  if(!dataUrl)return null; // Never create empty slots
+  const id=nid++;
+  const s={id,du:dataUrl};
+  S.push(s);rS();
+  return s;
+}
+function rS(){
+  const c=$('slots');c.innerHTML='';
+  S.forEach((s,i)=>{
+    const d=document.createElement('div');d.className='slot filled';
+    d.innerHTML=`<img src="${s.du}"/><span class="sl">${i+1}</span><button class="sr" onclick="event.stopPropagation();repSlot(${s.id})" title="Replace">↻</button><button class="sx" onclick="event.stopPropagation();rmSlot(${s.id})" title="Remove">×</button>`;
+    d.onclick=()=>openLightbox(s.du);
+    d.addEventListener('dragover',e=>{e.preventDefault();d.classList.add('drag-over')});
+    d.addEventListener('dragleave',()=>d.classList.remove('drag-over'));
+    d.addEventListener('drop',e=>{e.preventDefault();d.classList.remove('drag-over');const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))rdF(f,s.id)});
+    c.appendChild(d);
+  });
+  const ab=document.createElement('button');ab.className='slot-add-btn';
+  ab.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Add Image';
+  ab.onclick=()=>pickNewFiles();
+  c.appendChild(ab);
+  updateLassoBar();
+}
+function pickNewFiles(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.multiple=true;
+  inp.onchange=()=>{
+    const files=[...inp.files].filter(f=>f.type.startsWith('image/'));
+    files.forEach(f=>{const r=new FileReader();r.onload=e=>addSlot(e.target.result);r.readAsDataURL(f)});
+  };inp.click();
+}
+function pickFile(sid){
+  const inp=document.createElement('input');inp.type='file';inp.accept='image/*';
+  inp.onchange=()=>{if(inp.files[0])rdF(inp.files[0],sid)};inp.click();
+}
+function rdF(file,sid){const r=new FileReader();r.onload=e=>{const s=S.find(x=>x.id===sid);if(s){s.du=e.target.result;rS()}};r.readAsDataURL(file)}
+function repSlot(sid){pickFile(sid)}
+function rmSlot(sid){S=S.filter(x=>x.id!==sid);rS()}
+function openLightbox(src){$('lbi').src=src;$('lb').classList.add('open')}
+document.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])].filter(f=>f.type.startsWith('image/'));if(!files.length)return;files.forEach(f=>{const r=new FileReader();r.onload=ev=>addSlot(ev.target.result);r.readAsDataURL(f)})});
+document.addEventListener('dragover',e=>e.preventDefault());
+document.addEventListener('drop',e=>{e.preventDefault();const files=[...e.dataTransfer.files].filter(f=>f.type.startsWith('image/'));files.forEach(f=>{const r=new FileReader();r.onload=ev=>addSlot(ev.target.result);r.readAsDataURL(f)})});
+// No initial empty slots — start clean
+rS();
+
+/* === GENERATE === */
+let genAbort=null;
+async function gen(){
+  if(generating)return;
+  const filled=S.filter(s=>s.du);
+  if(!filled.length){toast('Upload at least one image',1);return}
+  const p=$('prompt').value.trim();
+  if(!p){toast('Enter a prompt',1);return}
+  const imgs={};S.forEach((s,i)=>{if(s.du)imgs[String(i)]=s.du});
+  const params={images:imgs,prompt:p,negative_prompt:$('neg').value.trim(),
+    true_cfg_scale:parseFloat($('cfg').value),guidance_scale:parseFloat($('gs').value),
+    num_inference_steps:parseInt($('steps').value),num_images_per_prompt:parseInt($('batch').value),
+    width:parseInt($('w').value)||null,height:parseInt($('h').value)||null,
+    seed:parseInt($('seed').value),max_sequence_length:parseInt($('msl').value)||null,
+    mask:maskDataUrl||null,mask_blur:parseInt($('maskBlur').value)||0};
+
+  // Ensure session is active before generating
+  if(!mlToken){toast('Please sign in first',1);$('authOverlay').style.display='flex';return}
+  if(!sessionActive){
+    const started=await startSession();
+    if(!started)return;
+    // Wait for model to be ready
+    toast('Waiting for model to load...');
+    let attempts=0;
+    while(attempts<120){
+      try{
+        const hr=await fetch(MODAL_URL+'/api/health');
+        const hd=await hr.json();
+        if(hd.ready)break;
+      }catch(e){}
+      await new Promise(r=>setTimeout(r,3000));
+      attempts++;
+    }
+    if(attempts>=120){toast('Model failed to load',1);return}
+  }
+
+  genAbort=new AbortController();
+  setG(1);
+  try{
+    const resp=await fetch(MODAL_URL+'/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params),signal:genAbort.signal});
+    if(!resp.ok)throw new Error('Server error: '+resp.status);
+    const reader=resp.body.getReader();
+    const decoder=new TextDecoder();
+    let buf='';
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      buf+=decoder.decode(value,{stream:true});
+      const lines=buf.split('\n');
+      buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        try{
+          const d=JSON.parse(line.slice(6));
+          if(d.type==='progress'){
+            const pct=Math.round((d.step/d.total)*100);
+            $('gpf').style.width=pct+'%';
+            const eta=d.remaining>0?` · ~${Math.round(d.remaining)}s left`:'';
+            $('gsl').textContent=`Step ${d.step}/${d.total} (${d.per_step}s/step${eta})`;
+          }else if(d.type==='done'){
+            showR(d.results);
+            rH();
+            toast('Done!');
+          }else if(d.type==='error'){
+            throw new Error(d.error||'Generation failed');
+          }
+        }catch(pe){if(pe.message&&!pe.message.includes('JSON'))throw pe;}
+      }
+    }
+  }catch(e){
+    if(e.name==='AbortError'){toast('Generation stopped');}
+    else{toast(e.message,1);}
+  }finally{
+    genAbort=null;
+    setG(0);
+  }
+}
+
+function stopGen(){
+  if(genAbort){genAbort.abort();genAbort=null;}
+}
+
+function setG(on){
+  generating=!!on;
+  $('genBtn').disabled=on;
+  $('genBtn').textContent=on?'GENERATING...':'⚡ Generate';
+  $('stopBtn').style.display=on?'inline-block':'none';
+  if(on){
+    $('pill').className='pill run';
+    $('pill').textContent='RUNNING';
+    $('gpf').style.width='0%';
+    $('gsl').textContent='Starting...';
+    $('statusBanner').className='status-banner'; // hide banner during gen
+    startFastPoll();
+  } else {
+    $('gsl').textContent='';
+    stopFastPoll();
+    pollHealth(); // refresh status immediately
+  }
+}
+
+function showR(results,selIdx){
+  if(lassoActive){lassoActive=false;$('lassoToggle').style.background='';$('lassoToggle').style.color=''}
+  $('lassoWrap').style.display='none';
+  $('ce').style.display='none';
+  window._lastResults=results;
+  window._selectedIdx=selIdx||0;
+  renderOutput();
+}
+
+function renderOutput(){
+  const results=window._lastResults;
+  if(!results||!results.length)return;
+  const sel=window._selectedIdx||0;
+  const g=$('og');g.style.display='flex';g.innerHTML='';
+
+  // Main image
+  const main=document.createElement('div');main.className='og-main';
+  main.innerHTML=`<img src="${results[sel]}"/>`;
+  main.onclick=()=>openLightbox(results[sel]);
+  g.appendChild(main);
+
+  // Thumbnail strip (only if >1 result)
+  if(results.length>1){
+    const strip=document.createElement('div');strip.className='og-thumbs';
+    results.forEach((b64,idx)=>{
+      const t=document.createElement('div');
+      t.className='og-thumb'+(idx===sel?' active':'');
+      t.innerHTML=`<img src="${b64}"/>`;
+      t.onclick=()=>{window._selectedIdx=idx;renderOutput()};
+      strip.appendChild(t);
+    });
+    g.appendChild(strip);
+  }
+
+  // Action bar
+  const bar=document.createElement('div');bar.className='og-bar';
+  let slotBtns='';
+  S.forEach((s,si)=>{
+    slotBtns+=`<button class="oc-slot-btn" onclick="event.stopPropagation();useAs(${sel},${s.id})" title="Replace Image ${si+1}"><img src="${s.du}"/>Replace Image ${si+1}</button>`;
+  });
+  bar.innerHTML=`<button onclick="dlImg(${sel})">💾 Save</button><div class="oc-sep"></div>${slotBtns}<button class="oc-new-btn" onclick="useAsNew(${sel})">+ Assign to New Slot</button>`;
+  g.appendChild(bar);
+}
+
+function dlImg(idx){const a=document.createElement('a');a.href=window._lastResults[idx];a.download=`output_${idx}.png`;a.click()}
+function useAs(idx,sid){const s=S.find(x=>x.id===sid);if(s){s.du=window._lastResults[idx];rS();toast('Replaced input image');renderOutput()}}
+function useAsNew(idx){addSlot(window._lastResults[idx]);toast('Added as new input');renderOutput()}
+
+/* === HISTORY === */
+async function rH(){
+  try{
+    const d=await(await fetch(MODAL_URL+'/api/history')).json();
+    const s=$('hs');s.innerHTML='';
+    (d.history||[]).forEach(h=>{
+      const e=document.createElement('div');e.className='he';
+      const p=h.params||{};
+      let thumbs=(h.input_thumbs||[]).map(t=>`<img class="inp" src="${t}"/>`).join('');
+      thumbs+=(h.outputs||[]).slice(0,3).map(o=>`<img class="out" src="${o}"/>`).join('');
+      const meta=`CFG:${p.true_cfg_scale||'?'} Steps:${p.num_inference_steps||'?'} Seed:${p.seed!=null?p.seed:'?'}`;
+      e.innerHTML=`<div class="hp">${h.prompt||'(no prompt)'}</div><div class="hm">${meta}</div><div class="ht">${thumbs}</div><span class="hx" onclick="event.stopPropagation();delH('${h.id}')">×</span>`;
+      e.onclick=()=>lH(h);
+      s.appendChild(e);
+    });
+  }catch(e){}
+}
+async function delH(id){try{await fetch(MODAL_URL+'/api/history/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});rH();toast('Removed')}catch(e){}}
+
+function lH(h){
+  // Restore prompt
+  $('prompt').value=h.prompt||'';
+  $('neg').value=h.negative_prompt||'';
+
+  // Restore settings
+  const p=h.params||{};
+  if(p.true_cfg_scale!=null){$('cfg').value=p.true_cfg_scale;rv('cfgV',p.true_cfg_scale)}
+  if(p.num_inference_steps!=null){$('steps').value=p.num_inference_steps;rv('stV',p.num_inference_steps)}
+  if(p.seed!=null)$('seed').value=p.seed;
+  if(p.guidance_scale!=null){$('gs').value=p.guidance_scale;rv('gsV',p.guidance_scale)}
+  if(p.num_images_per_prompt!=null){$('batch').value=p.num_images_per_prompt;rv('baV',p.num_images_per_prompt)}
+
+  // Restore input images to slots
+  if(h.input_images&&h.input_images.length){
+    S=[];nid=0;
+    h.input_images.forEach(img=>addSlot(img));
+  } else if(h.input_thumbs&&h.input_thumbs.length){
+    S=[];nid=0;
+    h.input_thumbs.forEach(t=>addSlot(t));
+  }
+
+  // Show outputs
+  if(h.outputs?.length)showR(h.outputs);
+
+  // Open settings if closed
+  document.querySelectorAll('.sec h3').forEach(el=>{
+    if(el.textContent.includes('Settings')&&!el.classList.contains('open')){
+      el.classList.add('open');el.nextElementSibling.classList.add('show');
+    }
+  });
+
+  toast('Restored from history');
+}
+
+/* === LASSO MASK TOOL === */
+function toggleLasso(){
+  const first=S.find(s=>s.du);
+  if(!first){toast('Upload an image first',1);return}
+  lassoActive=!lassoActive;
+  $('lassoToggle').style.background=lassoActive?'var(--gold)':'';
+  $('lassoToggle').style.color=lassoActive?'#0a0a0a':'';
+  if(lassoActive){showLassoCanvas(first.du)}
+  else{$('lassoWrap').style.display='none';const hasO=$('og').children.length>0;$('og').style.display=hasO?'flex':'none';$('ce').style.display=hasO?'none':''}
+}
+function showLassoCanvas(imgSrc){
+  $('ce').style.display='none';$('og').style.display='none';
+  const wrap=$('lassoWrap');wrap.style.display='block';
+  const img=$('lassoImg');
+  img.onload=()=>{
+    const maxW=$('C').clientWidth-48,maxH=$('C').clientHeight-80;
+    let w=img.naturalWidth,h=img.naturalHeight;
+    const scale=Math.min(1,maxW/w,maxH/h);
+    w=Math.round(w*scale);h=Math.round(h*scale);
+    img.style.width=w+'px';img.style.height=h+'px';
+    const dc=$('lassoDraw');dc.width=w;dc.height=h;dc.style.width=w+'px';dc.style.height=h+'px';
+    const mp=$('lassoMaskPreview');mp.width=w;mp.height=h;mp.style.width=w+'px';mp.style.height=h+'px';
+    renderMaskPreview();
+  };
+  img.src=imgSrc;
+}
+
+(function(){
+  const dc=$('lassoDraw');
+  dc.addEventListener('mousedown',e=>{if(!lassoActive)return;lassoDrawing=true;currentPoly=[pt(e)];drawLive()});
+  dc.addEventListener('mousemove',e=>{if(!lassoDrawing)return;currentPoly.push(pt(e));drawLive()});
+  dc.addEventListener('mouseup',()=>{if(!lassoDrawing)return;lassoDrawing=false;if(currentPoly.length>2){lassoPolygons.push([...currentPoly])}currentPoly=[];renderMaskPreview();drawLive()});
+  dc.addEventListener('mouseleave',()=>{if(!lassoDrawing)return;lassoDrawing=false;if(currentPoly.length>2){lassoPolygons.push([...currentPoly])}currentPoly=[];renderMaskPreview();drawLive()});
+  dc.addEventListener('touchstart',e=>{if(!lassoActive)return;e.preventDefault();lassoDrawing=true;currentPoly=[pt(e.touches[0])];drawLive()},{passive:false});
+  dc.addEventListener('touchmove',e=>{if(!lassoDrawing)return;e.preventDefault();currentPoly.push(pt(e.touches[0]));drawLive()},{passive:false});
+  dc.addEventListener('touchend',()=>{if(!lassoDrawing)return;lassoDrawing=false;if(currentPoly.length>2){lassoPolygons.push([...currentPoly])}currentPoly=[];renderMaskPreview();drawLive()});
+  function pt(e){const r=dc.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
+})();
+
+function drawLive(){
+  const dc=$('lassoDraw'),ctx=dc.getContext('2d');
+  ctx.clearRect(0,0,dc.width,dc.height);
+  ctx.fillStyle='rgba(212,160,23,0.25)';ctx.strokeStyle='#d4a017';ctx.lineWidth=2;
+  lassoPolygons.forEach(poly=>{ctx.beginPath();poly.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));ctx.closePath();ctx.fill();ctx.stroke()});
+  if(currentPoly.length>1){ctx.beginPath();ctx.strokeStyle='#f0c840';ctx.lineWidth=2;ctx.setLineDash([4,4]);currentPoly.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));ctx.stroke();ctx.setLineDash([])}
+}
+
+function renderMaskPreview(){
+  const mp=$('lassoMaskPreview'),ctx=mp.getContext('2d');
+  ctx.clearRect(0,0,mp.width,mp.height);
+  if(!lassoPolygons.length){maskDataUrl=null;return}
+  ctx.fillStyle='rgba(212,160,23,0.35)';
+  lassoPolygons.forEach(poly=>{ctx.beginPath();poly.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));ctx.closePath();ctx.fill()});
+  buildMaskDataUrl();
+}
+
+function buildMaskDataUrl(){
+  const first=S.find(s=>s.du);if(!first||!first.du)return;
+  const tmpImg=new Image();
+  tmpImg.onload=()=>{
+    const oc=document.createElement('canvas');oc.width=tmpImg.naturalWidth;oc.height=tmpImg.naturalHeight;
+    const octx=oc.getContext('2d');
+    octx.fillStyle='#000';octx.fillRect(0,0,oc.width,oc.height);
+    octx.fillStyle='#fff';
+    const dc=$('lassoDraw');
+    const sx=oc.width/dc.width,sy=oc.height/dc.height;
+    lassoPolygons.forEach(poly=>{octx.beginPath();poly.forEach((p,i)=>i===0?octx.moveTo(p.x*sx,p.y*sy):octx.lineTo(p.x*sx,p.y*sy));octx.closePath();octx.fill()});
+    maskDataUrl=oc.toDataURL('image/png');
+  };
+  tmpImg.src=first.du;
+}
+
+function clearMask(){lassoPolygons=[];currentPoly=[];maskDataUrl=null;renderMaskPreview();drawLive();toast('Mask cleared')}
+function undoLasso(){if(lassoPolygons.length){lassoPolygons.pop();renderMaskPreview();drawLive();toast('Undid last stroke')}}
+
+function updateLassoBar(){
+  const hasImg=S.some(s=>s.du);
+  $('lassoBar').style.display=hasImg?'flex':'none';
+  if(!hasImg&&lassoActive){lassoActive=false;$('lassoWrap').style.display='none';$('lassoToggle').style.background='';$('lassoToggle').style.color=''}
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();gen()}
+  if(e.key==='Escape'&&generating){e.preventDefault();stopGen()}
+  if(e.key==='Enter'&&document.activeElement===$('authToken')){e.preventDefault();authLogin()}
+});
+
+/* === CONTAINER STATUS === */
+let modelReady=false;
+let healthInterval=null;
+let keepOn=true;
+
+function toggleSession(){
+  if(sessionActive){
+    if(confirm('Stop GPU? The remaining time in this 10-min block is not refunded.')){stopSession()}
+  } else {
+    startSession();
+  }
+}
+
+function toggleKeepOn(){toggleSession()}
+let consecutiveFails=0;
+
+function updateStatus(status,detail,ok,step,total){
+  const pill=$('pill');
+  const spinner=$('statusSpinner');
+  const dot=$('statusDot');
+  const text=$('statusText');
+  const pbar=$('statusProgressBar');
+  const pfill=$('statusProgressFill');
+
+  if(status==='ready'){
+    pill.textContent='READY';
+    pill.className='pill';
+    spinner.style.display='none';
+    dot.style.display='block';
+    dot.className='status-dot green';
+    text.textContent=detail||'Model loaded and ready';
+    pbar.style.display='none';
+    modelReady=true;
+    $('genBtn').disabled=false;
+  } else if(status==='loading'){
+    pill.textContent='LOADING';
+    pill.className='pill loading';
+    spinner.style.display='block';
+    dot.style.display='none';
+    const stepText=step&&total?` (${step}/${total})`:';';
+    text.textContent=(detail||'Loading model...')+stepText;
+    if(step&&total){
+      pbar.style.display='block';
+      pfill.style.width=Math.round((step/total)*100)+'%';
+    } else {
+      pbar.style.display='none';
+    }
+    modelReady=false;
+    if(!generating)$('genBtn').disabled=true;
+  } else if(status==='offline'){
+    pill.textContent='OFFLINE';
+    pill.className='pill offline';
+    spinner.style.display='none';
+    dot.style.display='block';
+    dot.className='status-dot red';
+    text.textContent='Container offline — will cold-start on generate';
+    pbar.style.display='none';
+    modelReady=false;
+    $('genBtn').disabled=false;
+  } else if(status==='waking'){
+    pill.textContent='WAKING';
+    pill.className='pill loading';
+    spinner.style.display='block';
+    dot.style.display='none';
+    text.textContent='Waking container...';
+    pbar.style.display='none';
+    modelReady=false;
+  }
+}
+
+async function pollHealth(){
+  try{
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),8000);
+    const resp=await fetch(MODAL_URL+'/api/health',{signal:controller.signal});
+    clearTimeout(timeout);
+    if(!resp.ok)throw new Error('not ok');
+    const d=await resp.json();
+    consecutiveFails=0;
+    console.log('[health]',d.status,d.detail,d.step+'/'+d.total);
+
+    if(d.status==='ready'){
+      let detail=d.detail||'Model loaded and ready';
+      if(d.gpu)detail+=` | ${d.gpu.split(',')[0]}`;
+      updateStatus('ready',detail,true,d.step,d.total);
+    } else if(d.status==='loading'||d.status==='starting'){
+      updateStatus('loading',d.detail,false,d.step,d.total);
+    } else {
+      updateStatus('loading',d.detail||'Initializing...',false,d.step,d.total);
+    }
+  }catch(e){
+    consecutiveFails++;
+    console.log('[health] fail',consecutiveFails,e.message);
+    if(consecutiveFails>=3){
+      updateStatus('offline');
+    } else {
+      updateStatus('waking','Connecting to container...');
+    }
+  }
+}
+
+// Polling controlled by auth — don't auto-start
+updateStatus('offline','Sign in to connect');
+
+function startPolling(){
+  updateStatus('waking','Connecting to container...');
+  pollHealth();
+  if(healthInterval)clearInterval(healthInterval);
+  healthInterval=setInterval(pollHealth,2000);
+  // Also load history
+  rH();
+}
+
+function stopPolling(){
+  if(healthInterval){clearInterval(healthInterval);healthInterval=null}
+  updateStatus('offline','Signed out');
+}
+
+// Poll faster during generation, slower when idle
+function startFastPoll(){if(healthInterval)clearInterval(healthInterval);healthInterval=setInterval(pollHealth,2000)}
+function stopFastPoll(){
+  if(healthInterval)clearInterval(healthInterval);
+  if(keepOn){healthInterval=setInterval(pollHealth,8000)}
+  else{healthInterval=null;}
+}
+
+/* Init */
+
+/* ========== MOBILE TAB NAVIGATION ========== */
+function mobTab(tab){
+  const panels={edit:'.L',output:'.C',history:'.R'};
+  const btns=$('mobileNav')?.querySelectorAll('button');
+  if(!btns)return;
+  // Remove active from all panels and buttons
+  document.querySelectorAll('.main>.L,.main>.C,.main>.R').forEach(p=>p.classList.remove('mob-active'));
+  btns.forEach(b=>b.classList.remove('active'));
+  // Activate selected
+  const sel=panels[tab];
+  if(sel){document.querySelector('.main>'+sel.replace('.',''))?.classList.add('mob-active')||document.querySelector(sel)?.classList.add('mob-active')}
+  // Activate matching button
+  const labels={edit:0,output:1,history:2};
+  if(btns[labels[tab]])btns[labels[tab]].classList.add('active');
+}
+
+// Fix mobTab to work with class selectors
+function mobTab(tab){
+  const map={edit:'L',output:'C',history:'R'};
+  const cls=map[tab];
+  if(!cls)return;
+  document.querySelectorAll('.main>.L,.main>.C,.main>.R').forEach(p=>p.classList.remove('mob-active'));
+  document.querySelector('.main>.'+cls)?.classList.add('mob-active');
+  $('mobileNav')?.querySelectorAll('button').forEach((b,i)=>{
+    b.classList.toggle('active',['edit','output','history'][i]===tab);
+  });
+  // Scroll output into view on mobile
+  if(tab==='output')window.scrollTo({top:0});
+}
+
+// Auto-switch to output tab when generation completes on mobile
+const _origSetG=typeof setG==='function'?setG:null;
+</script>
+</body>
+</html>
