@@ -396,14 +396,20 @@ async function authLogin(){
     mlCredits=d.credits;
     showCredits();
     $('authOverlay').style.display='none';
-    // Reconnect to existing session
+    // Reconnect to existing session or auto-start
     if(d.active_session&&d.active_session.tunnel_url){
       MODAL_URL=d.active_session.tunnel_url;
       sessionActive=true;
       startHeartbeat();
       startPolling();
+      startBlockCountdown();
       $('keepOn').className='keep-on active';
       $('keepLabel').textContent='GPU On';
+    } else if(d.credits>=600){
+      startSession();
+    } else {
+      toast('You need GPU time to start editing — purchase below',1);
+      setTimeout(authBuy,800);
     }
   }catch(e){
     $('authErr').textContent='Network error — check connection';
@@ -411,9 +417,7 @@ async function authLogin(){
 }
 
 function authBuy(){
-  const email=prompt('Enter your email for the receipt:');
-  if(!email)return;
-  window.open(ML_API+'/buy/generation-credits?credits=18000&email='+encodeURIComponent(email),'_blank');
+  window.open(ML_API+'/buy/generation-credits?credits=18000','_blank');
 }
 
 function formatTime(secs){
@@ -558,6 +562,11 @@ function authLogout(){
           MODAL_URL=d.active_session.tunnel_url;sessionActive=true;
           startHeartbeat();startPolling();startBlockCountdown();
           $('keepOn').className='keep-on active';$('keepLabel').textContent='GPU On';
+        } else if(d.credits>=600){
+          startSession();
+        } else {
+          toast('You need GPU time to start editing — purchase below',1);
+          setTimeout(authBuy,800);
         }
         return;
       }
