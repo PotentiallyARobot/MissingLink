@@ -267,6 +267,7 @@ input:focus,textarea:focus{outline:none;border-color:var(--gold)}
   <div class="credits" id="creditsDisplay" onclick="authBuy()" title="Click to buy more GPU time" style="display:none">
     GPU: <b id="creditCount">0</b>
   </div>
+  <span class="user-email" id="userEmail" style="display:none;font-size:11px;color:#888;margin-right:8px;cursor:pointer" onclick="if(confirm('Sign out?')){mlToken='';localStorage.removeItem('ml_token');localStorage.removeItem('ml_email');location.reload()}" title="Click to sign out"></span>
   <div class="pill" id="pill">OFFLINE</div>
   <div class="keep-on" id="keepOn" onclick="toggleSession()" title="Start or stop your GPU instance">
     <span class="keep-label" id="keepLabel">GPU Off</span>
@@ -377,11 +378,88 @@ const rv=(id,v)=>$(id).textContent=v;
 const ML_API='https://missinglink.build';
 let MODAL_URL='';
 let mlToken=localStorage.getItem('ml_token')||'';
+let mlEmail=localStorage.getItem('ml_email')||'';
 let mlCredits=0; // remaining seconds
 let sessionActive=false;
 let heartbeatInterval=null;
 let blockTimer=null;
 let blockSecondsLeft=600; // 10 min per block
+
+/* ========== LOCAL STATE PERSISTENCE ========== */
+function saveCanvasState(){
+  try{
+    const state={
+      slots:S.map(s=>({id:s.id,du:s.du})),
+      nid:nid,
+      prompt:$('prompt')?$('prompt').value:'',
+      neg:$('neg')?$('neg').value:'',
+      cfg:$('cfg')?$('cfg').value:'4',
+      gs:$('gs')?$('gs').value:'1',
+      steps:$('steps')?$('steps').value:'25',
+      batch:$('batch')?$('batch').value:'1',
+      w:$('w')?$('w').value:'0',
+      h:$('h')?$('h').value:'0',
+      seed:$('seed')?$('seed').value:'-1',
+      msl:$('msl')?$('msl').value:'0',
+      lastResults:window._lastResults||null,
+      selectedIdx:window._selectedIdx||0,
+    };
+    localStorage.setItem('ml_canvas',JSON.stringify(state));
+  }catch(e){}
+}
+function loadCanvasState(){
+  try{
+    const raw=localStorage.getItem('ml_canvas');
+    if(!raw)return;
+    const state=JSON.parse(raw);
+    if(state.slots&&state.slots.length){
+      S=[];nid=state.nid||0;
+      state.slots.forEach(s=>{S.push({id:s.id,du:s.du})});
+      rS();
+    }
+    if(state.prompt&&$('prompt'))$('prompt').value=state.prompt;
+    if(state.neg&&$('neg'))$('neg').value=state.neg;
+    if(state.cfg&&$('cfg')){$('cfg').value=state.cfg;rv('cfgV',state.cfg)}
+    if(state.gs&&$('gs')){$('gs').value=state.gs;rv('gsV',state.gs)}
+    if(state.steps&&$('steps')){$('steps').value=state.steps;rv('stV',state.steps)}
+    if(state.batch&&$('batch')){$('batch').value=state.batch;rv('baV',state.batch)}
+    if(state.w&&$('w'))$('w').value=state.w;
+    if(state.h&&$('h'))$('h').value=state.h;
+    if(state.seed&&$('seed'))$('seed').value=state.seed;
+    if(state.msl&&$('msl'))$('msl').value=state.msl;
+    if(state.lastResults&&state.lastResults.length){
+      showR(state.lastResults,state.selectedIdx||0);
+    }
+  }catch(e){}
+}
+function saveLocalHistory(entry){
+  try{
+    const raw=localStorage.getItem('ml_history')||'[]';
+    const hist=JSON.parse(raw);
+    hist.unshift(entry);
+    // Keep last 50, trim to avoid quota issues
+    while(hist.length>50)hist.pop();
+    // If storage is getting too big, trim more aggressively
+    let serialized=JSON.stringify(hist);
+    while(serialized.length>4*1024*1024&&hist.length>5){
+      hist.pop();
+      serialized=JSON.stringify(hist);
+    }
+    localStorage.setItem('ml_history',serialized);
+  }catch(e){}
+}
+function getLocalHistory(){
+  try{return JSON.parse(localStorage.getItem('ml_history')||'[]')}catch(e){return[]}
+}
+function deleteLocalHistory(id){
+  try{
+    const hist=getLocalHistory().filter(h=>h.id!==id);
+    localStorage.setItem('ml_history',JSON.stringify(hist));
+  }catch(e){}
+}
+// Auto-save canvas on changes
+function autoSave(){saveCanvasState()}
+
 
 async function authLogin(){
   const token=$('authToken').value.trim();
@@ -394,8 +472,11 @@ async function authLogin(){
     mlToken=token;
     localStorage.setItem('ml_token',token);
     mlCredits=d.credits;
+    if(d.email){mlEmail=d.email;localStorage.setItem('ml_email',d.email)}
     showCredits();
     $('authOverlay').style.display='none';
+    loadCanvasState();
+    rH();
     // Reconnect ONLY if active session AND tunnel is reachable
     if(d.active_session&&d.active_session.tunnel_url){
       try{
@@ -441,6 +522,10 @@ function formatTime(secs){
 function showCredits(){
   $('creditCount').textContent=formatTime(mlCredits);
   $('creditsDisplay').style.display='flex';
+  if(mlEmail){
+    $('userEmail').textContent=mlEmail;
+    $('userEmail').style.display='inline';
+  }
 }
 
 function startBlockCountdown(){
@@ -566,8 +651,12 @@ function authLogout(){
       const resp=await fetch(ML_API+'/api/credits',{headers:{'x-api-key':mlToken}});
       const d=await resp.json();
       if(d.ok){
-        mlCredits=d.credits;showCredits();
+        mlCredits=d.credits;
+        if(d.email){mlEmail=d.email;localStorage.setItem('ml_email',d.email)}
+        showCredits();
         $('authOverlay').style.display='none';
+        loadCanvasState();
+        rH();
         if(d.active_session&&d.active_session.tunnel_url){
           try{
             const hc=await fetch(d.active_session.tunnel_url+'/api/health',{signal:AbortSignal.timeout(5000)});
@@ -605,7 +694,7 @@ function togSec(el){el.classList.toggle('open');el.nextElementSibling.classList.
 
 /* === IMAGE SLOTS === */
 function addSlot(dataUrl){
-  if(!dataUrl)return null; // Never create empty slots
+  if(!dataUrl)return null;
   const id=nid++;
   const s={id,du:dataUrl};
   S.push(s);rS();
@@ -627,6 +716,7 @@ function rS(){
   ab.onclick=()=>pickNewFiles();
   c.appendChild(ab);
   updateLassoBar();
+  autoSave();
 }
 function pickNewFiles(){
   const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.multiple=true;
@@ -705,7 +795,20 @@ async function gen(){
             $('pill').className='pill loading';
           }else if(d.type==='done'){
             showR(d.results);
+            // Save to local history
+            if(d.history_entry){
+              saveLocalHistory(d.history_entry);
+            } else {
+              saveLocalHistory({
+                id:Date.now().toString(36),
+                ts:Math.floor(Date.now()/1000),
+                prompt:$('prompt')?$('prompt').value:'',
+                outputs:d.results||[],
+                input_images:S.slice(0,1).map(s=>s.du),
+              });
+            }
             rH();
+            saveCanvasState();
             const elapsed=d.elapsed?` in ${d.elapsed}s`:'';
             toast('Done!'+elapsed);
           }else if(d.type==='progress'){
@@ -807,23 +910,20 @@ function useAs(idx,sid){const s=S.find(x=>x.id===sid);if(s){s.du=window._lastRes
 function useAsNew(idx){addSlot(window._lastResults[idx]);toast('Added as new input');renderOutput()}
 
 /* === HISTORY === */
-async function rH(){
-  try{
-    const d=await(await fetch(MODAL_URL+'/api/history')).json();
-    const s=$('hs');s.innerHTML='';
-    (d.history||[]).forEach(h=>{
-      const e=document.createElement('div');e.className='he';
-      const p=h.params||{};
-      let thumbs=(h.input_thumbs||[]).map(t=>`<img class="inp" src="${t}"/>`).join('');
-      thumbs+=(h.outputs||[]).slice(0,3).map(o=>`<img class="out" src="${o}"/>`).join('');
-      const meta=`CFG:${p.true_cfg_scale||'?'} Steps:${p.num_inference_steps||'?'} Seed:${p.seed!=null?p.seed:'?'}`;
-      e.innerHTML=`<div class="hp">${h.prompt||'(no prompt)'}</div><div class="hm">${meta}</div><div class="ht">${thumbs}</div><span class="hx" onclick="event.stopPropagation();delH('${h.id}')">×</span>`;
-      e.onclick=()=>lH(h);
-      s.appendChild(e);
-    });
-  }catch(e){}
+function rH(){
+  const hist=getLocalHistory();
+  const s=$('hs');s.innerHTML='';
+  hist.forEach(h=>{
+    const e=document.createElement('div');e.className='he';
+    let thumbs=(h.input_images||[]).slice(0,1).map(t=>`<img class="inp" src="${t}"/>`).join('');
+    thumbs+=(h.outputs||[]).slice(0,3).map(o=>`<img class="out" src="${o}"/>`).join('');
+    const ts=h.ts?new Date(h.ts*1000).toLocaleString():'';
+    e.innerHTML=`<div class="hp">${h.prompt||'(no prompt)'}</div><div class="hm">${ts}</div><div class="ht">${thumbs}</div><span class="hx" onclick="event.stopPropagation();delH('${h.id}')">×</span>`;
+    e.onclick=()=>lH(h);
+    s.appendChild(e);
+  });
 }
-async function delH(id){try{await fetch(MODAL_URL+'/api/history/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});rH();toast('Removed')}catch(e){}}
+function delH(id){deleteLocalHistory(id);rH();toast('Removed')}
 
 function lH(h){
   // Restore prompt
@@ -858,6 +958,7 @@ function lH(h){
   });
 
   toast('Restored from history');
+  autoSave();
 }
 
 /* === LASSO MASK TOOL === */
@@ -1108,6 +1209,13 @@ function mobTab(tab){
 
 // Auto-switch to output tab when generation completes on mobile
 const _origSetG=typeof setG==='function'?setG:null;
+
+// Auto-save canvas on prompt/settings changes (debounced)
+let _saveTimer=null;
+function debounceSave(){clearTimeout(_saveTimer);_saveTimer=setTimeout(autoSave,500)}
+document.querySelectorAll('#prompt,#neg,#cfg,#gs,#steps,#batch,#w,#h,#seed,#msl').forEach(el=>{
+  if(el){el.addEventListener('input',debounceSave);el.addEventListener('change',debounceSave)}
+});
 </script>
 </body>
 </html>
