@@ -396,20 +396,30 @@ async function authLogin(){
     mlCredits=d.credits;
     showCredits();
     $('authOverlay').style.display='none';
-    // Reconnect to existing session or auto-start
+    // Reconnect ONLY if active session AND tunnel is reachable
     if(d.active_session&&d.active_session.tunnel_url){
-      MODAL_URL=d.active_session.tunnel_url;
-      sessionActive=true;
-      startHeartbeat();
-      startPolling();
-      startBlockCountdown();
-      $('keepOn').className='keep-on active';
-      $('keepLabel').textContent='GPU On';
-    } else if(d.credits>=600){
-      startSession();
+      try{
+        const hc=await fetch(d.active_session.tunnel_url+'/api/health',{signal:AbortSignal.timeout(5000)});
+        if(hc.ok){
+          MODAL_URL=d.active_session.tunnel_url;
+          sessionActive=true;
+          startHeartbeat();
+          startPolling();
+          startBlockCountdown();
+          $('keepOn').className='keep-on active';
+          $('keepLabel').textContent='GPU On';
+        } else { throw new Error('not ok'); }
+      }catch(e){
+        // Stale session — don't reconnect
+        updateStatus('offline','GPU off — toggle the switch to connect');
+        $('keepOn').className='keep-on';
+        $('keepLabel').textContent='GPU Off';
+      }
     } else {
-      toast('You need GPU time to start editing — purchase below',1);
-      setTimeout(authBuy,800);
+      // GPU defaults to OFF — user must toggle it on
+      updateStatus('offline','GPU off — toggle the switch to connect');
+      $('keepOn').className='keep-on';
+      $('keepLabel').textContent='GPU Off';
     }
   }catch(e){
     $('authErr').textContent='Network error — check connection';
@@ -445,10 +455,10 @@ function startBlockCountdown(){
       stopBlockCountdown();
       sessionActive=false;MODAL_URL='';
       stopPolling();stopHeartbeat();
-      updateStatus('offline','10-min block expired');
+      updateStatus('offline','Session time expired');
       $('keepOn').className='keep-on';
       $('keepLabel').textContent='GPU Off';
-      toast('GPU block expired — start a new session to continue',1);
+      toast('Session expired — toggle GPU on to reconnect',1);
     }
   },1000);
 }
@@ -466,7 +476,7 @@ async function startSession(){
   if(!mlToken){toast('Please sign in first',1);$('authOverlay').style.display='flex';return false}
   if(mlCredits<600){toast('Not enough GPU time — need at least 10 min',1);authBuy();return false}
 
-  updateStatus('waking','Starting your GPU instance (10 min block)...');
+  updateStatus('waking','Connecting to GPU...');
   $('keepOn').className='keep-on active';
   $('keepLabel').textContent='Starting...';
   try{
@@ -485,8 +495,8 @@ async function startSession(){
     startHeartbeat();
     startPolling();
     startBlockCountdown();
-    if(d.already_running)toast('Reconnected to your GPU');
-    else toast('GPU starting — 10 min block deducted');
+    if(d.already_running)toast('Connected to GPU');
+    else toast('GPU starting — this may take a moment');
     return true;
   }catch(e){
     toast('Network error',1);
@@ -501,9 +511,9 @@ async function stopSession(){
   try{await fetch(ML_API+'/api/session/stop',{method:'POST',headers:{'x-api-key':mlToken,'Content-Type':'application/json'}})}catch(e){}
   sessionActive=false;MODAL_URL='';
   stopHeartbeat();stopPolling();stopBlockCountdown();
-  updateStatus('offline','Session stopped');
+  updateStatus('offline','GPU disconnected');
   $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
-  toast('GPU shutting down');
+  toast('Disconnected from GPU');
   refreshCredits();
 }
 
@@ -559,14 +569,20 @@ function authLogout(){
         mlCredits=d.credits;showCredits();
         $('authOverlay').style.display='none';
         if(d.active_session&&d.active_session.tunnel_url){
-          MODAL_URL=d.active_session.tunnel_url;sessionActive=true;
-          startHeartbeat();startPolling();startBlockCountdown();
-          $('keepOn').className='keep-on active';$('keepLabel').textContent='GPU On';
-        } else if(d.credits>=600){
-          startSession();
+          try{
+            const hc=await fetch(d.active_session.tunnel_url+'/api/health',{signal:AbortSignal.timeout(5000)});
+            if(hc.ok){
+              MODAL_URL=d.active_session.tunnel_url;sessionActive=true;
+              startHeartbeat();startPolling();startBlockCountdown();
+              $('keepOn').className='keep-on active';$('keepLabel').textContent='GPU On';
+            } else { throw new Error('stale'); }
+          }catch(e){
+            updateStatus('offline','GPU off — toggle the switch to connect');
+            $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+          }
         } else {
-          toast('You need GPU time to start editing — purchase below',1);
-          setTimeout(authBuy,800);
+          updateStatus('offline','GPU off — toggle the switch to connect');
+          $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
         }
         return;
       }
@@ -652,21 +668,12 @@ async function gen(){
   // Ensure session is active before generating
   if(!mlToken){toast('Please sign in first',1);$('authOverlay').style.display='flex';return}
   if(!sessionActive){
-    const started=await startSession();
-    if(!started)return;
-    // Wait for model to be ready
-    toast('Waiting for model to load...');
-    let attempts=0;
-    while(attempts<120){
-      try{
-        const hr=await fetch(MODAL_URL+'/api/health');
-        const hd=await hr.json();
-        if(hd.ready)break;
-      }catch(e){}
-      await new Promise(r=>setTimeout(r,3000));
-      attempts++;
-    }
-    if(attempts>=120){toast('Model failed to load',1);return}
+    toast('Turn on the GPU toggle first',1);
+    // Flash the toggle to draw attention
+    $('keepOn').style.transition='background .2s';
+    $('keepOn').style.background='rgba(212,160,23,0.3)';
+    setTimeout(()=>{$('keepOn').style.background=''},800);
+    return;
   }
 
   genAbort=new AbortController();
@@ -937,11 +944,11 @@ document.addEventListener('keydown',e=>{
 /* === CONTAINER STATUS === */
 let modelReady=false;
 let healthInterval=null;
-let keepOn=true;
+let keepOn=false;
 
 function toggleSession(){
   if(sessionActive){
-    if(confirm('Stop GPU? The remaining time in this 10-min block is not refunded.')){stopSession()}
+    if(confirm('Disconnect from GPU?')){stopSession()}
   } else {
     startSession();
   }
