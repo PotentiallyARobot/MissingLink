@@ -30,12 +30,12 @@ input:focus,textarea:focus{outline:none;border-color:var(--gold)}
 .topbar .tagline b{color:var(--gold);font-weight:600}
 .topbar .back-link{font-size:.65rem;color:var(--dim);text-decoration:none;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius);transition:.15s;white-space:nowrap;flex-shrink:0}
 .topbar .back-link:hover{color:var(--gold);border-color:var(--gold)}
-.topbar .pill{font-size:.5rem;padding:2px 7px;border-radius:10px;background:#1a2a1a;color:#4a4;white-space:nowrap;transition:all .3s;letter-spacing:.5px;text-transform:uppercase;font-weight:600;flex-shrink:0}
+.topbar .pill{font-size:.5rem;padding:2px 7px;border-radius:10px;background:#1a2a1a;color:#4a4;white-space:nowrap;transition:all .3s;letter-spacing:.5px;text-transform:uppercase;font-weight:600;flex-shrink:0;min-width:52px;text-align:center}
 .topbar .pill.run{background:#2a1a1a;color:#d44;animation:pulse 1.2s infinite}
 .topbar .pill.loading{background:#2a2a1a;color:#da4;animation:pulse 1.2s infinite}
 .topbar .pill.offline{background:#1a1a1a;color:#666}
 .topbar .keep-on{display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;flex-shrink:0}
-.topbar .keep-on .keep-label{font-size:.6rem;color:var(--dim);white-space:nowrap;font-family:'JetBrains Mono',monospace}
+.topbar .keep-on .keep-label{font-size:.6rem;color:var(--dim);white-space:nowrap;font-family:'JetBrains Mono',monospace;min-width:48px}
 .topbar .keep-on .keep-switch{position:relative;width:32px;height:18px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);transition:.2s;flex-shrink:0}
 .topbar .keep-on .keep-switch::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;background:var(--dim);border-radius:50%;transition:.2s}
 .topbar .keep-on.active .keep-switch{background:rgba(74,170,74,.25);border-color:#4a4}
@@ -46,7 +46,7 @@ input:focus,textarea:focus{outline:none;border-color:var(--gold)}
 .topbar .credits b{color:var(--gold)}
 
 /* STATUS BANNER */
-.status-banner{display:flex;padding:4px 12px;background:linear-gradient(90deg,var(--surface) 0%,var(--surface2) 100%);border-bottom:1px solid var(--border);font-size:.68rem;color:var(--dim);align-items:center;gap:6px;height:28px;min-height:28px}
+.status-banner{display:flex;padding:4px 12px;background:linear-gradient(90deg,var(--surface) 0%,var(--surface2) 100%);border-bottom:1px solid var(--border);font-size:.68rem;color:var(--dim);align-items:center;gap:6px;height:28px;min-height:28px;max-height:28px;overflow:hidden}
 .status-banner .spinner{width:11px;height:11px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
 .status-banner .status-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .status-banner .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
@@ -383,7 +383,7 @@ let mlCredits=0; // remaining seconds
 let sessionActive=false;
 let heartbeatInterval=null;
 let blockTimer=null;
-let blockSecondsLeft=600; // 10 min per block
+let creditTickTimer=null; // ticks down credits every second while GPU is on
 
 /* ========== LOCAL STATE PERSISTENCE ========== */
 function saveCanvasState(){
@@ -530,31 +530,23 @@ function showCredits(){
 
 function startBlockCountdown(){
   stopBlockCountdown();
-  blockSecondsLeft=600;
-  updateBlockDisplay();
-  blockTimer=setInterval(()=>{
-    blockSecondsLeft--;
-    updateBlockDisplay();
-    if(blockSecondsLeft<=0){
-      // Block expired
+  creditTickTimer=setInterval(()=>{
+    if(mlCredits>0){
+      mlCredits--;
+      $('creditCount').textContent=formatTime(mlCredits);
+    }
+    if(mlCredits<=0){
       stopBlockCountdown();
       sessionActive=false;MODAL_URL='';
       stopPolling();stopHeartbeat();
-      updateStatus('offline','Session time expired');
-      $('keepOn').className='keep-on';
-      $('keepLabel').textContent='GPU Off';
-      toast('Session expired — toggle GPU on to reconnect',1);
+      updateStatus('offline','GPU time depleted');
+      $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+      toast('GPU time used up — purchase more to continue',1);
     }
   },1000);
 }
 
-function stopBlockCountdown(){if(blockTimer){clearInterval(blockTimer);blockTimer=null}}
-
-function updateBlockDisplay(){
-  const m=Math.floor(blockSecondsLeft/60);
-  const s=blockSecondsLeft%60;
-  $('keepLabel').textContent='GPU '+m+':'+(s<10?'0':'')+s;
-}
+function stopBlockCountdown(){if(creditTickTimer){clearInterval(creditTickTimer);creditTickTimer=null}}
 
 async function startSession(){
   if(sessionActive)return true;
@@ -563,7 +555,7 @@ async function startSession(){
 
   updateStatus('waking','Connecting to GPU...');
   $('keepOn').className='keep-on active';
-  $('keepLabel').textContent='Starting...';
+  $('keepLabel').textContent='Loading...';
   try{
     const resp=await fetch(ML_API+'/api/session/start',{method:'POST',headers:{'x-api-key':mlToken,'Content-Type':'application/json'}});
     const d=await resp.json();
@@ -578,10 +570,43 @@ async function startSession(){
     sessionActive=true;
     if(d.credits>=0){mlCredits=d.credits;showCredits()}
     startHeartbeat();
-    startPolling();
     startBlockCountdown();
-    if(d.already_running)toast('Connected to GPU');
-    else toast('GPU starting — this may take a moment');
+
+    // Wait for model to be ready
+    if(!d.already_running){
+      toast('GPU started — loading model...');
+    } else {
+      toast('Connected — checking model...');
+    }
+    updateStatus('waking','Loading model...');
+    $('keepLabel').textContent='Loading...';
+    let ready=false;
+    for(let attempt=0;attempt<180;attempt++){
+      try{
+        const hr=await fetch(MODAL_URL+'/api/health',{signal:AbortSignal.timeout(5000)});
+        const hd=await hr.json();
+        if(hd.ready){ready=true;break}
+        const detail=hd.detail||'Loading...';
+        const step=hd.step||0;
+        const total=hd.total||5;
+        const pct=Math.round((step/total)*100);
+        updateStatus('waking',`${detail} (${pct}%)`);
+        $('keepLabel').textContent=`Loading ${pct}%`;
+      }catch(e){}
+      await new Promise(r=>setTimeout(r,2000));
+    }
+    if(!ready){
+      toast('Model failed to load — try again',1);
+      updateStatus('offline','Model load failed');
+      $('keepOn').className='keep-on';$('keepLabel').textContent='GPU Off';
+      sessionActive=false;MODAL_URL='';
+      stopHeartbeat();stopBlockCountdown();
+      return false;
+    }
+    updateStatus('ready','Ready');
+    $('keepLabel').textContent='GPU On';
+    startPolling();
+    toast('GPU ready!');
     return true;
   }catch(e){
     toast('Network error',1);
