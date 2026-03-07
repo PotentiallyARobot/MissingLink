@@ -1,3 +1,34 @@
+/* ===== POPULATE NAV DROPDOWNS FROM nav-data.js ===== */
+function buildDesktopDropdown(items) {
+  return items.map(item => {
+    const target = item.external ? ' target="_blank"' : '';
+    return `<a href="${item.href}"${target}><div class="nb-icon">${item.icon}</div><div class="nb-info"><span class="nb-name">${item.name}</span><span class="nb-sub">${item.sub}</span></div></a>`;
+  }).join('');
+}
+
+function buildMobileDropdown(items) {
+  return items.map(item => {
+    const target = item.external ? ' target="_blank"' : '';
+    return `<a href="${item.href}"${target}>${item.name} <span class="nb-tag-small">${item.tag}</span></a>`;
+  }).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Desktop dropdowns
+  document.querySelectorAll('[data-nav-dropdown]').forEach(el => {
+    const key = el.getAttribute('data-nav-dropdown');
+    const items = key === 'notebooks' ? NAV_NOTEBOOKS : key === 'partners' ? NAV_PARTNERS : [];
+    el.innerHTML = buildDesktopDropdown(items);
+  });
+
+  // Mobile dropdowns
+  document.querySelectorAll('[data-mobile-dropdown]').forEach(el => {
+    const key = el.getAttribute('data-mobile-dropdown');
+    const items = key === 'notebooks' ? NAV_NOTEBOOKS : key === 'partners' ? NAV_PARTNERS : [];
+    el.innerHTML = buildMobileDropdown(items);
+  });
+});
+
 /* ===== MOBILE MENU ===== */
 function toggleMobileMenu() {
   const menu = document.getElementById('mobileMenu');

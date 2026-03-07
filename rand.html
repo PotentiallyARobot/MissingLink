@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Embedding Adapter Demo</title>
+
+<style>
+body{background:#111;color:white;font-family:Arial;padding:40px}
+textarea{width:100%;height:120px}
+button{padding:10px;margin-top:10px}
+pre{background:#222;padding:10px}
+</style>
+
+</head>
+<body>
+
+<h2>MiniLM → OpenAI Embedding Adapter</h2>
+
+<textarea id="text">NASA announces discovery of Earth-like exoplanet.</textarea>
+<br>
+<button onclick="run()">Generate Embedding</button>
+
+<h3>Confidence</h3>
+<div id="confidence"></div>
+
+<h3>Embedding Preview</h3>
+<pre id="output"></pre>
+
+<script type="module">
+
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web/webgpu/+esm";
+import { load } from "https://cdn.jsdelivr.net/npm/npzjs/+esm";
+
+let embedder
+let adapter
+let quality
+
+async function init(){
+
+embedder = await pipeline(
+"feature-extraction",
+"Xenova/all-MiniLM-L6-v2",
+{device:"webgpu",quantized:true}
+)
+
+adapter = await ort.InferenceSession.create(
+"https://huggingface.co/TylerF/emb_adapter_minilm_to_openai_text-embedding-3-large_v1_onnx/resolve/main/emb_adapter_minilm_to_openai_text-embedding-3-large_v1.onnx",
+{executionProviders:["webgpu","wasm"]}
+)
+
+quality = await load(
+"https://huggingface.co/TylerF/emb_adapter_minilm_to_openai_text-embedding-3-large_v1/resolve/main/adapter_quality_stats_minilm_to_openai_text-embedding-3-large_v1.npz"
+)
+
+console.log("models loaded")
+
+}
+
+await init()
+
+function normalize(v){
+
+let s=0
+for(let i=0;i<v.length;i++) s+=v[i]*v[i]
+
+let n=Math.sqrt(s)
+let out=new Float32Array(v.length)
+
+for(let i=0;i<v.length;i++)
+out[i]=v[i]/n
+
+return out
+
+}
+
+function matmulVec(A,x){
+
+let d=x.length
+let out=new Float32Array(d)
+
+for(let i=0;i<d;i++){
+
+let sum=0
+for(let j=0;j<d;j++)
+sum+=A[i*d+j]*x[j]
+
+out[i]=sum
+}
+
+return out
+
+}
+
+function mahalanobis(x,mean,invCov){
+
+let d=x.length
+let centered=new Float32Array(d)
+
+for(let i=0;i<d;i++)
+centered[i]=x[i]-mean[i]
+
+let tmp=matmulVec(invCov,centered)
+
+let md2=0
+for(let i=0;i<d;i++)
+md2+=tmp[i]*centered[i]
+
+return Math.sqrt(Math.max(md2,0))
+}
+
+function knnDistance(x,refs){
+
+let best=-1
+
+for(let i=0;i<refs.length;i++){
+
+let r=refs[i]
+
+let dot=0
+for(let j=0;j<x.length;j++)
+dot+=x[j]*r[j]
+
+best=Math.max(best,dot)
+
+}
+
+return Math.sqrt(Math.max(2-2*best,0))
+}
+
+function sigmoid(x){
+return 1/(1+Math.exp(-x))
+}
+
+function confidenceFromRange(v,p95,p99){
+
+let c95=0.8
+let c99=0.2
+
+function logit(x){
+return Math.log(x/(1-x))
+}
+
+let A=logit(c95)
+let A99=logit(c99)
+let B=A-A99
+
+let z=(v-p95)/(p99-p95)
+
+return sigmoid(A-B*z)
+}
+
+async function run(){
+
+let text=document.getElementById("text").value
+
+let emb=await embedder(text,{pooling:"mean",normalize:false})
+
+let src=normalize(emb.data)
+
+let input=new ort.Tensor("float32",src,[1,src.length])
+
+let out=await adapter.run({input})
+
+let tgt=out.embedding.data
+
+let stats=quality
+
+let md=mahalanobis(
+src,
+stats.mean_src.data,
+stats.inv_cov_src.data
+)
+
+let knn=knnDistance(
+src,
+stats.knn_ref_src.data
+)
+
+let conf1=confidenceFromRange(md,stats.m95_src,stats.m99_src)
+let conf2=confidenceFromRange(knn,stats.knn95_src,stats.knn99_src)
+
+let confidence=Math.min(conf1,conf2)
+
+document.getElementById("confidence").innerText=
+confidence.toFixed(3)
+
+document.getElementById("output").innerText=
+JSON.stringify(Array.from(tgt.slice(0,32)),null,2)
+
+}
+
+</script>
+
+</body>
+</html>
