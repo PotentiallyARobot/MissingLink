@@ -33,6 +33,13 @@ const NAV_NOTEBOOKS = [
     href: 'https://colab.research.google.com/github/PotentiallyARobot/MissingLink/blob/main/notebooks/Wan2_2_T2V_GGUF_MissingLink_Colab_Optimized.ipynb',
   },
   {
+    icon: '🎬',
+    name: 'Wan2.2 I2V GGUF',
+    sub: 'Image+Text to Video • GGUF',
+    tag: 'Video Gen',
+    href: 'https://colab.research.google.com/github/PotentiallyARobot/MissingLink/blob/main/notebooks/Wan2_2_I2V_GGUF_MissingLink_Colab_Optimized.ipynb',
+  },
+  {
     icon: '🎨',
     name: 'Qwen Image Edit',
     sub: 'Image Editing • Quant',
