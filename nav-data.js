@@ -46,6 +46,13 @@ const NAV_NOTEBOOKS = [
     tag: 'Image Gen',
     href: 'https://colab.research.google.com/github/PotentiallyARobot/MissingLink/blob/main/notebooks/QWen_Image_Edit_MissingLink_Colab.ipynb',
   },
+  {
+    icon: '🎨',
+    name: 'Lora Studio w/CivitAI',
+    sub: 'Image Editing • Quant',
+    tag: 'Image Gen',
+    href: 'https://colab.research.google.com/github/PotentiallyARobot/MissingLink/blob/main/notebooks/MissingLink_Lora_Studio.ipynb',
+  },
 ];
 
 const NAV_PARTNERS = [
