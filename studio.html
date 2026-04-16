@@ -176,12 +176,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .job-tile.error{border-color:var(--red)}
 .job-thumb{width:48px;height:48px;border-radius:4px;background:var(--surface-3);flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .job-thumb img{width:100%;height:100%;object-fit:cover}
+.job-tile.queued .job-thumb img, .job-tile.running .job-thumb img{filter:blur(3px);opacity:.5}
+.job-thumb img.blurred{filter:blur(4px) brightness(.6);transform:scale(1.1)}
 .job-thumb .mini-spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+
+/* Toast notification */
+.toast{position:fixed;top:60px;right:16px;z-index:10001;background:var(--surface);border:1px solid var(--green);border-radius:8px;padding:10px 16px;font-family:var(--font-mono);font-size:11px;color:var(--green);box-shadow:0 4px 24px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px;transform:translateX(120%);transition:transform .3s ease;cursor:pointer}
+.toast.show{transform:translateX(0)}
+.toast.error{border-color:var(--red);color:var(--red)}
 .job-info{flex:1;min-width:0;font-family:var(--font-mono);font-size:10px}
 .job-status{color:var(--text);font-weight:700;margin-bottom:2px;display:flex;align-items:center;gap:4px}
 .job-mode{color:var(--text-muted);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
-.job-cancel{position:absolute;top:4px;right:4px;width:18px;height:18px;background:rgba(0,0,0,.6);border:1px solid var(--border);color:var(--red);border-radius:50%;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
-.job-cancel:hover{background:var(--red);color:var(--white);border-color:var(--red)}
+.job-cancel{position:absolute;top:6px;right:6px;width:22px;height:22px;background:rgba(239,68,68,.15);border:1px solid var(--red);color:var(--red);border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;font-weight:700}
+.job-cancel:hover{background:var(--red);color:var(--white)}
 
 .console{grid-area:console;background:var(--surface);border-top:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:all .2s}
 .console-tabs{display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--border);min-height:28px;gap:4px}
@@ -474,7 +481,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 <!-- JOB QUEUE PANEL -->
 <div class="hw-panel" id="hwPanel">
-    <div class="hw-title"><span class="icon">📋</span> YOUR JOBS <span id="queueCount" style="margin-left:auto;color:var(--text-muted);font-weight:400">0 / 3</span></div>
+    <div class="hw-title"><span class="icon">📋</span> YOUR JOBS <span id="queueCount" style="margin-left:auto;color:var(--text-muted);font-weight:400">0 / 3</span><button onclick="toggleHW()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 0 0 8px;line-height:1">×</button></div>
     <div id="queueList" style="display:flex;flex-direction:column;gap:8px;min-height:40px">
         <div id="queueEmpty" style="text-align:center;color:var(--text-muted);font-size:10px;padding:16px 0">No jobs yet</div>
     </div>
@@ -1036,6 +1043,20 @@ async function doGenerate(){
         }
 
         // Add to job list and start polling
+        const snapshot = {
+            mode: payload.mode,
+            prompt: payload.prompt,
+            negative_prompt: payload.negative_prompt,
+            seed: payload.seed,
+            guidance_scale: payload.guidance_scale,
+            inference_steps: payload.inference_steps,
+            lora_scale: payload.lora_scale,
+            width: payload.width,
+            height: payload.height,
+            input_image_id: currentMode==='camera' ? imageId : null,
+            input_image_url: currentMode==='camera' ? imageUrl : null,
+            edit_slots: currentMode==='edit' ? slots.filter(s=>s!==null).map(s=>({id:s.id,url:s.url,filename:s.filename})) : null,
+        };
         myJobs.unshift({
             id: d.job_id,
             status: 'queued',
@@ -1043,6 +1064,7 @@ async function doGenerate(){
             thumb: thumbUrl,
             result: null,
             submittedAt: Date.now(),
+            snapshot,
         });
         if(myJobs.length>6) myJobs=myJobs.slice(0,6);
         renderQueue();
@@ -1091,6 +1113,7 @@ function startJobPoll(jobId){
                 checkAuth();
             } else if(d.status==='running' && job.status!=='running'){
                 job.status='running';
+                job.startedAt=Date.now();
                 renderQueue();
             } else if(d.status==='queued'){
                 const elapsed=(Date.now()-startTime)/1000;
@@ -1133,35 +1156,91 @@ function renderQueue(){
         return;
     }
     list.innerHTML='';
+    const now=Date.now();
     for(const j of myJobs){
         const tile=document.createElement('div');
         tile.className=`job-tile ${j.status}`;
+        if(j.status==='done') tile.onclick=()=>restoreJobState(j.id);
+
         const thumbContent=j.status==='done' && j.result?.url
-            ? `<img src="${j.result.url}" onclick="loadJobResult('${j.id}')">`
+            ? `<img src="${j.result.url}">`
             : j.status==='running'
-                ? `<div class="mini-spinner"></div>`
+                ? `<img src="${j.thumb||''}" style="filter:blur(4px);opacity:.6"><div class="mini-spinner" style="position:absolute"></div>`
                 : j.status==='queued'
-                    ? `<img src="${j.thumb||''}" style="opacity:.4">`
-                    : `<img src="${j.thumb||''}" style="opacity:.3">`;
-        const statusIcon={queued:'⏳',running:'🔄',done:'✅',error:'⚠️',cancelled:'✕'}[j.status]||'·';
-        const statusText={queued:'Queued',running:'Generating',done:'Done',error:'Failed',cancelled:'Cancelled'}[j.status]||j.status;
+                    ? `<img src="${j.thumb||''}" style="filter:blur(4px);opacity:.5">`
+                    : `<img src="${j.thumb||''}" style="filter:blur(4px);opacity:.3">`;
+
+        let statusText, statusIcon, subtext;
+        if(j.status==='queued'){
+            statusIcon='⏳'; statusText='Queued';
+            const waited=Math.floor((now-j.submittedAt)/1000);
+            subtext=`${j.mode.toUpperCase()} · waiting ${waited}s`;
+        } else if(j.status==='running'){
+            statusIcon='🔄'; statusText='Generating';
+            const elapsed=j.startedAt ? Math.floor((now-j.startedAt)/1000) : 0;
+            subtext=`${j.mode.toUpperCase()} · ${elapsed}s`;
+        } else if(j.status==='done'){
+            statusIcon='✅'; statusText='Done';
+            subtext=`${j.mode.toUpperCase()}${j.result?.elapsed?' · '+j.result.elapsed+'s':''} — click to restore`;
+        } else if(j.status==='error'){
+            statusIcon='⚠️'; statusText='Failed';
+            subtext=j.error||j.mode.toUpperCase();
+        } else {
+            statusIcon='✕'; statusText='Cancelled';
+            subtext=j.mode.toUpperCase();
+        }
+
         tile.innerHTML=`
             <div class="job-thumb">${thumbContent}</div>
             <div class="job-info">
                 <div class="job-status">${statusIcon} ${statusText}</div>
-                <div class="job-mode">${j.mode}${j.result?.elapsed?' · '+j.result.elapsed+'s':''}</div>
+                <div class="job-mode">${subtext}</div>
             </div>
-            ${j.status==='queued'?`<button class="job-cancel" onclick="cancelJob('${j.id}')" title="Cancel & refund">×</button>`:''}
+            ${j.status==='queued'?`<button class="job-cancel" onclick="event.stopPropagation(); cancelJob('${j.id}')" title="Cancel & refund 100 tokens">×</button>`:''}
         `;
         list.appendChild(tile);
     }
 }
 
-function loadJobResult(jobId){
+// Tick timers every second
+setInterval(()=>{
+    if(hwOpen && myJobs.some(j=>j.status==='queued'||j.status==='running')) renderQueue();
+}, 1000);
+
+function restoreJobState(jobId){
     const job=myJobs.find(j=>j.id===jobId);
-    if(!job || !job.result) return;
-    showResult(job.result);
+    if(!job) return;
+    // Show the output
+    if(job.result) showResult(job.result);
+    // Restore input state
+    const s=job.snapshot;
+    if(!s) return;
+    setMode(s.mode);
+    if(s.mode==='camera' && s.input_image_id){
+        imageId=s.input_image_id; imageUrl=s.input_image_url;
+        $('dropzone').style.display='none';
+        $('inputPreview').style.display='';
+        $('inputImg').src=s.input_image_url;
+        setViewportImage(s.input_image_url);
+    } else if(s.mode==='edit' && s.edit_slots){
+        slots=[null,null,null];
+        s.edit_slots.forEach((sl,i)=>{ if(i<3) slots[i]={id:sl.id,url:sl.url,filename:sl.filename}; });
+        for(let i=0;i<3;i++) renderSlot(i);
+    }
+    if($('promptInput')) $('promptInput').value=s.prompt||'';
+    if($('customPrompt')) $('customPrompt').value=s.prompt||'';
+    if($('negPrompt')) $('negPrompt').value=s.negative_prompt||'';
+    $('rngSeed').value=s.seed||42; $('vSeed').textContent=s.seed||42;
+    $('rngCfg').value=s.guidance_scale||2; $('vCfg').textContent=s.guidance_scale||2;
+    $('rngSteps').value=s.inference_steps||4; $('vSteps').textContent=s.inference_steps||4;
+    if(s.lora_scale){ $('rngLora').value=s.lora_scale; $('vLora').textContent=s.lora_scale; }
+    if(s.width) $('inpWidth').value=s.width;
+    if(s.height) $('inpHeight').value=s.height;
+    updateGenButton();
+    log(`Restored state from job ${jobId}`);
 }
+
+function loadJobResult(jobId){ restoreJobState(jobId); }
 
 function showResult(d){
     lastResult=d;
