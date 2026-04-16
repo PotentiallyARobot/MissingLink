@@ -160,15 +160,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .gen-fill{height:100%;background:var(--gold);transition:width .3s;width:0}
 .gen-text{font-size:10px;color:var(--text-muted);font-family:var(--font-mono)}
 
-/* Queue overlay (inside output area, top-right) */
+/* Queue overlay (top-right of output area) */
 .queue-overlay{position:absolute;top:10px;right:10px;width:240px;z-index:10;display:flex;flex-direction:column;gap:6px;pointer-events:none}
 .queue-overlay>*{pointer-events:auto}
+
+/* History overlay (bottom-right of output area) */
+.history-overlay{position:absolute;bottom:10px;right:10px;width:240px;z-index:10;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.history-overlay>*{pointer-events:auto}
 .q-section{background:rgba(17,17,19,.92);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
 .q-header{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1px;color:var(--text-muted);padding:8px 10px 6px;display:flex;align-items:center;gap:6px}
 .q-count{margin-left:auto;font-weight:400;color:var(--gold)}
 .q-clear{margin-left:auto;background:none;border:none;color:var(--text-muted);font-family:var(--font-mono);font-size:8px;cursor:pointer;letter-spacing:.5px;padding:0}
 .q-clear:hover{color:var(--red)}
-.q-list{display:flex;flex-direction:column;gap:4px;padding:0 6px 6px;max-height:260px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.q-list{display:flex;flex-direction:column;gap:4px;padding:0 6px 6px;max-height:220px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 
 /* Job tile (active queue) */
 .job-tile{display:flex;gap:8px;padding:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;align-items:center;position:relative;transition:all .15s}
@@ -399,12 +403,16 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
 
-        <!-- Queue + History overlay (top-right of output area) -->
+        <!-- Queue overlay (top-right of output area) -->
         <div class="queue-overlay" id="queueOverlay">
             <div class="q-section" id="qActiveSection" style="display:none">
                 <div class="q-header">QUEUE <span id="queueCount" class="q-count">0/3</span></div>
                 <div id="qActiveList" class="q-list"></div>
             </div>
+        </div>
+
+        <!-- History overlay (bottom-right of output area) -->
+        <div class="history-overlay" id="historyOverlay">
             <div class="q-section" id="qHistorySection" style="display:none">
                 <div class="q-header">HISTORY <button onclick="clearHistory()" class="q-clear">Clear</button></div>
                 <div id="qHistoryList" class="q-list"></div>
@@ -640,7 +648,7 @@ const API=''; // same origin
 
 let _user=null;
 let imageId=null,imageUrl=null;
-let consoleOpen=false,hwOpen=false;
+let consoleOpen=false,hwOpen=true;
 let currentMode='camera';
 let slots=[null,null,null];
 let myJobs=[]; // {id, status, mode, thumb, result}
@@ -833,8 +841,8 @@ function toggleConsole(){
 }
 function toggleHW(){ 
     hwOpen=!hwOpen;
+    $('historyOverlay').style.display=hwOpen?'flex':'none';
     $('btnGpu').classList.toggle('active',hwOpen);
-    renderQueue();
 }
 
 // ── Status ────────────────────────────────────────
@@ -1107,12 +1115,9 @@ function startJobPoll(jobId){
                 clearInterval(pollTimers[jobId]);
                 delete pollTimers[jobId];
                 renderQueue();
+                showResult(d.result);
                 log(`Job ${jobId} done (${d.result.elapsed}s)`,'success');
                 $('coldBanner').classList.remove('show');
-                // Auto-show most recent finished job if nothing else is showing
-                if($('outImg').style.display==='none' || !lastResult){
-                    showResult(d.result);
-                }
                 checkAuth();
             } else if(d.status==='error' || d.status==='cancelled'){
                 job.status=d.status;
@@ -1200,10 +1205,10 @@ function renderQueue(){
         activeSection.style.display = 'none';
     }
 
-    // History section (only visible when toggled on)
+    // History section (always visible when there are completed jobs)
     const histSection = $('qHistorySection');
     const histList = $('qHistoryList');
-    if (historyJobs.length > 0 && hwOpen) {
+    if (historyJobs.length > 0) {
         histSection.style.display = '';
         histList.innerHTML = '';
         for (const j of historyJobs.slice(0, 10)) {
