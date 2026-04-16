@@ -179,12 +179,15 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .job-tile.done{border-color:var(--green);cursor:pointer}
 .job-tile.done:hover{background:var(--surface-3)}
 .job-tile.running{border-color:var(--gold)}
+.job-tile.waiting{border-color:var(--gold);border-style:dashed}
 .job-tile.queued{border-color:var(--text-muted)}
 .job-tile.error{border-color:var(--red);opacity:.6}
 .job-tile.cancelled{opacity:.4}
 .job-thumb{width:40px;height:40px;border-radius:4px;background:var(--surface-3);flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .job-thumb img{width:100%;height:100%;object-fit:cover}
-.job-tile.queued .job-thumb img,.job-tile.running .job-thumb img{filter:blur(3px);opacity:.5}
+.job-tile.queued .job-thumb img,.job-tile.running .job-thumb img,.job-tile.waiting .job-thumb img{filter:blur(3px);opacity:.5}
+.job-tile.waiting{animation:waitPulse 2s infinite}
+@keyframes waitPulse{0%,100%{border-color:var(--gold)}50%{border-color:var(--text-muted)}}
 .job-thumb .mini-spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;position:absolute}
 .job-info{flex:1;min-width:0;font-family:var(--font-mono);font-size:9px}
 .job-status{color:var(--text);font-weight:700;margin-bottom:1px;display:flex;align-items:center;gap:3px;font-size:10px}
@@ -236,7 +239,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 <!-- COLD START BANNER -->
 <div class="cold-banner" id="coldBanner">
-    <span>🧊</span><span>GPU is warming up — first generation may take ~60s</span>
+    <span>🧊</span><span>GPU is cold-starting. Your job will begin once the model is loaded (~60s first time).</span>
     <button class="cold-dismiss" onclick="document.getElementById('coldBanner').classList.remove('show')">×</button>
 </div>
 
@@ -821,7 +824,7 @@ function setMode(mode){
 function updateGenButton(){
     if(!_user){ $('btnGen').disabled=false; $('btnGen').textContent='🔑 SIGN IN TO GENERATE'; return; }
     if(_user.tokens<100){ $('btnGen').disabled=false; $('btnGen').textContent='🪙 GET TOKENS'; return; }
-    const activeCount=myJobs.filter(j=>j.status==='queued'||j.status==='running').length;
+    const activeCount=myJobs.filter(j=>j.status==='queued'||j.status==='waiting'||j.status==='running').length;
     if(activeCount>=3){ $('btnGen').disabled=true; $('btnGen').textContent='⏳ QUEUE FULL (3/3)'; return; }
     $('btnGen').textContent='⚡ GENERATE';
     if(currentMode==='camera'){ $('btnGen').disabled=!imageId; }
@@ -1127,9 +1130,14 @@ function startJobPoll(jobId){
                 renderQueue();
                 log(`Job ${jobId} ${d.status}`,'error');
                 checkAuth();
+            } else if(d.status==='waiting' && job.status!=='waiting'){
+                job.status='waiting';
+                job.startedAt=Date.now();
+                renderQueue();
             } else if(d.status==='running' && job.status!=='running'){
                 job.status='running';
                 job.startedAt=Date.now();
+                $('coldBanner').classList.remove('show');
                 renderQueue();
             } else if(d.status==='queued'){
                 const elapsed=(Date.now()-startTime)/1000;
@@ -1144,7 +1152,7 @@ function startJobPoll(jobId){
 
 async function cancelJob(jobId){
     const job=myJobs.find(j=>j.id===jobId);
-    if(!job || job.status!=='queued') return;
+    if(!job || (job.status!=='queued' && job.status!=='waiting')) return;
     try{
         const r=await fetchT(`${API}/api/studio/job/${jobId}`,{method:'DELETE'},6000);
         const d=await r.json();
@@ -1164,7 +1172,7 @@ async function cancelJob(jobId){
 }
 
 function renderQueue(){
-    const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'running');
+    const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
     const historyJobs = myJobs.filter(j => j.status === 'done' || j.status === 'error' || j.status === 'cancelled');
     const now = Date.now();
 
@@ -1178,7 +1186,7 @@ function renderQueue(){
         for (const j of activeJobs) {
             const tile = document.createElement('div');
             tile.className = `job-tile ${j.status}`;
-            const thumbContent = j.status === 'running'
+            const thumbContent = (j.status === 'running' || j.status === 'waiting')
                 ? `<img src="${j.thumb||''}" style="filter:blur(4px);opacity:.6"><div class="mini-spinner"></div>`
                 : `<img src="${j.thumb||''}">`;
             let statusText, statusIcon, subtext;
@@ -1186,18 +1194,27 @@ function renderQueue(){
                 statusIcon = '⏳'; statusText = 'Queued';
                 const waited = Math.floor((now - j.submittedAt) / 1000);
                 subtext = `${j.mode.toUpperCase()} · waiting ${waited}s`;
-            } else {
-                statusIcon = '🔄'; statusText = 'Generating';
+            } else if (j.status === 'waiting') {
+                statusIcon = '🔄'; statusText = 'Waiting for GPU';
+                const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
+                subtext = waited > 10 ? `GPU cold-starting · ${waited}s` : `Dispatched · ${waited}s`;
+                if (waited > 10 && !_coldShown) { _coldShown = true; $('coldBanner').classList.add('show'); }
+            } else if (j.status === 'running') {
+                statusIcon = '⚡'; statusText = 'Generating';
                 const elapsed = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0;
                 subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+            } else {
+                statusIcon = '⏳'; statusText = j.status;
+                subtext = j.mode.toUpperCase();
             }
+            const canCancel = j.status === 'queued' || j.status === 'waiting';
             tile.innerHTML = `
                 <div class="job-thumb">${thumbContent}</div>
                 <div class="job-info">
                     <div class="job-status">${statusIcon} ${statusText}</div>
                     <div class="job-mode">${subtext}</div>
                 </div>
-                ${j.status === 'queued' ? `<button class="job-cancel" onclick="event.stopPropagation(); cancelJob('${j.id}')" title="Cancel & refund">×</button>` : ''}
+                ${canCancel ? `<button class="job-cancel" onclick="event.stopPropagation(); cancelJob('${j.id}')" title="Cancel & refund">×</button>` : ''}
             `;
             activeList.appendChild(tile);
         }
@@ -1208,10 +1225,11 @@ function renderQueue(){
     // History section (always visible when there are completed jobs)
     const histSection = $('qHistorySection');
     const histList = $('qHistoryList');
-    if (historyJobs.length > 0) {
+    const sortedHistory = historyJobs.sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
+    if (sortedHistory.length > 0) {
         histSection.style.display = '';
         histList.innerHTML = '';
-        for (const j of historyJobs.slice(0, 10)) {
+        for (const j of sortedHistory.slice(0, 10)) {
             const tile = document.createElement('div');
             tile.className = 'q-hist-tile';
             if (j.status === 'done' && j.result) {
@@ -1237,7 +1255,7 @@ function renderQueue(){
 
 // Tick timers every second
 setInterval(() => {
-    if (myJobs.some(j => j.status === 'queued' || j.status === 'running')) renderQueue();
+    if (myJobs.some(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running')) renderQueue();
 }, 1000);
 
 function clearHistory(){
@@ -1281,14 +1299,13 @@ function restoreJobState(jobId){
 function loadJobResult(jobId){ restoreJobState(jobId); }
 
 function clearFinishedJobs(){
-    // Remove done, error, and cancelled jobs from list
-    const stuck = myJobs.filter(j => j.status === 'running' && j.startedAt && (Date.now() - j.startedAt > 300000));
+    const stuck = myJobs.filter(j => (j.status === 'running' || j.status === 'waiting') && j.startedAt && (Date.now() - j.startedAt > 300000));
     for (const s of stuck) {
         s.status = 'error';
         s.error = 'Timed out';
         if (pollTimers[s.id]) { clearInterval(pollTimers[s.id]); delete pollTimers[s.id]; }
     }
-    myJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'running');
+    myJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running');
     renderQueue();
     updateGenButton();
 }
@@ -1297,7 +1314,7 @@ function clearFinishedJobs(){
 setInterval(() => {
     const now = Date.now();
     for (const j of myJobs) {
-        if (j.status === 'running' && j.startedAt && (now - j.startedAt > 300000)) {
+        if ((j.status === 'running' || j.status === 'waiting') && j.startedAt && (now - j.startedAt > 300000)) {
             j.status = 'error';
             j.error = 'Timed out';
             if (pollTimers[j.id]) { clearInterval(pollTimers[j.id]); delete pollTimers[j.id]; }
