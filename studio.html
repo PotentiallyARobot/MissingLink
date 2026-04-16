@@ -1044,62 +1044,80 @@ async function doGenerate(){
 
     const btn=$('btnGen');
     const origText=btn.textContent;
-    btn.disabled=true; btn.textContent='⏳ SUBMITTING...';
 
-    try{
-        const r=await fetchT(`${API}/api/studio/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},120000);
-        const d=await r.json();
+    // Create optimistic job entry immediately
+    const tempId = 'pending-' + Date.now();
+    myJobs.unshift({
+        id: tempId,
+        status: 'waiting',
+        mode: payload.mode,
+        thumb: thumbUrl,
+        result: null,
+        submittedAt: Date.now(),
+        startedAt: Date.now(),
+        snapshot,
+    });
+    renderQueue();
+    btn.disabled = true;
+    btn.textContent = '⏳ SUBMITTING...';
 
-        if(!d.ok){
-            if(r.status===401){ $('loginModal').classList.add('open'); }
-            else if(r.status===402){ showBuyModal(); }
-            else if(r.status===429){ alert(`Max 3 jobs queued. Wait or cancel one.`); }
-            else { alert('Error: '+(d.error||'Failed')); log('Error: '+d.error,'error'); }
-            btn.disabled=false; btn.textContent=origText;
-            return;
+    // Fire the request in the background (blocks until GPU responds)
+    (async () => {
+        try {
+            const r = await fetchT(`${API}/api/studio/generate`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }, 180000); // 3 minute timeout
+            const d = await r.json();
+
+            // Remove temp entry
+            myJobs = myJobs.filter(j => j.id !== tempId);
+
+            if (!d.ok) {
+                if (r.status === 401) { $('loginModal').classList.add('open'); }
+                else if (r.status === 402) { showBuyModal(); }
+                else if (r.status === 429) { alert(`Max 3 jobs queued. Wait or cancel one.`); }
+                else { log('Error: ' + (d.error || 'Failed'), 'error'); }
+                renderQueue();
+                btn.disabled = false;
+                updateGenButton();
+                return;
+            }
+
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                $('tokenCount').textContent = d.tokens_remaining;
+                $('sidebarBalance').textContent = `${d.tokens_remaining} (${Math.floor(d.tokens_remaining/100)} images)`;
+                $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
+            }
+
+            // Add real job — it's likely already done since dispatch is synchronous
+            myJobs.unshift({
+                id: d.job_id,
+                status: 'done', // optimistic — poll will confirm
+                mode: payload.mode,
+                thumb: thumbUrl,
+                result: null,
+                submittedAt: Date.now(),
+                snapshot,
+            });
+            if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
+            renderQueue();
+            log(`Job ${d.job_id} submitted`);
+
+            // Poll once to get the actual result
+            startJobPoll(d.job_id);
+        } catch (e) {
+            myJobs = myJobs.filter(j => j.id !== tempId);
+            log('Generate failed: ' + e.message, 'error');
+            renderQueue();
+        } finally {
+            btn.disabled = false;
+            updateGenButton();
+            checkAuth();
         }
-
-        if(d.tokens_remaining!==undefined && _user){
-            _user.tokens=d.tokens_remaining;
-            $('tokenCount').textContent=d.tokens_remaining;
-            $('sidebarBalance').textContent=`${d.tokens_remaining} (${Math.floor(d.tokens_remaining/100)} images)`;
-            $('tokenBadge').classList.toggle('low',d.tokens_remaining<200);
-        }
-
-        // Add to job list and start polling
-        const snapshot = {
-            mode: payload.mode,
-            prompt: payload.prompt,
-            negative_prompt: payload.negative_prompt,
-            seed: payload.seed,
-            guidance_scale: payload.guidance_scale,
-            inference_steps: payload.inference_steps,
-            lora_scale: payload.lora_scale,
-            width: payload.width,
-            height: payload.height,
-            input_image_id: currentMode==='camera' ? imageId : null,
-            input_image_url: currentMode==='camera' ? imageUrl : null,
-            edit_slots: currentMode==='edit' ? slots.filter(s=>s!==null).map(s=>({id:s.id,url:s.url,filename:s.filename})) : null,
-        };
-        myJobs.unshift({
-            id: d.job_id,
-            status: 'queued',
-            mode: payload.mode,
-            thumb: thumbUrl,
-            result: null,
-            submittedAt: Date.now(),
-            snapshot,
-        });
-        if(myJobs.length>6) myJobs=myJobs.slice(0,6);
-        renderQueue();
-        log(`Job ${d.job_id} submitted`);
-        startJobPoll(d.job_id);
-    }catch(e){
-        alert('Request failed: '+e.message);
-    }finally{
-        btn.textContent=origText;
-        updateGenButton();
-    }
+    })();
+    // Don't await — return immediately so UI stays interactive
 }
 
 function startJobPoll(jobId){
