@@ -22,12 +22,7 @@
 html,body{height:100%;overflow:hidden}
 body{background:var(--black);color:var(--text);font-family:var(--font-body);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
 
-.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;grid-template-rows:auto var(--header-h) 1fr var(--console-h);grid-template-areas:"cold cold""header header""sidebar main""console console";height:100vh;width:100vw;overflow:hidden}
-
-/* Cold start banner */
-.cold-banner{grid-area:cold;display:none;align-items:center;gap:8px;padding:8px 16px;background:#1a1400;border-bottom:1px solid var(--gold);font-family:var(--font-mono);font-size:11px;color:var(--gold)}
-.cold-banner.show{display:flex}
-.cold-dismiss{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;margin-left:auto;padding:2px 6px}
+.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;grid-template-rows:var(--header-h) 1fr var(--console-h);grid-template-areas:"header header""sidebar main""console console";height:100vh;width:100vw;overflow:hidden}
 
 /* Header */
 .app-header{grid-area:header;display:flex;align-items:center;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);z-index:100;gap:10px}
@@ -236,12 +231,6 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 </head>
 <body>
 <div class="app">
-
-<!-- COLD START BANNER -->
-<div class="cold-banner" id="coldBanner">
-    <span>🧊</span><span>GPU is cold-starting. Your job will begin once the model is loaded (~60s first time).</span>
-    <button class="cold-dismiss" onclick="document.getElementById('coldBanner').classList.remove('show')">×</button>
-</div>
 
 <!-- HEADER -->
 <header class="app-header">
@@ -1130,7 +1119,7 @@ function startJobPoll(jobId){
                 renderQueue();
                 showResult(d.result);
                 log(`Job ${jobId} done (${d.result.elapsed}s)`,'success');
-                $('coldBanner').classList.remove('show');
+                
                 checkAuth();
             } else if(d.status==='error' || d.status==='cancelled'){
                 job.status=d.status;
@@ -1147,13 +1136,13 @@ function startJobPoll(jobId){
             } else if(d.status==='running' && job.status!=='running'){
                 job.status='running';
                 job.startedAt=Date.now();
-                $('coldBanner').classList.remove('show');
+                
                 renderQueue();
             } else if(d.status==='queued'){
                 const elapsed=(Date.now()-startTime)/1000;
                 if(elapsed>4 && !_coldShown && Object.keys(pollTimers).length===1){
                     _coldShown=true;
-                    $('coldBanner').classList.add('show');
+                    
                 }
             }
         }catch(e){}
@@ -1208,7 +1197,7 @@ function renderQueue(){
                 statusIcon = '🔄'; statusText = 'Waiting for GPU';
                 const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
                 subtext = waited > 10 ? `GPU cold-starting · ${waited}s` : `Dispatched · ${waited}s`;
-                if (waited > 10 && !_coldShown) { _coldShown = true; $('coldBanner').classList.add('show'); }
+                if (waited > 10 && !_coldShown) { _coldShown = true;  }
             } else if (j.status === 'running') {
                 statusIcon = '⚡'; statusText = 'Generating';
                 const elapsed = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0;
