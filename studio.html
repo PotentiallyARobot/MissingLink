@@ -1063,81 +1063,53 @@ async function doGenerate(){
         edit_slots: currentMode==='edit' ? slots.filter(s=>s!==null).map(s=>({id:s.id,url:s.url,filename:s.filename})) : null,
     };
 
-    // Create optimistic job entry immediately
-    const tempId = 'pending-' + Date.now();
-    myJobs.unshift({
-        id: tempId,
-        status: 'waiting',
-        mode: payload.mode,
-        thumb: thumbUrl,
-        result: null,
-        submittedAt: Date.now(),
-        startedAt: Date.now(),
-        snapshot,
-    });
-    renderQueue();
-    btn.disabled = true;
-    btn.textContent = '⏳ SUBMITTING...';
+    btn.disabled=true; btn.textContent='⏳ SUBMITTING...';
 
-    // Fire the request in the background (blocks until GPU responds)
-    (async () => {
-        try {
-            const r = await fetchT(`${API}/api/studio/generate`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            }, 180000);
-            const d = await r.json();
+    try {
+        const r = await fetchT(`${API}/api/studio/generate`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        }, 30000);
+        const d = await r.json();
 
-            // Always remove the temp entry
-            myJobs = myJobs.filter(j => j.id !== tempId);
-
-            if (!d.ok) {
-                if (r.status === 401) { $('loginModal').classList.add('open'); }
-                else if (r.status === 402) { showBuyModal(); }
-                else if (r.status === 429) { alert(`Max 3 jobs queued. Wait or cancel one.`); }
-                else { log('Error: ' + (d.error || 'Failed'), 'error'); }
-                renderQueue();
-                btn.disabled = false;
-                updateGenButton();
-                return;
-            }
-
-            if (d.tokens_remaining !== undefined && _user) {
-                _user.tokens = d.tokens_remaining;
-                $('tokenCount').textContent = d.tokens_remaining;
-                $('sidebarBalance').textContent = `${d.tokens_remaining} (${Math.floor(d.tokens_remaining/100)} images)`;
-                $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
-            }
-
-            // Also remove any duplicate from pollQueue rehydration
-            myJobs = myJobs.filter(j => j.id !== d.job_id);
-
-            // Add the real job — poll will pick up actual status
-            myJobs.unshift({
-                id: d.job_id,
-                status: 'waiting',
-                mode: payload.mode,
-                thumb: thumbUrl,
-                result: null,
-                submittedAt: Date.now(),
-                startedAt: Date.now(),
-                snapshot,
-            });
-            if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
-            renderQueue();
-            log(`Job ${d.job_id} submitted`);
-            startJobPoll(d.job_id);
-        } catch (e) {
-            myJobs = myJobs.filter(j => j.id !== tempId);
-            log('Generate failed: ' + e.message, 'error');
-            renderQueue();
-        } finally {
-            btn.disabled = false;
-            updateGenButton();
-            checkAuth();
+        if (!d.ok) {
+            if (r.status === 401) { $('loginModal').classList.add('open'); }
+            else if (r.status === 402) { showBuyModal(); }
+            else if (r.status === 429) { alert(`Max 3 jobs queued. Wait or cancel one.`); }
+            else { log('Error: ' + (d.error || 'Failed'), 'error'); }
+            return;
         }
-    })();
-    // Don't await — return immediately so UI stays interactive
+
+        if (d.tokens_remaining !== undefined && _user) {
+            _user.tokens = d.tokens_remaining;
+            $('tokenCount').textContent = d.tokens_remaining;
+            $('sidebarBalance').textContent = `${d.tokens_remaining} (${Math.floor(d.tokens_remaining/100)} images)`;
+            $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
+        }
+
+        // Remove any duplicate
+        myJobs = myJobs.filter(j => j.id !== d.job_id);
+
+        myJobs.unshift({
+            id: d.job_id,
+            status: 'waiting',
+            mode: payload.mode,
+            thumb: thumbUrl,
+            result: null,
+            submittedAt: Date.now(),
+            startedAt: Date.now(),
+            snapshot,
+        });
+        if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
+        renderQueue();
+        log(`Job ${d.job_id} submitted`);
+        startJobPoll(d.job_id);
+    } catch (e) {
+        log('Generate failed: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        updateGenButton();
+    }
 }
 
 function startJobPoll(jobId){
