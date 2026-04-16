@@ -868,7 +868,9 @@ async function pollQueue(){
         if(d.ok && d.your_jobs){
             for(const srvJob of d.your_jobs){
                 const existing=myJobs.find(j=>j.id===srvJob.id);
-                if(!existing){
+                // Skip if we already have this job OR if we have a pending temp entry
+                const hasPending = myJobs.some(j => j.id.startsWith('pending-'));
+                if(!existing && !hasPending){
                     myJobs.unshift({
                         id: srvJob.id, status: srvJob.status, mode: srvJob.mode,
                         thumb: null, result: null, submittedAt: (srvJob.created_at||0)*1000,
@@ -1067,10 +1069,10 @@ async function doGenerate(){
             const r = await fetchT(`${API}/api/studio/generate`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload)
-            }, 180000); // 3 minute timeout
+            }, 180000);
             const d = await r.json();
 
-            // Remove temp entry
+            // Always remove the temp entry
             myJobs = myJobs.filter(j => j.id !== tempId);
 
             if (!d.ok) {
@@ -1091,21 +1093,23 @@ async function doGenerate(){
                 $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
             }
 
-            // Add real job — it's likely already done since dispatch is synchronous
+            // Also remove any duplicate from pollQueue rehydration
+            myJobs = myJobs.filter(j => j.id !== d.job_id);
+
+            // Add the real job — poll will pick up actual status
             myJobs.unshift({
                 id: d.job_id,
-                status: 'done', // optimistic — poll will confirm
+                status: 'waiting',
                 mode: payload.mode,
                 thumb: thumbUrl,
                 result: null,
                 submittedAt: Date.now(),
+                startedAt: Date.now(),
                 snapshot,
             });
             if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
             renderQueue();
             log(`Job ${d.job_id} submitted`);
-
-            // Poll once to get the actual result
             startJobPoll(d.job_id);
         } catch (e) {
             myJobs = myJobs.filter(j => j.id !== tempId);
