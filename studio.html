@@ -98,6 +98,40 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .modal-close{position:absolute;top:16px;right:20px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:18px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10}
 .modal-close:hover{background:rgba(255,255,255,.2)}
 
+/* Full-history modal */
+.modal{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:40px}
+.history-modal-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(1200px,95vw);height:min(85vh,800px);display:flex;flex-direction:column;overflow:hidden;position:relative}
+.history-modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
+.history-modal-title{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px;flex:1}
+.history-modal-head .modal-close{position:relative;top:0;right:0;width:28px;height:28px;font-size:14px}
+.history-grid{flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;align-content:start}
+.history-grid::-webkit-scrollbar{width:8px}
+.history-grid::-webkit-scrollbar-track{background:var(--surface-2)}
+.history-grid::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+.history-grid::-webkit-scrollbar-thumb:hover{background:var(--border)}
+.history-modal-foot{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:center}
+.history-load-more{padding:8px 20px;background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;border-radius:6px;cursor:pointer;transition:background .15s}
+.history-load-more:hover{background:var(--gold-dim);border-color:var(--gold);color:var(--gold)}
+.history-loading,.history-empty{grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px}
+.history-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative;cursor:pointer;transition:all .15s;display:flex;flex-direction:column}
+.history-card:hover{border-color:var(--gold);transform:translateY(-2px)}
+.history-card-thumb{width:100%;aspect-ratio:1/1;background:var(--surface-3);overflow:hidden;display:flex;align-items:center;justify-content:center}
+.history-card-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.history-card-meta{padding:8px 10px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);letter-spacing:.5px}
+.history-card-meta .hc-mode{color:var(--gold);font-weight:700;text-transform:uppercase;margin-right:6px}
+.history-card-meta .hc-prompt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text-muted);margin-top:3px;font-size:9px;line-height:1.3;min-height:2.6em}
+.history-card-delete{position:absolute;top:6px;right:6px;width:22px;height:22px;background:rgba(0,0,0,.7);border:1px solid var(--border);color:var(--text-muted);border-radius:50%;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:0;transition:all .15s;padding:0;line-height:1}
+.history-card:hover .history-card-delete{opacity:1}
+.history-card-delete:hover{background:var(--red);border-color:var(--red);color:var(--white)}
+
+/* GPU state badge shown in queue when container is cold/warming */
+.gpu-state-badge{padding:10px 12px;margin-bottom:8px;border-radius:6px;font-family:var(--font-mono);font-size:10px;display:flex;align-items:center;gap:8px;letter-spacing:.5px}
+.gpu-state-badge.warming{background:rgba(234,179,8,.1);border:1px solid var(--gold);color:var(--gold)}
+.gpu-state-badge.ready{background:rgba(34,197,94,.1);border:1px solid var(--green);color:var(--green)}
+.gpu-state-badge-progress{flex:1;height:3px;background:rgba(0,0,0,.3);border-radius:2px;overflow:hidden}
+.gpu-state-badge-progress-fill{height:100%;background:var(--gold);transition:width .5s linear}
+.gpu-state-badge.ready .gpu-state-badge-progress-fill{background:var(--green)}
+
 .result-bar{padding:6px 12px;background:var(--surface);border-top:1px solid var(--border);font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:8px}
 .use-input-btn{margin-left:auto;padding:3px 10px;background:var(--gold-dim);color:var(--gold);border:1px solid var(--gold);border-radius:4px;font-family:var(--font-mono);font-size:9px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .use-input-btn:hover{background:var(--gold);color:var(--black)}
@@ -411,7 +445,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <!-- History overlay (bottom-right of output area) -->
         <div class="history-overlay" id="historyOverlay">
             <div class="q-section" id="qHistorySection" style="display:none">
-                <div class="q-header">HISTORY <button onclick="clearHistory()" class="q-clear">Clear</button></div>
+                <div class="q-header">
+                    HISTORY
+                    <button onclick="openHistoryModal()" class="q-clear" style="margin-left:auto" title="View all generations">⛶ Expand</button>
+                </div>
                 <div id="qHistoryList" class="q-list"></div>
             </div>
         </div>
@@ -419,6 +456,22 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="result-bar" id="resultBar" style="display:none">
         <span id="resultText"></span>
         <button class="use-input-btn" id="btnUseAsInput" onclick="useAsInput()" style="display:none">↩ Use as Input</button>
+    </div>
+</div>
+
+<!-- FULL HISTORY MODAL -->
+<div id="historyModal" class="modal" style="display:none" onclick="if(event.target===this) closeHistoryModal()">
+    <div class="modal-panel history-modal-panel" onclick="event.stopPropagation()">
+        <div class="history-modal-head">
+            <div class="history-modal-title">Your Generations <span id="historyModalCount" class="q-count">—</span></div>
+            <button class="modal-close" onclick="closeHistoryModal()">×</button>
+        </div>
+        <div id="historyModalGrid" class="history-grid">
+            <div class="history-loading">Loading…</div>
+        </div>
+        <div class="history-modal-foot">
+            <button id="historyLoadMore" class="history-load-more" style="display:none" onclick="loadMoreHistory()">Load more</button>
+        </div>
     </div>
 </div>
 
@@ -650,6 +703,15 @@ let currentMode='camera';
 let slots=[null,null,null];
 let myJobs=[]; // {id, status, mode, thumb, result}
 let pollTimers={}; // jobId → interval
+// Server-synced GPU state from /api/studio/status — updated by pollStatus.
+// Shape: { state: 'cold'|'warming'|'ready', warming_for_s, ready_age_s }
+let _gpuState = { state: 'cold', warming_for_s: 0, ready_age_s: null };
+// Server-synced history (done jobs). Shape: [{id, mode, prompt, url, w, h, elapsed, seed, created_at, finished_at}].
+// Separate from myJobs (which tracks in-flight + ephemeral state) so history
+// survives page reloads and is authoritative per user.
+let _historyItems = [];
+let _historyTotal = 0;
+let _historyLoading = false;
 let lastResult=null;
 let lastOutputFilename=null;
 window._promptLocked=false;
@@ -693,6 +755,15 @@ async function checkAuth(){
             $('tokenBadge').classList.toggle('low',d.tokens<200);
             $('secBuyTokens').style.display='';
             closeLoginModal();
+            // Pre-warm the GPU so cold-start happens while the user is
+            // uploading and picking a pose, not after they click Generate.
+            // Only fire on the logged-out → logged-in transition, or on first
+            // checkAuth after page load (wasLoggedIn is false either way).
+            if(!wasLoggedIn){
+                warmupGpu();
+                syncHistory();  // hydrate history sidebar from server
+                pollQueue();    // hydrate active queue from server
+            }
         } else {
             _user=null;
             $('authIn').style.display='none';
@@ -721,6 +792,18 @@ async function checkAuth(){
 }
 
 function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.html`; }
+
+// Pre-warm the Modal GPU container so cold-start happens in the background
+// while the user is uploading and picking a pose, not after they click
+// Generate. Worker debounces per-user to one ping per 5 min, so calling this
+// liberally (checkAuth, onfocus, etc.) is safe.
+async function warmupGpu(){
+    try{
+        const r=await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
+        const d=await r.json().catch(()=>({}));
+        if(d.queued) log('GPU warming up in background','info');
+    }catch(e){ /* fire-and-forget — silent failure is fine */ }
+}
 
 // ── Email/password auth form ──
 let _authMode = 'signin'; // 'signin' or 'signup'
@@ -848,6 +931,14 @@ async function pollStatus(){
         const r=await fetchT(`${API}/api/studio/status`,null,6000);
         const d=await r.json();
         $('connDot').className='dot on'; $('connLabel').textContent='Connected';
+        if(d.gpu){
+            const prevState = _gpuState.state;
+            // Stash receive time so we can tick warming_for_s locally between polls
+            _gpuState = Object.assign({}, d.gpu, { _receivedAt: Date.now() });
+            if(prevState !== d.gpu.state || d.gpu.state === 'warming'){
+                renderQueue();
+            }
+        }
     }catch(e){
         $('connDot').className='dot'; $('connLabel').textContent='Disconnected';
     }
@@ -855,27 +946,70 @@ async function pollStatus(){
 
 async function pollQueue(){
     if(!_user) return;
-    // Rehydrate job states from server if we've lost track (page refresh)
+    // Rehydrate job states from server — authoritative source of truth so
+    // state survives page reloads and stays in sync across tabs.
     try{
         const r=await fetchT(`${API}/api/studio/queue`,null,5000);
         const d=await r.json();
         if(d.ok && d.your_jobs){
             for(const srvJob of d.your_jobs){
-                const existing=myJobs.find(j=>j.id===srvJob.id);
-                // Skip if we already have this job OR if we have a pending temp entry
-                const hasPending = myJobs.some(j => j.id.startsWith('pending-'));
-                if(!existing && !hasPending){
-                    myJobs.unshift({
-                        id: srvJob.id, status: srvJob.status, mode: srvJob.mode,
-                        thumb: null, result: null, submittedAt: (srvJob.created_at||0)*1000,
-                    });
+                let existing=myJobs.find(j=>j.id===srvJob.id);
+                if(!existing){
+                    // New-to-us job (e.g. after refresh) — add a stub we'll flesh out
+                    existing = {
+                        id: srvJob.id,
+                        status: srvJob.status,
+                        mode: srvJob.mode,
+                        thumb: null,
+                        result: null,
+                        submittedAt: (srvJob.created_at||0)*1000,
+                    };
+                    myJobs.unshift(existing);
                     startJobPoll(srvJob.id);
                 }
+                // Always refresh the progress-relevant fields from server so
+                // pollQueue acts as a sync even for jobs we already track.
+                existing.status = srvJob.status;
+                existing.stage = srvJob.stage;
+                existing.step = srvJob.step;
+                existing.totalSteps = srvJob.total_steps;
+                if(srvJob.started_at && !existing.startedAt){
+                    existing.startedAt = srvJob.started_at * 1000;
+                }
+                if(srvJob.status === 'running' && !existing.runningAt && srvJob.stage_at){
+                    existing.runningAt = srvJob.stage_at * 1000;
+                }
             }
-            if(myJobs.length>6) myJobs=myJobs.slice(0,6);
             renderQueue();
         }
     }catch(e){}
+}
+
+// Fetch the user's completed generations from the server. This is the
+// authoritative history — client-side myJobs only mirrors it for display.
+// Called on login, after each job finishes, and when the history modal opens.
+async function syncHistory(opts){
+    opts = opts || {};
+    if(!_user) return;
+    const limit = opts.limit || 20;
+    const offset = opts.offset || 0;
+    try{
+        const r = await fetchT(`${API}/api/studio/history?limit=${limit}&offset=${offset}`, null, 8000);
+        const d = await r.json();
+        if(!d.ok) return;
+        if(offset === 0){
+            _historyItems = d.items || [];
+        } else {
+            _historyItems = _historyItems.concat(d.items || []);
+        }
+        _historyTotal = d.total || 0;
+        renderHistorySidebar();
+        if($('historyModal').style.display !== 'none'){
+            renderHistoryModal();
+        }
+    }catch(e){
+        // Silent — history is non-critical
+    }
 }
 
 // ── Uploads ───────────────────────────────────────
@@ -1128,11 +1262,16 @@ function startJobPoll(jobId){
                 job.result=d.result;
                 clearInterval(pollTimers[jobId]);
                 delete pollTimers[jobId];
+                // Remove the completed job from the active list in myJobs —
+                // history is now authoritative (server-synced) so we don't
+                // need to keep done jobs in the local state.
+                myJobs = myJobs.filter(x => x.id !== jobId);
                 renderQueue();
                 showResult(d.result);
                 log(`Job ${jobId} done (${d.result.elapsed}s)`,'success');
-                
                 checkAuth();
+                // Refresh history from server so the new generation appears
+                syncHistory();
             } else if(d.status==='error' || d.status==='cancelled'){
                 job.status=d.status;
                 job.error=d.error;
@@ -1196,16 +1335,45 @@ async function cancelJob(jobId){
 
 function renderQueue(){
     const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
-    const historyJobs = myJobs.filter(j => j.status === 'done' || j.status === 'error' || j.status === 'cancelled');
     const now = Date.now();
 
-    // Active queue section
+    // Active queue section (GPU state badge + individual job tiles)
     const activeSection = $('qActiveSection');
     const activeList = $('qActiveList');
     $('queueCount').textContent = `${activeJobs.length}/3`;
-    if (activeJobs.length > 0) {
+
+    // Decide whether to show the GPU state badge. Show it when:
+    //   - actively warming (so user sees progress even before submitting)
+    //   - just became ready (flash green for ~5s)
+    // Hide when cold and no activity (nothing to say).
+    const showBadge = _gpuState.state === 'warming' ||
+        (_gpuState.state === 'ready' && (_gpuState.ready_age_s == null || _gpuState.ready_age_s < 5));
+
+    if (activeJobs.length > 0 || showBadge) {
         activeSection.style.display = '';
         activeList.innerHTML = '';
+
+        if (showBadge) {
+            const badge = document.createElement('div');
+            badge.className = `gpu-state-badge ${_gpuState.state}`;
+            if (_gpuState.state === 'warming') {
+                // Tick live between polls: add the delta since we last received state
+                const sinceReceived = _gpuState._receivedAt ? Math.floor((Date.now() - _gpuState._receivedAt) / 1000) : 0;
+                const liveWarmingFor = (_gpuState.warming_for_s || 0) + sinceReceived;
+                // Expected cold start ~180s (3 min). Fill toward that estimate and
+                // plateau at 95% if it takes longer so the bar never looks stuck.
+                const ESTIMATE_S = 180;
+                const pct = Math.min(95, (liveWarmingFor / ESTIMATE_S) * 100);
+                badge.innerHTML = `
+                    <span>⚡ GPU warming up · ${liveWarmingFor}s</span>
+                    <span class="gpu-state-badge-progress"><span class="gpu-state-badge-progress-fill" style="width:${pct}%"></span></span>
+                `;
+            } else {
+                badge.innerHTML = `<span>✓ GPU ready</span>`;
+            }
+            activeList.appendChild(badge);
+        }
+
         for (const j of activeJobs) {
             const tile = document.createElement('div');
             tile.className = `job-tile ${j.status}`;
@@ -1216,10 +1384,10 @@ function renderQueue(){
             // Compute label + progress %. Percentages are rough anchors, not precise.
             //   queued            →  2%
             //   waiting (<15s)    →  5%
-            //   waiting (15s+)    →  8%   (still no ping from Modal — container may be cold)
+            //   waiting (15s+)    →  8%
             //   fetching          → 12%
             //   generating 0/N    → 20%
-            //   generating s/N    → 20 + (s/N)*65      (so 4/4 ≈ 85%)
+            //   generating s/N    → 20 + (s/N)*65
             //   encoding          → 92%
             //   done              →100%
             let statusText, statusIcon, subtext, pct = 2;
@@ -1299,46 +1467,162 @@ function renderQueue(){
         activeSection.style.display = 'none';
     }
 
-    // History section (always visible when there are completed jobs)
+    // History sidebar now pulls from server-synced _historyItems (via syncHistory).
+    // Only DONE jobs; errors/cancellations are hidden by design.
+    renderHistorySidebar();
+}
+
+// Render the 6 most recent done jobs in the sidebar history panel.
+function renderHistorySidebar(){
     const histSection = $('qHistorySection');
     const histList = $('qHistoryList');
-    const sortedHistory = historyJobs.sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
-    if (sortedHistory.length > 0) {
-        histSection.style.display = '';
-        histList.innerHTML = '';
-        for (const j of sortedHistory.slice(0, 10)) {
-            const tile = document.createElement('div');
-            tile.className = 'q-hist-tile';
-            if (j.status === 'done' && j.result) {
-                tile.onclick = () => restoreJobState(j.id);
-            }
-            const thumbSrc = (j.status === 'done' && j.result?.url) ? j.result.url : (j.thumb || '');
-            const statusIcon = { done: '✅', error: '⚠️', cancelled: '✕' }[j.status] || '·';
-            const statusText = { done: 'Done', error: 'Failed', cancelled: 'Cancelled' }[j.status] || j.status;
-            const detail = j.result?.elapsed ? `${j.result.elapsed}s` : (j.error ? j.error.slice(0, 20) : '');
-            tile.innerHTML = `
-                <div class="job-thumb"><img src="${thumbSrc}"></div>
-                <div class="job-info">
-                    <div class="job-status">${statusIcon} ${statusText}</div>
-                    <div class="job-mode">${j.mode.toUpperCase()}${detail ? ' · ' + detail : ''}</div>
-                </div>
-            `;
-            histList.appendChild(tile);
-        }
-    } else {
+    if (!_historyItems.length) {
         histSection.style.display = 'none';
+        return;
+    }
+    histSection.style.display = '';
+    histList.innerHTML = '';
+    for (const j of _historyItems.slice(0, 6)) {
+        const tile = document.createElement('div');
+        tile.className = 'q-hist-tile';
+        tile.onclick = (ev) => {
+            // Don't restore if user clicked the delete button
+            if (ev.target.closest('.history-card-delete')) return;
+            restoreFromHistory(j);
+        };
+        const detail = j.elapsed ? `${j.elapsed}s` : '';
+        tile.innerHTML = `
+            <div class="job-thumb"><img src="${j.url}" loading="lazy"></div>
+            <div class="job-info">
+                <div class="job-status">✅ Done</div>
+                <div class="job-mode">${(j.mode||'').toUpperCase()}${detail ? ' · ' + detail : ''}</div>
+            </div>
+            <button class="history-card-delete" title="Delete" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">×</button>
+        `;
+        histList.appendChild(tile);
     }
 }
 
-// Tick timers every second
-setInterval(() => {
-    if (myJobs.some(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running')) renderQueue();
-}, 1000);
+// ───────────── Full history modal ─────────────
 
-function clearHistory(){
-    myJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'running');
-    renderQueue();
+function openHistoryModal(){
+    $('historyModal').style.display = 'flex';
+    // Refresh from server on open so it's always current
+    syncHistory({ limit: 20, offset: 0 });
+    renderHistoryModal();
 }
+
+function closeHistoryModal(){
+    $('historyModal').style.display = 'none';
+}
+
+function renderHistoryModal(){
+    const grid = $('historyModalGrid');
+    const countEl = $('historyModalCount');
+    const loadMore = $('historyLoadMore');
+    countEl.textContent = _historyTotal > 0 ? `${_historyItems.length} of ${_historyTotal}` : '—';
+
+    if (!_historyItems.length) {
+        grid.innerHTML = `<div class="history-empty">No generations yet — create one to see it here</div>`;
+        loadMore.style.display = 'none';
+        return;
+    }
+
+    grid.innerHTML = '';
+    for (const j of _historyItems) {
+        const when = j.finished_at || j.created_at || 0;
+        const whenLabel = when ? timeAgo(when * 1000) : '';
+        const card = document.createElement('div');
+        card.className = 'history-card';
+        card.onclick = (ev) => {
+            if (ev.target.closest('.history-card-delete')) return;
+            restoreFromHistory(j);
+            closeHistoryModal();
+        };
+        card.innerHTML = `
+            <div class="history-card-thumb"><img src="${j.url}" loading="lazy" alt=""></div>
+            <div class="history-card-meta">
+                <span class="hc-mode">${(j.mode||'').toUpperCase()}</span>${whenLabel}
+                <div class="hc-prompt">${escapeHtml(j.prompt || '')}</div>
+            </div>
+            <button class="history-card-delete" title="Delete" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">×</button>
+        `;
+        grid.appendChild(card);
+    }
+
+    loadMore.style.display = _historyItems.length < _historyTotal ? '' : 'none';
+}
+
+async function loadMoreHistory(){
+    if (_historyLoading) return;
+    _historyLoading = true;
+    $('historyLoadMore').disabled = true;
+    $('historyLoadMore').textContent = 'Loading…';
+    try {
+        await syncHistory({ limit: 20, offset: _historyItems.length });
+    } finally {
+        _historyLoading = false;
+        $('historyLoadMore').disabled = false;
+        $('historyLoadMore').textContent = 'Load more';
+    }
+}
+
+// Delete a completed generation (soft-delete server-side; removes R2 object too).
+async function deleteHistoryItem(jobId){
+    if (!confirm('Delete this generation? This cannot be undone.')) return;
+    try {
+        const r = await fetchT(`${API}/api/studio/job/${jobId}`, { method: 'DELETE' }, 6000);
+        const d = await r.json();
+        if (d.ok) {
+            // Remove from local state immediately, then re-render both views
+            _historyItems = _historyItems.filter(x => x.id !== jobId);
+            _historyTotal = Math.max(0, _historyTotal - 1);
+            renderHistorySidebar();
+            if ($('historyModal').style.display !== 'none') renderHistoryModal();
+            log(`Deleted generation ${jobId}`, 'success');
+        } else {
+            log(`Delete failed: ${d.error || 'unknown'}`, 'error');
+        }
+    } catch (e) {
+        log(`Delete failed: ${e.message}`, 'error');
+    }
+}
+
+// Restore UI state from a server-side history item (completed job).
+// Different from restoreJobState which uses the client-side job.snapshot.
+function restoreFromHistory(j){
+    if (!j) return;
+    // Show the output image in the main viewport
+    showResult({ url: j.url, w: j.w, h: j.h, prompt: j.prompt, seed: j.seed, elapsed: j.elapsed, mode: j.mode });
+    // Update prompt + seed at minimum — full settings aren't stored in history items
+    if ($('promptInput') && j.prompt) $('promptInput').value = j.prompt;
+    if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').textContent = j.seed; }
+    log(`Restored output from generation ${j.id}`);
+}
+
+// Tiny "N seconds ago" formatter for history cards
+function timeAgo(tsMs){
+    const s = Math.max(0, Math.floor((Date.now() - tsMs) / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+}
+
+function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Tick once a second while anything needs live timing: active jobs counting
+// up, or GPU warming progress bar filling in.
+setInterval(() => {
+    const hasActive = myJobs.some(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running');
+    const warming = _gpuState.state === 'warming';
+    if (hasActive || warming) renderQueue();
+}, 1000);
 
 function restoreJobState(jobId){
     const job=myJobs.find(j=>j.id===jobId);
