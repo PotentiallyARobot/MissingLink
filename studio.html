@@ -189,6 +189,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .job-mode{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.5px}
 .job-cancel{position:absolute;top:3px;right:3px;width:18px;height:18px;background:rgba(239,68,68,.15);border:1px solid var(--red);color:var(--red);border-radius:50%;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;font-weight:700}
 .job-cancel:hover{background:var(--red);color:var(--white)}
+.job-progress{height:3px;background:var(--surface-3);border-radius:2px;margin-top:3px;overflow:hidden}
+.job-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),#ffcf4a);transition:width .4s ease-out;border-radius:2px}
+.job-tile.running .job-progress-fill{animation:progShimmer 1.6s ease-in-out infinite}
+@keyframes progShimmer{0%,100%{opacity:.85}50%{opacity:1}}
 
 /* History tile (smaller) */
 .q-hist-tile{display:flex;gap:6px;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;align-items:center;cursor:pointer;transition:all .15s}
@@ -1111,6 +1115,11 @@ function startJobPoll(jobId){
             const job=myJobs.find(j=>j.id===jobId);
             if(!job){ clearInterval(pollTimers[jobId]); delete pollTimers[jobId]; return; }
 
+            // Pick up latest progress fields regardless of status transition
+            if(d.stage !== undefined) job.stage = d.stage;
+            if(d.step !== undefined) job.step = d.step;
+            if(d.total_steps !== undefined) job.totalSteps = d.total_steps;
+
             if(d.status==='done'){
                 job.status='done';
                 job.result=d.result;
@@ -1135,8 +1144,8 @@ function startJobPoll(jobId){
                 renderQueue();
             } else if(d.status==='running' && job.status!=='running'){
                 job.status='running';
-                job.startedAt=Date.now();
-                
+                if(!job.runningAt) job.runningAt=Date.now();
+                if(!job.startedAt) job.startedAt=Date.now();
                 renderQueue();
             } else if(d.status==='queued'){
                 const elapsed=(Date.now()-startTime)/1000;
@@ -1144,6 +1153,9 @@ function startJobPoll(jobId){
                     _coldShown=true;
                     
                 }
+            } else {
+                // Same status, but stage/step may have changed — re-render
+                renderQueue();
             }
         }catch(e){}
     }, 2000);
@@ -1151,6 +1163,8 @@ function startJobPoll(jobId){
 
 async function cancelJob(jobId){
     const job=myJobs.find(j=>j.id===jobId);
+    // Cancel only allowed before GPU picks up the work. Once running, the
+    // compute is already happening — the server will reject this anyway.
     if(!job || (job.status!=='queued' && job.status!=='waiting')) return;
     try{
         const r=await fetchT(`${API}/api/studio/job/${jobId}`,{method:'DELETE'},6000);
@@ -1188,30 +1202,82 @@ function renderQueue(){
             const thumbContent = (j.status === 'running' || j.status === 'waiting')
                 ? `<img src="${j.thumb||''}" style="filter:blur(4px);opacity:.6"><div class="mini-spinner"></div>`
                 : `<img src="${j.thumb||''}">`;
-            let statusText, statusIcon, subtext;
+
+            // Compute label + progress %. Percentages are rough anchors, not precise.
+            //   queued            →  2%
+            //   waiting (<15s)    →  5%
+            //   waiting (15s+)    →  8%   (still no ping from Modal — container may be cold)
+            //   fetching          → 12%
+            //   generating 0/N    → 20%
+            //   generating s/N    → 20 + (s/N)*65      (so 4/4 ≈ 85%)
+            //   encoding          → 92%
+            //   done              →100%
+            let statusText, statusIcon, subtext, pct = 2;
+            const stage = j.stage || null;
+            const step = j.step || 0;
+            const total = j.totalSteps || 0;
+
             if (j.status === 'queued') {
                 statusIcon = '⏳'; statusText = 'Queued';
                 const waited = Math.floor((now - j.submittedAt) / 1000);
                 subtext = `${j.mode.toUpperCase()} · waiting ${waited}s`;
+                pct = 2;
             } else if (j.status === 'waiting') {
-                statusIcon = '🔄'; statusText = 'Waiting for GPU';
                 const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
-                subtext = waited > 10 ? `GPU cold-starting · ${waited}s` : `Dispatched · ${waited}s`;
-                if (waited > 10 && !_coldShown) { _coldShown = true;  }
+                statusIcon = '🔄';
+                if (waited < 15) {
+                    statusText = 'Dispatching';
+                    subtext = `Sent to GPU · ${waited}s`;
+                    pct = 5;
+                } else if (waited < 90) {
+                    statusText = 'Waiting for GPU';
+                    subtext = `Warming up · ${waited}s`;
+                    pct = 8;
+                } else {
+                    statusText = 'Cold-starting GPU';
+                    subtext = `First run takes 3–5 min · ${waited}s`;
+                    pct = 10;
+                }
             } else if (j.status === 'running') {
-                statusIcon = '⚡'; statusText = 'Generating';
-                const elapsed = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0;
-                subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
+                if (stage === 'fetching') {
+                    statusIcon = '📥'; statusText = 'Loading inputs';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 12;
+                } else if (stage === 'generating') {
+                    statusIcon = '⚡'; statusText = 'Generating';
+                    if (total > 0) {
+                        subtext = `Step ${Math.max(step, 0)}/${total} · ${elapsed}s`;
+                        const frac = Math.min(1, Math.max(0, step / total));
+                        pct = 20 + frac * 65;
+                    } else {
+                        subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                        pct = 30;
+                    }
+                } else if (stage === 'encoding') {
+                    statusIcon = '💾'; statusText = 'Saving output';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 92;
+                } else {
+                    // Running but no stage reported yet — show generic
+                    statusIcon = '⚡'; statusText = 'Generating';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 20;
+                }
             } else {
                 statusIcon = '⏳'; statusText = j.status;
                 subtext = j.mode.toUpperCase();
             }
+
+            // Cancel only allowed before GPU picks up the job
             const canCancel = j.status === 'queued' || j.status === 'waiting';
+            const pctClamped = Math.max(0, Math.min(100, Math.round(pct)));
             tile.innerHTML = `
                 <div class="job-thumb">${thumbContent}</div>
                 <div class="job-info">
                     <div class="job-status">${statusIcon} ${statusText}</div>
                     <div class="job-mode">${subtext}</div>
+                    <div class="job-progress"><div class="job-progress-fill" style="width:${pctClamped}%"></div></div>
                 </div>
                 ${canCancel ? `<button class="job-cancel" onclick="event.stopPropagation(); cancelJob('${j.id}')" title="Cancel & refund">×</button>` : ''}
             `;
