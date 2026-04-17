@@ -203,7 +203,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .viewport-widget{border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:10px;background:#0d0d0f}
 .viewport-widget canvas{width:100%!important;height:200px!important;display:block;cursor:grab}
 .viewport-widget canvas:active{cursor:grabbing}
-#viewport-canvas{width:100%;height:200px;display:block;cursor:grab;background:#0d0d0f}
+#viewport-canvas{width:100%;height:200px;display:block;cursor:grab;background:#0d0d0f;touch-action:none}
 
 .prompt-bar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--border)}
 .prompt-input{flex:1;background:var(--surface-3);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--gold);font-family:var(--font-mono);font-size:11px;outline:none;transition:border-color .15s}
@@ -301,13 +301,104 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .popup-note{font-size:9px;color:var(--text-muted);margin-top:8px;font-family:var(--font-mono)}
 .google-btn{display:inline-flex;align-items:center;gap:10px;padding:12px 24px;background:#fff;color:#333;border:none;border-radius:8px;font-family:var(--font-mono);font-size:12px;font-weight:700;cursor:pointer;margin-top:8px;transition:all .15s}
 .google-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
+/* Hidden by default on desktop — only shown by mobile media query below */
+.hdr-hamburger{display:none;background:none;border:1px solid var(--border);color:var(--text);font-size:18px;width:36px;height:32px;border-radius:4px;cursor:pointer;align-items:center;justify-content:center;padding:0}
+.hdr-hamburger:hover{border-color:var(--gold);color:var(--gold)}
+.sidebar-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:190;backdrop-filter:blur(2px)}
+.sidebar-scrim.open{display:block}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOBILE: tablet and below (≤ 900px)
+   — sidebar becomes a slide-out drawer
+   — header chrome condenses
+   — queue/history float at bottom instead of right-side overlays
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+    :root { --sidebar-w: 0px; }
+    .app { grid-template-columns: 1fr; grid-template-areas:"header""main""console"; }
+    .hdr-hamburger { display: inline-flex; }
+    .app-header { padding: 0 10px; gap: 8px; }
+    .app-header h1 { font-size: 11px; letter-spacing: 1.2px; }
+
+    .sidebar {
+        position: fixed; top: var(--header-h); left: 0; bottom: 0;
+        width: min(320px, 85vw); z-index: 200;
+        transform: translateX(-100%); transition: transform .2s ease;
+        box-shadow: 4px 0 24px rgba(0,0,0,.5);
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    /* Hide secondary header elements on narrow screens; keep badge + auth */
+    .hdr-right #userEmail { display: none; }
+    .hdr-right .user-avatar { display: none; }
+    #btnConsole { display: none; }
+    #btnGpu { display: none; }
+    .hdr-badge { min-width: 0; padding: 3px 6px; font-size: 9px; }
+    .hdr-badge span { max-width: 70px; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Prompt bar wraps better */
+    .prompt-bar { padding: 6px 8px; }
+    .prompt-input { font-size: 12px; }
+
+    /* Output area: less padding, image scales nicely */
+    .output-area { padding: 10px; }
+
+    /* Queue and history overlays: stack at bottom of viewport instead of
+       top-right / bottom-right, and make them collapsible chips. */
+    .queue-overlay, .history-overlay {
+        position: fixed; right: 8px; left: 8px; top: auto;
+        max-width: none; width: auto;
+    }
+    .queue-overlay { bottom: 8px; z-index: 80; }
+    .history-overlay { bottom: 8px; z-index: 70; }
+    /* When the queue panel is present and visible, push history up.
+       Toggled via JS (.has-queue class on body) since :has selector has
+       inconsistent support on older mobile browsers. */
+    body.has-queue .history-overlay { bottom: 72px; }
+    .q-list { max-height: 180px; overflow-y: auto; }
+
+    /* Full-screen modals on mobile */
+    .modal-content, .notif-panel { max-width: 92vw; max-height: 88vh; }
+    .history-modal-body { max-width: 96vw; max-height: 88vh; }
+    .history-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+
+    /* Result bar footer on mobile */
+    .result-bar { flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px; font-size: 11px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHONE: narrow phones (≤ 560px)
+   — tighter spacing, single-column history grid, smaller fonts
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 560px) {
+    .app-header img { height: 18px; }
+    .app-header h1 { font-size: 10px; letter-spacing: 1px; }
+    .hdr-badge { display: none; }  /* too cramped, shown in drawer instead */
+    .token-badge { padding: 2px 6px; font-size: 9px; }
+    .output-area { padding: 6px; }
+    .prompt-bar { flex-wrap: wrap; }
+    .history-grid { grid-template-columns: 1fr; }
+    .notif-panel { padding: 16px; }
+    .sec { padding: 10px 12px; }
+}
+
+/* Touch-friendly: larger hit areas when hover isn't available */
+@media (hover: none) {
+    .mode-btn, .hdr-btn, .q-clear { min-height: 32px; }
+    input[type="range"] { height: 10px; }
+    input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; }
+}
 </style>
 </head>
 <body>
 <div class="app">
 
+<!-- MOBILE SIDEBAR SCRIM — shown when drawer is open on small screens -->
+<div class="sidebar-scrim" id="sidebarScrim" onclick="closeMobileSidebar()"></div>
+
 <!-- HEADER -->
 <header class="app-header">
+    <button class="hdr-hamburger" id="btnHamburger" onclick="toggleMobileSidebar()" aria-label="Menu">☰</button>
     <img src="https://www.missinglink.build/logo.png" alt="" onerror="this.style.display='none'">
     <h1>QWEN <span>STUDIO</span></h1>
     <div class="hdr-right">
@@ -771,6 +862,34 @@ let _historyMinimized = (() => {
 let lastResult=null;
 let lastOutputFilename=null;
 window._promptLocked=false;
+
+// ── Mobile sidebar drawer ─────────────────────────────────────────
+// On narrow screens the sidebar is positioned fixed, off-canvas. These
+// helpers toggle its .open class. A scrim behind it closes on tap.
+function toggleMobileSidebar(){
+    const sb = document.querySelector('.sidebar');
+    const sc = $('sidebarScrim');
+    if (!sb) return;
+    const isOpen = sb.classList.contains('open');
+    if (isOpen) { sb.classList.remove('open'); sc.classList.remove('open'); }
+    else        { sb.classList.add('open');    sc.classList.add('open'); }
+}
+function closeMobileSidebar(){
+    const sb = document.querySelector('.sidebar');
+    const sc = $('sidebarScrim');
+    if (sb) sb.classList.remove('open');
+    if (sc) sc.classList.remove('open');
+}
+// Close drawer when user taps a mode button or generates — interactions that
+// imply they want to see the output, not keep the menu in their face.
+document.addEventListener('click', (e) => {
+    if (window.innerWidth > 900) return;
+    const target = e.target;
+    if (!target) return;
+    if (target.closest('.mode-btn') || target.closest('#btnGenerate')) {
+        closeMobileSidebar();
+    }
+});
 
 function log(msg,lvl){
     const body=$('consoleBody'); if(!body) return;
@@ -1556,6 +1675,7 @@ function renderQueue(){
 
     if (activeJobs.length > 0) {
         activeSection.style.display = '';
+        document.body.classList.add('has-queue');
         activeList.innerHTML = '';
 
         // Remove any tile whose job is no longer active (completed / cancelled
@@ -1696,6 +1816,7 @@ function renderQueue(){
         }
     } else {
         activeSection.style.display = 'none';
+        document.body.classList.remove('has-queue');
     }
 
     // History sidebar now pulls from server-synced _historyItems (via syncHistory).
