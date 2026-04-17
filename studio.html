@@ -1164,11 +1164,18 @@ function startJobPoll(jobId){
     }, 2000);
 }
 
+// Job is cancellable until GPU compute actually starts.
+// Matches the server-side DELETE /api/studio/job/:id guard.
+function canCancelJob(j){
+    if(!j) return false;
+    if(j.status === 'queued' || j.status === 'waiting') return true;
+    if(j.status === 'running' && (!j.stage || j.stage === 'fetching')) return true;
+    return false;
+}
+
 async function cancelJob(jobId){
     const job=myJobs.find(j=>j.id===jobId);
-    // Cancel only allowed before GPU picks up the work. Once running, the
-    // compute is already happening — the server will reject this anyway.
-    if(!job || (job.status!=='queued' && job.status!=='waiting')) return;
+    if(!canCancelJob(job)) return;
     try{
         const r=await fetchT(`${API}/api/studio/job/${jobId}`,{method:'DELETE'},6000);
         const d=await r.json();
@@ -1272,8 +1279,10 @@ function renderQueue(){
                 subtext = j.mode.toUpperCase();
             }
 
-            // Cancel only allowed before GPU picks up the job
-            const canCancel = j.status === 'queued' || j.status === 'waiting';
+            // Cancel allowed before GPU compute starts (queued, waiting, or
+            // running/fetching — the R2 download phase). Uses the shared
+            // canCancelJob helper that mirrors the server's policy.
+            const canCancel = canCancelJob(j);
             const pctClamped = Math.max(0, Math.min(100, Math.round(pct)));
             tile.innerHTML = `
                 <div class="job-thumb">${thumbContent}</div>
