@@ -369,7 +369,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <label class="check-row"><input type="checkbox" id="chkRand" checked> Randomize Seed</label>
         <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="10" value="2" step="0.5" oninput="$('vCfg').textContent=this.value"><span class="sv" id="vCfg">2</span></div>
         <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="20" value="4" oninput="$('vSteps').textContent=this.value"><span class="sv" id="vSteps">4</span></div>
-        <div class="slider-row camera-only"><span class="sl">LoRA</span><input type="range" id="rngLora" min="0" max="1.5" value="0.9" step="0.05" oninput="$('vLora').textContent=this.value"><span class="sv" id="vLora">0.9</span></div>
+        <div class="slider-row camera-only"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05" oninput="$('vLoraLightning').textContent=this.value"><span class="sv" id="vLoraLightning">1.0</span></div>
+        <div class="slider-row camera-only"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05" oninput="$('vLoraAngles').textContent=this.value"><span class="sv" id="vLoraAngles">0.9</span></div>
     </div>
 
     <div class="sec">
@@ -1013,7 +1014,8 @@ async function doGenerate(){
             randomize_seed:$('chkRand').checked,
             guidance_scale:parseFloat($('rngCfg').value),
             inference_steps:parseInt($('rngSteps').value),
-            lora_scale:parseFloat($('rngLora').value),
+            lora_lightning:parseFloat($('rngLoraLightning').value),
+            lora_angles:parseFloat($('rngLoraAngles').value),
             width:parseInt($('inpWidth').value)||0,
             height:parseInt($('inpHeight').value)||0,
         };
@@ -1048,7 +1050,8 @@ async function doGenerate(){
         seed: payload.seed,
         guidance_scale: payload.guidance_scale,
         inference_steps: payload.inference_steps,
-        lora_scale: payload.lora_scale,
+        lora_lightning: payload.lora_lightning,
+        lora_angles: payload.lora_angles,
         width: payload.width,
         height: payload.height,
         input_image_id: currentMode==='camera' ? imageId : null,
@@ -1354,7 +1357,11 @@ function restoreJobState(jobId){
     $('rngSeed').value=s.seed||42; $('vSeed').textContent=s.seed||42;
     $('rngCfg').value=s.guidance_scale||2; $('vCfg').textContent=s.guidance_scale||2;
     $('rngSteps').value=s.inference_steps||4; $('vSteps').textContent=s.inference_steps||4;
-    if(s.lora_scale){ $('rngLora').value=s.lora_scale; $('vLora').textContent=s.lora_scale; }
+    // New per-LoRA sliders. Fall back to legacy single lora_scale if snapshot is old.
+    const lightVal = (s.lora_lightning != null) ? s.lora_lightning : 1.0;
+    const anglesVal = (s.lora_angles != null) ? s.lora_angles : (s.lora_scale != null ? s.lora_scale : 0.9);
+    $('rngLoraLightning').value = lightVal; $('vLoraLightning').textContent = lightVal;
+    $('rngLoraAngles').value = anglesVal; $('vLoraAngles').textContent = anglesVal;
     if(s.width) $('inpWidth').value=s.width;
     if(s.height) $('inpHeight').value=s.height;
     updateGenButton();
