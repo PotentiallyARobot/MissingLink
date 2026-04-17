@@ -132,6 +132,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .gpu-state-badge-progress-fill{height:100%;background:var(--gold);transition:width .5s linear}
 .gpu-state-badge.ready .gpu-state-badge-progress-fill{background:var(--green)}
 
+/* Minimized history panel: keep the header visible as a compact pill */
+.q-section.minimized .q-list{display:none}
+.q-section.minimized{padding-bottom:0}
+.q-section.minimized .q-header{margin-bottom:0}
+
 .result-bar{padding:6px 12px;background:var(--surface);border-top:1px solid var(--border);font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:8px}
 .use-input-btn{margin-left:auto;padding:3px 10px;background:var(--gold-dim);color:var(--gold);border:1px solid var(--gold);border-radius:4px;font-family:var(--font-mono);font-size:9px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .use-input-btn:hover{background:var(--gold);color:var(--black)}
@@ -446,8 +451,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div class="history-overlay" id="historyOverlay">
             <div class="q-section" id="qHistorySection" style="display:none">
                 <div class="q-header">
-                    HISTORY
-                    <button onclick="openHistoryModal()" class="q-clear" style="margin-left:auto" title="View all generations">⛶ Expand</button>
+                    <span>HISTORY <span id="historySidebarCount" class="q-count"></span></span>
+                    <span style="margin-left:auto;display:flex;gap:4px">
+                        <button onclick="openHistoryModal()" class="q-clear" title="View all generations">⛶</button>
+                        <button id="historyMinBtn" onclick="toggleHistoryMinimized()" class="q-clear" title="Minimize">–</button>
+                    </span>
                 </div>
                 <div id="qHistoryList" class="q-list"></div>
             </div>
@@ -712,6 +720,11 @@ let _gpuState = { state: 'cold', warming_for_s: 0, ready_age_s: null };
 let _historyItems = [];
 let _historyTotal = 0;
 let _historyLoading = false;
+// Minimized state for the sidebar history panel; persisted in localStorage.
+let _historyMinimized = (() => {
+    try { return localStorage.getItem('studio_history_minimized') === '1'; }
+    catch (e) { return false; }
+})();
 let lastResult=null;
 let lastOutputFilename=null;
 window._promptLocked=false;
@@ -1357,15 +1370,42 @@ function renderQueue(){
             const badge = document.createElement('div');
             badge.className = `gpu-state-badge ${_gpuState.state}`;
             if (_gpuState.state === 'warming') {
-                // Tick live between polls: add the delta since we last received state
-                const sinceReceived = _gpuState._receivedAt ? Math.floor((Date.now() - _gpuState._receivedAt) / 1000) : 0;
-                const liveWarmingFor = (_gpuState.warming_for_s || 0) + sinceReceived;
-                // Expected cold start ~180s (3 min). Fill toward that estimate and
-                // plateau at 95% if it takes longer so the bar never looks stuck.
-                const ESTIMATE_S = 180;
-                const pct = Math.min(95, (liveWarmingFor / ESTIMATE_S) * 100);
+                // Map Modal's setup stages to user-friendly labels + % anchors.
+                // These anchors roughly match real time spent on an L4:
+                //   booting 0s-2s  loading_transformer ~10-15s
+                //   loading_text_encoder ~15s  building_pipeline ~5s
+                //   compiling ~60s (longest)  warming_up ~20s  ready = done
+                const stageMap = {
+                    booting:              { label: 'Starting container',   pct: 2  },
+                    loading_transformer:  { label: 'Loading model (5GB)',  pct: 8  },
+                    loading_text_encoder: { label: 'Loading text encoder', pct: 18 },
+                    building_pipeline:    { label: 'Building pipeline',    pct: 25 },
+                    compiling:            { label: 'Compiling kernels',    pct: 30 }, // overridden below
+                    warming_up:           { label: 'Final warmup',         pct: 90 },
+                    ready:                { label: 'GPU ready',            pct: 100 },
+                };
+                const stage = _gpuState.startup_stage;
+                let label, pct;
+                if (stage && stageMap[stage]) {
+                    label = stageMap[stage].label;
+                    pct = stageMap[stage].pct;
+                    // For compiling, use real block progress so the bar moves
+                    // continuously over the longest phase.
+                    if (stage === 'compiling' && _gpuState.startup_total > 0) {
+                        const frac = Math.min(1, _gpuState.startup_progress / _gpuState.startup_total);
+                        pct = 30 + frac * 55;  // 30% at block 0, 85% at block 60
+                        label = `Compiling ${_gpuState.startup_progress}/${_gpuState.startup_total} blocks`;
+                    }
+                } else {
+                    // No heartbeat yet — we know warmup was triggered, just don't
+                    // know the stage. Show a conservative generic label.
+                    const sinceReceived = _gpuState._receivedAt ? Math.floor((Date.now() - _gpuState._receivedAt) / 1000) : 0;
+                    const liveWarmingFor = (_gpuState.warming_for_s || 0) + sinceReceived;
+                    label = `Spinning up GPU · ${liveWarmingFor}s`;
+                    pct = Math.min(10, liveWarmingFor / 6);  // 10% max until heartbeat arrives
+                }
                 badge.innerHTML = `
-                    <span>⚡ GPU warming up · ${liveWarmingFor}s</span>
+                    <span>⚡ ${label}</span>
                     <span class="gpu-state-badge-progress"><span class="gpu-state-badge-progress-fill" style="width:${pct}%"></span></span>
                 `;
             } else {
@@ -1476,17 +1516,31 @@ function renderQueue(){
 function renderHistorySidebar(){
     const histSection = $('qHistorySection');
     const histList = $('qHistoryList');
+    const countEl = $('historySidebarCount');
     if (!_historyItems.length) {
         histSection.style.display = 'none';
         return;
     }
     histSection.style.display = '';
+    // Apply persisted minimize state every render (survives tile rebuild)
+    if (_historyMinimized) histSection.classList.add('minimized');
+    else histSection.classList.remove('minimized');
+    // Item count in header
+    if (countEl) countEl.textContent = _historyTotal > _historyItems.length
+        ? `(${_historyItems.length}/${_historyTotal})`
+        : `(${_historyItems.length})`;
+    // Update the minimize button icon to match state
+    const minBtn = $('historyMinBtn');
+    if (minBtn) {
+        minBtn.textContent = _historyMinimized ? '+' : '–';
+        minBtn.title = _historyMinimized ? 'Restore' : 'Minimize';
+    }
+
     histList.innerHTML = '';
     for (const j of _historyItems.slice(0, 6)) {
         const tile = document.createElement('div');
         tile.className = 'q-hist-tile';
         tile.onclick = (ev) => {
-            // Don't restore if user clicked the delete button
             if (ev.target.closest('.history-card-delete')) return;
             restoreFromHistory(j);
         };
@@ -1501,6 +1555,14 @@ function renderHistorySidebar(){
         `;
         histList.appendChild(tile);
     }
+}
+
+// Toggle the sidebar history between expanded and minimized. Persists via
+// localStorage so the choice survives refresh.
+function toggleHistoryMinimized(){
+    _historyMinimized = !_historyMinimized;
+    try { localStorage.setItem('studio_history_minimized', _historyMinimized ? '1' : '0'); } catch (e) {}
+    renderHistorySidebar();
 }
 
 // ───────────── Full history modal ─────────────
