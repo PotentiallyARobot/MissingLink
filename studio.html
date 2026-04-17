@@ -307,6 +307,27 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .sidebar-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:190;backdrop-filter:blur(2px)}
 .sidebar-scrim.open{display:block}
 
+/* Camera/upload capture button — visible on all screen sizes but primarily
+   useful on mobile where `capture="environment"` opens the device camera. */
+.capture-btn{width:100%;margin-top:8px;padding:10px;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s}
+.capture-btn:hover,.capture-btn:active{background:var(--gold-dim);border-color:var(--gold);color:var(--gold)}
+
+/* MOBILE ACTION BAR — hidden on desktop, shown on mobile by media query.
+   Sticks to the bottom of the viewport. Horizontal pose chips above a
+   row with [Camera] [Upload] [Generate] buttons. */
+.mobile-action-bar{display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:linear-gradient(to top,var(--surface) 70%,rgba(17,17,20,0.9));border-top:1px solid var(--border);padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px))}
+.mab-pose-strip{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;padding-bottom:6px;margin-bottom:6px}
+.mab-pose-strip::-webkit-scrollbar{display:none}
+.mab-pose-chip{flex:0 0 auto;padding:6px 10px;background:var(--surface-3);border:1px solid var(--border);border-radius:999px;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;font-weight:600;white-space:nowrap;cursor:pointer;transition:all .15s;-webkit-tap-highlight-color:transparent}
+.mab-pose-chip.active{background:var(--gold);border-color:var(--gold);color:var(--black)}
+.mab-pose-chip:active{transform:scale(0.97)}
+.mab-row{display:flex;gap:8px;align-items:center}
+.mab-btn{height:44px;border-radius:8px;font-family:var(--font-mono);font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--surface-3);color:var(--text);-webkit-tap-highlight-color:transparent}
+.mab-btn:active{transform:scale(0.97)}
+.mab-upload{flex:0 0 44px;width:44px;font-size:18px;padding:0;display:flex;align-items:center;justify-content:center}
+.mab-generate{flex:1 1 auto;background:var(--gold);border-color:var(--gold);color:var(--black);font-weight:800;letter-spacing:1px}
+.mab-generate:disabled{background:var(--surface-3);border-color:var(--border);color:var(--text-dim);cursor:not-allowed}
+
 /* ═══════════════════════════════════════════════════════════════════════
    MOBILE: tablet and below (≤ 900px)
    — sidebar becomes a slide-out drawer
@@ -314,11 +335,16 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
    — queue/history float at bottom instead of right-side overlays
    ═══════════════════════════════════════════════════════════════════════ */
 @media (max-width: 900px) {
-    :root { --sidebar-w: 0px; }
+    :root { --sidebar-w: 0px; --mobile-action-h: 110px; }
     .app { grid-template-columns: 1fr; grid-template-areas:"header""main""console"; }
     .hdr-hamburger { display: inline-flex; }
     .app-header { padding: 0 10px; gap: 8px; }
     .app-header h1 { font-size: 11px; letter-spacing: 1.2px; }
+
+    /* Mobile action bar visible at bottom of viewport */
+    .mobile-action-bar { display: block; }
+    /* Push main content up so it's not hidden behind the action bar */
+    .main { padding-bottom: var(--mobile-action-h); }
 
     .sidebar {
         position: fixed; top: var(--header-h); left: 0; bottom: 0;
@@ -349,12 +375,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         position: fixed; right: 8px; left: 8px; top: auto;
         max-width: none; width: auto;
     }
-    .queue-overlay { bottom: 8px; z-index: 80; }
-    .history-overlay { bottom: 8px; z-index: 70; }
+    .queue-overlay { bottom: calc(var(--mobile-action-h) + 4px); z-index: 80; }
+    .history-overlay { bottom: calc(var(--mobile-action-h) + 4px); z-index: 70; }
     /* When the queue panel is present and visible, push history up.
        Toggled via JS (.has-queue class on body) since :has selector has
        inconsistent support on older mobile browsers. */
-    body.has-queue .history-overlay { bottom: 72px; }
+    body.has-queue .history-overlay { bottom: calc(var(--mobile-action-h) + 68px); }
     .q-list { max-height: 180px; overflow-y: auto; }
 
     /* Full-screen modals on mobile */
@@ -436,6 +462,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <input type="file" accept="image/*" id="fileInput">
             <div class="dz-text">Drop image or <b>browse</b></div>
         </div>
+        <!-- Capture-attribute input: mobile browsers open the camera directly.
+             Desktop browsers treat it the same as a regular file picker. The
+             button is styled to look distinct so users know it's camera. -->
+        <button class="capture-btn" id="btnCapturePhoto" onclick="$('cameraInput').click()">
+            📷 Take Photo
+        </button>
+        <input type="file" accept="image/*" capture="environment" id="cameraInput" style="display:none">
         <div class="input-preview" id="inputPreview" style="display:none">
             <img id="inputImg" onclick="openModal(this.src)">
             <button class="preview-clear" onclick="clearInput()" title="Remove">×</button>
@@ -586,6 +619,21 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="result-bar" id="resultBar" style="display:none">
         <span id="resultText"></span>
         <button class="use-input-btn" id="btnUseAsInput" onclick="useAsInput()" style="display:none">↩ Use as Input</button>
+    </div>
+
+    <!-- MOBILE ACTION BAR — sticky at the bottom of the viewport on narrow
+         screens. Gives one-tap access to the most common controls: camera
+         upload, a horizontal strip of pose presets, and Generate. Hidden
+         entirely on desktop via the mobile media query.
+         The pose chips call into the same syncFromDropdowns machinery as
+         the sidebar dropdowns so state stays consistent between them. -->
+    <div class="mobile-action-bar" id="mobileActionBar">
+        <div class="mab-pose-strip" id="mabPoseStrip"></div>
+        <div class="mab-row">
+            <button class="mab-btn mab-upload" onclick="$('cameraInput').click()" title="Take photo">📷</button>
+            <button class="mab-btn mab-upload" onclick="$('fileInput').click()" title="Upload image">📁</button>
+            <button class="mab-btn mab-generate" id="mabGenBtn" onclick="doGenerate()">⚡ GENERATE</button>
+        </div>
     </div>
 </div>
 
@@ -827,6 +875,45 @@ function syncFromDropdowns(){
     const ei=EL.find(e=>e.l===document.getElementById('selEl').value); if(ei) elDeg=ei.a;
     const di=DI.find(d=>d.l===document.getElementById('selDist').value); if(di) distR=di.r;
     updateScene();
+    syncMobilePoseChips();
+}
+// ── Mobile pose chips ─────────────────────────────────────────
+// Populate the horizontal chip strip in the mobile action bar with all 8
+// azimuth options. Tapping a chip sets the dropdown value and runs the
+// normal sync path so sidebar + 3D viewport + prompt all update together.
+function initMobilePoseChips(){
+    const strip = document.getElementById('mabPoseStrip');
+    if (!strip) return;
+    // Short friendly labels for the chips (the full labels are too long)
+    const SHORT = {
+        "front view": "Front", "front-right quarter view": "Front-R",
+        "right side view": "Right", "back-right quarter view": "Back-R",
+        "back view": "Back", "back-left quarter view": "Back-L",
+        "left side view": "Left", "front-left quarter view": "Front-L",
+    };
+    strip.innerHTML = '';
+    for (const a of AZ) {
+        const c = document.createElement('button');
+        c.className = 'mab-pose-chip';
+        c.dataset.label = a.l;
+        c.textContent = SHORT[a.l] || a.l;
+        c.onclick = () => {
+            const sel = document.getElementById('selAz');
+            if (sel) { sel.value = a.l; syncFromDropdowns(); }
+        };
+        strip.appendChild(c);
+    }
+    syncMobilePoseChips();
+}
+function syncMobilePoseChips(){
+    const strip = document.getElementById('mabPoseStrip');
+    if (!strip) return;
+    const sel = document.getElementById('selAz');
+    const current = sel ? sel.value : null;
+    for (const c of strip.children) {
+        if (c.dataset.label === current) c.classList.add('active');
+        else c.classList.remove('active');
+    }
 }
 window.addEventListener('resize',()=>{if(!canv||!ren)return;const W=canv.clientWidth,H=canv.clientHeight||200;cam.aspect=W/H;cam.updateProjectionMatrix();ren.setSize(W,H);});
 </script>
@@ -1305,6 +1392,13 @@ function initDrop(){
     ['dragleave','drop'].forEach(e=>z.addEventListener(e,ev=>{ev.preventDefault();z.classList.remove('over');}));
     z.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length)uploadFile(ev.dataTransfer.files[0]);});
     inp.addEventListener('change',()=>{if(inp.files.length)uploadFile(inp.files[0]);inp.value='';});
+    // Camera capture (mobile): separate input with `capture` attribute opens
+    // the device camera directly. On desktop it behaves like a normal picker.
+    const camInp = $('cameraInput');
+    if (camInp) camInp.addEventListener('change', () => {
+        if (camInp.files.length) uploadFile(camInp.files[0]);
+        camInp.value = '';
+    });
 }
 
 async function uploadFile(file){
@@ -1638,7 +1732,9 @@ function startJobPoll(jobId){
 function canCancelJob(j){
     if(!j) return false;
     if(j.status === 'queued' || j.status === 'waiting') return true;
-    if(j.status === 'running' && (!j.stage || j.stage === 'fetching')) return true;
+    // Pre-generation stages: user can still bail out without wasting denoising steps
+    const PRE_GEN = new Set(['fetching', 'preparing', 'encoding_prompt', 'encoding_image']);
+    if(j.status === 'running' && (!j.stage || PRE_GEN.has(j.stage))) return true;
     return false;
 }
 
@@ -1738,35 +1834,42 @@ function renderQueue(){
                 const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
                 if (stage === 'fetching') {
                     statusIcon = '📥'; statusText = 'Loading inputs';
+                    // Sub-progress: "image N/M" when multi-image
+                    if (total > 1) {
+                        subtext = `Image ${Math.max(1, step)}/${total} · ${elapsed}s`;
+                    } else {
+                        subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    }
+                    pct = 6 + (total > 0 ? (step / total) * 6 : 0);   // 6 → 12
+                } else if (stage === 'preparing') {
+                    statusIcon = '⚙️'; statusText = 'Warming up';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
-                    pct = 12;
+                    pct = 14;
+                } else if (stage === 'encoding_prompt') {
+                    statusIcon = '💬'; statusText = 'Encoding prompt';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 17;
+                } else if (stage === 'encoding_image') {
+                    statusIcon = '🖼️'; statusText = 'Encoding image';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 22;
                 } else if (stage === 'generating') {
                     statusIcon = '⚡'; statusText = 'Generating';
                     if (total > 0) {
-                        // Per-step pings (callback_on_step_end) give us step counts
-                        // during denoising. BEFORE the first real step callback
-                        // there's a ~5-15s window where text encoding + image VAE
-                        // encoding happens. We show "Preparing..." with a slow
-                        // growing bar + rough ETA so the user isn't staring at
-                        // "Step 0/4" thinking it's frozen.
+                        // Per-step pings (callback_on_step_end) give us step
+                        // counts during denoising. The pre-first-step window
+                        // is already covered by the encoding_* stages above,
+                        // so arriving here with step<1 just means pipe hasn't
+                        // fired the first callback yet. Show step 1 with an
+                        // ETA so the bar doesn't stall at 25%.
                         if (step < 1) {
-                            statusText = 'Preparing';
-                            // Typical per-step ~3s for 4-step Lightning, ~2.5s for
-                            // 20-step, ~2s for 40-step quality. Rough ETA = total *
-                            // per-step estimate + ~8s prep overhead.
                             const perStepEst = total <= 8 ? 3 : 2.2;
                             const etaTotal = Math.round(8 + total * perStepEst);
                             const remaining = Math.max(0, etaTotal - elapsed);
-                            subtext = `${elapsed}s · ~${remaining}s left`;
-                            // Prep window bar: grow from 15% → 25% over ~12s,
-                            // based on elapsed time since entering the stage.
-                            const prepRamp = Math.min(1, elapsed / 12);
-                            pct = 15 + prepRamp * 10;
+                            subtext = `Starting step 1 · ~${remaining}s left`;
+                            pct = 25;
                         } else {
                             subtext = `Step ${step}/${total} · ${elapsed}s`;
-                            // Track when the current step started so the bar can
-                            // animate continuously between step pings (which only
-                            // fire every ~2-3s).
                             if (j._lastStep !== step) {
                                 j._lastStep = step;
                                 j._stepStartMs = Date.now();
