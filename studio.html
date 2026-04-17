@@ -133,12 +133,21 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .q-hist-delete:hover{background:var(--red);border-color:var(--red);color:var(--white);transform:scale(1.08)}
 
 /* GPU state badge shown in queue when container is cold/warming */
-.gpu-state-badge{padding:10px 12px;margin-bottom:8px;border-radius:6px;font-family:var(--font-mono);font-size:10px;display:flex;align-items:center;gap:8px;letter-spacing:.5px}
-.gpu-state-badge.warming{background:rgba(234,179,8,.1);border:1px solid var(--gold);color:var(--gold)}
-.gpu-state-badge.ready{background:rgba(34,197,94,.1);border:1px solid var(--green);color:var(--green)}
-.gpu-state-badge-progress{flex:1;height:3px;background:rgba(0,0,0,.3);border-radius:2px;overflow:hidden}
-.gpu-state-badge-progress-fill{height:100%;background:var(--gold);transition:width .5s linear}
-.gpu-state-badge.ready .gpu-state-badge-progress-fill{background:var(--green)}
+/* Notification / confirm modal — replaces native alert() and confirm() */
+.notif-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(440px,92vw);padding:22px 24px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.notif-panel.notif-error{border-color:var(--red)}
+.notif-panel.notif-success{border-color:var(--green)}
+.notif-panel .notif-title{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text);letter-spacing:1px;margin-bottom:10px;text-transform:uppercase}
+.notif-panel.notif-error .notif-title{color:var(--red)}
+.notif-panel.notif-success .notif-title{color:var(--green)}
+.notif-panel .notif-body{color:var(--text);font-size:13px;line-height:1.5;margin-bottom:18px;word-wrap:break-word}
+.notif-panel .notif-actions{display:flex;gap:8px;justify-content:flex-end}
+.notif-panel .notif-btn{padding:8px 16px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.5px;border-radius:5px;cursor:pointer;border:1px solid var(--border);background:var(--surface-3);color:var(--text);transition:all .12s}
+.notif-panel .notif-btn:hover{background:var(--gold-dim);border-color:var(--gold);color:var(--gold)}
+.notif-panel .notif-btn.primary{background:var(--gold);border-color:var(--gold);color:#000}
+.notif-panel .notif-btn.primary:hover{background:var(--gold-bright,var(--gold));filter:brightness(1.1)}
+.notif-panel .notif-btn.danger{background:var(--red);border-color:var(--red);color:var(--white)}
+.notif-panel .notif-btn.danger:hover{filter:brightness(1.1)}
 
 /* Minimized history panel: keep the header visible as a compact pill */
 .q-section.minimized .q-list{display:none}
@@ -157,7 +166,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .slider-row .sl{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.3px;min-width:65px}
 .slider-row input[type=range]{flex:1;height:4px;accent-color:var(--gold);cursor:pointer;-webkit-appearance:none;background:var(--surface-3);border-radius:2px}
 .slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--gold);cursor:pointer}
-.slider-row .sv{font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--text);min-width:28px;text-align:right}
+/* Typeable number field paired with the slider. Looks like a read-only
+   label by default; shows its editable nature on hover/focus. */
+.slider-row .sv{font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--text);min-width:52px;text-align:right;background:transparent;border:1px solid transparent;border-radius:3px;padding:2px 4px;outline:none;-moz-appearance:textfield}
+.slider-row .sv::-webkit-outer-spin-button,
+.slider-row .sv::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.slider-row .sv:hover{border-color:var(--border);background:var(--surface-3)}
+.slider-row .sv:focus{border-color:var(--gold);background:var(--surface-3);color:var(--gold)}
+/* Wide typeable seed field — replaces the useless 0–2^31 slider */
+.seed-input{flex:1;font-family:var(--font-mono);font-size:11px;color:var(--text);background:var(--surface-3);border:1px solid var(--border);border-radius:4px;padding:5px 8px;outline:none;-moz-appearance:textfield}
+.seed-input::-webkit-outer-spin-button,
+.seed-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.seed-input:focus{border-color:var(--gold)}
+.seed-input::placeholder{color:var(--text-dim);font-size:10px}
 .check-row{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);cursor:pointer;margin-bottom:8px}
 .check-row input{width:14px;height:14px;accent-color:var(--gold)}
 
@@ -228,14 +249,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .job-tile.cancelled{opacity:.4}
 .job-thumb{width:40px;height:40px;border-radius:4px;background:var(--surface-3);flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .job-thumb img{width:100%;height:100%;object-fit:cover}
-/* Dim thumbnail during any in-flight status. No blur on calm states — only
-   when inference is actively running so the motion reads as "something
-   heavy is happening" and not as visual noise. */
-.job-tile.queued .job-thumb img,.job-tile.waiting .job-thumb img{opacity:.35}
-.job-tile.running .job-thumb img{filter:blur(2px);opacity:.55}
-/* Spinner is reserved for the tile that's actively burning GPU cycles.
-   Slower rotation (1.4s) reads as steady progress, not a panic indicator. */
-.job-thumb .mini-spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin 1.4s linear infinite;position:absolute}
+/* Dim thumbnail during any in-flight status — same treatment across all
+   states so there's no visual "change" as the job progresses (which was
+   reading as stuttering). Tile border + progress bar communicate the state. */
+.job-tile.queued .job-thumb img,
+.job-tile.waiting .job-thumb img,
+.job-tile.running .job-thumb img{opacity:.4}
 .job-info{flex:1;min-width:0;font-family:var(--font-mono);font-size:9px}
 .job-status{color:var(--text);font-weight:700;margin-bottom:1px;display:flex;align-items:center;gap:3px;font-size:10px}
 .job-mode{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.5px}
@@ -243,8 +262,6 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .job-cancel:hover{background:var(--red);color:var(--white)}
 .job-progress{height:3px;background:var(--surface-3);border-radius:2px;margin-top:3px;overflow:hidden}
 .job-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),#ffcf4a);transition:width .4s ease-out;border-radius:2px}
-.job-tile.running .job-progress-fill{animation:progShimmer 1.6s ease-in-out infinite}
-@keyframes progShimmer{0%,100%{opacity:.85}50%{opacity:1}}
 
 /* History tile (smaller) */
 .q-hist-tile{display:flex;gap:6px;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;align-items:center;cursor:pointer;transition:all .15s}
@@ -418,12 +435,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="dim-field"><label>Height</label><input type="number" id="inpHeight" min="8" max="2048" step="8" placeholder="auto"></div>
             <span class="dim-hint">Set by upload</span>
         </div>
-        <div class="slider-row"><span class="sl">Seed</span><input type="range" id="rngSeed" min="0" max="2147483647" value="42" oninput="$('vSeed').textContent=this.value"><span class="sv" id="vSeed">42</span></div>
+        <div class="slider-row"><span class="sl">Seed</span><input type="number" class="seed-input" id="vSeed" value="42" min="0" max="2147483647" step="1" placeholder="any integer 0–2147483647"><input type="hidden" id="rngSeed" value="42"></div>
         <label class="check-row"><input type="checkbox" id="chkRand" checked> Randomize Seed</label>
-        <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5" oninput="$('vCfg').textContent=this.value"><span class="sv" id="vCfg">1</span></div>
-        <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4" oninput="$('vSteps').textContent=this.value"><span class="sv" id="vSteps">4</span></div>
-        <div class="slider-row camera-only"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05" oninput="$('vLoraLightning').textContent=this.value"><span class="sv" id="vLoraLightning">1.0</span></div>
-        <div class="slider-row camera-only"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05" oninput="$('vLoraAngles').textContent=this.value"><span class="sv" id="vLoraAngles">0.9</span></div>
+        <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5"><input type="number" class="sv" id="vCfg" value="1" min="1" max="8" step="0.5"></div>
+        <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
+        <div class="slider-row camera-only"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row camera-only"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
     </div>
 
     <div class="sec">
@@ -478,6 +495,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="result-bar" id="resultBar" style="display:none">
         <span id="resultText"></span>
         <button class="use-input-btn" id="btnUseAsInput" onclick="useAsInput()" style="display:none">↩ Use as Input</button>
+    </div>
+</div>
+
+<!-- NOTIFICATION / CONFIRM MODAL (replaces native alert / confirm) -->
+<div id="notifModal" class="modal" style="display:none" onclick="if(event.target===this) _notifCancel()">
+    <div id="notifPanel" class="notif-panel">
+        <div class="notif-title" id="notifTitle">Notice</div>
+        <div class="notif-body" id="notifBody"></div>
+        <div class="notif-actions">
+            <button class="notif-btn" id="notifCancelBtn" style="display:none" onclick="_notifCancel()">Cancel</button>
+            <button class="notif-btn primary" id="notifOkBtn" onclick="_notifConfirm()">OK</button>
+        </div>
     </div>
 </div>
 
@@ -742,7 +771,6 @@ let _historyMinimized = (() => {
 let lastResult=null;
 let lastOutputFilename=null;
 window._promptLocked=false;
-let _coldShown=false;
 
 function log(msg,lvl){
     const body=$('consoleBody'); if(!body) return;
@@ -753,6 +781,50 @@ function log(msg,lvl){
     body.appendChild(div);
     body.scrollTop=body.scrollHeight;
     while(body.children.length>200) body.removeChild(body.firstChild);
+}
+
+// Modal notification + confirm helpers — replace native alert()/confirm() so
+// all user-facing messages use the styled UI instead of browser chrome.
+let _notifResolver = null;
+function showNotif(message, type){
+    // type: 'info' (default) | 'error' | 'success'
+    return new Promise(resolve => {
+        _notifResolver = resolve;
+        const panel = $('notifPanel');
+        panel.className = 'notif-panel' + (type === 'error' ? ' notif-error' : type === 'success' ? ' notif-success' : '');
+        $('notifTitle').textContent = type === 'error' ? 'Error' : type === 'success' ? 'Done' : 'Notice';
+        $('notifBody').textContent = message;
+        $('notifCancelBtn').style.display = 'none';
+        $('notifOkBtn').textContent = 'OK';
+        $('notifOkBtn').className = 'notif-btn primary';
+        $('notifModal').style.display = 'flex';
+    });
+}
+function showConfirm(message, opts){
+    // opts: { confirmLabel, cancelLabel, danger }
+    opts = opts || {};
+    return new Promise(resolve => {
+        _notifResolver = resolve;
+        const panel = $('notifPanel');
+        panel.className = 'notif-panel';
+        $('notifTitle').textContent = 'Confirm';
+        $('notifBody').textContent = message;
+        $('notifCancelBtn').style.display = '';
+        $('notifCancelBtn').textContent = opts.cancelLabel || 'Cancel';
+        $('notifOkBtn').textContent = opts.confirmLabel || 'OK';
+        $('notifOkBtn').className = 'notif-btn ' + (opts.danger ? 'danger' : 'primary');
+        $('notifModal').style.display = 'flex';
+    });
+}
+function _notifConfirm(){
+    $('notifModal').style.display = 'none';
+    const r = _notifResolver; _notifResolver = null;
+    if (r) r(true);
+}
+function _notifCancel(){
+    $('notifModal').style.display = 'none';
+    const r = _notifResolver; _notifResolver = null;
+    if (r) r(false);
 }
 
 function fetchT(url,opts,ms){
@@ -826,9 +898,7 @@ function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.
 // liberally (checkAuth, onfocus, etc.) is safe.
 async function warmupGpu(){
     try{
-        const r=await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
-        const d=await r.json().catch(()=>({}));
-        if(d.queued) log('GPU warming up in background','info');
+        await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
     }catch(e){ /* fire-and-forget — silent failure is fine */ }
 }
 
@@ -892,6 +962,13 @@ async function doLogout(){
     _user=null;
     $('authIn').style.display='none';
     $('authOut').style.display='block';
+    // Clear any input images — they're tied to the previous user's uploads
+    clearInput();
+    for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
+    try {
+        localStorage.removeItem('studio_input');
+        localStorage.removeItem('studio_slots');
+    } catch (e) {}
     updateGenButton();
     log('Signed out');
 }
@@ -909,8 +986,8 @@ async function doBuyTokens(){
         const r=await fetchT(`${API}/api/studio/checkout`,{method:'POST',headers:{'Content-Type':'application/json'}},10000);
         const d=await r.json();
         if(d.url) window.location.href=d.url;
-        else alert('Payment setup failed');
-    }catch(e){ alert('Error: '+e.message); }
+        else showNotif('Payment setup failed. Please try again.', 'error');
+    }catch(e){ showNotif('Error: ' + e.message, 'error'); }
 }
 
 // ── Mode ──────────────────────────────────────────
@@ -971,8 +1048,9 @@ async function pollStatus(){
 }
 
 // The header badge is the single at-a-glance indicator: when disconnected it
-// says so; when connected it reflects GPU state (cold / warming / ready).
-// The detailed warming progress bar still lives in the queue area.
+// says so; when connected it reflects GPU state. During warming, the specific
+// Modal setup stage is shown (e.g. "Compiling 30/60") so the user knows what
+// is happening without needing a separate progress panel.
 function updateHeaderStatusBadge(connected){
     const dot = $('connDot'); const label = $('connLabel');
     if (!connected) {
@@ -986,7 +1064,26 @@ function updateHeaderStatusBadge(connected){
         label.textContent = 'GPU ready';
     } else if (state === 'warming') {
         dot.className = 'dot warm';
-        label.textContent = 'GPU warming';
+        // Map Modal's setup stages to user-friendly labels.
+        const stageMap = {
+            booting:              'Starting container',
+            loading_transformer:  'Loading model',
+            loading_text_encoder: 'Loading encoder',
+            building_pipeline:    'Building pipeline',
+            compiling:            'Compiling kernels',
+            warming_up:           'Final warmup',
+            ready:                'GPU ready',
+        };
+        const stage = _gpuState.startup_stage;
+        let text;
+        if (stage === 'compiling' && _gpuState.startup_total > 0) {
+            text = `Compiling ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
+        } else if (stage && stageMap[stage]) {
+            text = stageMap[stage];
+        } else {
+            text = 'GPU warming';
+        }
+        label.textContent = text;
     } else {
         dot.className = 'dot cold';
         label.textContent = 'GPU cold';
@@ -1077,10 +1174,10 @@ async function uploadFile(file){
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
-        if(d.error){ alert(d.error); return; }
+        if(d.error){ showNotif(d.error, 'error'); return; }
         setInputImage(d.id,d.url,d.w,d.h);
         log(`Uploaded ${file.name}`);
-    }catch(e){ alert('Upload failed'); }
+    }catch(e){ showNotif('Upload failed. Check your connection and try again.', 'error'); }
 }
 
 function setInputImage(id,url,w,h){
@@ -1092,6 +1189,12 @@ function setInputImage(id,url,w,h){
     if(w) $('inpWidth').value=w;
     if(h) $('inpHeight').value=h;
     updateGenButton();
+    // Persist so a page refresh doesn't erase the user's upload
+    try {
+        localStorage.setItem('studio_input', JSON.stringify({
+            id, url, w: w || null, h: h || null,
+        }));
+    } catch (e) {}
 }
 
 function clearInput(){
@@ -1101,6 +1204,7 @@ function clearInput(){
     $('inputImg').src='';
     $('inpWidth').value=''; $('inpHeight').value='';
     updateGenButton();
+    try { localStorage.removeItem('studio_input'); } catch (e) {}
 }
 
 // ── Edit mode slots ───────────────────────────────
@@ -1131,15 +1235,25 @@ async function uploadToSlot(i,file){
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
-        if(d.error){ alert(d.error); return; }
+        if(d.error){ showNotif(d.error, 'error'); return; }
         slots[i]={id:d.id,url:d.url,filename:d.filename,w:d.w,h:d.h};
         $('inpWidth').value=d.w; $('inpHeight').value=d.h;
         renderSlot(i);
         updateGenButton();
-    }catch(e){ alert('Upload failed'); }
+        persistSlots();
+    }catch(e){ showNotif('Upload failed. Check your connection and try again.', 'error'); }
 }
 
-function removeSlot(i){ slots[i]=null; renderSlot(i); updateGenButton(); }
+function removeSlot(i){ slots[i]=null; renderSlot(i); updateGenButton(); persistSlots(); }
+
+// Write slots to localStorage so uploaded images survive a page refresh.
+// We store only the R2 refs (id/url/filename/w/h), not the actual image bytes.
+function persistSlots(){
+    try {
+        const nonEmpty = slots.map(s => s || null);
+        localStorage.setItem('studio_slots', JSON.stringify(nonEmpty));
+    } catch (e) {}
+}
 
 function renderSlot(i){
     const el=$('slot'+i); if(!el) return;
@@ -1170,7 +1284,7 @@ async function useAsInput(){
             if(t===-1) t=0;
             await uploadToSlot(t,file);
         }
-    }catch(e){ alert('Failed'); }
+    }catch(e){ showNotif('Failed. Please try again.', 'error'); }
 }
 
 function toggleLock(){
@@ -1206,7 +1320,7 @@ async function doGenerate(){
         const filled=slots.filter(s=>s!==null);
         if(!filled.length) return;
         const prompt=$('customPrompt').value.trim();
-        if(!prompt){ alert('Enter edit instruction'); return; }
+        if(!prompt){ showNotif('Please enter an edit instruction before generating.'); return; }
         thumbUrl=filled[0].url;
         payload={
             mode:'edit',
@@ -1254,7 +1368,7 @@ async function doGenerate(){
         if (!d.ok) {
             if (r.status === 401) { $('loginModal').classList.add('open'); }
             else if (r.status === 402) { showBuyModal(); }
-            else if (r.status === 429) { alert(`Max 3 jobs queued. Wait or cancel one.`); }
+            else if (r.status === 429) { showNotif('Max 3 jobs queued. Wait for one to finish or cancel one.'); }
             else { log('Error: ' + (d.error || 'Failed'), 'error'); }
             return;
         }
@@ -1346,11 +1460,7 @@ function startJobPoll(jobId){
                 // bar fills and the "Step N/M" label ticks.
                 renderQueue();
             } else if(d.status==='queued'){
-                const elapsed=(Date.now()-startTime)/1000;
-                if(elapsed>4 && !_coldShown && Object.keys(pollTimers).length===1){
-                    _coldShown=true;
-                    
-                }
+                // Still queued — no-op; renderQueue driven by 1Hz ticker
             } else {
                 // Same status, but stage/step may have changed — re-render
                 renderQueue();
@@ -1393,83 +1503,56 @@ function renderQueue(){
     const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (a.submittedAt || 0) - (b.submittedAt || 0));
     const now = Date.now();
 
-    // Active queue section (GPU state badge + individual job tiles)
+    // Active queue section — ONLY shows user jobs. All GPU state (cold /
+    // warming with stage / ready) is communicated via the header badge.
     const activeSection = $('qActiveSection');
     const activeList = $('qActiveList');
     $('queueCount').textContent = `${activeJobs.length}/3`;
 
-    // Decide whether to show the GPU warming progress in the queue. Only
-    // during warming — cold and ready states are handled by the header badge.
-    const showBadge = _gpuState.state === 'warming';
-
-    if (activeJobs.length > 0 || showBadge) {
+    if (activeJobs.length > 0) {
         activeSection.style.display = '';
         activeList.innerHTML = '';
 
-        if (showBadge) {
-            const badge = document.createElement('div');
-            badge.className = `gpu-state-badge ${_gpuState.state}`;
-            if (_gpuState.state === 'warming') {
-                // Map Modal's setup stages to user-friendly labels + % anchors.
-                // These anchors roughly match real time spent on an L4:
-                //   booting 0s-2s  loading_transformer ~10-15s
-                //   loading_text_encoder ~15s  building_pipeline ~5s
-                //   compiling ~60s (longest)  warming_up ~20s  ready = done
-                const stageMap = {
-                    booting:              { label: 'Starting container',   pct: 2  },
-                    loading_transformer:  { label: 'Loading model (5GB)',  pct: 8  },
-                    loading_text_encoder: { label: 'Loading text encoder', pct: 18 },
-                    building_pipeline:    { label: 'Building pipeline',    pct: 25 },
-                    compiling:            { label: 'Compiling kernels',    pct: 30 }, // overridden below
-                    warming_up:           { label: 'Final warmup',         pct: 90 },
-                    ready:                { label: 'GPU ready',            pct: 100 },
-                };
-                const stage = _gpuState.startup_stage;
-                let label, pct;
-                if (stage && stageMap[stage]) {
-                    label = stageMap[stage].label;
-                    pct = stageMap[stage].pct;
-                    // For compiling, use real block progress so the bar moves
-                    // continuously over the longest phase.
-                    if (stage === 'compiling' && _gpuState.startup_total > 0) {
-                        const frac = Math.min(1, _gpuState.startup_progress / _gpuState.startup_total);
-                        pct = 30 + frac * 55;  // 30% at block 0, 85% at block 60
-                        label = `Compiling ${_gpuState.startup_progress}/${_gpuState.startup_total} blocks`;
-                    }
-                } else {
-                    // No heartbeat yet — we know warmup was triggered, just don't
-                    // know the stage. Show a conservative generic label.
-                    const sinceReceived = _gpuState._receivedAt ? Math.floor((Date.now() - _gpuState._receivedAt) / 1000) : 0;
-                    const liveWarmingFor = (_gpuState.warming_for_s || 0) + sinceReceived;
-                    label = `Spinning up GPU · ${liveWarmingFor}s`;
-                    pct = Math.min(10, liveWarmingFor / 6);  // 10% max until heartbeat arrives
-                }
-                badge.innerHTML = `
-                    <span>⚡ ${label}</span>
-                    <span class="gpu-state-badge-progress"><span class="gpu-state-badge-progress-fill" style="width:${pct}%"></span></span>
-                `;
+        // Remove any tile whose job is no longer active (completed / cancelled
+        // / removed from the visible queue). We identify tiles by data-job-id.
+        const activeIds = new Set(activeJobs.map(j => j.id));
+        for (const child of Array.from(activeList.children)) {
+            if (!activeIds.has(child.dataset.jobId)) {
+                child.remove();
             }
-            activeList.appendChild(badge);
         }
 
         for (const j of activeJobs) {
-            const tile = document.createElement('div');
-            tile.className = `job-tile ${j.status}`;
-
-            // Motion on the thumbnail is reserved for tiles that are *actually*
-            // burning GPU cycles — running with a generating/encoding stage.
-            // Queued / waiting / running-fetching show a calmer dimmed thumbnail
-            // since their visual "story" is told by the GPU state badge above.
-            const activelyGenerating =
-                j.status === 'running' && (j.stage === 'generating' || j.stage === 'encoding');
-            const thumbContent = activelyGenerating
-                ? `<img src="${j.thumb||''}"><div class="mini-spinner"></div>`
-                : `<img src="${j.thumb||''}">`;
+            // Reuse the existing tile DOM node if we already have one for this
+            // job. This is critical: the spinner's CSS animation and the
+            // progress bar's width transition only play smoothly when the
+            // same element is updated in place — rebuilding via innerHTML
+            // destroys the element, resetting the spinner to 0° and making
+            // the browser treat width changes as initial values (no transition).
+            let tile = activeList.querySelector(`[data-job-id="${j.id}"]`);
+            const isNew = !tile;
+            if (isNew) {
+                tile = document.createElement('div');
+                tile.dataset.jobId = j.id;
+                // Skeleton created once, then updated in place. No spinner —
+                // state is communicated via border color + progress bar fill +
+                // label text, which stay stable across re-renders.
+                tile.innerHTML = `
+                    <div class="job-thumb"><img></div>
+                    <div class="job-info">
+                        <div class="job-status"></div>
+                        <div class="job-mode"></div>
+                        <div class="job-progress"><div class="job-progress-fill" style="width:0%"></div></div>
+                    </div>
+                    <button class="job-cancel" title="Cancel & refund" style="display:none">×</button>
+                `;
+                activeList.appendChild(tile);
+            }
 
             // Compute label + progress %. Percentages are rough anchors, not precise.
-            //   queued / waiting  →  2%   (details live in the GPU badge above)
+            //   queued / waiting  →  2-5%
             //   fetching          → 12%
-            //   generating s/N    → 20 + (s/N)*65
+            //   generating s/N    → smoothly animated between 20 and 85
             //   encoding          → 92%
             let statusText, statusIcon, subtext, pct = 2;
             const stage = j.stage || null;
@@ -1482,8 +1565,6 @@ function renderQueue(){
                 subtext = `${j.mode.toUpperCase()} · ${waited}s`;
                 pct = 2;
             } else if (j.status === 'waiting') {
-                // Don't duplicate what the GPU badge already says — just show
-                // the job is in the queue and how long it's been waiting.
                 const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
                 statusIcon = '⏳'; statusText = 'Queued';
                 subtext = `${j.mode.toUpperCase()} · ${waited}s`;
@@ -1498,8 +1579,19 @@ function renderQueue(){
                     statusIcon = '⚡'; statusText = 'Generating';
                     if (total > 0) {
                         subtext = `Step ${Math.max(step, 0)}/${total} · ${elapsed}s`;
-                        const frac = Math.min(1, Math.max(0, step / total));
-                        pct = 20 + frac * 65;
+                        // Track when the current step started so the bar can
+                        // animate continuously between step pings (which only
+                        // fire every ~3s for a 4-step generation).
+                        if (j._lastStep !== step) {
+                            j._lastStep = step;
+                            j._stepStartMs = Date.now();
+                        }
+                        // Assume ~3s per step as the growth window. Capped at 1
+                        // so we don't overshoot if a step takes longer.
+                        const stepElapsedMs = Date.now() - (j._stepStartMs || Date.now());
+                        const intraStep = Math.min(1, stepElapsedMs / 3000);
+                        const pctPerStep = 65 / Math.max(1, total);
+                        pct = 20 + (step * pctPerStep) + (intraStep * pctPerStep);
                     } else {
                         subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                         pct = 30;
@@ -1509,7 +1601,6 @@ function renderQueue(){
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 92;
                 } else {
-                    // Running but no stage reported yet — show generic
                     statusIcon = '⚡'; statusText = 'Generating';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 20;
@@ -1519,21 +1610,25 @@ function renderQueue(){
                 subtext = j.mode.toUpperCase();
             }
 
-            // Cancel allowed before GPU compute starts (queued, waiting, or
-            // running/fetching — the R2 download phase). Uses the shared
-            // canCancelJob helper that mirrors the server's policy.
             const canCancel = canCancelJob(j);
-            const pctClamped = Math.max(0, Math.min(100, Math.round(pct)));
-            tile.innerHTML = `
-                <div class="job-thumb">${thumbContent}</div>
-                <div class="job-info">
-                    <div class="job-status">${statusIcon} ${statusText}</div>
-                    <div class="job-mode">${subtext}</div>
-                    <div class="job-progress"><div class="job-progress-fill" style="width:${pctClamped}%"></div></div>
-                </div>
-                ${canCancel ? `<button class="job-cancel" onclick="event.stopPropagation(); cancelJob('${j.id}')" title="Cancel & refund">×</button>` : ''}
-            `;
-            activeList.appendChild(tile);
+            const pctClamped = Math.max(0, Math.min(100, pct));
+
+            // In-place updates — only modify what changed. This preserves the
+            // progress bar's width transition and avoids any element creation
+            // that would trigger layout/animation restarts.
+            tile.className = `job-tile ${j.status}`;
+            const img = tile.querySelector('.job-thumb img');
+            if (img.src !== (j.thumb || '')) img.src = j.thumb || '';
+            tile.querySelector('.job-status').textContent = `${statusIcon} ${statusText}`;
+            tile.querySelector('.job-mode').textContent = subtext;
+            tile.querySelector('.job-progress-fill').style.width = pctClamped.toFixed(2) + '%';
+            const cancelBtn = tile.querySelector('.job-cancel');
+            if (canCancel) {
+                cancelBtn.style.display = '';
+                cancelBtn.onclick = (ev) => { ev.stopPropagation(); cancelJob(j.id); };
+            } else {
+                cancelBtn.style.display = 'none';
+            }
         }
     } else {
         activeSection.style.display = 'none';
@@ -1690,7 +1785,7 @@ function restoreFromHistory(j){
     showResult({ url: j.url, w: j.w, h: j.h, prompt: j.prompt, seed: j.seed, elapsed: j.elapsed, mode: j.mode });
     // Update prompt + seed at minimum — full settings aren't stored in history items
     if ($('promptInput') && j.prompt) $('promptInput').value = j.prompt;
-    if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').textContent = j.seed; }
+    if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
 }
 
@@ -1741,14 +1836,14 @@ function restoreJobState(jobId){
     if($('promptInput')) $('promptInput').value=s.prompt||'';
     if($('customPrompt')) $('customPrompt').value=s.prompt||'';
     if($('negPrompt')) $('negPrompt').value=s.negative_prompt||'';
-    $('rngSeed').value=s.seed||42; $('vSeed').textContent=s.seed||42;
-    $('rngCfg').value=s.guidance_scale||1; $('vCfg').textContent=s.guidance_scale||1;
-    $('rngSteps').value=s.inference_steps||4; $('vSteps').textContent=s.inference_steps||4;
+    $('rngSeed').value=s.seed||42; $('vSeed').value=s.seed||42;
+    $('rngCfg').value=s.guidance_scale||1; $('vCfg').value=s.guidance_scale||1;
+    $('rngSteps').value=s.inference_steps||4; $('vSteps').value=s.inference_steps||4;
     // New per-LoRA sliders. Fall back to legacy single lora_scale if snapshot is old.
     const lightVal = (s.lora_lightning != null) ? s.lora_lightning : 1.0;
     const anglesVal = (s.lora_angles != null) ? s.lora_angles : (s.lora_scale != null ? s.lora_scale : 0.9);
-    $('rngLoraLightning').value = lightVal; $('vLoraLightning').textContent = lightVal;
-    $('rngLoraAngles').value = anglesVal; $('vLoraAngles').textContent = anglesVal;
+    $('rngLoraLightning').value = lightVal; $('vLoraLightning').value = lightVal;
+    $('rngLoraAngles').value = anglesVal; $('vLoraAngles').value = anglesVal;
     if(s.width) $('inpWidth').value=s.width;
     if(s.height) $('inpHeight').value=s.height;
     updateGenButton();
@@ -1794,7 +1889,7 @@ function showResult(d){
     lastResult=d;
     $('outImg').src=d.url; $('outImg').style.display='';
     $('outPh').style.display='none';
-    $('rngSeed').value=d.seed; $('vSeed').textContent=d.seed;
+    $('rngSeed').value=d.seed; $('vSeed').value=d.seed;
     $('resultBar').style.display='flex';
     const tag=d.mode==='camera'?'':'✏️ ';
     $('resultText').textContent=`${tag}${d.w}×${d.h} · ${d.elapsed}s · seed:${d.seed}`;
@@ -1803,10 +1898,61 @@ function showResult(d){
 }
 
 // ── Init ──────────────────────────────────────────
+// Wire up a slider + number-input pair for two-way binding:
+//   - moving the slider updates the number field
+//   - typing into the number field updates the slider (clamped to min/max)
+// Called once at page load for each Seed / CFG / Steps / Lightning / Angles pair.
+function bindSliderPair(sliderId, inputId){
+    const slider = $(sliderId);
+    const input  = $(inputId);
+    if (!slider || !input) return;
+    const min = parseFloat(slider.min), max = parseFloat(slider.max);
+    slider.addEventListener('input', () => { input.value = slider.value; });
+    const syncFromInput = () => {
+        let v = parseFloat(input.value);
+        if (isNaN(v)) return;
+        if (v < min) v = min;
+        if (v > max) v = max;
+        slider.value = v;
+        input.value = v;
+    };
+    input.addEventListener('change', syncFromInput);
+    // Also sync on Enter so the user doesn't have to tab out to commit
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); syncFromInput(); input.blur(); }
+    });
+}
+
 document.addEventListener('DOMContentLoaded',()=>{
     initViewport();
     initDrop();
     initSlots();
+    restorePersistedInputs();
+    // Two-way binding for all slider / number-input pairs
+    // Seed: no slider (useless across a 0–2^31 range), keep rngSeed hidden
+    //       input in sync with vSeed so legacy code reading rngSeed still works.
+    (function bindSeed(){
+        const input  = $('vSeed');
+        const hidden = $('rngSeed');
+        if (!input || !hidden) return;
+        const sync = () => {
+            let v = parseInt(input.value, 10);
+            if (isNaN(v)) return;
+            if (v < 0) v = 0;
+            if (v > 2147483647) v = 2147483647;
+            input.value = v;
+            hidden.value = v;
+        };
+        input.addEventListener('change', sync);
+        input.addEventListener('input', () => { hidden.value = input.value; });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); sync(); input.blur(); }
+        });
+    })();
+    bindSliderPair('rngCfg',            'vCfg');
+    bindSliderPair('rngSteps',          'vSteps');
+    bindSliderPair('rngLoraLightning',  'vLoraLightning');
+    bindSliderPair('rngLoraAngles',     'vLoraAngles');
     checkAuth();
     pollStatus();
     pollQueue();
@@ -1815,6 +1961,38 @@ document.addEventListener('DOMContentLoaded',()=>{
     setInterval(checkAuth,30000);
     log('Studio ready');
 });
+
+// Restore camera-mode single input and edit-mode slots from localStorage so
+// uploaded images survive a page refresh. Only references (R2 id + url) are
+// stored locally — the actual image bytes live in R2.
+function restorePersistedInputs(){
+    try {
+        const raw = localStorage.getItem('studio_input');
+        if (raw) {
+            const d = JSON.parse(raw);
+            if (d && d.id && d.url) {
+                setInputImage(d.id, d.url, d.w, d.h);
+            }
+        }
+    } catch (e) {}
+    try {
+        const raw = localStorage.getItem('studio_slots');
+        if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+                for (let i = 0; i < Math.min(3, arr.length); i++) {
+                    if (arr[i] && arr[i].id && arr[i].url) {
+                        slots[i] = arr[i];
+                        renderSlot(i);
+                        if (arr[i].w) $('inpWidth').value = arr[i].w;
+                        if (arr[i].h) $('inpHeight').value = arr[i].h;
+                    }
+                }
+                updateGenButton();
+            }
+        }
+    } catch (e) {}
+}
 </script>
 
 </body>
