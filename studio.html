@@ -1623,20 +1623,39 @@ function renderQueue(){
                 } else if (stage === 'generating') {
                     statusIcon = '⚡'; statusText = 'Generating';
                     if (total > 0) {
-                        subtext = `Step ${Math.max(step, 0)}/${total} · ${elapsed}s`;
-                        // Track when the current step started so the bar can
-                        // animate continuously between step pings (which only
-                        // fire every ~3s for a 4-step generation).
-                        if (j._lastStep !== step) {
-                            j._lastStep = step;
-                            j._stepStartMs = Date.now();
+                        // Per-step pings (callback_on_step_end) give us step counts
+                        // during denoising. BEFORE the first real step callback
+                        // there's a ~5-15s window where text encoding + image VAE
+                        // encoding happens. We show "Preparing..." with a slow
+                        // growing bar + rough ETA so the user isn't staring at
+                        // "Step 0/4" thinking it's frozen.
+                        if (step < 1) {
+                            statusText = 'Preparing';
+                            // Typical per-step ~3s for 4-step Lightning, ~2.5s for
+                            // 20-step, ~2s for 40-step quality. Rough ETA = total *
+                            // per-step estimate + ~8s prep overhead.
+                            const perStepEst = total <= 8 ? 3 : 2.2;
+                            const etaTotal = Math.round(8 + total * perStepEst);
+                            const remaining = Math.max(0, etaTotal - elapsed);
+                            subtext = `${elapsed}s · ~${remaining}s left`;
+                            // Prep window bar: grow from 15% → 25% over ~12s,
+                            // based on elapsed time since entering the stage.
+                            const prepRamp = Math.min(1, elapsed / 12);
+                            pct = 15 + prepRamp * 10;
+                        } else {
+                            subtext = `Step ${step}/${total} · ${elapsed}s`;
+                            // Track when the current step started so the bar can
+                            // animate continuously between step pings (which only
+                            // fire every ~2-3s).
+                            if (j._lastStep !== step) {
+                                j._lastStep = step;
+                                j._stepStartMs = Date.now();
+                            }
+                            const stepElapsedMs = Date.now() - (j._stepStartMs || Date.now());
+                            const intraStep = Math.min(1, stepElapsedMs / 3000);
+                            const pctPerStep = 65 / Math.max(1, total);
+                            pct = 25 + ((step - 1) * pctPerStep) + (intraStep * pctPerStep);
                         }
-                        // Assume ~3s per step as the growth window. Capped at 1
-                        // so we don't overshoot if a step takes longer.
-                        const stepElapsedMs = Date.now() - (j._stepStartMs || Date.now());
-                        const intraStep = Math.min(1, stepElapsedMs / 3000);
-                        const pctPerStep = 65 / Math.max(1, total);
-                        pct = 20 + (step * pctPerStep) + (intraStep * pctPerStep);
                     } else {
                         subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                         pct = 30;
