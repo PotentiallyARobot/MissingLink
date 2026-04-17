@@ -1159,6 +1159,27 @@ async function syncHistory(opts){
 }
 
 // ── Uploads ───────────────────────────────────────
+
+// Read an image File's natural width/height without uploading. Used so the
+// Width/Height fields populate immediately instead of showing "auto" after
+// upload (the server doesn't decode images and doesn't return dimensions).
+function readImageDimensions(file){
+    return new Promise((resolve) => {
+        try {
+            const url = URL.createObjectURL(file);
+            const im = new Image();
+            im.onload = () => {
+                resolve({ w: im.naturalWidth, h: im.naturalHeight });
+                URL.revokeObjectURL(url);
+            };
+            im.onerror = () => { resolve({ w: 0, h: 0 }); URL.revokeObjectURL(url); };
+            im.src = url;
+        } catch (e) {
+            resolve({ w: 0, h: 0 });
+        }
+    });
+}
+
 function initDrop(){
     const z=$('dropzone'),inp=$('fileInput');
     ['dragenter','dragover'].forEach(e=>z.addEventListener(e,ev=>{ev.preventDefault();z.classList.add('over');}));
@@ -1169,14 +1190,17 @@ function initDrop(){
 
 async function uploadFile(file){
     if(!_user){ $('loginModal').classList.add('open'); return; }
+    // Read dimensions client-side so Width/Height populate immediately
+    const dims = await readImageDimensions(file);
     const fd=new FormData(); fd.append('image',file);
     try{
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
         if(d.error){ showNotif(d.error, 'error'); return; }
-        setInputImage(d.id,d.url,d.w,d.h);
-        log(`Uploaded ${file.name}`);
+        // Prefer server-returned dims if available, else use client-read dims
+        setInputImage(d.id, d.url, d.w || dims.w, d.h || dims.h);
+        log(`Uploaded ${file.name} (${dims.w}×${dims.h})`);
     }catch(e){ showNotif('Upload failed. Check your connection and try again.', 'error'); }
 }
 
@@ -1189,6 +1213,24 @@ function setInputImage(id,url,w,h){
     if(w) $('inpWidth').value=w;
     if(h) $('inpHeight').value=h;
     updateGenButton();
+    // Guarantee Width/Height are populated even if caller didn't pass them
+    // (e.g. restoring from localStorage entries created before the dimension
+    // read was added). Load the actual image URL and copy natural dims.
+    if (!w || !h) {
+        const probe = new Image();
+        probe.onload = () => {
+            const pw = probe.naturalWidth, ph = probe.naturalHeight;
+            if (pw && !$('inpWidth').value) $('inpWidth').value = pw;
+            if (ph && !$('inpHeight').value) $('inpHeight').value = ph;
+            // Persist the now-known dimensions
+            try {
+                localStorage.setItem('studio_input', JSON.stringify({
+                    id, url, w: pw || null, h: ph || null,
+                }));
+            } catch (e) {}
+        };
+        probe.src = url;
+    }
     // Persist so a page refresh doesn't erase the user's upload
     try {
         localStorage.setItem('studio_input', JSON.stringify({
@@ -1230,14 +1272,17 @@ function slotFileChange(i){
 
 async function uploadToSlot(i,file){
     if(!_user){ $('loginModal').classList.add('open'); return; }
+    // Read dimensions client-side before upload so Width/Height populate right away
+    const dims = await readImageDimensions(file);
     const fd=new FormData(); fd.append('image',file);
     try{
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
         if(d.error){ showNotif(d.error, 'error'); return; }
-        slots[i]={id:d.id,url:d.url,filename:d.filename,w:d.w,h:d.h};
-        $('inpWidth').value=d.w; $('inpHeight').value=d.h;
+        const w = d.w || dims.w, h = d.h || dims.h;
+        slots[i]={id:d.id,url:d.url,filename:d.filename,w:w,h:h};
+        $('inpWidth').value=w; $('inpHeight').value=h;
         renderSlot(i);
         updateGenButton();
         persistSlots();
@@ -2009,6 +2054,17 @@ function restorePersistedInputs(){
                         renderSlot(i);
                         if (arr[i].w) $('inpWidth').value = arr[i].w;
                         if (arr[i].h) $('inpHeight').value = arr[i].h;
+                        // Backfill dims from the image URL if they weren't saved
+                        if (!arr[i].w || !arr[i].h) {
+                            const probe = new Image();
+                            probe.onload = (function(idx, im){ return function(){
+                                const pw = im.naturalWidth, ph = im.naturalHeight;
+                                if (pw && !$('inpWidth').value) $('inpWidth').value = pw;
+                                if (ph && !$('inpHeight').value) $('inpHeight').value = ph;
+                                if (slots[idx]) { slots[idx].w = pw; slots[idx].h = ph; persistSlots(); }
+                            };})(i, probe);
+                            probe.src = arr[i].url;
+                        }
                     }
                 }
                 updateGenButton();
