@@ -436,7 +436,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <span class="dim-hint">Set by upload</span>
         </div>
         <div class="slider-row"><span class="sl">Seed</span><input type="number" class="seed-input" id="vSeed" value="42" min="0" max="2147483647" step="1" placeholder="any integer 0–2147483647"><input type="hidden" id="rngSeed" value="42"></div>
-        <label class="check-row"><input type="checkbox" id="chkRand" checked> Randomize Seed</label>
+        <label class="check-row"><input type="checkbox" id="chkRand"> Randomize Seed</label>
         <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5"><input type="number" class="sv" id="vCfg" value="1" min="1" max="8" step="0.5"></div>
         <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
         <div class="slider-row camera-only"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
@@ -1931,10 +1931,24 @@ document.addEventListener('DOMContentLoaded',()=>{
     // Two-way binding for all slider / number-input pairs
     // Seed: no slider (useless across a 0–2^31 range), keep rngSeed hidden
     //       input in sync with vSeed so legacy code reading rngSeed still works.
+    //       Typing or focusing in the seed field auto-unchecks "Randomize Seed"
+    //       because the user is clearly asking for a reproducible run.
+    //       The seed field is also styled as disabled when Randomize is on so
+    //       the user SEES their value won't be used.
     (function bindSeed(){
         const input  = $('vSeed');
         const hidden = $('rngSeed');
+        const rand   = $('chkRand');
         if (!input || !hidden) return;
+        const updateDisabledLook = () => {
+            if (rand && rand.checked) {
+                input.style.opacity = '0.45';
+                input.title = 'Randomize Seed is on — your typed seed will be ignored. Uncheck to use the value shown.';
+            } else {
+                input.style.opacity = '';
+                input.title = '';
+            }
+        };
         const sync = () => {
             let v = parseInt(input.value, 10);
             if (isNaN(v)) return;
@@ -1944,10 +1958,19 @@ document.addEventListener('DOMContentLoaded',()=>{
             hidden.value = v;
         };
         input.addEventListener('change', sync);
-        input.addEventListener('input', () => { hidden.value = input.value; });
+        input.addEventListener('input', () => {
+            hidden.value = input.value;
+            if (rand && rand.checked) { rand.checked = false; updateDisabledLook(); }
+        });
+        input.addEventListener('focus', () => {
+            // Focusing the seed field is intent to set a seed — disable randomize
+            if (rand && rand.checked) { rand.checked = false; updateDisabledLook(); }
+        });
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); sync(); input.blur(); }
         });
+        if (rand) rand.addEventListener('change', updateDisabledLook);
+        updateDisabledLook();
     })();
     bindSliderPair('rngCfg',            'vCfg');
     bindSliderPair('rngSteps',          'vSteps');
