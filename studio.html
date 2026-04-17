@@ -30,9 +30,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .app-header h1{font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim)}
 .app-header h1 span{color:var(--gold)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
-.hdr-badge{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:3px 8px;border:1px solid var(--border);border-radius:4px;display:flex;align-items:center;gap:5px}
+.hdr-badge{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:3px 8px;border:1px solid var(--border);border-radius:4px;display:flex;align-items:center;gap:5px;min-width:115px;justify-content:flex-start;white-space:nowrap}
 .hdr-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--text-muted);transition:background .3s}
 .hdr-badge .dot.on{background:var(--green);animation:pulse 2s infinite}
+.hdr-badge .dot.warm{background:var(--gold);animation:pulse 1.2s infinite}
+.hdr-badge .dot.cold{background:var(--text-muted)}
+.hdr-badge .dot.off{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .hdr-btn{background:none;border:1px solid var(--border);color:var(--text-muted);font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:4px;cursor:pointer;transition:all .15s}
 .hdr-btn:hover{border-color:var(--gold);color:var(--gold)}
@@ -302,9 +305,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <img class="user-avatar" id="userAvatar" src="" onerror="this.style.display='none'">
             <button class="hdr-btn" onclick="doLogout()" title="Sign out">Sign Out</button>
         </div>
-        <div class="hdr-badge" id="connBadge"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <button class="hdr-btn" id="btnGpu" onclick="toggleHW()">📋 History</button>
         <button class="hdr-btn" id="btnConsole" onclick="toggleConsole()">▸ Console</button>
+        <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
     </div>
 </header>
 
@@ -954,17 +957,39 @@ async function pollStatus(){
     try{
         const r=await fetchT(`${API}/api/studio/status`,null,6000);
         const d=await r.json();
-        $('connDot').className='dot on'; $('connLabel').textContent='Connected';
         if(d.gpu){
             const prevState = _gpuState.state;
-            // Stash receive time so we can tick warming_for_s locally between polls
             _gpuState = Object.assign({}, d.gpu, { _receivedAt: Date.now() });
             if(prevState !== d.gpu.state || d.gpu.state === 'warming'){
                 renderQueue();
             }
         }
+        updateHeaderStatusBadge(true);
     }catch(e){
-        $('connDot').className='dot'; $('connLabel').textContent='Disconnected';
+        updateHeaderStatusBadge(false);
+    }
+}
+
+// The header badge is the single at-a-glance indicator: when disconnected it
+// says so; when connected it reflects GPU state (cold / warming / ready).
+// The detailed warming progress bar still lives in the queue area.
+function updateHeaderStatusBadge(connected){
+    const dot = $('connDot'); const label = $('connLabel');
+    if (!connected) {
+        dot.className = 'dot off';
+        label.textContent = 'Offline';
+        return;
+    }
+    const state = _gpuState.state || 'cold';
+    if (state === 'ready') {
+        dot.className = 'dot on';
+        label.textContent = 'GPU ready';
+    } else if (state === 'warming') {
+        dot.className = 'dot warm';
+        label.textContent = 'GPU warming';
+    } else {
+        dot.className = 'dot cold';
+        label.textContent = 'GPU cold';
     }
 }
 
@@ -1276,10 +1301,13 @@ function startJobPoll(jobId){
             const job=myJobs.find(j=>j.id===jobId);
             if(!job){ clearInterval(pollTimers[jobId]); delete pollTimers[jobId]; return; }
 
-            // Pick up latest progress fields regardless of status transition
-            if(d.stage !== undefined) job.stage = d.stage;
-            if(d.step !== undefined) job.step = d.step;
-            if(d.total_steps !== undefined) job.totalSteps = d.total_steps;
+            // Pick up latest progress fields regardless of status transition.
+            // Track whether they changed so we can redraw even when status stays
+            // the same (e.g. running→running as step goes 1→2→3→4).
+            let progressChanged = false;
+            if(d.stage !== undefined && d.stage !== job.stage){ job.stage = d.stage; progressChanged = true; }
+            if(d.step !== undefined && d.step !== job.step){ job.step = d.step; progressChanged = true; }
+            if(d.total_steps !== undefined && d.total_steps !== job.totalSteps){ job.totalSteps = d.total_steps; progressChanged = true; }
 
             if(d.status==='done'){
                 job.status='done';
@@ -1313,6 +1341,10 @@ function startJobPoll(jobId){
                 if(!job.runningAt) job.runningAt=Date.now();
                 if(!job.startedAt) job.startedAt=Date.now();
                 renderQueue();
+            } else if(progressChanged){
+                // Same status, but stage/step advanced — redraw so the progress
+                // bar fills and the "Step N/M" label ticks.
+                renderQueue();
             } else if(d.status==='queued'){
                 const elapsed=(Date.now()-startTime)/1000;
                 if(elapsed>4 && !_coldShown && Object.keys(pollTimers).length===1){
@@ -1324,7 +1356,7 @@ function startJobPoll(jobId){
                 renderQueue();
             }
         }catch(e){}
-    }, 2000);
+    }, 1000);
 }
 
 // Job is cancellable until GPU compute actually starts.
@@ -1358,7 +1390,7 @@ async function cancelJob(jobId){
 }
 
 function renderQueue(){
-    const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
+    const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (a.submittedAt || 0) - (b.submittedAt || 0));
     const now = Date.now();
 
     // Active queue section (GPU state badge + individual job tiles)
@@ -1366,12 +1398,9 @@ function renderQueue(){
     const activeList = $('qActiveList');
     $('queueCount').textContent = `${activeJobs.length}/3`;
 
-    // Decide whether to show the GPU state badge. Show it when:
-    //   - actively warming (so user sees progress even before submitting)
-    //   - just became ready (flash green for ~5s)
-    // Hide when cold and no activity (nothing to say).
-    const showBadge = _gpuState.state === 'warming' ||
-        (_gpuState.state === 'ready' && (_gpuState.ready_age_s == null || _gpuState.ready_age_s < 5));
+    // Decide whether to show the GPU warming progress in the queue. Only
+    // during warming — cold and ready states are handled by the header badge.
+    const showBadge = _gpuState.state === 'warming';
 
     if (activeJobs.length > 0 || showBadge) {
         activeSection.style.display = '';
@@ -1419,8 +1448,6 @@ function renderQueue(){
                     <span>⚡ ${label}</span>
                     <span class="gpu-state-badge-progress"><span class="gpu-state-badge-progress-fill" style="width:${pct}%"></span></span>
                 `;
-            } else {
-                badge.innerHTML = `<span>✓ GPU ready</span>`;
             }
             activeList.appendChild(badge);
         }
