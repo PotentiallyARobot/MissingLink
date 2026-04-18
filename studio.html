@@ -65,6 +65,59 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .mode-btn.active{background:var(--gold);color:var(--black)}
 
 .dropzone{border:1.5px dashed var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
+
+/* ── Batch mode UI ────────────────────────────────────────────── */
+.batch-inputs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.batch-inputs-grid:empty{display:none}
+.batch-input-tile{
+    position:relative;aspect-ratio:1/1;border-radius:5px;overflow:hidden;
+    background:var(--surface-3);border:2px solid var(--border);cursor:pointer;
+    transition:all .12s;
+}
+.batch-input-tile:hover{border-color:var(--border-strong)}
+.batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.batch-input-tile img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.batch-input-tile .bit-check{
+    position:absolute;top:4px;left:4px;width:16px;height:16px;border-radius:3px;
+    background:rgba(0,0,0,.6);border:1.5px solid #fff;
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:11px;font-weight:700;line-height:1;
+    backdrop-filter:blur(4px);
+    transition:all .12s;
+}
+.batch-input-tile.selected .bit-check{background:var(--gold);border-color:var(--gold);color:#0a0a0c}
+.batch-input-tile .bit-check::before{content:""}
+.batch-input-tile.selected .bit-check::before{content:"✓"}
+.batch-input-tile .bit-remove{
+    position:absolute;top:4px;right:4px;width:18px;height:18px;border-radius:50%;
+    background:rgba(0,0,0,.7);border:none;color:#fff;cursor:pointer;
+    font-size:11px;line-height:1;padding:0;
+    display:flex;align-items:center;justify-content:center;
+    opacity:0;transition:opacity .12s;
+}
+.batch-input-tile:hover .bit-remove{opacity:1}
+.batch-input-tile .bit-remove:hover{background:rgba(239,68,68,.9)}
+.batch-input-tile .bit-label{
+    position:absolute;bottom:0;left:0;right:0;
+    padding:3px 5px;
+    background:linear-gradient(180deg,transparent,rgba(0,0,0,.75));
+    color:#fff;font-size:9px;font-weight:500;text-align:center;
+    pointer-events:none;
+}
+.batch-select-controls{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.batch-mini-btn{
+    padding:4px 10px;font-family:var(--font-mono);font-size:9.5px;font-weight:600;
+    letter-spacing:.3px;text-transform:uppercase;
+    background:transparent;color:var(--text-muted);
+    border:1px solid var(--border);border-radius:3px;cursor:pointer;
+    transition:all .12s;
+}
+.batch-mini-btn:hover{color:var(--gold);border-color:var(--gold)}
+.sec-label-count{
+    margin-left:auto;font-family:var(--font-body,inherit);font-size:9.5px;
+    font-weight:400;color:var(--text-dim);letter-spacing:normal;text-transform:none;
+}
+.sec-label{display:flex;align-items:center;gap:6px}
 .dropzone.over{border-color:var(--gold);background:var(--gold-dim)}
 .dropzone input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .dz-text{color:var(--text-muted);font-size:11px}.dz-text b{color:var(--gold)}
@@ -751,6 +804,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div class="mode-toggle">
             <button class="mode-btn active" id="btnModeCamera" onclick="setMode('camera')">🎥 Camera</button>
             <button class="mode-btn" id="btnModeEdit" onclick="setMode('edit')">✏️ Edit</button>
+            <button class="mode-btn" id="btnModeBatch" onclick="setMode('batch')">📚 Batch</button>
         </div>
     </div>
 
@@ -849,6 +903,32 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div id="editingSlotBanner" style="display:none"></div>
         <div class="sec-label"><span class="icon">✏️</span> EDIT INSTRUCTION</div>
         <textarea class="custom-prompt" id="customPrompt" placeholder="Describe your edit...&#10;e.g. &quot;The girl in image 1 wears the dress from image 2&quot;&#10;or &quot;Remove the background&quot;" rows="4" oninput="updateGenButton()"></textarea>
+    </div>
+
+    <!-- BATCH MODE — upload N images, apply same edit to selected set -->
+    <div class="sec batch-only" id="secBatchInput" style="display:none">
+        <div class="sec-label"><span class="icon">📚</span> BATCH INPUTS
+            <span class="sec-label-count" id="batchInputsCount"></span>
+        </div>
+        <div class="dropzone" id="batchDropzone">
+            <div class="dropzone-hint">Drop multiple images here<br><span style="font-size:10px;color:var(--text-dim)">or click to select</span></div>
+            <input type="file" id="batchFileInput" accept="image/*" multiple style="display:none">
+        </div>
+        <!-- Grid of thumbnails, each with a select checkbox and remove ✕ button.
+             Only rendered when there are inputs. -->
+        <div class="batch-inputs-grid" id="batchInputsGrid"></div>
+        <!-- Bulk-select / clear-all controls. Hidden when no inputs. -->
+        <div class="batch-select-controls" id="batchSelectControls" style="display:none">
+            <button type="button" class="batch-mini-btn" onclick="batchSelectAll(true)">Select all</button>
+            <button type="button" class="batch-mini-btn" onclick="batchSelectAll(false)">Deselect all</button>
+            <button type="button" class="batch-mini-btn" onclick="batchClearInputs()">Clear</button>
+        </div>
+    </div>
+    <div class="sec batch-only" style="display:none">
+        <div class="sec-label"><span class="icon">✏️</span> EDIT INSTRUCTION
+            <span class="sec-label-count">applied to each selected image</span>
+        </div>
+        <textarea class="custom-prompt" id="batchPrompt" placeholder="Describe the edit to apply to every selected image...&#10;e.g. &quot;Remove the background&quot;&#10;or &quot;Convert to oil painting style&quot;" rows="4" oninput="updateGenButton()"></textarea>
     </div>
 
     <!-- SHARED SETTINGS -->
@@ -1537,13 +1617,18 @@ function setMode(mode){
         _editingBatchSlot = null;
         renderEditingSlotBanner();
     }
-    currentMode=mode;
-    const isCam=mode==='camera';
-    $('btnModeCamera').classList.toggle('active',isCam);
-    $('btnModeEdit').classList.toggle('active',!isCam);
-    document.querySelectorAll('.camera-only').forEach(el=>el.style.display=isCam?'':'none');
-    document.querySelectorAll('.edit-only').forEach(el=>el.style.display=isCam?'none':'');
-    $('outPh').textContent=isCam?'Upload an image and generate':'Add image(s) and describe your edit';
+    currentMode = mode;
+    $('btnModeCamera').classList.toggle('active', mode === 'camera');
+    $('btnModeEdit').classList.toggle('active', mode === 'edit');
+    const btnBatch = $('btnModeBatch');
+    if (btnBatch) btnBatch.classList.toggle('active', mode === 'batch');
+    document.querySelectorAll('.camera-only').forEach(el => el.style.display = mode === 'camera' ? '' : 'none');
+    document.querySelectorAll('.edit-only').forEach(el => el.style.display = mode === 'edit' ? '' : 'none');
+    document.querySelectorAll('.batch-only').forEach(el => el.style.display = mode === 'batch' ? '' : 'none');
+    const phText = mode === 'camera' ? 'Upload an image and generate'
+                 : mode === 'edit'   ? 'Add image(s) and describe your edit'
+                 :                     'Upload multiple images and describe one edit to apply to each';
+    $('outPh').textContent = phText;
     updateGenButton();
 }
 
@@ -1560,11 +1645,30 @@ function updateGenButton(){
     if(activeCount>=MAX_QUEUED){ $('btnGen').disabled=true; $('btnGen').textContent=`⏳ QUEUE FULL (${activeCount}/${MAX_QUEUED})`;
         if(btnAll){ btnAll.disabled=true; } return; }
     $('btnGen').textContent='⚡ GENERATE';
-    if(currentMode==='camera'){ $('btnGen').disabled=!imageId; }
-    else {
-        const f=slots.filter(s=>s!==null);
-        const cp=$('customPrompt')?$('customPrompt').value.trim():'';
-        $('btnGen').disabled=!(f.length>0 && cp);
+    if (currentMode === 'camera') {
+        $('btnGen').disabled = !imageId;
+    } else if (currentMode === 'batch') {
+        // Batch: need ≥1 selected input + prompt + enough tokens + headroom.
+        const selectedCount = _batchInputs.filter(b => b.selected).length;
+        const cp = $('batchPrompt') ? $('batchPrompt').value.trim() : '';
+        const needed = selectedCount * 100;
+        if (selectedCount === 0 || !cp) {
+            $('btnGen').disabled = true;
+        } else if (_user.tokens < needed) {
+            $('btnGen').disabled = true;
+            $('btnGen').textContent = `🪙 NEED ${needed} TOKENS`;
+        } else if (activeCount + selectedCount > MAX_QUEUED) {
+            $('btnGen').disabled = true;
+            $('btnGen').textContent = `⏳ NEED ${selectedCount - (MAX_QUEUED - activeCount)} FREE SLOTS`;
+        } else {
+            $('btnGen').disabled = false;
+            $('btnGen').textContent = `⚡ GENERATE ${selectedCount} × EDIT`;
+        }
+    } else {
+        // Edit mode
+        const f = slots.filter(s => s !== null);
+        const cp = $('customPrompt') ? $('customPrompt').value.trim() : '';
+        $('btnGen').disabled = !(f.length > 0 && cp);
     }
 
     // All-Angles button: camera-mode-only, needs 600 tokens, and enough
@@ -1915,6 +2019,25 @@ function initDrop(){
         if (camInp.files.length) uploadFile(camInp.files[0]);
         camInp.value = '';
     });
+
+    // Batch mode dropzone — accepts multiple files. Each file goes through
+    // batchUploadFile independently so partial failures don't lose the
+    // whole drop.
+    const bz = $('batchDropzone'), binp = $('batchFileInput');
+    if (bz && binp) {
+        ['dragenter','dragover'].forEach(e => bz.addEventListener(e, ev => { ev.preventDefault(); bz.classList.add('over'); }));
+        ['dragleave','drop'].forEach(e => bz.addEventListener(e, ev => { ev.preventDefault(); bz.classList.remove('over'); }));
+        bz.addEventListener('drop', async (ev) => {
+            const files = Array.from(ev.dataTransfer.files || []).filter(f => /^image\//.test(f.type));
+            for (const f of files) { await batchUploadFile(f); }
+        });
+        bz.addEventListener('click', () => binp.click());
+        binp.addEventListener('change', async () => {
+            const files = Array.from(binp.files || []);
+            for (const f of files) { await batchUploadFile(f); }
+            binp.value = '';
+        });
+    }
 }
 
 async function uploadFile(file){
@@ -2070,6 +2193,11 @@ function toggleLock(){
 // ── Generate ──────────────────────────────────────
 async function doGenerate(){
     if(!_user){ $('loginModal').classList.add('open'); return; }
+    // Batch mode delegates to its own dedicated submission routine — each
+    // selected input becomes its own job routed through _activeBatch.
+    if (currentMode === 'batch') {
+        return generateBatchEdits();
+    }
     if(_user.tokens<100){ showBuyModal(); return; }
 
     let payload, thumbUrl;
@@ -2217,6 +2345,218 @@ const ALL_ANGLES_BATCH = [
 // but the individual jobs persist in history as normal.
 // Schema: { id, started, shots: [{ label, prompt, jobId, status, url }], inputUrl }
 let _activeBatch = null;
+
+// ── Batch Mode state ────────────────────────────────────────────────
+// Independent from the 6-angle batch: this is user-uploaded images with
+// one shared edit prompt applied to each selected image. Shape of each
+// entry: {id, url, w, h, fname, selected}.
+let _batchInputs = [];
+
+function renderBatchInputs(){
+    const grid = $('batchInputsGrid');
+    const controls = $('batchSelectControls');
+    const countEl = $('batchInputsCount');
+    if (!grid) return;
+    grid.innerHTML = '';
+    if (_batchInputs.length === 0) {
+        if (controls) controls.style.display = 'none';
+        if (countEl) countEl.textContent = '';
+        updateGenButton();
+        return;
+    }
+    const selected = _batchInputs.filter(b => b.selected).length;
+    if (controls) controls.style.display = '';
+    if (countEl) countEl.textContent = `${selected}/${_batchInputs.length} selected`;
+    _batchInputs.forEach((inp, i) => {
+        const tile = document.createElement('div');
+        tile.className = 'batch-input-tile' + (inp.selected ? ' selected' : '');
+        tile.title = inp.fname || `Image ${i + 1}`;
+        tile.innerHTML = `
+            <img src="${inp.url}" alt="">
+            <div class="bit-check"></div>
+            <button type="button" class="bit-remove" title="Remove this image">×</button>
+            <div class="bit-label">${i + 1}</div>
+        `;
+        tile.onclick = (e) => {
+            // Remove button stops propagation itself
+            inp.selected = !inp.selected;
+            renderBatchInputs();
+        };
+        tile.querySelector('.bit-remove').onclick = (e) => {
+            e.stopPropagation();
+            _batchInputs = _batchInputs.filter(b => b !== inp);
+            renderBatchInputs();
+        };
+        grid.appendChild(tile);
+    });
+    updateGenButton();
+}
+
+function batchSelectAll(state){
+    _batchInputs.forEach(b => b.selected = state);
+    renderBatchInputs();
+}
+
+function batchClearInputs(){
+    _batchInputs = [];
+    renderBatchInputs();
+}
+
+// Upload one file to the batch inputs list. Uses the same /api/studio/upload
+// endpoint as the camera + edit modes so we get a stable R2-backed image_id.
+async function batchUploadFile(file){
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    const dims = await readImageDimensions(file);
+    const fd = new FormData();
+    fd.append('image', file);
+    try {
+        const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
+        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        const d = await r.json();
+        if (d.error) { showNotif(d.error, 'error'); return; }
+        _batchInputs.push({
+            id: d.id, url: d.url,
+            w: d.w || dims.w, h: d.h || dims.h,
+            fname: file.name,
+            selected: true,   // new uploads default to selected
+        });
+        renderBatchInputs();
+        log(`Batch input added: ${file.name} (${dims.w}×${dims.h})`);
+    } catch (e) {
+        showNotif('Upload failed: ' + e.message, 'error');
+    }
+}
+
+// Submit one edit job per selected batch input. Each job is a normal
+// edit-mode generation with image_ids=[input.id] and the shared prompt.
+// Results feed into _activeBatch so the existing grid UI fills tiles in
+// real time, same as the 6-angle flow.
+async function generateBatchEdits(){
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    const selected = _batchInputs.filter(b => b.selected);
+    if (selected.length === 0) {
+        showNotif('Select at least one image to edit.', 'error');
+        return;
+    }
+    const prompt = $('batchPrompt').value.trim();
+    if (!prompt) { showNotif('Enter an edit instruction first.', 'error'); return; }
+
+    const needed = selected.length * 100;
+    if (_user.tokens < needed) {
+        showNotif(`Need ${needed} tokens for ${selected.length} edits. You have ${_user.tokens}.`, 'error');
+        showBuyModal();
+        return;
+    }
+    const activeCount = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
+    const MAX_QUEUED = 12;
+    if (activeCount + selected.length > MAX_QUEUED) {
+        showNotif(`Not enough queue slots. You need ${selected.length} free, have ${MAX_QUEUED - activeCount}.`, 'error');
+        return;
+    }
+
+    // Seed / settings shared across the whole batch
+    const seed = parseInt($('rngSeed').value) || 42;
+    const negative = $('negPrompt').value.trim();
+    const cfg = parseFloat($('rngCfg').value);
+    const steps = parseInt($('rngSteps').value);
+    const lightning = parseFloat($('rngLoraLightning').value);
+    // No angles LoRA in edit mode — irrelevant for batch edit
+    const batchId = `bedit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    if (_editingBatchSlot) {
+        _editingBatchSlot = null;
+        renderEditingSlotBanner();
+    }
+
+    // Initialize the active-batch state. Each shot corresponds to one
+    // selected input image. The grid renderer handles variable N.
+    _activeBatch = {
+        id: batchId,
+        started: Date.now(),
+        inputUrl: selected[0].url,  // for history thumbnails
+        shots: selected.map((inp, i) => ({
+            label: `Edit ${i + 1}`,
+            prompt,
+            status: 'pending',
+            url: null,
+            jobId: null,
+            inputUrl: inp.url,   // so we can show the input in the tile placeholder
+        })),
+    };
+    renderBatchGrid();
+
+    const btn = $('btnGen');
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = `⏳ SUBMITTING 0/${selected.length}`;
+
+    let submitted = 0;
+    for (let i = 0; i < selected.length; i++) {
+        const inp = selected[i];
+        const payload = {
+            mode: 'edit',
+            image_ids: [inp.id],
+            prompt, negative_prompt: negative, seed,
+            guidance_scale: cfg, inference_steps: steps,
+            lora_lightning: lightning,
+            // Preserve the input's own dimensions per-job so each output
+            // matches its source. If the inputs vary in aspect ratio, this
+            // avoids stretching them all into one fixed shape.
+            width: inp.w || 0, height: inp.h || 0,
+            batch_id: batchId,
+        };
+        try {
+            const r = await fetchT(`${API}/api/studio/generate`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            }, 30000);
+            const d = await r.json();
+            if (!d.ok) {
+                if (r.status === 401) { $('loginModal').classList.add('open'); break; }
+                if (r.status === 402) { showBuyModal(); break; }
+                if (r.status === 429) { showNotif(`Queue full — submitted ${submitted} of ${selected.length}.`, 'error'); break; }
+                log(`Batch edit '${inp.fname}' failed: ${d.error || 'unknown'}`, 'error');
+                _activeBatch.shots[i].status = 'error';
+                renderBatchGrid();
+                continue;
+            }
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                $('tokenCount').textContent = d.tokens_remaining;
+                $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
+            }
+            _activeBatch.shots[i].jobId = d.job_id;
+            _activeBatch.shots[i].status = 'queued';
+            myJobs.unshift({
+                id: d.job_id,
+                status: 'waiting',
+                mode: 'edit',
+                thumb: inp.url,
+                result: null,
+                submittedAt: Date.now(),
+                startedAt: Date.now(),
+                batchId,
+                angleLabel: `Edit ${i + 1}`,
+            });
+            submitted++;
+            btn.textContent = `⏳ SUBMITTING ${submitted}/${selected.length}`;
+            startJobPoll(d.job_id);
+            renderQueue();
+            renderBatchGrid();
+        } catch (e) {
+            log(`Batch edit '${inp.fname}' submit error: ${e.message}`, 'error');
+            _activeBatch.shots[i].status = 'error';
+            renderBatchGrid();
+        }
+        // Small gap between submissions so the worker's DB + queue don't
+        // get hit all at once. 200ms matches the 6-angle flow.
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    log(`Submitted ${submitted}/${selected.length} batch edits (batch ${batchId})`, 'success');
+    btn.textContent = origText;
+    updateGenButton();
+}
 
 // When the user clicks the ✎ edit button on a batch tile, we set this to
 // { slotIdx, batchId } so the next Generate submission knows to route its
