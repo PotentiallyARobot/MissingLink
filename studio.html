@@ -148,6 +148,22 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 /* GPU state badge shown in queue when container is cold/warming */
 /* Notification / confirm modal — replaces native alert() and confirm() */
 .notif-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(440px,92vw);padding:22px 24px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+/* Wider variant for the embed-creation form which packs several fields */
+.notif-panel.notif-panel-wide{width:min(560px,94vw)}
+
+/* ── Embed product-metadata form ─────────────────────────────────── */
+.ef-grid{display:flex;flex-direction:column;gap:14px}
+.ef-field{display:flex;flex-direction:column;gap:5px}
+.ef-field label{font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;display:flex;align-items:baseline;gap:6px}
+.ef-field .ef-hint{font-family:var(--font-body,inherit);font-size:10px;font-weight:400;color:var(--text-dim);letter-spacing:.2px;text-transform:none}
+.ef-field input,.ef-field textarea{width:100%;padding:9px 10px;font-family:var(--font-body,inherit);font-size:13px;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;color:var(--text);outline:none;transition:border-color .12s;resize:vertical}
+.ef-field input:focus,.ef-field textarea:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(232,169,23,.12)}
+.ef-field textarea{min-height:72px;font-family:inherit;line-height:1.45}
+/* Small label pill for copy-URL blocks on the share-ready dialog */
+.ef-label-mono{display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px}
+.ef-copy-row{display:flex;gap:6px;align-items:stretch}
+.ef-copy-row input{flex:1;padding:8px 10px;font-family:var(--font-mono);font-size:11px;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;color:var(--text);outline:none}
+.ef-copy-row .notif-btn{padding:8px 14px;white-space:nowrap;font-size:11px}
 .notif-panel.notif-error{border-color:var(--red)}
 .notif-panel.notif-success{border-color:var(--green)}
 .notif-panel .notif-title{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text);letter-spacing:1px;margin-bottom:10px;text-transform:uppercase}
@@ -789,7 +805,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="q-section" id="qActiveSection" style="display:none">
                 <div class="q-header">
                     <span>QUEUE <span id="queueCount" class="q-count">0/12</span></span>
-                    <span id="queueGlobalHint" class="q-global-hint" style="display:none;margin-left:auto"></span>
+                    <span id="queueGlobalHint" class="q-global-hint" style="display:none;margin-left:6px"></span>
+                    <span style="margin-left:auto">
+                        <button id="queueMinBtn" onclick="toggleQueueMinimized()" class="q-clear" title="Minimize">▼ Hide</button>
+                    </span>
                 </div>
                 <div id="qActiveList" class="q-list"></div>
             </div>
@@ -1144,6 +1163,11 @@ let _historyLoading = false;
 // Minimized state for the sidebar history panel; persisted in localStorage.
 let _historyMinimized = (() => {
     try { return localStorage.getItem('studio_history_minimized') === '1'; }
+    catch (e) { return false; }
+})();
+// Minimized state for the queue panel; persisted alongside history minimize.
+let _queueMinimized = (() => {
+    try { return localStorage.getItem('studio_queue_minimized') === '1'; }
     catch (e) { return false; }
 })();
 let lastResult=null;
@@ -1531,6 +1555,8 @@ async function pollQueue(){
         const r=await fetchT(`${API}/api/studio/queue`,null,5000);
         const d=await r.json();
         if(d.ok && d.your_jobs){
+            const serverActiveIds = new Set(d.your_jobs.map(j => j.id));
+
             for(const srvJob of d.your_jobs){
                 let existing=myJobs.find(j=>j.id===srvJob.id);
                 if(!existing){
@@ -1563,9 +1589,94 @@ async function pollQueue(){
             }
             // Global queue depth (informational, shown in the queue header)
             _totalGlobalActive = d.total_global || 0;
+
+            // AUTHORITATIVE CLEANUP: any job in myJobs but NOT in the server's
+            // active list has finished (done/error/cancelled) since our last
+            // poll. Per-job polls normally catch this, but they can silently
+            // fail (timeout, transient 5xx, rate limit) — and once the server
+            // drops a job from /api/studio/queue its per-job 1s poll can loop
+            // forever without seeing the transition if those direct calls fail.
+            // This block ensures we always converge within one queue poll.
+            const disappeared = myJobs.filter(j =>
+                !serverActiveIds.has(j.id) &&
+                j.status !== 'done' && j.status !== 'error' && j.status !== 'cancelled'
+            );
+            for (const j of disappeared) {
+                resolveDisappearedJob(j.id);
+            }
+
             renderQueue();
         }
     }catch(e){}
+}
+
+// When pollQueue notices a job has vanished from the server's active list,
+// fetch its final state directly and feed it through the same done-handler
+// path. Handles timeouts/auth errors gracefully — if the fetch fails we
+// leave the job as-is and retry on the next queue poll.
+async function resolveDisappearedJob(jobId){
+    try {
+        const r = await fetchT(`${API}/api/studio/job/${jobId}`, null, 6000);
+        const d = await r.json();
+        if (!d.ok) return;
+        handleJobTerminal(jobId, d);
+    } catch (e) {
+        // Leave state — next queue poll will retry
+    }
+}
+
+// Single place that processes a terminal (done/error/cancelled) status
+// payload, so both the per-job poller and the queue-disappearance catcher
+// route through identical logic. Prevents divergent state between the two
+// paths.
+function handleJobTerminal(jobId, d){
+    const job = myJobs.find(j => j.id === jobId);
+    if (!job) return;
+    // Cancel per-job poll if still running
+    if (pollTimers[jobId]) { clearInterval(pollTimers[jobId]); delete pollTimers[jobId]; }
+
+    if (d.status === 'done') {
+        job.status = 'done';
+        job.result = d.result;
+        myJobs = myJobs.filter(x => x.id !== jobId);
+        renderQueue();
+        // Batch routing: active batch → fill grid slot; orphan batch → silent
+        // hand-off to history; otherwise single-result showResult.
+        let handledByBatch = false;
+        if (_activeBatch && d.result) {
+            const shot = _activeBatch.shots.find(s => s.jobId === jobId);
+            if (shot) {
+                shot.status = 'done';
+                shot.url = d.result.url;
+                shot.w = d.result.w;
+                shot.h = d.result.h;
+                shot.seed = d.result.seed;
+                shot.elapsed = d.result.elapsed;
+                renderBatchGrid();
+                handledByBatch = true;
+            }
+        }
+        if (!handledByBatch) {
+            if (job.batchId) {
+                log(`Job ${jobId} done (orphaned batch job, in history)`, 'success');
+            } else if (d.result) {
+                showResult(d.result);
+            }
+        }
+        log(`Job ${jobId} done`, 'success');
+        checkAuth();
+        syncHistory();
+    } else if (d.status === 'error' || d.status === 'cancelled') {
+        job.status = d.status;
+        job.error = d.error;
+        renderQueue();
+        if (_activeBatch) {
+            const shot = _activeBatch.shots.find(s => s.jobId === jobId);
+            if (shot) { shot.status = 'error'; renderBatchGrid(); }
+        }
+        log(`Job ${jobId} ${d.status}`, 'error');
+        checkAuth();
+    }
 }
 
 // Total non-terminal jobs across all users (from /api/studio/queue). Used
@@ -2198,28 +2309,81 @@ function renderBatchGrid(){
     }
 }
 
-// Download all successful results from the active batch. We can't make a ZIP
-// without bundling a library, so instead we trigger a sequential set of
-// direct downloads — browsers handle up to ~10 rapid downloads cleanly.
+// Lazy-loads JSZip from cdnjs on first download-all click. Cached afterwards.
+let _jszipLoaded = null;
+async function _loadJSZip(){
+    if (_jszipLoaded) return _jszipLoaded;
+    _jszipLoaded = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        s.onload = () => resolve(window.JSZip);
+        s.onerror = () => reject(new Error('Failed to load JSZip'));
+        document.head.appendChild(s);
+    });
+    return _jszipLoaded;
+}
+
+// Download all successful results from the active batch as a single ZIP.
+// Each image is fetched as a blob, added to the archive with a descriptive
+// filename, then the archive blob is triggered as one download. Single-click
+// UX rather than browser-blocked popup chains.
 async function downloadBatchAll(){
     if (!_activeBatch) return;
     const btn = $('btnDownloadAll');
-    if (btn) btn.classList.add('busy');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) { btn.classList.add('busy'); btn.disabled = true; }
     try {
-        for (let i = 0; i < _activeBatch.shots.length; i++) {
-            const shot = _activeBatch.shots[i];
-            if (!shot.url) continue;
-            const a = document.createElement('a');
-            a.href = shot.url;
-            a.download = `qwen-batch-${_activeBatch.id}-${String(i+1).padStart(2,'0')}-${shot.label.replace(/[^a-z0-9]+/gi,'_').toLowerCase()}.png`;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            await new Promise(r => setTimeout(r, 150));
+        if (btn) btn.innerHTML = '⏳ <span>Zipping…</span>';
+        const JSZip = await _loadJSZip();
+        const zip = new JSZip();
+
+        const shotsWithUrls = _activeBatch.shots
+            .map((s, i) => ({ ...s, _idx: i }))
+            .filter(s => s.url);
+        if (!shotsWithUrls.length) {
+            showNotif('No images to download yet.', 'error');
+            return;
         }
+
+        // Fetch all images in parallel — R2 serves with CORS enabled for
+        // the studio.html origin, so cross-origin fetch returns usable blobs.
+        const fetches = shotsWithUrls.map(async (shot) => {
+            try {
+                const res = await fetch(shot.url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const blob = await res.blob();
+                const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+                const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
+                zip.file(fname, blob);
+            } catch (e) {
+                log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
+            }
+        });
+        await Promise.all(fetches);
+
+        // Generate the zip blob. "store" skips compression — these are PNGs
+        // (already compressed), so DEFLATE would waste CPU with ~0 size gain.
+        const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+        const shortId = _activeBatch.id.split('_').pop() || 'batch';
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qwen-batch-${shortId}.zip`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Release the blob URL after the browser has started the download
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        log(`Downloaded ${shotsWithUrls.length}-image zip`, 'success');
+    } catch (e) {
+        showNotif('Zip failed: ' + e.message, 'error');
     } finally {
-        if (btn) btn.classList.remove('busy');
+        if (btn) {
+            btn.classList.remove('busy');
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
     }
 }
 
@@ -2318,9 +2482,13 @@ function _loadImageTo(url){
 }
 
 // ── Embed link ─────────────────────────────────────────
-// Calls the backend to persist the batch as a shareable "embed". Returns
-// a URL the user can share that opens a standalone viewer. The viewer is
-// itself a small HTML page the worker serves at /embed/{id}.
+// Two-step flow:
+//   1) User clicks Share → opens product-metadata form (title/desc/price/
+//      buy URL + label). None of these are required; the CTA section only
+//      shows in the viewer if a URL is provided.
+//   2) Form submit → POST to backend → shows dialog with share URL +
+//      iframe snippet + Edit button that re-opens the form pre-filled and
+//      PATCHes the existing embed on save.
 async function createBatchEmbed(){
     if (!_activeBatch) return;
     const shots = _activeBatch.shots.filter(s => s.url);
@@ -2328,64 +2496,164 @@ async function createBatchEmbed(){
         showNotif('Need at least 2 images to create an embed.', 'error');
         return;
     }
-    const btn = $('btnEmbedLink');
-    if (btn) btn.classList.add('busy');
-    try {
-        const body = {
-            batch_id: _activeBatch.id,
-            input_url: _activeBatch.inputUrl || '',
-            shots: shots.map(s => ({
-                label: s.label,
-                url: s.url,
-                w: s.w || null,
-                h: s.h || null,
-            })),
-        };
-        const r = await fetchT(`${API}/api/studio/embed`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body),
-        }, 15000);
-        const d = await r.json();
-        if (!d.ok) throw new Error(d.error || 'embed_failed');
-        const shareUrl = d.url;     // e.g. https://missinglink.build/embed/abc123
-        const iframeSnippet = `<iframe src="${shareUrl}" width="800" height="600" frameborder="0" allowfullscreen></iframe>`;
-        // Show both the URL and the iframe snippet, let user copy either
-        showEmbedDialog(shareUrl, iframeSnippet);
-    } catch (e) {
-        showNotif('Could not create embed: ' + e.message, 'error');
-    } finally {
-        if (btn) btn.classList.remove('busy');
-    }
+    showEmbedFormDialog({
+        embedId: null,   // null = create new; otherwise we're editing
+        initial: {},
+        shots,
+    });
 }
 
-// Modal that presents the embed URL + iframe snippet with copy buttons.
-// Uses the existing notifModal infra to avoid native alert/prompt.
-function showEmbedDialog(url, iframeSnippet){
+// Open the product-metadata form. Called for both "create new embed" (no
+// embedId passed in) and "edit existing embed" (embedId + initial field
+// values). On submit, POSTs or PATCHes as appropriate.
+function showEmbedFormDialog({ embedId, initial, shots }){
+    const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const panel = $('notifPanel');
-    panel.className = 'notif-panel';
-    $('notifTitle').textContent = 'Share link created';
+    panel.className = 'notif-panel notif-panel-wide';
+    $('notifTitle').textContent = embedId ? 'Edit product details' : 'Create shareable product gallery';
     $('notifBody').innerHTML = `
-        <div style="margin-bottom:14px;font-size:12px;color:var(--text-muted)">
-            Anyone with this link can view your generated views. Thumbnails are
-            persisted — the viewer works without a login.
+        <div style="margin-bottom:16px;font-size:12px;color:var(--text-muted);line-height:1.5">
+            Turn your generated views into a standalone product page anyone can
+            view or embed. All fields optional — leave blank to hide.
         </div>
-        <label style="display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase">Share URL</label>
-        <div style="display:flex;gap:6px;margin-bottom:12px">
-            <input readonly value="${url}" id="_embedUrl" style="flex:1;padding:8px;font-family:var(--font-mono);font-size:11px;background:var(--surface-3);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none" onfocus="this.select()">
-            <button class="notif-btn primary" onclick="_copyEmbedText('_embedUrl', this)" style="padding:8px 14px">Copy</button>
+        <div class="ef-grid">
+            <div class="ef-field">
+                <label>Product Title</label>
+                <input type="text" id="_efTitle" maxlength="120" placeholder="e.g. Apex Hoodie — Black" value="${esc(initial.title || '')}">
+            </div>
+            <div class="ef-field">
+                <label>Description</label>
+                <textarea id="_efDesc" maxlength="2000" rows="4" placeholder="Short description of what makes this product special.">${esc(initial.description || '')}</textarea>
+            </div>
+            <div class="ef-field">
+                <label>Price <span class="ef-hint">(any text — "$99", "From €29", etc.)</span></label>
+                <input type="text" id="_efPrice" maxlength="40" placeholder="$99.00" value="${esc(initial.price || '')}">
+            </div>
+            <div class="ef-field">
+                <label>Buy Now URL <span class="ef-hint">(link users go to when they click the button)</span></label>
+                <input type="url" id="_efCtaUrl" maxlength="512" placeholder="https://your-store.com/product" value="${esc(initial.cta_url || '')}">
+            </div>
+            <div class="ef-field">
+                <label>Button Label</label>
+                <input type="text" id="_efCtaLabel" maxlength="40" placeholder="Buy Now" value="${esc(initial.cta_label || 'Buy Now')}">
+            </div>
         </div>
-        <label style="display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase">Embed &lt;iframe&gt;</label>
-        <div style="display:flex;gap:6px">
-            <input readonly value='${iframeSnippet.replace(/'/g, "&apos;")}' id="_embedIframe" style="flex:1;padding:8px;font-family:var(--font-mono);font-size:10px;background:var(--surface-3);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none" onfocus="this.select()">
-            <button class="notif-btn primary" onclick="_copyEmbedText('_embedIframe', this)" style="padding:8px 14px">Copy</button>
+    `;
+    $('notifCancelBtn').style.display = '';
+    $('notifCancelBtn').textContent = 'Cancel';
+    $('notifOkBtn').textContent = embedId ? 'Save Changes' : 'Create Share Link';
+    $('notifOkBtn').className = 'notif-btn primary';
+    $('notifModal').style.display = 'flex';
+
+    // Focus the Title field so the user can start typing immediately
+    setTimeout(() => { const t = $('_efTitle'); if (t) t.focus(); }, 50);
+
+    _notifResolver = async (ok) => {
+        if (!ok) {
+            $('notifModal').style.display = 'none';
+            return;
+        }
+        const payload = {
+            title:       $('_efTitle').value.trim(),
+            description: $('_efDesc').value.trim(),
+            price:       $('_efPrice').value.trim(),
+            cta_url:     $('_efCtaUrl').value.trim(),
+            cta_label:   $('_efCtaLabel').value.trim(),
+        };
+        const okBtn = $('notifOkBtn');
+        okBtn.disabled = true;
+        const origLabel = okBtn.textContent;
+        okBtn.textContent = embedId ? 'Saving…' : 'Creating…';
+        try {
+            let d;
+            if (embedId) {
+                // Edit existing
+                const r = await fetchT(`${API}/api/studio/embed/${embedId}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload),
+                }, 15000);
+                d = await r.json();
+            } else {
+                // Create new — include shots + batch context
+                const body = {
+                    ...payload,
+                    batch_id: _activeBatch ? _activeBatch.id : null,
+                    input_url: (_activeBatch && _activeBatch.inputUrl) || '',
+                    shots: shots.map(s => ({
+                        label: s.label, url: s.url,
+                        w: s.w || null, h: s.h || null,
+                    })),
+                };
+                const r = await fetchT(`${API}/api/studio/embed`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                }, 15000);
+                d = await r.json();
+            }
+            if (!d.ok) throw new Error(d.error || 'embed_failed');
+            const finalId = d.id || embedId;
+            const shareUrl = embedId
+                ? `https://missinglink.build/embed/${finalId}`
+                : d.url;
+            $('notifModal').style.display = 'none';
+            // Pass the stored fields so the Edit button can reopen the form pre-filled
+            showEmbedShareDialog({
+                id: finalId,
+                shareUrl,
+                stored: {
+                    title: d.title, description: d.description, price: d.price,
+                    cta_url: d.cta_url, cta_label: d.cta_label,
+                },
+                shots,
+            });
+        } catch (e) {
+            okBtn.disabled = false;
+            okBtn.textContent = origLabel;
+            showNotif('Could not save: ' + e.message, 'error');
+        }
+    };
+}
+
+// Show the share URL + iframe snippet + "Edit details" button.
+function showEmbedShareDialog({ id, shareUrl, stored, shots }){
+    const iframeSnippet = `<iframe src="${shareUrl}" width="100%" height="640" frameborder="0" style="border:1px solid #eee;border-radius:10px"></iframe>`;
+    const panel = $('notifPanel');
+    panel.className = 'notif-panel notif-panel-wide';
+    $('notifTitle').textContent = 'Share link ready';
+    $('notifBody').innerHTML = `
+        <div style="margin-bottom:14px;font-size:12px;color:var(--text-muted);line-height:1.5">
+            Your product gallery is live. Share the link, or paste the iframe
+            snippet into your site to embed the gallery anywhere.
+        </div>
+        <label class="ef-label-mono">Share URL</label>
+        <div class="ef-copy-row">
+            <input readonly value="${shareUrl}" id="_embedUrl" onfocus="this.select()">
+            <button class="notif-btn primary" onclick="_copyEmbedText('_embedUrl', this)">Copy</button>
+            <a href="${shareUrl}" target="_blank" rel="noopener" class="notif-btn" style="text-decoration:none">Open</a>
+        </div>
+        <label class="ef-label-mono" style="margin-top:14px">Embed &lt;iframe&gt;</label>
+        <div class="ef-copy-row">
+            <input readonly value='${iframeSnippet.replace(/'/g, "&apos;")}' id="_embedIframe" onfocus="this.select()">
+            <button class="notif-btn primary" onclick="_copyEmbedText('_embedIframe', this)">Copy</button>
+        </div>
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <div style="font-size:11px;color:var(--text-muted)">Need to tweak the title, price, or link?</div>
+            <button class="notif-btn" id="_btnEditEmbed">✎ Edit details</button>
         </div>
     `;
     $('notifCancelBtn').style.display = 'none';
     $('notifOkBtn').textContent = 'Done';
     $('notifOkBtn').className = 'notif-btn primary';
     $('notifModal').style.display = 'flex';
-    _notifResolver = () => {};
+    _notifResolver = () => { $('notifModal').style.display = 'none'; };
+
+    // Edit button re-opens the form pre-filled with the stored values
+    const editBtn = $('_btnEditEmbed');
+    if (editBtn) editBtn.onclick = () => {
+        showEmbedFormDialog({ embedId: id, initial: stored || {}, shots });
+    };
 }
 function _copyEmbedText(inputId, btn){
     const el = $(inputId);
@@ -2414,6 +2682,12 @@ function startJobPoll(jobId){
     if(pollTimers[jobId]) return;
     const startTime=Date.now();
     pollTimers[jobId]=setInterval(async ()=>{
+        // Safety kill: no job should still be polling after 10 minutes.
+        // pollQueue's resolveDisappearedJob path will still catch real finishes.
+        if (Date.now() - startTime > 10 * 60 * 1000) {
+            clearInterval(pollTimers[jobId]); delete pollTimers[jobId];
+            return;
+        }
         try{
             const r=await fetchT(`${API}/api/studio/job/${jobId}`,null,6000);
             const d=await r.json();
@@ -2421,73 +2695,16 @@ function startJobPoll(jobId){
             if(!job){ clearInterval(pollTimers[jobId]); delete pollTimers[jobId]; return; }
 
             // Pick up latest progress fields regardless of status transition.
-            // Track whether they changed so we can redraw even when status stays
-            // the same (e.g. running→running as step goes 1→2→3→4).
             let progressChanged = false;
             if(d.stage !== undefined && d.stage !== job.stage){ job.stage = d.stage; progressChanged = true; }
             if(d.step !== undefined && d.step !== job.step){ job.step = d.step; progressChanged = true; }
             if(d.total_steps !== undefined && d.total_steps !== job.totalSteps){ job.totalSteps = d.total_steps; progressChanged = true; }
 
-            if(d.status==='done'){
-                job.status='done';
-                job.result=d.result;
-                clearInterval(pollTimers[jobId]);
-                delete pollTimers[jobId];
-                // Remove the completed job from the active list in myJobs —
-                // history is now authoritative (server-synced) so we don't
-                // need to keep done jobs in the local state.
-                myJobs = myJobs.filter(x => x.id !== jobId);
-                renderQueue();
-                // Routing for single-image output vs batch grid:
-                // 1) If this job belongs to the currently active batch,
-                //    drop its image into the grid slot. Don't call showResult.
-                // 2) If the job has a batchId but there's no active batch
-                //    (user closed the grid or started a single-generate),
-                //    suppress output — the 6 views are in history under
-                //    the batch_id, user will restore from there.
-                // 3) Otherwise it's a regular single-generate — call
-                //    showResult, which will clear any lingering grid.
-                let handledByBatch = false;
-                if (_activeBatch) {
-                    const shot = _activeBatch.shots.find(s => s.jobId === jobId);
-                    if (shot) {
-                        shot.status = 'done';
-                        shot.url = d.result.url;
-                        shot.w = d.result.w;
-                        shot.h = d.result.h;
-                        shot.seed = d.result.seed;
-                        shot.elapsed = d.result.elapsed;
-                        renderBatchGrid();
-                        handledByBatch = true;
-                    }
-                }
-                if (!handledByBatch) {
-                    // Orphaned batch job (grid was closed before this one
-                    // finished) — don't surface it; it's safely in history.
-                    if (job.batchId) {
-                        log(`Job ${jobId} done (orphaned batch job, in history)`,'success');
-                    } else {
-                        showResult(d.result);
-                    }
-                }
-                log(`Job ${jobId} done (${d.result.elapsed}s)`,'success');
-                checkAuth();
-                // Refresh history from server so the new generation appears
-                syncHistory();
-            } else if(d.status==='error' || d.status==='cancelled'){
-                job.status=d.status;
-                job.error=d.error;
-                clearInterval(pollTimers[jobId]);
-                delete pollTimers[jobId];
-                renderQueue();
-                // If this was a batch job, mark its grid slot as errored so
-                // the user sees "Failed" instead of an endless spinner.
-                if (_activeBatch) {
-                    const shot = _activeBatch.shots.find(s => s.jobId === jobId);
-                    if (shot) { shot.status = 'error'; renderBatchGrid(); }
-                }
-                log(`Job ${jobId} ${d.status}`,'error');
-                checkAuth();
+            if(d.status==='done' || d.status==='error' || d.status==='cancelled'){
+                // Delegate to shared terminal handler (same path used by
+                // pollQueue's disappearance-catcher, so behaviour is identical
+                // regardless of which poller notices first).
+                handleJobTerminal(jobId, d);
             } else if(d.status==='waiting' && job.status!=='waiting'){
                 job.status='waiting';
                 job.startedAt=Date.now();
@@ -2501,14 +2718,12 @@ function startJobPoll(jobId){
                 // Same status, but stage/step advanced — redraw so the progress
                 // bar fills and the "Step N/M" label ticks.
                 renderQueue();
-            } else if(d.status==='queued'){
-                // Still queued — no-op; renderQueue driven by 1Hz ticker
-            } else {
-                // Same status, but stage/step may have changed — re-render
-                renderQueue();
             }
-        }catch(e){}
-    }, 1000);
+        }catch(e){
+            // Silent — pollQueue (5s) will catch the terminal state if this
+            // per-job poll keeps failing.
+        }
+    }, 2000);
 }
 
 // Job is cancellable until GPU compute actually starts.
@@ -2569,6 +2784,14 @@ function renderQueue(){
     if (activeJobs.length > 0) {
         activeSection.style.display = '';
         document.body.classList.add('has-queue');
+        // Apply persisted minimize state every render (survives tile rebuild)
+        if (_queueMinimized) activeSection.classList.add('minimized');
+        else activeSection.classList.remove('minimized');
+        const minBtn = $('queueMinBtn');
+        if (minBtn) {
+            minBtn.innerHTML = _queueMinimized ? '▲ Show' : '▼ Hide';
+            minBtn.title = _queueMinimized ? 'Show queue tiles' : 'Hide queue tiles';
+        }
         activeList.innerHTML = '';
 
         // Remove any tile whose job is no longer active (completed / cancelled
@@ -2819,6 +3042,14 @@ function toggleHistoryMinimized(){
     _historyMinimized = !_historyMinimized;
     try { localStorage.setItem('studio_history_minimized', _historyMinimized ? '1' : '0'); } catch (e) {}
     renderHistorySidebar();
+}
+
+// Same pattern for the active-queue panel. Minimize state persists across
+// refreshes via localStorage.
+function toggleQueueMinimized(){
+    _queueMinimized = !_queueMinimized;
+    try { localStorage.setItem('studio_queue_minimized', _queueMinimized ? '1' : '0'); } catch (e) {}
+    renderQueue();
 }
 
 // ───────────── Full history modal ─────────────
