@@ -159,6 +159,33 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .ef-field input,.ef-field textarea{width:100%;padding:9px 10px;font-family:var(--font-body,inherit);font-size:13px;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;color:var(--text);outline:none;transition:border-color .12s;resize:vertical}
 .ef-field input:focus,.ef-field textarea:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(232,169,23,.12)}
 .ef-field textarea{min-height:72px;font-family:inherit;line-height:1.45}
+
+/* Two-column field row used inside the form (e.g. Price + Button Label) */
+.ef-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width: 440px){ .ef-row2{grid-template-columns:1fr} }
+
+/* Collapsible sub-section (Reviews & Ratings) — uses native <details> with
+   custom chevron so it blends with the form aesthetic. */
+.ef-section{border:1px solid var(--border);border-radius:6px;padding:10px 12px;background:var(--surface-2)}
+.ef-section summary{font-family:var(--font-mono);font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--text-muted);cursor:pointer;list-style:none;padding:4px 0;outline:none;user-select:none}
+.ef-section summary::-webkit-details-marker{display:none}
+.ef-section summary::before{content:"▸ ";color:var(--text-dim);font-size:9px;margin-right:4px}
+.ef-section[open] > summary::before{content:"▾ "}
+.ef-section summary:hover{color:var(--text)}
+
+/* Reviews builder */
+.ef-reviews{margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.ef-reviews-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.ef-mini-btn{padding:5px 10px;font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;background:transparent;color:var(--gold);border:1px solid var(--gold);border-radius:4px;cursor:pointer;transition:all .12s}
+.ef-mini-btn:hover{background:var(--gold-dim)}
+.ef-review-row{display:grid;grid-template-columns:1fr 60px auto;grid-template-rows:auto auto;gap:6px;padding:8px;background:var(--surface-3);border:1px solid var(--border);border-radius:5px}
+.ef-review-row input.ef-rev-author{grid-column:1}
+.ef-review-row input.ef-rev-rating{grid-column:2;text-align:center}
+.ef-review-row .ef-rev-remove{grid-column:3;grid-row:1;width:26px;height:26px;padding:0;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .12s}
+.ef-review-row .ef-rev-remove:hover{background:rgba(239,68,68,.1);border-color:var(--red);color:var(--red)}
+.ef-review-row textarea.ef-rev-text{grid-column:1/span 3;grid-row:2;min-height:48px;font-size:12px;line-height:1.45}
+.ef-review-row input,.ef-review-row textarea{padding:6px 8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none;transition:border-color .12s;font-family:var(--font-body,inherit)}
+.ef-review-row input:focus,.ef-review-row textarea:focus{border-color:var(--gold)}
 /* Small label pill for copy-URL blocks on the share-ready dialog */
 .ef-label-mono{display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px}
 .ef-copy-row{display:flex;gap:6px;align-items:stretch}
@@ -1546,8 +1573,12 @@ function updateHeaderStatusBadge(connected){
         }
         label.textContent = text;
     } else {
+        // Cold state: container has scaled to zero (Modal scaledown_window
+        // fires after 30 min idle). Label as "Connecting…" rather than the
+        // old "GPU cold" — more accurate about what clicking Generate will
+        // trigger (cold-boot, ~90s) and doesn't misleadingly say "ready".
         dot.className = 'dot cold';
-        label.textContent = 'GPU cold';
+        label.textContent = 'Connecting…';
     }
 }
 
@@ -2571,20 +2602,43 @@ function showEmbedFormDialog({ embedId, initial, shots }){
             </div>
             <div class="ef-field">
                 <label>Description</label>
-                <textarea id="_efDesc" maxlength="2000" rows="4" placeholder="Short description of what makes this product special.">${esc(initial.description || '')}</textarea>
+                <textarea id="_efDesc" maxlength="2000" rows="3" placeholder="Short description of what makes this product special.">${esc(initial.description || '')}</textarea>
+            </div>
+            <div class="ef-row2">
+                <div class="ef-field">
+                    <label>Price <span class="ef-hint">(any text)</span></label>
+                    <input type="text" id="_efPrice" maxlength="40" placeholder="$99.00" value="${esc(initial.price || '')}">
+                </div>
+                <div class="ef-field">
+                    <label>Button Label</label>
+                    <input type="text" id="_efCtaLabel" maxlength="40" placeholder="Buy Now" value="${esc(initial.cta_label || 'Buy Now')}">
+                </div>
             </div>
             <div class="ef-field">
-                <label>Price <span class="ef-hint">(any text — "$99", "From €29", etc.)</span></label>
-                <input type="text" id="_efPrice" maxlength="40" placeholder="$99.00" value="${esc(initial.price || '')}">
-            </div>
-            <div class="ef-field">
-                <label>Buy Now URL <span class="ef-hint">(link users go to when they click the button)</span></label>
+                <label>Buy Now URL <span class="ef-hint">(where the button takes users)</span></label>
                 <input type="url" id="_efCtaUrl" maxlength="512" placeholder="https://your-store.com/product" value="${esc(initial.cta_url || '')}">
             </div>
-            <div class="ef-field">
-                <label>Button Label</label>
-                <input type="text" id="_efCtaLabel" maxlength="40" placeholder="Buy Now" value="${esc(initial.cta_label || 'Buy Now')}">
-            </div>
+
+            <details class="ef-section" ${(initial.rating_avg || (initial.reviews && initial.reviews.length)) ? 'open' : ''}>
+                <summary>Ratings &amp; Reviews <span class="ef-hint">(optional — builds trust)</span></summary>
+                <div class="ef-row2" style="margin-top:10px">
+                    <div class="ef-field">
+                        <label>Average Rating <span class="ef-hint">(0.0 – 5.0)</span></label>
+                        <input type="number" id="_efRating" min="0" max="5" step="0.1" placeholder="4.5" value="${esc(initial.rating_avg || '')}">
+                    </div>
+                    <div class="ef-field">
+                        <label>Total Reviews Count</label>
+                        <input type="number" id="_efRatingCount" min="0" max="1000000" step="1" placeholder="127" value="${esc(initial.rating_count || '')}">
+                    </div>
+                </div>
+                <div class="ef-reviews">
+                    <div class="ef-reviews-header">
+                        <label style="margin:0">Featured Reviews <span class="ef-hint">(up to 10)</span></label>
+                        <button type="button" class="ef-mini-btn" id="_efAddReview">+ Add review</button>
+                    </div>
+                    <div id="_efReviewList"></div>
+                </div>
+            </details>
         </div>
     `;
     $('notifCancelBtn').style.display = '';
@@ -2596,17 +2650,55 @@ function showEmbedFormDialog({ embedId, initial, shots }){
     // Focus the Title field so the user can start typing immediately
     setTimeout(() => { const t = $('_efTitle'); if (t) t.focus(); }, 50);
 
+    // ── Reviews UI wiring ──
+    // Populate existing reviews from initial.reviews (if editing). Each row
+    // is a 3-input block (author / rating / text) with a remove button.
+    const reviewList = $('_efReviewList');
+    const addReviewRow = (rev) => {
+        if (!reviewList) return;
+        if (reviewList.children.length >= 10) return;  // cap
+        const row = document.createElement('div');
+        row.className = 'ef-review-row';
+        row.innerHTML = `
+            <input class="ef-rev-author" maxlength="60" placeholder="Reviewer name" value="${esc((rev && rev.author) || '')}">
+            <input class="ef-rev-rating" type="number" min="0" max="5" step="1" placeholder="5" value="${esc((rev && rev.rating) || 5)}">
+            <textarea class="ef-rev-text" maxlength="600" rows="2" placeholder="What did they think?">${esc((rev && rev.text) || '')}</textarea>
+            <button type="button" class="ef-rev-remove" title="Remove review">✕</button>
+        `;
+        row.querySelector('.ef-rev-remove').onclick = () => row.remove();
+        reviewList.appendChild(row);
+    };
+    const existingReviews = Array.isArray(initial.reviews) ? initial.reviews : [];
+    for (const r of existingReviews) addReviewRow(r);
+    const addBtn = $('_efAddReview');
+    if (addBtn) addBtn.onclick = () => addReviewRow(null);
+
     _notifResolver = async (ok) => {
         if (!ok) {
             $('notifModal').style.display = 'none';
             return;
         }
+        // Harvest reviews from the dynamic rows
+        const reviews = [];
+        if (reviewList) {
+            for (const row of reviewList.children) {
+                const author = (row.querySelector('.ef-rev-author')?.value || '').trim();
+                const rating = parseFloat(row.querySelector('.ef-rev-rating')?.value || '5');
+                const text = (row.querySelector('.ef-rev-text')?.value || '').trim();
+                if (author || text) {
+                    reviews.push({ author, rating: isFinite(rating) ? rating : 5, text });
+                }
+            }
+        }
         const payload = {
-            title:       $('_efTitle').value.trim(),
-            description: $('_efDesc').value.trim(),
-            price:       $('_efPrice').value.trim(),
-            cta_url:     $('_efCtaUrl').value.trim(),
-            cta_label:   $('_efCtaLabel').value.trim(),
+            title:        $('_efTitle').value.trim(),
+            description:  $('_efDesc').value.trim(),
+            price:        $('_efPrice').value.trim(),
+            cta_url:      $('_efCtaUrl').value.trim(),
+            cta_label:    $('_efCtaLabel').value.trim(),
+            rating_avg:   $('_efRating').value.trim(),
+            rating_count: $('_efRatingCount').value.trim(),
+            reviews,
         };
         const okBtn = $('notifOkBtn');
         okBtn.disabled = true;
@@ -2653,6 +2745,8 @@ function showEmbedFormDialog({ embedId, initial, shots }){
                 stored: {
                     title: d.title, description: d.description, price: d.price,
                     cta_url: d.cta_url, cta_label: d.cta_label,
+                    rating_avg: d.rating_avg, rating_count: d.rating_count,
+                    reviews: d.reviews || [],
                 },
                 shots,
             });
