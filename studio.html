@@ -187,6 +187,36 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .ef-review-row input,.ef-review-row textarea{padding:6px 8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none;transition:border-color .12s;font-family:var(--font-body,inherit)}
 .ef-review-row input:focus,.ef-review-row textarea:focus{border-color:var(--gold)}
 
+/* Layout picker — 3 tiles, each with a mini visual preview of the layout */
+.ef-layout-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}
+.ef-layout-opt{padding:10px 8px 8px;background:var(--surface-3);border:1.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--text);transition:all .12s;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+.ef-layout-opt:hover{border-color:var(--border-strong)}
+.ef-layout-opt.selected{border-color:var(--gold);background:rgba(232,169,23,.06);box-shadow:0 0 0 2px rgba(232,169,23,.12)}
+.ef-layout-name{font-size:11px;font-weight:600;color:var(--text)}
+.ef-layout-desc{font-size:9.5px;color:var(--text-muted);line-height:1.3}
+.ef-layout-preview{width:100%;height:44px;border-radius:3px;position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border)}
+/* Classic: split 55/45 with rectangle on left, bars on right */
+.ef-layout-preview-classic{background:linear-gradient(90deg,var(--text-dim) 0 55%,transparent 55% 100%)}
+.ef-layout-preview-classic::after{content:"";position:absolute;right:10%;top:24%;width:35%;height:3px;background:var(--text-dim);box-shadow:0 7px 0 var(--text-dim),0 14px 0 var(--text-dim)}
+/* Stack: top 60% is image, bottom 40% is bars */
+.ef-layout-preview-stack{background:linear-gradient(180deg,var(--text-dim) 0 60%,transparent 60% 100%)}
+.ef-layout-preview-stack::after{content:"";position:absolute;left:15%;bottom:20%;width:55%;height:3px;background:var(--text-dim);box-shadow:0 6px 0 var(--text-dim)}
+/* Grid: 4-tile mosaic on left, bars on right */
+.ef-layout-preview-grid{background:
+    linear-gradient(90deg,transparent 0 50%,var(--surface) 50% 100%),
+    linear-gradient(var(--surface) 0 0) 25% 0/1px 100% no-repeat,
+    linear-gradient(var(--surface) 0 0) 0 50%/50% 1px no-repeat,
+    var(--text-dim)}
+.ef-layout-preview-grid::after{content:"";position:absolute;right:6%;top:24%;width:30%;height:3px;background:var(--text-dim);box-shadow:0 7px 0 var(--text-dim)}
+
+/* Feature row (single input + remove button) */
+.ef-feature-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:center}
+.ef-feature-row input{padding:7px 9px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none;transition:border-color .12s}
+.ef-feature-row input:focus{border-color:var(--gold)}
+.ef-feature-row .ef-rev-remove{width:26px;height:26px;padding:0;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .12s}
+.ef-feature-row .ef-rev-remove:hover{background:rgba(239,68,68,.1);border-color:var(--red);color:var(--red)}
+.ef-features{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+
 /* Sticky "Editing view N" banner shown above the Edit Instruction textarea
    while a slot-edit session is active. Reminds the user their generates
    will update the batch tile, and gives a one-click exit. */
@@ -2852,6 +2882,34 @@ function showEmbedFormDialog({ embedId, initial, shots }){
                 <input type="url" id="_efCtaUrl" maxlength="512" placeholder="https://your-store.com/product" value="${esc(initial.cta_url || '')}">
             </div>
 
+            <div class="ef-field">
+                <label>Layout <span class="ef-hint">(how it looks when shared)</span></label>
+                <div class="ef-layout-picker" id="_efLayoutPicker">
+                    ${['classic', 'stack', 'grid'].map(opt => {
+                        const selected = (initial.layout || 'classic') === opt;
+                        const label = {classic:'Classic', stack:'Stacked', grid:'Mosaic'}[opt];
+                        const desc = {classic:'Gallery left, info right',stack:'Big hero on top',grid:'All views in a grid'}[opt];
+                        return `<button type="button" class="ef-layout-opt ${selected ? 'selected' : ''}" data-layout="${opt}">
+                            <div class="ef-layout-preview ef-layout-preview-${opt}"></div>
+                            <div class="ef-layout-name">${label}</div>
+                            <div class="ef-layout-desc">${desc}</div>
+                        </button>`;
+                    }).join('')}
+                </div>
+                <input type="hidden" id="_efLayout" value="${esc(initial.layout || 'classic')}">
+            </div>
+
+            <details class="ef-section" ${(initial.features && initial.features.length) ? 'open' : ''}>
+                <summary>Feature Highlights <span class="ef-hint">(bullet points shown in the viewer)</span></summary>
+                <div class="ef-features">
+                    <div class="ef-reviews-header">
+                        <label style="margin:0">Up to 8 bullets</label>
+                        <button type="button" class="ef-mini-btn" id="_efAddFeature">+ Add feature</button>
+                    </div>
+                    <div id="_efFeatureList"></div>
+                </div>
+            </details>
+
             <details class="ef-section" ${(initial.rating_avg || (initial.reviews && initial.reviews.length)) ? 'open' : ''}>
                 <summary>Ratings &amp; Reviews <span class="ef-hint">(optional — builds trust)</span></summary>
                 <div class="ef-row2" style="margin-top:10px">
@@ -2883,9 +2941,39 @@ function showEmbedFormDialog({ embedId, initial, shots }){
     // Focus the Title field so the user can start typing immediately
     setTimeout(() => { const t = $('_efTitle'); if (t) t.focus(); }, 50);
 
+    // ── Layout picker wiring ──
+    const layoutPicker = $('_efLayoutPicker');
+    const layoutHidden = $('_efLayout');
+    if (layoutPicker) {
+        layoutPicker.querySelectorAll('.ef-layout-opt').forEach(btn => {
+            btn.addEventListener('click', () => {
+                layoutPicker.querySelectorAll('.ef-layout-opt').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                layoutHidden.value = btn.dataset.layout;
+            });
+        });
+    }
+
+    // ── Features UI wiring ──
+    const featureList = $('_efFeatureList');
+    const addFeatureRow = (text) => {
+        if (!featureList) return;
+        if (featureList.children.length >= 8) return;
+        const row = document.createElement('div');
+        row.className = 'ef-feature-row';
+        row.innerHTML = `
+            <input class="ef-feat-text" maxlength="120" placeholder="e.g. Free shipping worldwide" value="${esc(text || '')}">
+            <button type="button" class="ef-rev-remove" title="Remove">✕</button>
+        `;
+        row.querySelector('.ef-rev-remove').onclick = () => row.remove();
+        featureList.appendChild(row);
+    };
+    const existingFeatures = Array.isArray(initial.features) ? initial.features : [];
+    for (const f of existingFeatures) addFeatureRow(f);
+    const addFeatureBtn = $('_efAddFeature');
+    if (addFeatureBtn) addFeatureBtn.onclick = () => addFeatureRow('');
+
     // ── Reviews UI wiring ──
-    // Populate existing reviews from initial.reviews (if editing). Each row
-    // is a 3-input block (author / rating / text) with a remove button.
     const reviewList = $('_efReviewList');
     const addReviewRow = (rev) => {
         if (!reviewList) return;
@@ -2911,7 +2999,15 @@ function showEmbedFormDialog({ embedId, initial, shots }){
             $('notifModal').style.display = 'none';
             return;
         }
-        // Harvest reviews from the dynamic rows
+        // Harvest features
+        const features = [];
+        if (featureList) {
+            for (const row of featureList.children) {
+                const t = (row.querySelector('.ef-feat-text')?.value || '').trim();
+                if (t) features.push(t);
+            }
+        }
+        // Harvest reviews
         const reviews = [];
         if (reviewList) {
             for (const row of reviewList.children) {
@@ -2932,6 +3028,8 @@ function showEmbedFormDialog({ embedId, initial, shots }){
             rating_avg:   $('_efRating').value.trim(),
             rating_count: $('_efRatingCount').value.trim(),
             reviews,
+            layout:       $('_efLayout').value || 'classic',
+            features,
         };
         const okBtn = $('notifOkBtn');
         okBtn.disabled = true;
@@ -2980,6 +3078,8 @@ function showEmbedFormDialog({ embedId, initial, shots }){
                     cta_url: d.cta_url, cta_label: d.cta_label,
                     rating_avg: d.rating_avg, rating_count: d.rating_count,
                     reviews: d.reviews || [],
+                    layout: d.layout || 'classic',
+                    features: d.features || [],
                 },
                 shots,
             });
@@ -3267,19 +3367,18 @@ function renderQueue(){
                 pct = 5;
             } else if (j.status === 'running') {
                 const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
-                if (stage === 'accepted') {
-                    // Thread started on Modal, lock not yet acquired. If the
-                    // lock is held (another batch job running), we pinged
-                    // 'accepted' before trying the non-blocking acquire.
+                if (stage === 'accepted' || stage === 'waiting_for_gpu') {
+                    // Thread is alive on Modal but hasn't acquired the
+                    // pipe_lock yet (either waiting for the current running
+                    // job to finish, or just about to take the lock). From
+                    // the user's point of view this is indistinguishable
+                    // from normal "queued" — only when inference actually
+                    // starts do we show detailed progress. waiting_for_gpu
+                    // is legacy; the code no longer pings it, but handle
+                    // it here in case a rolling deployment has old jobs.
                     statusIcon = '⏳'; statusText = 'Queued';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 4;
-                } else if (stage === 'waiting_for_gpu') {
-                    // Non-blocking acquire failed, explicitly waiting for
-                    // the pipe_lock to free up behind an earlier job.
-                    statusIcon = '⏳'; statusText = 'Waiting for GPU';
-                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
-                    pct = 5;
                 } else if (stage === 'fetching') {
                     statusIcon = '📥'; statusText = 'Loading inputs';
                     // Sub-progress: "image N/M" when multi-image
