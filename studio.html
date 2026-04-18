@@ -123,8 +123,16 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-loading,.history-empty{grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px}
 .history-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative;cursor:pointer;transition:all .15s;display:flex;flex-direction:column}
 .history-card:hover{border-color:var(--gold);transform:translateY(-2px)}
-.history-card-thumb{width:100%;aspect-ratio:1/1;background:var(--surface-3);overflow:hidden;display:flex;align-items:center;justify-content:center}
+.history-card-thumb{width:100%;aspect-ratio:1/1;background:var(--surface-3);overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
 .history-card-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+/* Batch card mosaic: 3 columns × 2 rows of tiny thumbs, snug with 2px gaps.
+   Badge sits top-right over the mosaic showing the shot count. */
+.history-card-mosaic{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:2px;padding:2px;background:#0a0a0c}
+.history-card-mosaic .hcm-cell{overflow:hidden;background:#000;position:relative}
+.history-card-mosaic .hcm-cell img{width:100%;height:100%;object-fit:cover;display:block}
+.history-card-mosaic .hcm-empty{background:linear-gradient(135deg,#0d0d0f,#16161c)}
+.history-card-mosaic .hcm-badge{position:absolute;top:6px;right:6px;z-index:2;background:rgba(232,169,23,.92);color:#0a0a0c;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1px;padding:3px 7px;border-radius:4px;pointer-events:none}
+.history-card-batch:hover .history-card-mosaic{outline:1px solid var(--gold);outline-offset:-1px}
 .history-card-meta{padding:8px 10px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);letter-spacing:.5px}
 .history-card-meta .hc-mode{color:var(--gold);font-weight:700;text-transform:uppercase;margin-right:6px}
 .history-card-meta .hc-prompt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text-muted);margin-top:3px;font-size:9px;line-height:1.3;min-height:2.6em}
@@ -317,11 +325,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     backdrop-filter:blur(6px);
 }
 .batch-tile.done:hover::after{opacity:1;transform:scale(1)}
-/* Footer — Download / Close buttons, unchanged behavior */
-.batch-footer{position:absolute;bottom:8px;right:8px;display:flex;gap:6px;z-index:4;background:rgba(17,17,20,.9);padding:8px;border-radius:8px;border:1px solid var(--border);backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,0,0,.4)}
-/* Live progress indicator top-center while batch is in progress */
+/* Action bar — top-right overlay while batch is active */
+.batch-footer{position:absolute;top:10px;right:10px;display:flex;gap:4px;z-index:5;background:rgba(17,17,20,.92);padding:5px;border-radius:8px;border:1px solid var(--border);backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.batch-action-btn{background:none;border:none;color:var(--text);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;padding:7px 10px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;-webkit-tap-highlight-color:transparent}
+.batch-action-btn:hover:not(:disabled){background:var(--gold-dim);color:var(--gold)}
+.batch-action-btn:disabled{opacity:.35;cursor:not-allowed}
+.batch-action-btn.batch-action-close{padding:7px 9px;font-size:14px;color:var(--text-muted)}
+.batch-action-btn.batch-action-close:hover{background:rgba(239,68,68,.15);color:var(--red)}
+.batch-action-btn.busy{background:var(--gold-dim);color:var(--gold);pointer-events:none}
+.batch-action-btn.busy::before{content:"";width:10px;height:10px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;margin-right:3px}
+/* Live progress indicator bottom-center while batch is in progress */
 .batch-progress{
-    position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
     z-index:3;background:rgba(17,17,20,.9);
     padding:6px 14px;border-radius:999px;border:1px solid var(--border);
     font-family:var(--font-mono);font-size:10px;font-weight:600;
@@ -2148,19 +2163,36 @@ function renderBatchGrid(){
         progText.textContent = `Rendering ${doneCount}/${total}`;
     }
 
-    // Download / Close controls appear when the batch is done with ≥1 image
+    // Action bar with all batch tools — positioned top-right. Shows once at
+    // least one shot is done so the user can start sharing immediately.
     let footer = $('batchFooter');
-    if (allDone && anyDone) {
+    if (anyDone) {
         if (!footer) {
             footer = document.createElement('div');
             footer.id = 'batchFooter';
             footer.className = 'batch-footer';
             footer.innerHTML = `
-                <button class="hdr-btn" id="btnDownloadAll" onclick="downloadBatchAll()">⬇ Download all</button>
-                <button class="hdr-btn" id="btnCloseBatch"   onclick="clearBatchGrid()">× Close</button>
+                <button class="batch-action-btn" id="btnDownloadAll" onclick="downloadBatchAll()" title="Download all images">
+                    ⬇ <span>Download</span>
+                </button>
+                <button class="batch-action-btn" id="btnMakeGif" onclick="makeBatchGif()" title="Generate an animated GIF of the views">
+                    🎞 <span>GIF</span>
+                </button>
+                <button class="batch-action-btn" id="btnEmbedLink" onclick="createBatchEmbed()" title="Create a shareable embed link">
+                    🔗 <span>Share</span>
+                </button>
+                <button class="batch-action-btn batch-action-close" id="btnCloseBatch" onclick="clearBatchGrid()" title="Close">
+                    ×
+                </button>
             `;
             area.appendChild(footer);
         }
+        // Disable actions that require ALL shots done (GIF + embed) until
+        // all images have arrived. Download works with whatever's done.
+        const gifBtn = $('btnMakeGif');
+        const embedBtn = $('btnEmbedLink');
+        if (gifBtn)   gifBtn.disabled   = !allDone;
+        if (embedBtn) embedBtn.disabled = !allDone;
     } else if (footer) {
         footer.remove();
     }
@@ -2171,17 +2203,201 @@ function renderBatchGrid(){
 // direct downloads — browsers handle up to ~10 rapid downloads cleanly.
 async function downloadBatchAll(){
     if (!_activeBatch) return;
-    for (let i = 0; i < _activeBatch.shots.length; i++) {
-        const shot = _activeBatch.shots[i];
-        if (!shot.url) continue;
+    const btn = $('btnDownloadAll');
+    if (btn) btn.classList.add('busy');
+    try {
+        for (let i = 0; i < _activeBatch.shots.length; i++) {
+            const shot = _activeBatch.shots[i];
+            if (!shot.url) continue;
+            const a = document.createElement('a');
+            a.href = shot.url;
+            a.download = `qwen-batch-${_activeBatch.id}-${String(i+1).padStart(2,'0')}-${shot.label.replace(/[^a-z0-9]+/gi,'_').toLowerCase()}.png`;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            await new Promise(r => setTimeout(r, 150));
+        }
+    } finally {
+        if (btn) btn.classList.remove('busy');
+    }
+}
+
+// ── GIF generation ─────────────────────────────────────
+// Lazy-loads gif.js from cdnjs on first click. Stitches the 6 batch images
+// into an animated GIF with ~800ms per frame, loops forever. All work happens
+// in a web worker so the main thread stays responsive.
+let _gifJsLoaded = null;
+async function _loadGifJs(){
+    if (_gifJsLoaded) return _gifJsLoaded;
+    _gifJsLoaded = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
+        s.onload = () => resolve(window.GIF);
+        s.onerror = () => reject(new Error('Failed to load gif.js'));
+        document.head.appendChild(s);
+    });
+    return _gifJsLoaded;
+}
+
+async function makeBatchGif(){
+    if (!_activeBatch) return;
+    const shots = _activeBatch.shots.filter(s => s.url);
+    if (shots.length < 2) {
+        showNotif('Need at least 2 images to make a GIF.', 'error');
+        return;
+    }
+    const btn = $('btnMakeGif');
+    if (btn) btn.classList.add('busy');
+
+    try {
+        const GIF = await _loadGifJs();
+
+        // Determine canvas size from first image — all 6 shots share the
+        // same user-requested dimensions, so we can use any of them. If the
+        // output is very large, downsample to 1024 wide for a reasonable
+        // GIF size (full resolution would produce 20MB+ files).
+        const firstImg = await _loadImageTo(shots[0].url);
+        const srcW = firstImg.naturalWidth;
+        const srcH = firstImg.naturalHeight;
+        const MAX_W = 1024;
+        const scale = srcW > MAX_W ? MAX_W / srcW : 1;
+        const gifW = Math.round(srcW * scale);
+        const gifH = Math.round(srcH * scale);
+
+        const gif = new GIF({
+            workers: 2,
+            quality: 10,              // 1-20, lower is higher quality
+            width: gifW, height: gifH,
+            workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',
+        });
+
+        // Load and add each frame. Use a scratch canvas so we can downsize.
+        const canvas = document.createElement('canvas');
+        canvas.width = gifW; canvas.height = gifH;
+        const ctx = canvas.getContext('2d');
+        for (const shot of shots) {
+            const img = shot === shots[0] ? firstImg : await _loadImageTo(shot.url);
+            ctx.clearRect(0, 0, gifW, gifH);
+            ctx.drawImage(img, 0, 0, gifW, gifH);
+            gif.addFrame(canvas, { copy: true, delay: 800 });  // 800ms per frame
+        }
+
+        // Render — this runs in a web worker
+        const blobUrl = await new Promise((resolve, reject) => {
+            gif.on('finished', blob => resolve(URL.createObjectURL(blob)));
+            gif.on('abort', () => reject(new Error('GIF encode aborted')));
+            gif.render();
+        });
+
+        // Trigger download
         const a = document.createElement('a');
-        a.href = shot.url;
-        a.download = `qwen-batch-${_activeBatch.id}-${String(i+1).padStart(2,'0')}-${shot.label.replace(/[^a-z0-9]+/gi,'_').toLowerCase()}.png`;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        await new Promise(r => setTimeout(r, 150));
+        a.href = blobUrl;
+        a.download = `qwen-batch-${_activeBatch.id}.gif`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        // Revoke the object URL after a delay (browser needs time to start the download)
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+        log('GIF generated', 'success');
+    } catch (e) {
+        log('GIF generation failed: ' + e.message, 'error');
+        showNotif('GIF generation failed: ' + e.message, 'error');
+    } finally {
+        if (btn) btn.classList.remove('busy');
+    }
+}
+// Helper — promises an <img> element with its bitmap loaded. Needed because
+// GIF.js wants fully-loaded images before addFrame.
+function _loadImageTo(url){
+    return new Promise((resolve, reject) => {
+        const im = new Image();
+        im.crossOrigin = 'anonymous';   // R2 serves with appropriate CORS
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error('Failed to load ' + url));
+        im.src = url;
+    });
+}
+
+// ── Embed link ─────────────────────────────────────────
+// Calls the backend to persist the batch as a shareable "embed". Returns
+// a URL the user can share that opens a standalone viewer. The viewer is
+// itself a small HTML page the worker serves at /embed/{id}.
+async function createBatchEmbed(){
+    if (!_activeBatch) return;
+    const shots = _activeBatch.shots.filter(s => s.url);
+    if (shots.length < 2) {
+        showNotif('Need at least 2 images to create an embed.', 'error');
+        return;
+    }
+    const btn = $('btnEmbedLink');
+    if (btn) btn.classList.add('busy');
+    try {
+        const body = {
+            batch_id: _activeBatch.id,
+            input_url: _activeBatch.inputUrl || '',
+            shots: shots.map(s => ({
+                label: s.label,
+                url: s.url,
+                w: s.w || null,
+                h: s.h || null,
+            })),
+        };
+        const r = await fetchT(`${API}/api/studio/embed`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        }, 15000);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'embed_failed');
+        const shareUrl = d.url;     // e.g. https://missinglink.build/embed/abc123
+        const iframeSnippet = `<iframe src="${shareUrl}" width="800" height="600" frameborder="0" allowfullscreen></iframe>`;
+        // Show both the URL and the iframe snippet, let user copy either
+        showEmbedDialog(shareUrl, iframeSnippet);
+    } catch (e) {
+        showNotif('Could not create embed: ' + e.message, 'error');
+    } finally {
+        if (btn) btn.classList.remove('busy');
+    }
+}
+
+// Modal that presents the embed URL + iframe snippet with copy buttons.
+// Uses the existing notifModal infra to avoid native alert/prompt.
+function showEmbedDialog(url, iframeSnippet){
+    const panel = $('notifPanel');
+    panel.className = 'notif-panel';
+    $('notifTitle').textContent = 'Share link created';
+    $('notifBody').innerHTML = `
+        <div style="margin-bottom:14px;font-size:12px;color:var(--text-muted)">
+            Anyone with this link can view your generated views. Thumbnails are
+            persisted — the viewer works without a login.
+        </div>
+        <label style="display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase">Share URL</label>
+        <div style="display:flex;gap:6px;margin-bottom:12px">
+            <input readonly value="${url}" id="_embedUrl" style="flex:1;padding:8px;font-family:var(--font-mono);font-size:11px;background:var(--surface-3);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none" onfocus="this.select()">
+            <button class="notif-btn primary" onclick="_copyEmbedText('_embedUrl', this)" style="padding:8px 14px">Copy</button>
+        </div>
+        <label style="display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase">Embed &lt;iframe&gt;</label>
+        <div style="display:flex;gap:6px">
+            <input readonly value='${iframeSnippet.replace(/'/g, "&apos;")}' id="_embedIframe" style="flex:1;padding:8px;font-family:var(--font-mono);font-size:10px;background:var(--surface-3);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none" onfocus="this.select()">
+            <button class="notif-btn primary" onclick="_copyEmbedText('_embedIframe', this)" style="padding:8px 14px">Copy</button>
+        </div>
+    `;
+    $('notifCancelBtn').style.display = 'none';
+    $('notifOkBtn').textContent = 'Done';
+    $('notifOkBtn').className = 'notif-btn primary';
+    $('notifModal').style.display = 'flex';
+    _notifResolver = () => {};
+}
+function _copyEmbedText(inputId, btn){
+    const el = $(inputId);
+    if (!el) return;
+    el.select();
+    try {
+        navigator.clipboard.writeText(el.value);
+        const orig = btn.textContent;
+        btn.textContent = '✓ Copied';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+    } catch (e) {
+        document.execCommand('copy');
     }
 }
 
@@ -2222,9 +2438,15 @@ function startJobPoll(jobId){
                 // need to keep done jobs in the local state.
                 myJobs = myJobs.filter(x => x.id !== jobId);
                 renderQueue();
-                // If this job belongs to the active batch, drop its image into
-                // the grid slot instead of clobbering the main single-image
-                // view. Single-output jobs go through showResult as before.
+                // Routing for single-image output vs batch grid:
+                // 1) If this job belongs to the currently active batch,
+                //    drop its image into the grid slot. Don't call showResult.
+                // 2) If the job has a batchId but there's no active batch
+                //    (user closed the grid or started a single-generate),
+                //    suppress output — the 6 views are in history under
+                //    the batch_id, user will restore from there.
+                // 3) Otherwise it's a regular single-generate — call
+                //    showResult, which will clear any lingering grid.
                 let handledByBatch = false;
                 if (_activeBatch) {
                     const shot = _activeBatch.shots.find(s => s.jobId === jobId);
@@ -2240,7 +2462,13 @@ function startJobPoll(jobId){
                     }
                 }
                 if (!handledByBatch) {
-                    showResult(d.result);
+                    // Orphaned batch job (grid was closed before this one
+                    // finished) — don't surface it; it's safely in history.
+                    if (job.batchId) {
+                        log(`Job ${jobId} done (orphaned batch job, in history)`,'success');
+                    } else {
+                        showResult(d.result);
+                    }
                 }
                 log(`Job ${jobId} done (${d.result.elapsed}s)`,'success');
                 checkAuth();
@@ -2529,22 +2757,58 @@ function renderHistorySidebar(){
     }
 
     histList.innerHTML = '';
-    for (const j of _historyItems.slice(0, 6)) {
+    // Group items same way as modal so a batch shows as a single sidebar tile
+    // rather than eating 6 of the 6 visible slots.
+    const grouped = [];
+    const seenBatch = new Set();
+    for (const j of _historyItems) {
+        if (j.batch_id) {
+            if (seenBatch.has(j.batch_id)) continue;
+            seenBatch.add(j.batch_id);
+            const items = _historyItems.filter(x => x.batch_id === j.batch_id);
+            grouped.push({ kind: 'batch', items });
+        } else {
+            grouped.push({ kind: 'single', item: j });
+        }
+    }
+    for (const g of grouped.slice(0, 6)) {
         const tile = document.createElement('div');
         tile.className = 'q-hist-tile';
-        tile.onclick = (ev) => {
-            if (ev.target.closest('.q-hist-delete')) return;
-            restoreFromHistory(j);
-        };
-        const detail = j.elapsed ? `${j.elapsed}s` : '';
-        tile.innerHTML = `
-            <div class="job-thumb"><img src="${j.url}" loading="lazy"></div>
-            <div class="job-info">
-                <div class="job-status">✅ Done</div>
-                <div class="job-mode">${(j.mode||'').toUpperCase()}${detail ? ' · ' + detail : ''}</div>
-            </div>
-            <button class="q-hist-delete" title="Delete this generation" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">🗑</button>
-        `;
+        if (g.kind === 'single') {
+            const j = g.item;
+            tile.onclick = (ev) => {
+                if (ev.target.closest('.q-hist-delete')) return;
+                restoreFromHistory(j);
+            };
+            const detail = j.elapsed ? `${j.elapsed}s` : '';
+            tile.innerHTML = `
+                <div class="job-thumb"><img src="${j.url}" loading="lazy"></div>
+                <div class="job-info">
+                    <div class="job-status">✅ Done</div>
+                    <div class="job-mode">${(j.mode||'').toUpperCase()}${detail ? ' · ' + detail : ''}</div>
+                </div>
+                <button class="q-hist-delete" title="Delete this generation" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">🗑</button>
+            `;
+        } else {
+            const items = [...g.items].sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+            const leader = items[0];
+            const batchId = leader.batch_id;
+            tile.onclick = (ev) => {
+                if (ev.target.closest('.q-hist-delete')) return;
+                restoreBatchFromHistory(items);
+            };
+            tile.innerHTML = `
+                <div class="job-thumb" style="position:relative">
+                    <img src="${leader.url}" loading="lazy">
+                    <div style="position:absolute;top:2px;right:2px;background:rgba(232,169,23,.9);color:#0a0a0c;font-family:var(--font-mono);font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;letter-spacing:.5px">${items.length}×</div>
+                </div>
+                <div class="job-info">
+                    <div class="job-status">✅ ${items.length} views</div>
+                    <div class="job-mode">ALL ANGLES</div>
+                </div>
+                <button class="q-hist-delete" title="Delete this batch" onclick="event.stopPropagation(); deleteBatchFromHistory('${batchId}')">🗑</button>
+            `;
+        }
         histList.appendChild(tile);
     }
 }
@@ -2630,37 +2894,104 @@ function renderHistoryModal(){
         existingIds.add(card.dataset.jobId);
     }
 
-    // Remove cards whose jobs no longer exist (e.g. after a delete)
-    const currentIds = new Set(_historyItems.map(j => j.id));
+    // Group items by batch_id. Items with a batch_id collapse into a single
+    // grouped card; items without keep their own card. We preserve the
+    // original ordering by taking the first-seen position of each group.
+    //
+    // Output shape:
+    //   [{ kind: 'single', item: j },
+    //    { kind: 'batch', batch_id, items: [...], leader: j_first }]
+    const grouped = [];
+    const batchMap = new Map();
+    for (const j of _historyItems) {
+        if (j.batch_id) {
+            let entry = batchMap.get(j.batch_id);
+            if (!entry) {
+                entry = { kind: 'batch', batch_id: j.batch_id, items: [j], leader: j };
+                batchMap.set(j.batch_id, entry);
+                grouped.push(entry);
+            } else {
+                entry.items.push(j);
+                // Use the earliest finished_at as the "leader" for timestamp;
+                // the items inside are ordered by arrival, we don't sort.
+            }
+        } else {
+            grouped.push({ kind: 'single', item: j });
+        }
+    }
+
+    // Remove cards whose entries no longer exist
+    const currentEntryIds = new Set(grouped.map(g =>
+        g.kind === 'batch' ? `batch:${g.batch_id}` : `single:${g.item.id}`));
     for (const card of Array.from(grid.querySelectorAll('.history-card'))) {
-        if (!currentIds.has(card.dataset.jobId)) card.remove();
+        if (!currentEntryIds.has(card.dataset.jobId)) card.remove();
     }
     // Remove the "Loading..." placeholder if it's still there
     const placeholder = grid.querySelector('.history-empty');
     if (placeholder) placeholder.remove();
 
     // Append new cards in order
-    for (const j of _historyItems) {
-        if (existingIds.has(j.id)) continue;
-        const when = j.finished_at || j.created_at || 0;
-        const whenLabel = when ? timeAgo(when * 1000) : '';
-        const card = document.createElement('div');
-        card.className = 'history-card';
-        card.dataset.jobId = j.id;
-        card.onclick = (ev) => {
-            if (ev.target.closest('.history-card-delete')) return;
-            restoreFromHistory(j);
-            closeHistoryModal();
-        };
-        card.innerHTML = `
-            <div class="history-card-thumb"><img src="${j.url}" loading="lazy" alt=""></div>
-            <div class="history-card-meta">
-                <span class="hc-mode">${(j.mode||'').toUpperCase()}</span>${whenLabel}
-                <div class="hc-prompt">${escapeHtml(j.prompt || '')}</div>
-            </div>
-            <button class="history-card-delete" title="Delete this generation" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">🗑</button>
-        `;
-        grid.appendChild(card);
+    for (const g of grouped) {
+        if (g.kind === 'single') {
+            const j = g.item;
+            const entryId = `single:${j.id}`;
+            if (existingIds.has(entryId)) continue;
+            const when = j.finished_at || j.created_at || 0;
+            const whenLabel = when ? timeAgo(when * 1000) : '';
+            const card = document.createElement('div');
+            card.className = 'history-card';
+            card.dataset.jobId = entryId;
+            card.onclick = (ev) => {
+                if (ev.target.closest('.history-card-delete')) return;
+                restoreFromHistory(j);
+                closeHistoryModal();
+            };
+            card.innerHTML = `
+                <div class="history-card-thumb"><img src="${j.url}" loading="lazy" alt=""></div>
+                <div class="history-card-meta">
+                    <span class="hc-mode">${(j.mode||'').toUpperCase()}</span>${whenLabel}
+                    <div class="hc-prompt">${escapeHtml(j.prompt || '')}</div>
+                </div>
+                <button class="history-card-delete" title="Delete this generation" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">🗑</button>
+            `;
+            grid.appendChild(card);
+        } else {
+            // Batch: render a grouped card with a 2×3 mini-mosaic of thumbs.
+            const entryId = `batch:${g.batch_id}`;
+            if (existingIds.has(entryId)) continue;
+            // Sort items by created_at so the mosaic order is stable (hero
+            // shot 1 is typically the earliest; rest follow arrival order).
+            const items = [...g.items].sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+            const when = Math.max(...items.map(i => i.finished_at || i.created_at || 0));
+            const whenLabel = when ? timeAgo(when * 1000) : '';
+            const card = document.createElement('div');
+            card.className = 'history-card history-card-batch';
+            card.dataset.jobId = entryId;
+            card.onclick = (ev) => {
+                if (ev.target.closest('.history-card-delete')) return;
+                restoreBatchFromHistory(items);
+                closeHistoryModal();
+            };
+            // Build the mosaic — up to 6 thumbs in a 3×2 grid. If fewer,
+            // empty cells stay dark.
+            const tiles = items.slice(0, 6).map(i =>
+                `<div class="hcm-cell"><img src="${i.url}" loading="lazy" alt=""></div>`
+            ).join('');
+            const emptyCells = Math.max(0, 6 - items.length);
+            const empties = Array(emptyCells).fill('<div class="hcm-cell hcm-empty"></div>').join('');
+            card.innerHTML = `
+                <div class="history-card-thumb history-card-mosaic">
+                    ${tiles}${empties}
+                    <div class="hcm-badge">${items.length} VIEWS</div>
+                </div>
+                <div class="history-card-meta">
+                    <span class="hc-mode">BATCH</span>${whenLabel}
+                    <div class="hc-prompt">All-angles look-around · ${items.length} shots</div>
+                </div>
+                <button class="history-card-delete" title="Delete this batch" onclick="event.stopPropagation(); deleteBatchFromHistory('${g.batch_id}')">🗑</button>
+            `;
+            grid.appendChild(card);
+        }
     }
 
     // Show a skeleton/spinner sentinel if more to load, hide when done
@@ -2710,12 +3041,95 @@ async function deleteHistoryItem(jobId){
 // Different from restoreJobState which uses the client-side job.snapshot.
 function restoreFromHistory(j){
     if (!j) return;
-    // Show the output image in the main viewport
+    // Show the output image in the main viewport (this also tears down
+    // any lingering batch grid via showResult's _activeBatch check).
     showResult({ url: j.url, w: j.w, h: j.h, prompt: j.prompt, seed: j.seed, elapsed: j.elapsed, mode: j.mode });
     // Update prompt + seed at minimum — full settings aren't stored in history items
     if ($('promptInput') && j.prompt) $('promptInput').value = j.prompt;
     if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
+}
+
+// Restore a full 6-angle batch from history. We rebuild the _activeBatch
+// object from the history entries so the same renderBatchGrid used during
+// a live batch displays all 6 finished shots with their labels. Click-to-
+// expand works, Download-all works, Share works.
+function restoreBatchFromHistory(items){
+    if (!items || !items.length) return;
+    // Sort by created_at so shot 1 (earliest submit) is first
+    const sorted = [...items].sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+    // Derive friendly labels by matching each item's prompt back to the
+    // canonical shot list. Fallback to raw prompt fragment if no match.
+    const shots = sorted.map((it, idx) => {
+        const label = _deriveShotLabel(it.prompt) || `View ${idx + 1}`;
+        return {
+            label,
+            prompt: it.prompt || '',
+            jobId: it.id,              // real job ID in case we need to re-open
+            status: 'done',
+            url: it.url,
+            w: it.w, h: it.h,
+            seed: it.seed, elapsed: it.elapsed,
+        };
+    });
+    _activeBatch = {
+        id: sorted[0].batch_id || ('restored_' + Date.now()),
+        started: (sorted[0].created_at || 0) * 1000,
+        inputUrl: null,  // input image isn't stored per-job result
+        shots,
+        restored: true,  // flag so we know this came from history
+    };
+    renderBatchGrid();
+    log(`Restored ${sorted.length}-angle batch from history`);
+}
+
+// Try to map a prompt like "<sks> front-right quarter view eye-level shot close-up"
+// back to a human label like "Front-R · Close-up". Done heuristically — if the
+// prompt doesn't match any of our canonical 6 shots, we fall back to a generic
+// "View N" label in the caller.
+function _deriveShotLabel(prompt){
+    if (!prompt) return null;
+    const p = prompt.toLowerCase();
+    // Cheap mapping: detect azimuth keyword, abbreviate for display
+    const az =
+        p.includes('front-right') ? 'Front-R' :
+        p.includes('front-left')  ? 'Front-L' :
+        p.includes('front')       ? 'Front'   :
+        p.includes('back')        ? 'Back'    :
+        p.includes('right side')  ? 'Right'   :
+        p.includes('left side')   ? 'Left'    :
+        null;
+    if (!az) return null;
+    const mod =
+        p.includes('close-up')     ? 'Close-up' :
+        p.includes('wide shot')    ? 'Wide'     :
+        p.includes('low-angle')    ? 'Low'      :
+        p.includes('high-angle')   ? 'High · Wide' :
+        p.includes('elevated')     ? 'Elevated' :
+        'Eye Level';
+    return `${az} · ${mod}`;
+}
+
+// Soft-delete all jobs in a batch. Each one hits the existing single-delete
+// endpoint; we fire them in parallel and then refresh history.
+async function deleteBatchFromHistory(batchId){
+    const confirmed = await showConfirm(`Delete all images from this batch?`, 'Delete');
+    if (!confirmed) return;
+    const toDelete = _historyItems.filter(j => j.batch_id === batchId);
+    if (!toDelete.length) return;
+    try {
+        await Promise.all(toDelete.map(j =>
+            fetchT(`${API}/api/studio/job/${j.id}`, { method: 'DELETE' }, 10000)
+                .catch(() => {})  // ignore individual failures; refresh handles truth
+        ));
+        // Optimistic local removal; server will be authoritative on next sync
+        _historyItems = _historyItems.filter(j => j.batch_id !== batchId);
+        renderHistoryModal();
+        renderHistorySidebar();
+        log(`Deleted batch (${toDelete.length} images)`, 'success');
+    } catch (e) {
+        log('Batch delete failed: ' + e.message, 'error');
+    }
 }
 
 // Tiny "N seconds ago" formatter for history cards
@@ -2816,6 +3230,10 @@ setInterval(() => {
 
 function showResult(d){
     lastResult=d;
+    // If a batch grid is currently displayed, tear it down. The 6 batch
+    // jobs are safe in history (grouped by batch_id) so the user can
+    // restore the full set by clicking the grouped history card.
+    if (_activeBatch) clearBatchGrid();
     $('outImg').src=d.url; $('outImg').style.display='';
     $('outPh').style.display='none';
     $('rngSeed').value=d.seed; $('vSeed').value=d.seed;
