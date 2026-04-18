@@ -190,6 +190,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .gen-btn{width:100%;padding:11px;background:var(--gold);color:var(--black);font-family:var(--font-mono);font-weight:700;font-size:11px;letter-spacing:.5px;text-transform:uppercase;border:none;border-radius:6px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px}
 .gen-btn:hover:not(:disabled){background:var(--gold-light)}
 .gen-btn:disabled{opacity:.4;cursor:not-allowed}
+.gen-btn-secondary{background:transparent;border:1px solid var(--gold);color:var(--gold)}
+.gen-btn-secondary:hover:not(:disabled){background:var(--gold-dim);color:var(--gold)}
 .token-cost{text-align:center;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);margin-top:6px;letter-spacing:.3px}
 .buy-btn{width:100%;padding:9px;background:none;color:var(--gold);border:1px solid var(--gold);border-radius:6px;font-family:var(--font-mono);font-weight:600;font-size:10px;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.5px}
 .buy-btn:hover{background:var(--gold);color:var(--black)}
@@ -237,6 +239,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-overlay>*{pointer-events:auto}
 .q-section{background:rgba(17,17,19,.92);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
 .q-header{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1px;color:var(--text-muted);padding:8px 10px 6px;display:flex;align-items:center;gap:6px}
+.q-global-hint{font-family:var(--font-mono);font-size:9px;font-weight:400;color:var(--text-dim);letter-spacing:.3px;text-transform:none}
 .q-count{margin-left:auto;font-weight:400;color:var(--gold)}
 .q-clear{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:10px;font-weight:600;cursor:pointer;letter-spacing:.5px;padding:5px 10px;border-radius:5px;display:inline-flex;align-items:center;gap:5px;transition:all .12s;line-height:1;white-space:nowrap}
 .q-clear:hover{background:var(--gold-dim);border-color:var(--gold);color:var(--gold);transform:translateY(-1px)}
@@ -312,9 +315,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .sidebar-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:190;backdrop-filter:blur(2px)}
 .sidebar-scrim.open{display:block}
 
-/* Camera/upload capture button — visible on all screen sizes but primarily
-   useful on mobile where `capture="environment"` opens the device camera. */
-.capture-btn{width:100%;margin-top:8px;padding:10px;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s}
+/* Camera/upload capture button — hidden on desktop, shown on mobile (where
+   the `capture="environment"` attribute meaningfully opens the device camera
+   rather than just behaving like a regular file picker). Mobile media query
+   below flips display:flex. */
+.capture-btn{display:none;width:100%;margin-top:8px;padding:10px;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;align-items:center;justify-content:center;gap:6px;transition:all .15s}
 .capture-btn:hover,.capture-btn:active{background:var(--gold-dim);border-color:var(--gold);color:var(--gold)}
 
 /* MOBILE ACTION BAR — hidden on desktop, shown on mobile by media query.
@@ -348,6 +353,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
     /* Mobile action bar visible at bottom of viewport */
     .mobile-action-bar { display: block; }
+    /* Take Photo button in the sidebar drawer — useful on mobile where
+       the capture attribute actually opens the device camera. */
+    .capture-btn { display: flex; }
     /* Push main content up so it's not hidden behind the action bar */
     .main { padding-bottom: var(--mobile-action-h); }
 
@@ -574,9 +582,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
     <div class="sec">
         <button class="gen-btn" id="btnGen" onclick="doGenerate()" disabled>⚡ GENERATE</button>
+        <!-- Camera mode only: one click, 6 jobs queued, one per canonical
+             azimuth. Uses current elevation/distance/seed so the user has
+             a coherent set they can compare side-by-side. -->
+        <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles" onclick="generateAllAngles()" disabled style="margin-top:8px">
+            🔄 All 6 Angles
+        </button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
             <span style="color:var(--text-muted)">Cost</span>
             <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.05</span>
+        </div>
+        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
+            <span style="color:var(--text-muted)">All 6 Angles</span>
+            <span style="color:var(--gold);font-weight:700">🪙 600 tokens</span>
         </div>
         <div class="token-cost" id="balanceLine" style="display:none;justify-content:space-between;padding:4px 0 0">
             <span style="color:var(--text-muted)">Balance</span>
@@ -602,7 +620,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <!-- Queue overlay (top-right of output area) -->
         <div class="queue-overlay" id="queueOverlay">
             <div class="q-section" id="qActiveSection" style="display:none">
-                <div class="q-header">QUEUE <span id="queueCount" class="q-count">0/3</span></div>
+                <div class="q-header">
+                    <span>QUEUE <span id="queueCount" class="q-count">0/12</span></span>
+                    <span id="queueGlobalHint" class="q-global-hint" style="display:none;margin-left:auto"></span>
+                </div>
                 <div id="qActiveList" class="q-list"></div>
             </div>
         </div>
@@ -1221,16 +1242,32 @@ function setMode(mode){
 }
 
 function updateGenButton(){
-    if(!_user){ $('btnGen').disabled=false; $('btnGen').textContent='🔑 SIGN IN TO GENERATE'; return; }
-    if(_user.tokens<100){ $('btnGen').disabled=false; $('btnGen').textContent='🪙 GET TOKENS'; return; }
+    const MAX_QUEUED = 12;  // matches STUDIO_MAX_QUEUED on the worker
+    const btnAll = $('btnAllAngles');
+
+    // Primary button state first
+    if(!_user){ $('btnGen').disabled=false; $('btnGen').textContent='🔑 SIGN IN TO GENERATE';
+        if(btnAll){ btnAll.disabled=true; } return; }
+    if(_user.tokens<100){ $('btnGen').disabled=false; $('btnGen').textContent='🪙 GET TOKENS';
+        if(btnAll){ btnAll.disabled=true; } return; }
     const activeCount=myJobs.filter(j=>j.status==='queued'||j.status==='waiting'||j.status==='running').length;
-    if(activeCount>=3){ $('btnGen').disabled=true; $('btnGen').textContent='⏳ QUEUE FULL (3/3)'; return; }
+    if(activeCount>=MAX_QUEUED){ $('btnGen').disabled=true; $('btnGen').textContent=`⏳ QUEUE FULL (${activeCount}/${MAX_QUEUED})`;
+        if(btnAll){ btnAll.disabled=true; } return; }
     $('btnGen').textContent='⚡ GENERATE';
     if(currentMode==='camera'){ $('btnGen').disabled=!imageId; }
     else {
         const f=slots.filter(s=>s!==null);
         const cp=$('customPrompt')?$('customPrompt').value.trim():'';
         $('btnGen').disabled=!(f.length>0 && cp);
+    }
+
+    // All-Angles button: camera-mode-only, needs 600 tokens, and enough
+    // queue headroom for 6 jobs on top of what's already there.
+    if (btnAll) {
+        if (currentMode !== 'camera' || !imageId) { btnAll.disabled = true; btnAll.textContent = '🔄 All 6 Angles'; }
+        else if (_user.tokens < 600) { btnAll.disabled = true; btnAll.textContent = '🪙 Need 600 tokens'; }
+        else if (activeCount + 6 > MAX_QUEUED) { btnAll.disabled = true; btnAll.textContent = `⏳ Need ${6 - (MAX_QUEUED - activeCount)} free slots`; }
+        else { btnAll.disabled = false; btnAll.textContent = '🔄 All 6 Angles'; }
     }
 }
 
@@ -1282,20 +1319,30 @@ function updateHeaderStatusBadge(connected){
         label.textContent = 'GPU ready';
     } else if (state === 'warming') {
         dot.className = 'dot warm';
-        // Map Modal's setup stages to user-friendly labels.
+        // Map Modal's setup stages to user-friendly labels. The "registering"
+        // stage is the fast torch.compile wrap loop (reports N/M progress).
+        // The "compiling" stage is the slow actual compile work happening
+        // during the warmup forward pass — no granular progress available so
+        // we show elapsed time to reassure the user it's still alive.
         const stageMap = {
             booting:              'Starting container',
             loading_transformer:  'Loading model',
             loading_text_encoder: 'Loading encoder',
             building_pipeline:    'Building pipeline',
+            registering:          'Registering kernels',
             compiling:            'Compiling kernels',
             warming_up:           'Final warmup',
             ready:                'GPU ready',
         };
         const stage = _gpuState.startup_stage;
         let text;
-        if (stage === 'compiling' && _gpuState.startup_total > 0) {
-            text = `Compiling ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
+        if (stage === 'registering' && _gpuState.startup_total > 0) {
+            text = `Registering ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
+        } else if (stage === 'compiling') {
+            // Slow real compile. Show elapsed seconds so the user can see
+            // it's progressing, even though there's no per-block progress.
+            const age = _gpuState.startup_age_s || 0;
+            text = age > 0 ? `Compiling kernels · ${age}s` : 'Compiling kernels';
         } else if (stage && stageMap[stage]) {
             text = stageMap[stage];
         } else {
@@ -1337,6 +1384,8 @@ async function pollQueue(){
                 existing.stage = srvJob.stage;
                 existing.step = srvJob.step;
                 existing.totalSteps = srvJob.total_steps;
+                existing.othersAhead = srvJob.others_ahead || 0;
+                existing.globalPosition = srvJob.global_position;
                 if(srvJob.started_at && !existing.startedAt){
                     existing.startedAt = srvJob.started_at * 1000;
                 }
@@ -1344,10 +1393,16 @@ async function pollQueue(){
                     existing.runningAt = srvJob.stage_at * 1000;
                 }
             }
+            // Global queue depth (informational, shown in the queue header)
+            _totalGlobalActive = d.total_global || 0;
             renderQueue();
         }
     }catch(e){}
 }
+
+// Total non-terminal jobs across all users (from /api/studio/queue). Used
+// to show "~N others in queue" in the header so users get a sense of load.
+let _totalGlobalActive = 0;
 
 // Fetch the user's completed generations from the server. This is the
 // authoritative history — client-side myJobs only mirrors it for display.
@@ -1675,6 +1730,132 @@ async function doGenerate(){
     }
 }
 
+// ── Generate All 6 Angles ─────────────────────────────
+// Submits 6 jobs in sequence — one per canonical azimuth — using the user's
+// current elevation, distance, seed, CFG, steps, and LoRA scales. Same seed
+// across all 6 so the only variable is the camera angle (isolates the Angles
+// LoRA effect). Width/height are pinned to the input image dimensions so no
+// scaling happens. Each job is a regular entry in the user's history.
+//
+// The 8 AZ entries are defined globally near the top of the viewport script.
+// We pick 6 of them — the canonical look-around set — skipping the two
+// "back-quarter" views which are less useful and save the user 200 tokens.
+const ALL_ANGLES_BATCH = [
+    'front view',
+    'front-right quarter view',
+    'right side view',
+    'back view',
+    'left side view',
+    'front-left quarter view',
+];
+
+async function generateAllAngles(){
+    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(_user.tokens < 600){ showBuyModal(); return; }
+    if(currentMode !== 'camera' || !imageId){ return; }
+
+    const activeCount = myJobs.filter(j => j.status==='queued'||j.status==='waiting'||j.status==='running').length;
+    if(activeCount + ALL_ANGLES_BATCH.length > 12){
+        showNotif(`Not enough queue slots. You need ${ALL_ANGLES_BATCH.length} free, have ${12-activeCount}.`, 'error');
+        return;
+    }
+
+    // Shared generation params — match current sidebar settings
+    const el = $('selEl').value;      // current elevation label
+    const dist = $('selDist').value;  // current distance label
+    const seed = parseInt($('rngSeed').value) || 42;
+    const negative = $('negPrompt').value.trim();
+    const cfg = parseFloat($('rngCfg').value);
+    const steps = parseInt($('rngSteps').value);
+    const lightning = parseFloat($('rngLoraLightning').value);
+    const angles = parseFloat($('rngLoraAngles').value);
+    const width = parseInt($('inpWidth').value) || 0;
+    const height = parseInt($('inpHeight').value) || 0;
+    // Group jobs so the UI can visually cluster them later. Server stores
+    // this as an opaque tag; no worker logic depends on it.
+    const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const btn = $('btnAllAngles');
+    btn.disabled = true;
+    btn.textContent = '⏳ Submitting 6...';
+
+    let submitted = 0;
+    for (const azLabel of ALL_ANGLES_BATCH) {
+        const prompt = `<sks> ${azLabel} ${el} ${dist}`;
+        const payload = {
+            mode: 'camera',
+            image_ids: [imageId],
+            prompt,
+            negative_prompt: negative,
+            seed,
+            randomize_seed: false,   // same seed across all 6 so angle is the only variable
+            guidance_scale: cfg,
+            inference_steps: steps,
+            lora_lightning: lightning,
+            lora_angles: angles,
+            width,
+            height,
+            batch_id: batchId,
+        };
+        const snapshot = {
+            mode: 'camera',
+            prompt, negative_prompt: negative, seed,
+            guidance_scale: cfg, inference_steps: steps,
+            lora_lightning: lightning, lora_angles: angles,
+            width, height,
+            input_image_id: imageId, input_image_url: imageUrl,
+            edit_slots: null,
+            batch_id: batchId,
+        };
+        try {
+            const r = await fetchT(`${API}/api/studio/generate`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }, 30000);
+            const d = await r.json();
+            if (!d.ok) {
+                if (r.status === 401) { $('loginModal').classList.add('open'); break; }
+                if (r.status === 402) { showBuyModal(); break; }
+                if (r.status === 429) { showNotif('Queue full — submitted ' + submitted + ' of 6.', 'error'); break; }
+                log(`Angle '${azLabel}' failed: ${d.error || 'unknown'}`, 'error');
+                continue;
+            }
+
+            // Deduct tokens in UI immediately (server already deducted)
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                $('tokenCount').textContent = d.tokens_remaining;
+                $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
+            }
+
+            myJobs.unshift({
+                id: d.job_id,
+                status: 'waiting',
+                mode: 'camera',
+                thumb: imageUrl,
+                result: null,
+                submittedAt: Date.now(),
+                startedAt: Date.now(),
+                batchId,
+                angleLabel: azLabel,
+                snapshot,
+            });
+            submitted++;
+            startJobPoll(d.job_id);
+            renderQueue();
+        } catch (e) {
+            log(`Angle '${azLabel}' failed: ${e.message}`, 'error');
+        }
+        // Tiny delay between submissions so we don't hammer the worker
+        // — helps avoid occasional transient 5xx under load.
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    log(`Submitted ${submitted}/6 angle jobs (batch ${batchId})`, 'success');
+    btn.textContent = '🔄 All 6 Angles';
+    updateGenButton();
+}
+
 function startJobPoll(jobId){
     if(pollTimers[jobId]) return;
     const startTime=Date.now();
@@ -1779,7 +1960,20 @@ function renderQueue(){
     // warming with stage / ready) is communicated via the header badge.
     const activeSection = $('qActiveSection');
     const activeList = $('qActiveList');
-    $('queueCount').textContent = `${activeJobs.length}/3`;
+    $('queueCount').textContent = `${activeJobs.length}/12`;
+
+    // Global load hint: total active across all users, minus your own jobs,
+    // so "5 others generating" reads naturally to the user.
+    const hintEl = $('queueGlobalHint');
+    if (hintEl) {
+        const others = Math.max(0, _totalGlobalActive - activeJobs.length);
+        if (others > 0) {
+            hintEl.style.display = '';
+            hintEl.textContent = `· ${others} other${others === 1 ? '' : 's'} active`;
+        } else {
+            hintEl.style.display = 'none';
+        }
+    }
 
     if (activeJobs.length > 0) {
         activeSection.style.display = '';
@@ -1835,12 +2029,21 @@ function renderQueue(){
             if (j.status === 'queued') {
                 statusIcon = '⏳'; statusText = 'Queued';
                 const waited = Math.floor((now - j.submittedAt) / 1000);
-                subtext = `${j.mode.toUpperCase()} · ${waited}s`;
+                // Show position relative to other users' jobs, not total
+                // queue depth (user doesn't care about their own jobs ahead
+                // of this one; they see those in their own list).
+                const ahead = j.othersAhead || 0;
+                subtext = ahead > 0
+                    ? `${ahead} ahead · ${waited}s`
+                    : `${j.mode.toUpperCase()} · ${waited}s`;
                 pct = 2;
             } else if (j.status === 'waiting') {
                 const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
                 statusIcon = '⏳'; statusText = 'Queued';
-                subtext = `${j.mode.toUpperCase()} · ${waited}s`;
+                const ahead = j.othersAhead || 0;
+                subtext = ahead > 0
+                    ? `${ahead} ahead · ${waited}s`
+                    : `${j.mode.toUpperCase()} · ${waited}s`;
                 pct = 5;
             } else if (j.status === 'running') {
                 const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
@@ -1952,10 +2155,9 @@ function renderHistorySidebar(){
     // Apply persisted minimize state every render (survives tile rebuild)
     if (_historyMinimized) histSection.classList.add('minimized');
     else histSection.classList.remove('minimized');
-    // Item count in header
-    if (countEl) countEl.textContent = _historyTotal > _historyItems.length
-        ? `(${_historyItems.length}/${_historyTotal})`
-        : `(${_historyItems.length})`;
+    // Item count in header — just show what's visible. Full total lives
+    // in the history modal when the user expands, no need to clutter here.
+    if (countEl) countEl.textContent = `(${_historyItems.length})`;
     // Update the minimize button icon to match state
     const minBtn = $('historyMinBtn');
     if (minBtn) {
@@ -2047,7 +2249,9 @@ function renderHistoryModal(){
     const grid = $('historyModalGrid');
     const countEl = $('historyModalCount');
     const sentinel = $('historyScrollSentinel');
-    countEl.textContent = _historyTotal > 0 ? `${_historyItems.length} of ${_historyTotal}` : '—';
+    // Show current-count only; total isn't meaningful now that infinite
+    // scroll loads more as the user scrolls. Hide before any load happens.
+    countEl.textContent = _historyItems.length > 0 ? `(${_historyItems.length})` : '';
 
     if (!_historyItems.length) {
         grid.innerHTML = `<div class="history-empty">No generations yet — create one to see it here</div>`;
