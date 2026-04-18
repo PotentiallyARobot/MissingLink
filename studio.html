@@ -934,30 +934,28 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div class="sec-label"><span class="icon">🧩</span> SHARED CONTEXT
             <span class="sec-label-count">optional · reused across every job</span>
         </div>
-        <div class="slots">
-            <div class="slot" data-slot="1">
-                <div class="slot-label">Image 2</div>
-                <div class="slot-drop" id="bslotDrop1" onclick="document.getElementById('bslotInp1').click()"
-                     ondragover="event.preventDefault()" ondrop="batchContextDrop(event,1)">
-                    <span class="slot-placeholder">+</span>
-                </div>
-                <input type="file" id="bslotInp1" accept="image/*" style="display:none">
-                <div class="slot-filled" id="bslotFilled1" style="display:none">
-                    <img id="bslotImg1">
-                    <button class="slot-remove" onclick="batchContextRemove(1)">×</button>
-                </div>
+        <div class="img-slot" id="bslot1"
+             ondragover="event.preventDefault()" ondrop="batchContextDrop(event,1)">
+            <div class="slot-empty" onclick="$('bslotFile1').click()">
+                <input type="file" accept="image/*" id="bslotFile1" onchange="bslotFileChange(1)">
+                <span class="slot-num">2</span><span class="slot-plus">+</span><span class="slot-hint">Drop or click to add</span>
             </div>
-            <div class="slot" data-slot="2">
-                <div class="slot-label">Image 3</div>
-                <div class="slot-drop" id="bslotDrop2" onclick="document.getElementById('bslotInp2').click()"
-                     ondragover="event.preventDefault()" ondrop="batchContextDrop(event,2)">
-                    <span class="slot-placeholder">+</span>
-                </div>
-                <input type="file" id="bslotInp2" accept="image/*" style="display:none">
-                <div class="slot-filled" id="bslotFilled2" style="display:none">
-                    <img id="bslotImg2">
-                    <button class="slot-remove" onclick="batchContextRemove(2)">×</button>
-                </div>
+            <div class="slot-filled" style="display:none">
+                <img id="bslotImg1" onclick="openModal(this.src)">
+                <span class="slot-num-badge">2</span>
+                <button class="slot-remove" onclick="batchContextRemove(1)">×</button>
+            </div>
+        </div>
+        <div class="img-slot" id="bslot2"
+             ondragover="event.preventDefault()" ondrop="batchContextDrop(event,2)">
+            <div class="slot-empty" onclick="$('bslotFile2').click()">
+                <input type="file" accept="image/*" id="bslotFile2" onchange="bslotFileChange(2)">
+                <span class="slot-num">3</span><span class="slot-plus">+</span><span class="slot-hint">Drop or click to add</span>
+            </div>
+            <div class="slot-filled" style="display:none">
+                <img id="bslotImg2" onclick="openModal(this.src)">
+                <span class="slot-num-badge">3</span>
+                <button class="slot-remove" onclick="batchContextRemove(2)">×</button>
             </div>
         </div>
     </div>
@@ -2076,18 +2074,8 @@ function initDrop(){
             binp.value = '';
         });
     }
-
-    // Shared-context slots for batch mode (Image 2 / Image 3). Drop is
-    // handled inline via batchContextDrop; this wires the click-to-pick
-    // file input change event for each slot.
-    for (const slotIdx of [1, 2]) {
-        const inp = $(`bslotInp${slotIdx}`);
-        if (!inp) continue;
-        inp.addEventListener('change', () => {
-            if (inp.files.length) batchContextUpload(slotIdx, inp.files[0]);
-            inp.value = '';
-        });
-    }
+    // Shared-context slots — drop handled inline on the element; click and
+    // file-input change handled via onclick/onchange attributes.
 }
 
 async function uploadFile(file){
@@ -2447,20 +2435,30 @@ function batchContextRemove(slotIdx){
 function renderBatchContext(){
     for (const slotIdx of [1, 2]) {
         const ctx = _batchContext[slotIdx];
-        const drop = $(`bslotDrop${slotIdx}`);
-        const filled = $(`bslotFilled${slotIdx}`);
-        const img = $(`bslotImg${slotIdx}`);
-        if (!drop || !filled || !img) continue;
+        const slot = $(`bslot${slotIdx}`);
+        if (!slot) continue;
+        const emptyEl = slot.querySelector('.slot-empty');
+        const filledEl = slot.querySelector('.slot-filled');
+        const imgEl = $(`bslotImg${slotIdx}`);
         if (ctx) {
-            drop.style.display = 'none';
-            filled.style.display = '';
-            img.src = ctx.url;
+            if (emptyEl) emptyEl.style.display = 'none';
+            if (filledEl) filledEl.style.display = '';
+            if (imgEl) imgEl.src = ctx.url;
         } else {
-            drop.style.display = '';
-            filled.style.display = 'none';
-            img.src = '';
+            if (emptyEl) emptyEl.style.display = '';
+            if (filledEl) filledEl.style.display = 'none';
+            if (imgEl) imgEl.src = '';
         }
     }
+}
+
+// onchange handler for the hidden file inputs on each context slot
+function bslotFileChange(slotIdx){
+    const inp = $(`bslotFile${slotIdx}`);
+    if (!inp || !inp.files || !inp.files.length) return;
+    const f = inp.files[0];
+    batchContextUpload(slotIdx, f);
+    inp.value = '';   // allow re-picking same file
 }
 
 function renderBatchInputs(){
