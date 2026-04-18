@@ -147,9 +147,17 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 /* GPU state badge shown in queue when container is cold/warming */
 /* Notification / confirm modal — replaces native alert() and confirm() */
-.notif-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(440px,92vw);padding:22px 24px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.notif-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(440px,92vw);padding:22px 24px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;max-height:90vh}
 /* Wider variant for the embed-creation form which packs several fields */
 .notif-panel.notif-panel-wide{width:min(560px,94vw)}
+/* When the panel has a lot of content, the body scrolls internally while
+   title + action buttons stay pinned. */
+.notif-panel .notif-title{flex:0 0 auto}
+.notif-panel .notif-body{flex:1 1 auto;overflow-y:auto;min-height:0;padding-right:4px;margin-right:-4px}
+.notif-panel .notif-body::-webkit-scrollbar{width:8px}
+.notif-panel .notif-body::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px}
+.notif-panel .notif-body::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
+.notif-panel .notif-actions{flex:0 0 auto;padding-top:14px;border-top:1px solid var(--border);margin-top:12px}
 
 /* ── Embed product-metadata form ─────────────────────────────────── */
 .ef-grid{display:flex;flex-direction:column;gap:14px}
@@ -194,20 +202,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .ef-layout-opt.selected{border-color:var(--gold);background:rgba(232,169,23,.06);box-shadow:0 0 0 2px rgba(232,169,23,.12)}
 .ef-layout-name{font-size:11px;font-weight:600;color:var(--text)}
 .ef-layout-desc{font-size:9.5px;color:var(--text-muted);line-height:1.3}
-.ef-layout-preview{width:100%;height:44px;border-radius:3px;position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border)}
-/* Classic: split 55/45 with rectangle on left, bars on right */
-.ef-layout-preview-classic{background:linear-gradient(90deg,var(--text-dim) 0 55%,transparent 55% 100%)}
-.ef-layout-preview-classic::after{content:"";position:absolute;right:10%;top:24%;width:35%;height:3px;background:var(--text-dim);box-shadow:0 7px 0 var(--text-dim),0 14px 0 var(--text-dim)}
-/* Stack: top 60% is image, bottom 40% is bars */
-.ef-layout-preview-stack{background:linear-gradient(180deg,var(--text-dim) 0 60%,transparent 60% 100%)}
-.ef-layout-preview-stack::after{content:"";position:absolute;left:15%;bottom:20%;width:55%;height:3px;background:var(--text-dim);box-shadow:0 6px 0 var(--text-dim)}
-/* Grid: 4-tile mosaic on left, bars on right */
-.ef-layout-preview-grid{background:
-    linear-gradient(90deg,transparent 0 50%,var(--surface) 50% 100%),
-    linear-gradient(var(--surface) 0 0) 25% 0/1px 100% no-repeat,
-    linear-gradient(var(--surface) 0 0) 0 50%/50% 1px no-repeat,
-    var(--text-dim)}
-.ef-layout-preview-grid::after{content:"";position:absolute;right:6%;top:24%;width:30%;height:3px;background:var(--text-dim);box-shadow:0 7px 0 var(--text-dim)}
+.ef-layout-preview{width:100%;height:48px;border-radius:3px;overflow:hidden;background:var(--surface);border:1px solid var(--border);padding:0;display:flex;align-items:stretch;justify-content:stretch}
+.ef-layout-preview svg{width:100%;height:100%;display:block}
 
 /* Feature row (single input + remove button) */
 .ef-feature-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:center}
@@ -2630,8 +2626,11 @@ function renderBatchGrid(){
                 <button class="batch-action-btn" id="btnMakeGif" onclick="makeBatchGif()" title="Generate an animated GIF of the views">
                     🎞 <span>GIF</span>
                 </button>
-                <button class="batch-action-btn" id="btnEmbedLink" onclick="createBatchEmbed()" title="Create a shareable embed link">
+                <button class="batch-action-btn" id="btnEmbedLink" onclick="createBatchEmbed()" title="Quick shareable gallery — pick a layout, get a link">
                     🔗 <span>Share</span>
+                </button>
+                <button class="batch-action-btn" id="btnProductize" onclick="productizeBatch()" title="Turn this into a product page with price, reviews, and a Buy Now button">
+                    🏷 <span>Productize</span>
                 </button>
                 <button class="batch-action-btn batch-action-close" id="btnCloseBatch" onclick="clearBatchGrid()" title="Close">
                     ×
@@ -2643,8 +2642,10 @@ function renderBatchGrid(){
         // all images have arrived. Download works with whatever's done.
         const gifBtn = $('btnMakeGif');
         const embedBtn = $('btnEmbedLink');
+        const prodBtn = $('btnProductize');
         if (gifBtn)   gifBtn.disabled   = !allDone;
         if (embedBtn) embedBtn.disabled = !allDone;
+        if (prodBtn)  prodBtn.disabled  = !allDone;
     } else if (footer) {
         footer.remove();
     }
@@ -2848,6 +2849,11 @@ function _loadImageTo(url){
 //   2) Form submit → POST to backend → shows dialog with share URL +
 //      iframe snippet + Edit button that re-opens the form pre-filled and
 //      PATCHes the existing embed on save.
+// ── Quick Share ──
+// Minimal flow: just pick a layout, get a share link. No product metadata
+// required. Creates an embed with default layout values; the user can
+// optionally upgrade to a full product page later via the "Edit details"
+// button on the share dialog.
 async function createBatchEmbed(){
     if (!_activeBatch) return;
     const shots = _activeBatch.shots.filter(s => s.url);
@@ -2855,11 +2861,162 @@ async function createBatchEmbed(){
         showNotif('Need at least 2 images to create an embed.', 'error');
         return;
     }
+    showQuickShareDialog({ shots });
+}
+
+// ── Productize ──
+// Full product-metadata form: title, description, price, CTA, rating,
+// reviews, features, layout. Produces a full product page embed suitable
+// for embedding on a storefront.
+async function productizeBatch(){
+    if (!_activeBatch) return;
+    const shots = _activeBatch.shots.filter(s => s.url);
+    if (shots.length < 2) {
+        showNotif('Need at least 2 images to productize.', 'error');
+        return;
+    }
     showEmbedFormDialog({
-        embedId: null,   // null = create new; otherwise we're editing
+        embedId: null,
         initial: {},
         shots,
     });
+}
+
+// Tiny dialog for Share: pick a layout → submit → share URL. No product
+// fields. User can upgrade to a full product page via "Edit details" on
+// the resulting share dialog.
+function showQuickShareDialog({ shots }){
+    const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const panel = $('notifPanel');
+    panel.className = 'notif-panel notif-panel-wide';
+    $('notifTitle').textContent = 'Share gallery';
+    // Layout SVGs — same as productize form
+    const svgFill = 'var(--text-dim)', svgLine = 'var(--text-muted)';
+    const layoutSvgs = {
+        classic: `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="4" width="52" height="52" rx="3" fill="${svgFill}" opacity=".6"/>
+            <rect x="4" y="44" width="10" height="12" rx="1.5" fill="${svgFill}" opacity=".9"/>
+            <rect x="16" y="44" width="10" height="12" rx="1.5" fill="${svgFill}" opacity=".9"/>
+            <rect x="28" y="44" width="10" height="12" rx="1.5" fill="${svgFill}" opacity=".9"/>
+            <rect x="62" y="8" width="32" height="3" rx="1.5" fill="${svgLine}"/>
+            <rect x="62" y="15" width="22" height="2" rx="1" fill="${svgLine}" opacity=".5"/>
+            <rect x="62" y="24" width="14" height="4" rx="1" fill="${svgLine}" opacity=".8"/>
+            <rect x="62" y="32" width="32" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+            <rect x="62" y="37" width="28" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+            <rect x="62" y="46" width="32" height="6" rx="1.5" fill="${svgFill}"/>
+        </svg>`,
+        stack: `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="4" width="92" height="28" rx="3" fill="${svgFill}" opacity=".6"/>
+            <rect x="4" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+            <rect x="14" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+            <rect x="24" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+            <rect x="34" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+            <rect x="4" y="44" width="32" height="3" rx="1" fill="${svgLine}"/>
+            <rect x="4" y="49" width="22" height="2" rx="1" fill="${svgLine}" opacity=".5"/>
+            <rect x="4" y="53" width="26" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+            <rect x="68" y="44" width="28" height="11" rx="1.5" fill="${svgFill}"/>
+        </svg>`,
+        grid: `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="4" width="26" height="26" rx="2" fill="${svgFill}" opacity=".65"/>
+            <rect x="32" y="4" width="26" height="26" rx="2" fill="${svgFill}" opacity=".55"/>
+            <rect x="4" y="32" width="26" height="24" rx="2" fill="${svgFill}" opacity=".5"/>
+            <rect x="32" y="32" width="26" height="24" rx="2" fill="${svgFill}" opacity=".6"/>
+            <rect x="64" y="6" width="30" height="3" rx="1.5" fill="${svgLine}"/>
+            <rect x="64" y="13" width="22" height="2" rx="1" fill="${svgLine}" opacity=".5"/>
+            <rect x="64" y="22" width="12" height="3" rx="1" fill="${svgLine}" opacity=".8"/>
+            <rect x="64" y="29" width="30" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+            <rect x="64" y="34" width="26" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+            <rect x="64" y="48" width="30" height="6" rx="1.5" fill="${svgFill}"/>
+        </svg>`,
+    };
+    $('notifBody').innerHTML = `
+        <div style="margin-bottom:16px;font-size:12px;color:var(--text-muted);line-height:1.5">
+            Pick a layout and we'll generate a shareable link to your gallery.
+            Want to add pricing, reviews, or a Buy Now button? Use <strong>Productize</strong> instead.
+        </div>
+        <div class="ef-field">
+            <label>Layout</label>
+            <div class="ef-layout-picker" id="_qsLayoutPicker">
+                ${['classic', 'stack', 'grid'].map(opt => {
+                    const selected = opt === 'classic';
+                    const label = {classic:'Classic', stack:'Stacked', grid:'Mosaic'}[opt];
+                    const desc = {classic:'Gallery left, info right',stack:'Big hero on top',grid:'All views in a grid'}[opt];
+                    return `<button type="button" class="ef-layout-opt ${selected ? 'selected' : ''}" data-layout="${opt}">
+                        <div class="ef-layout-preview">${layoutSvgs[opt]}</div>
+                        <div class="ef-layout-name">${label}</div>
+                        <div class="ef-layout-desc">${desc}</div>
+                    </button>`;
+                }).join('')}
+            </div>
+            <input type="hidden" id="_qsLayout" value="classic">
+        </div>
+    `;
+    $('notifCancelBtn').style.display = '';
+    $('notifCancelBtn').textContent = 'Cancel';
+    $('notifOkBtn').textContent = 'Create Link';
+    $('notifOkBtn').className = 'notif-btn primary';
+    $('notifModal').style.display = 'flex';
+
+    // Wire layout picker
+    const picker = $('_qsLayoutPicker');
+    const hidden = $('_qsLayout');
+    if (picker) {
+        picker.querySelectorAll('.ef-layout-opt').forEach(btn => {
+            btn.addEventListener('click', () => {
+                picker.querySelectorAll('.ef-layout-opt').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                hidden.value = btn.dataset.layout;
+            });
+        });
+    }
+
+    _notifResolver = async (ok) => {
+        if (!ok) {
+            $('notifModal').style.display = 'none';
+            return;
+        }
+        const okBtn = $('notifOkBtn');
+        okBtn.disabled = true;
+        const origLabel = okBtn.textContent;
+        okBtn.textContent = 'Creating…';
+        try {
+            const body = {
+                batch_id: _activeBatch ? _activeBatch.id : null,
+                input_url: (_activeBatch && _activeBatch.inputUrl) || '',
+                shots: shots.map(s => ({
+                    label: s.label, url: s.url,
+                    w: s.w || null, h: s.h || null,
+                })),
+                layout: $('_qsLayout').value || 'classic',
+                // All product fields stay empty — viewer gracefully hides sections
+            };
+            const r = await fetchT(`${API}/api/studio/embed`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            }, 15000);
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.error || 'embed_failed');
+            $('notifModal').style.display = 'none';
+            showEmbedShareDialog({
+                id: d.id,
+                shareUrl: d.url,
+                stored: {
+                    title: d.title, description: d.description, price: d.price,
+                    cta_url: d.cta_url, cta_label: d.cta_label,
+                    rating_avg: d.rating_avg, rating_count: d.rating_count,
+                    reviews: d.reviews || [],
+                    layout: d.layout || 'classic',
+                    features: d.features || [],
+                },
+                shots,
+            });
+        } catch (e) {
+            okBtn.disabled = false;
+            okBtn.textContent = origLabel;
+            showNotif('Could not create share link: ' + e.message, 'error');
+        }
+    };
 }
 
 // Open the product-metadata form. Called for both "create new embed" (no
@@ -2906,8 +3063,50 @@ function showEmbedFormDialog({ embedId, initial, shots }){
                         const selected = (initial.layout || 'classic') === opt;
                         const label = {classic:'Classic', stack:'Stacked', grid:'Mosaic'}[opt];
                         const desc = {classic:'Gallery left, info right',stack:'Big hero on top',grid:'All views in a grid'}[opt];
+                        // Inline SVG previews — rendered crisp at any size and accurately
+                        // show the relative proportions of each layout. Dimensions are
+                        // viewBox-based so they scale with the tile.
+                        const svgFill = 'var(--text-dim)';
+                        const svgLine = 'var(--text-muted)';
+                        const svgs = {
+                            classic: `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="4" y="4" width="52" height="52" rx="3" fill="${svgFill}" opacity=".6"/>
+                                <rect x="4" y="44" width="10" height="12" rx="1.5" fill="${svgFill}" opacity=".9"/>
+                                <rect x="16" y="44" width="10" height="12" rx="1.5" fill="${svgFill}" opacity=".9"/>
+                                <rect x="28" y="44" width="10" height="12" rx="1.5" fill="${svgFill}" opacity=".9"/>
+                                <rect x="62" y="8" width="32" height="3" rx="1.5" fill="${svgLine}"/>
+                                <rect x="62" y="15" width="22" height="2" rx="1" fill="${svgLine}" opacity=".5"/>
+                                <rect x="62" y="24" width="14" height="4" rx="1" fill="${svgLine}" opacity=".8"/>
+                                <rect x="62" y="32" width="32" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+                                <rect x="62" y="37" width="28" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+                                <rect x="62" y="46" width="32" height="6" rx="1.5" fill="${svgFill}"/>
+                            </svg>`,
+                            stack: `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="4" y="4" width="92" height="28" rx="3" fill="${svgFill}" opacity=".6"/>
+                                <rect x="4" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+                                <rect x="14" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+                                <rect x="24" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+                                <rect x="34" y="34" width="8" height="6" rx="1" fill="${svgFill}" opacity=".9"/>
+                                <rect x="4" y="44" width="32" height="3" rx="1" fill="${svgLine}"/>
+                                <rect x="4" y="49" width="22" height="2" rx="1" fill="${svgLine}" opacity=".5"/>
+                                <rect x="4" y="53" width="26" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+                                <rect x="68" y="44" width="28" height="11" rx="1.5" fill="${svgFill}"/>
+                            </svg>`,
+                            grid: `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="4" y="4" width="26" height="26" rx="2" fill="${svgFill}" opacity=".65"/>
+                                <rect x="32" y="4" width="26" height="26" rx="2" fill="${svgFill}" opacity=".55"/>
+                                <rect x="4" y="32" width="26" height="24" rx="2" fill="${svgFill}" opacity=".5"/>
+                                <rect x="32" y="32" width="26" height="24" rx="2" fill="${svgFill}" opacity=".6"/>
+                                <rect x="64" y="6" width="30" height="3" rx="1.5" fill="${svgLine}"/>
+                                <rect x="64" y="13" width="22" height="2" rx="1" fill="${svgLine}" opacity=".5"/>
+                                <rect x="64" y="22" width="12" height="3" rx="1" fill="${svgLine}" opacity=".8"/>
+                                <rect x="64" y="29" width="30" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+                                <rect x="64" y="34" width="26" height="2" rx="1" fill="${svgLine}" opacity=".4"/>
+                                <rect x="64" y="48" width="30" height="6" rx="1.5" fill="${svgFill}"/>
+                            </svg>`,
+                        };
                         return `<button type="button" class="ef-layout-opt ${selected ? 'selected' : ''}" data-layout="${opt}">
-                            <div class="ef-layout-preview ef-layout-preview-${opt}"></div>
+                            <div class="ef-layout-preview">${svgs[opt]}</div>
                             <div class="ef-layout-name">${label}</div>
                             <div class="ef-layout-desc">${desc}</div>
                         </button>`;
