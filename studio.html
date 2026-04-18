@@ -2395,17 +2395,24 @@ function renderBatchGrid(){
 
         if (shot.url) {
             doneCount++;
-            if (img.src !== shot.url) {
+            // Use dataset to track the URL we INTENDED to load. Reading img.src
+            // back returns the browser-resolved absolute URL, which never
+            // matches our relative shot.url — causing the reveal guard to
+            // permanently early-return and the placeholder to stay stuck on
+            // WAITING. Storing the target URL as a data attribute gives us
+            // a clean string-equality check that survives URL resolution.
+            if (img.dataset.loadingUrl !== shot.url) {
+                img.dataset.loadingUrl = shot.url;
                 // Start the fetch immediately. Keep the placeholder visible
                 // (shimmer + "Waiting") until the image actually decodes —
-                // otherwise, when the browser queues several image requests
-                // (concurrent-connection limit), the last 2 tiles appear
-                // empty/stuck for a few seconds.
+                // otherwise the last few tiles appear empty/stuck for a few
+                // seconds while the browser queues the image requests.
                 img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;transition:transform .3s;opacity:0';
+                const targetUrl = shot.url;
                 const revealWhenLoaded = () => {
                     // Guard against races where another render already swapped
-                    // the src to a different URL before this image finished.
-                    if (img.src !== shot.url) return;
+                    // the target URL before this image finished loading.
+                    if (img.dataset.loadingUrl !== targetUrl) return;
                     placeholder.style.display = 'none';
                     img.style.opacity = '1';
                     tile.classList.add('done');
@@ -2417,19 +2424,16 @@ function renderBatchGrid(){
                 };
                 img.onload = revealWhenLoaded;
                 img.onerror = () => {
-                    // Network error. Show the error state so user knows
-                    // something's off rather than staring at a shimmer forever.
-                    if (img.src !== shot.url) return;
+                    if (img.dataset.loadingUrl !== targetUrl) return;
                     placeholder.textContent = 'Failed to load';
                     placeholder.classList.remove('loading');
                     placeholder.classList.add('error');
                     placeholder.style.display = '';
                 };
                 img.src = shot.url;
-                // Fast-path: if the image was already in browser cache,
-                // onload may have fired synchronously before we set it, or
-                // the browser may have the response instantly. `complete`
-                // + naturalWidth > 0 means it's decoded and ready.
+                // Fast-path: if the browser already has this image cached,
+                // onload may have fired synchronously or the image may be
+                // instantly decoded. complete + naturalWidth > 0 means ready.
                 if (img.complete && img.naturalWidth > 0) {
                     revealWhenLoaded();
                 }
