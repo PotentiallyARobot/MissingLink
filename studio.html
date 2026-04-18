@@ -186,6 +186,35 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .ef-review-row textarea.ef-rev-text{grid-column:1/span 3;grid-row:2;min-height:48px;font-size:12px;line-height:1.45}
 .ef-review-row input,.ef-review-row textarea{padding:6px 8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);outline:none;transition:border-color .12s;font-family:var(--font-body,inherit)}
 .ef-review-row input:focus,.ef-review-row textarea:focus{border-color:var(--gold)}
+
+/* Sticky "Editing view N" banner shown above the Edit Instruction textarea
+   while a slot-edit session is active. Reminds the user their generates
+   will update the batch tile, and gives a one-click exit. */
+.editing-slot-banner{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:8px 12px;margin-bottom:10px;
+    background:linear-gradient(90deg,rgba(232,169,23,.14),rgba(232,169,23,.04));
+    border:1px solid rgba(232,169,23,.35);
+    border-left:3px solid var(--gold);
+    border-radius:5px;
+    font-size:11px;color:var(--text);
+    animation:esbSlideIn .2s ease-out;
+}
+@keyframes esbSlideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.editing-slot-banner .esb-info{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.editing-slot-banner .esb-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);flex:0 0 7px;box-shadow:0 0 6px rgba(232,169,23,.6);animation:esbPulse 1.6s infinite}
+@keyframes esbPulse{0%,100%{opacity:1}50%{opacity:.4}}
+.editing-slot-banner .esb-text{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;min-width:0}
+.editing-slot-banner .esb-text strong{color:var(--gold);font-weight:700;letter-spacing:.2px}
+.editing-slot-banner .esb-sub{color:var(--text-muted);font-size:10.5px;line-height:1.4}
+.editing-slot-banner .esb-close{
+    width:22px;height:22px;padding:0;
+    background:transparent;border:1px solid transparent;border-radius:4px;
+    color:var(--text-muted);font-size:15px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;flex:0 0 22px;
+    transition:all .12s;
+}
+.editing-slot-banner .esb-close:hover{background:rgba(239,68,68,.12);border-color:var(--red);color:var(--red)}
 /* Small label pill for copy-URL blocks on the share-ready dialog */
 .ef-label-mono{display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px}
 .ef-copy-row{display:flex;gap:6px;align-items:stretch}
@@ -787,6 +816,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     </div>
 
     <div class="sec edit-only" style="display:none">
+        <!-- "Editing view N" indicator — shown when the user is in a sticky
+             edit-a-slot session. Keeps them aware their generates are
+             updating that slot, with an explicit exit button. Hidden by
+             default; populated by renderEditingSlotBanner(). -->
+        <div id="editingSlotBanner" style="display:none"></div>
         <div class="sec-label"><span class="icon">✏️</span> EDIT INSTRUCTION</div>
         <textarea class="custom-prompt" id="customPrompt" placeholder="Describe your edit...&#10;e.g. &quot;The girl in image 1 wears the dress from image 2&quot;&#10;or &quot;Remove the background&quot;" rows="4" oninput="updateGenButton()"></textarea>
     </div>
@@ -1470,6 +1504,13 @@ async function doBuyTokens(){
 
 // ── Mode ──────────────────────────────────────────
 function setMode(mode){
+    // If user leaves Edit mode, end any "editing view N" session — a Camera
+    // generation should produce a fresh single-image output, not try to
+    // update a batch slot.
+    if (mode !== 'edit' && _editingBatchSlot) {
+        _editingBatchSlot = null;
+        renderEditingSlotBanner();
+    }
     currentMode=mode;
     const isCam=mode==='camera';
     $('btnModeCamera').classList.toggle('active',isCam);
@@ -2092,14 +2133,12 @@ async function doGenerate(){
 
         // If this generation was launched via the "edit this tile" flow,
         // capture the target slot so the completion handler updates the
-        // grid tile instead of replacing the main viewport.
+        // grid tile instead of replacing the main viewport. NOTE: we do NOT
+        // clear _editingBatchSlot here — it stays sticky so consecutive
+        // generates keep updating the same slot. Cleared only on explicit
+        // exit events (switching to camera mode, starting a new batch,
+        // closing the grid, or removing the slot-0 input image).
         const editTarget = _editingBatchSlot;
-        if (editTarget) {
-            // Clear the in-flight state now — we've snapshotted it into the
-            // job record. A second click on another tile won't re-submit to
-            // the same slot by accident.
-            _editingBatchSlot = null;
-        }
 
         myJobs.unshift({
             id: d.job_id,
@@ -2156,8 +2195,55 @@ let _activeBatch = null;
 // When the user clicks the ✎ edit button on a batch tile, we set this to
 // { slotIdx, batchId } so the next Generate submission knows to route its
 // result back into the matching grid tile instead of replacing the main
-// single-image viewport. Cleared after submission.
+// single-image viewport. STICKY: not cleared on each submit — consecutive
+// generates keep updating the same slot until the user explicitly exits
+// (switches to Camera, starts a new batch, closes the grid, or clicks the
+// × on the editing-slot banner).
 let _editingBatchSlot = null;
+
+// Render / hide the "Editing view N · Front · Eye Level" banner based on
+// current _editingBatchSlot state. Called from every place that sets or
+// clears the state so the UI stays in sync.
+function renderEditingSlotBanner(){
+    const banner = $('editingSlotBanner');
+    if (!banner) return;
+    if (!_editingBatchSlot || !_activeBatch) {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+        return;
+    }
+    const { slotIdx } = _editingBatchSlot;
+    const shot = _activeBatch.shots[slotIdx];
+    if (!shot) {
+        banner.style.display = 'none';
+        return;
+    }
+    banner.className = 'editing-slot-banner';
+    banner.style.display = '';
+    banner.innerHTML = `
+        <div class="esb-info">
+            <span class="esb-dot"></span>
+            <span class="esb-text">
+                <strong>Editing View ${slotIdx + 1}</strong>
+                <span class="esb-sub">· ${_htmlEsc(shot.label)} — subsequent generates will update this view</span>
+            </span>
+        </div>
+        <button type="button" class="esb-close" title="Exit edit-view mode" aria-label="Exit">×</button>
+    `;
+    banner.querySelector('.esb-close').onclick = () => {
+        _editingBatchSlot = null;
+        renderEditingSlotBanner();
+        log('Exited edit-view mode');
+    };
+}
+
+// Small HTML-escape helper for use inside template literals where user
+// data might contain < or & or quotes.
+function _htmlEsc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
 
 // Click handler for the ✎ button on a batch tile. Loads that view's image
 // into the Edit sidebar as the first edit-slot input, switches modes, and
@@ -2182,8 +2268,9 @@ async function editBatchSlot(slotIdx){
         // Clear all edit slots and upload into slot 0 as the primary input
         for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
         await uploadToSlot(0, file);
-        // Arm the routing flag
+        // Arm the routing flag — sticky until user explicitly exits.
         _editingBatchSlot = { slotIdx, batchId: _activeBatch.id };
+        renderEditingSlotBanner();
         // Prefill the edit prompt with a helpful starter the user can replace
         const cp = $('customPrompt');
         if (cp && !cp.value.trim()) {
@@ -2223,6 +2310,13 @@ async function generateAllAngles(){
     const width = parseInt($('inpWidth').value) || 0;
     const height = parseInt($('inpHeight').value) || 0;
     const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // New batch starts → any pending "edit this view" session is stale
+    // because the target slot is about to be replaced by a fresh render.
+    if (_editingBatchSlot) {
+        _editingBatchSlot = null;
+        renderEditingSlotBanner();
+    }
 
     // Initialize the batch state before any jobs fire so the renderer shows
     // all 6 slots with a placeholder/loading state immediately.
@@ -2953,6 +3047,11 @@ function _copyEmbedText(inputId, btn){
 // Clear the batch grid and return the main output area to its default state.
 function clearBatchGrid(){
     _activeBatch = null;
+    // End any sticky "edit this view" session — the target tile is gone.
+    if (_editingBatchSlot) {
+        _editingBatchSlot = null;
+        renderEditingSlotBanner();
+    }
     const grid = $('batchGrid');    if (grid) grid.remove();
     const footer = $('batchFooter'); if (footer) footer.remove();
     $('outPh').style.display = $('outImg').src ? 'none' : '';
