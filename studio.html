@@ -3256,7 +3256,22 @@ function renderQueue(){
                 pct = 5;
             } else if (j.status === 'running') {
                 const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
-                if (stage === 'fetching') {
+                if (stage === 'accepted') {
+                    // Thread started on Modal but hasn't acquired _pipe_lock
+                    // yet. Could be the first job to land (lock free) or
+                    // waiting for an earlier batch job. Either way: "in line".
+                    statusIcon = '⏳'; statusText = 'Queued';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 4;
+                } else if (stage === 'waiting_for_gpu') {
+                    // Explicit stage: _work tried to grab _pipe_lock non-
+                    // blocking, failed, pinged this, now waiting in earnest.
+                    // User knows the GPU is busy with someone earlier in
+                    // their own batch.
+                    statusIcon = '⏳'; statusText = 'Waiting for GPU';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 5;
+                } else if (stage === 'fetching') {
                     statusIcon = '📥'; statusText = 'Loading inputs';
                     // Sub-progress: "image N/M" when multi-image
                     if (total > 1) {
