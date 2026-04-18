@@ -271,7 +271,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-tile.done:hover .batch-tile-thumb img{transform:scale(1.03)}
 /* When the image is placed directly in the tile (new layout), the hover
    zoom still applies. */
-.batch-tile > img{transition:transform .3s}
+.batch-tile > img{transition:transform .3s, opacity .25s ease-out}
 .batch-tile.done:hover > img{transform:scale(1.03)}
 /* Slot number badge top-left of each tile — small cinematic frame number */
 .batch-tile::before{
@@ -312,6 +312,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     100%{background-position:-200% 0}
 }
 .batch-tile-placeholder.error{color:var(--red)}
+.batch-tile-placeholder.cancelled{color:var(--text-dim);background:linear-gradient(135deg,#0a0a0c 0%,#111114 100%)}
+.batch-tile.cancelled{opacity:.55;cursor:default}
+.batch-tile.cancelled::before{opacity:.4}
+.batch-tile.cancelled::after{display:none}
 /* Caption overlay — sits at the bottom of each tile, gradient so text
    always reads over any image. Slot label renders in monospace, uppercase. */
 .batch-tile-label{
@@ -1669,6 +1673,9 @@ function handleJobTerminal(jobId, d){
     } else if (d.status === 'error' || d.status === 'cancelled') {
         job.status = d.status;
         job.error = d.error;
+        // Remove from active list so pollQueue doesn't keep re-resolving this
+        // same job every 5s forever. Terminal status is final.
+        myJobs = myJobs.filter(x => x.id !== jobId);
         renderQueue();
         if (_activeBatch) {
             const shot = _activeBatch.shots.find(s => s.jobId === jobId);
@@ -2223,17 +2230,43 @@ function renderBatchGrid(){
         if (shot.url) {
             doneCount++;
             if (img.src !== shot.url) {
+                // Start the fetch immediately. Keep the placeholder visible
+                // (shimmer + "Waiting") until the image actually decodes —
+                // otherwise, when the browser queues several image requests
+                // (concurrent-connection limit), the last 2 tiles appear
+                // empty/stuck for a few seconds.
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;transition:transform .3s;opacity:0';
+                const revealWhenLoaded = () => {
+                    // Guard against races where another render already swapped
+                    // the src to a different URL before this image finished.
+                    if (img.src !== shot.url) return;
+                    placeholder.style.display = 'none';
+                    img.style.opacity = '1';
+                    tile.classList.add('done');
+                    // Arrival animation — once per image.
+                    tile.classList.remove('just-arrived');
+                    void tile.offsetWidth;
+                    tile.classList.add('just-arrived');
+                    setTimeout(() => tile.classList.remove('just-arrived'), 600);
+                };
+                img.onload = revealWhenLoaded;
+                img.onerror = () => {
+                    // Network error. Show the error state so user knows
+                    // something's off rather than staring at a shimmer forever.
+                    if (img.src !== shot.url) return;
+                    placeholder.textContent = 'Failed to load';
+                    placeholder.classList.remove('loading');
+                    placeholder.classList.add('error');
+                    placeholder.style.display = '';
+                };
                 img.src = shot.url;
-                img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;transition:transform .3s';
-                placeholder.style.display = 'none';
-                tile.classList.add('done');
-                // Trigger arrival animation once, then strip the class so it
-                // doesn't replay on future renders for this tile.
-                tile.classList.remove('just-arrived');
-                // Force reflow so the animation restarts cleanly
-                void tile.offsetWidth;
-                tile.classList.add('just-arrived');
-                setTimeout(() => tile.classList.remove('just-arrived'), 600);
+                // Fast-path: if the image was already in browser cache,
+                // onload may have fired synchronously before we set it, or
+                // the browser may have the response instantly. `complete`
+                // + naturalWidth > 0 means it's decoded and ready.
+                if (img.complete && img.naturalWidth > 0) {
+                    revealWhenLoaded();
+                }
                 // Click to expand in the existing image modal
                 tile.onclick = () => openModal(shot.url);
             }
@@ -2243,9 +2276,20 @@ function renderBatchGrid(){
             placeholder.classList.remove('loading');
             placeholder.style.display = '';
             tile.classList.remove('done');
+        } else if (shot.status === 'cancelled') {
+            // User-initiated cancel — distinct from error. Neutral styling,
+            // no shimmer, tile exits loading state.
+            placeholder.textContent = 'Cancelled';
+            placeholder.classList.remove('error', 'loading');
+            placeholder.classList.add('cancelled');
+            placeholder.style.display = '';
+            tile.classList.remove('done');
+            tile.classList.add('cancelled');
+            // Remove click handler since there's nothing to open
+            tile.onclick = null;
         } else {
             // queued / running / pending — show shimmer + spinner
-            placeholder.classList.remove('error');
+            placeholder.classList.remove('error', 'cancelled');
             placeholder.classList.add('loading');
             placeholder.style.display = '';
             placeholder.textContent = '';  // pseudo-elements handle label
@@ -2255,7 +2299,11 @@ function renderBatchGrid(){
     // Live progress pill at top center — shows N/6 while batch is building.
     // Switches to a "Complete" state when all images have arrived.
     const total = _activeBatch.shots.length;
-    const allDone = _activeBatch.shots.every(s => s.url || s.status === 'error');
+    // A shot is "settled" when it has a URL, erred, or was cancelled by the
+    // user. allDone = batch is no longer in flight; anyDone = at least one
+    // real image arrived (used to gate Share / GIF buttons which need ≥1 image).
+    const allDone = _activeBatch.shots.every(s =>
+        s.url || s.status === 'error' || s.status === 'cancelled');
     const anyDone = _activeBatch.shots.some(s => s.url);
     let prog = $('batchProgress');
     if (!prog) {
@@ -2751,11 +2799,26 @@ async function cancelJob(jobId){
                 $('tokenCount').textContent=d.tokens_remaining;
                 $('sidebarBalance').textContent=`${d.tokens_remaining} (${Math.floor(d.tokens_remaining/100)} images)`;
             }
+            // If this job is part of the active batch, flip its slot to
+            // cancelled so the tile drops out of loading/shimmer state.
+            // Without this the tile keeps saying "Waiting" forever even
+            // though the job is terminated.
+            if (_activeBatch) {
+                const shot = _activeBatch.shots.find(s => s.jobId === jobId);
+                if (shot) {
+                    shot.status = 'cancelled';
+                    renderBatchGrid();
+                }
+            }
+            // Remove from active list — cancelled is terminal, keeping it
+            // around causes pollQueue's disappearance catcher to fire on it
+            // every 5s forever.
+            myJobs = myJobs.filter(x => x.id !== jobId);
             renderQueue();
             log(`Job ${jobId} cancelled — tokens refunded`,'success');
             updateGenButton();
         }
-    }catch(e){ alert('Cancel failed'); }
+    }catch(e){ showNotif('Cancel failed: ' + e.message, 'error'); }
 }
 
 function renderQueue(){
