@@ -924,11 +924,49 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <button type="button" class="batch-mini-btn" onclick="batchClearInputs()">Clear</button>
         </div>
     </div>
+
+    <!-- SHARED CONTEXT — slots 2 & 3, reused as image 2 / image 3 across
+         every batch job. Enables compositional prompts like "put the
+         subject from image 1 into the scene in image 2" across an entire
+         batch. Both slots are optional; if unfilled the prompt should only
+         reference "image 1". -->
+    <div class="sec batch-only" style="display:none">
+        <div class="sec-label"><span class="icon">🧩</span> SHARED CONTEXT
+            <span class="sec-label-count">optional · reused across every job</span>
+        </div>
+        <div class="slots">
+            <div class="slot" data-slot="1">
+                <div class="slot-label">Image 2</div>
+                <div class="slot-drop" id="bslotDrop1" onclick="document.getElementById('bslotInp1').click()"
+                     ondragover="event.preventDefault()" ondrop="batchContextDrop(event,1)">
+                    <span class="slot-placeholder">+</span>
+                </div>
+                <input type="file" id="bslotInp1" accept="image/*" style="display:none">
+                <div class="slot-filled" id="bslotFilled1" style="display:none">
+                    <img id="bslotImg1">
+                    <button class="slot-remove" onclick="batchContextRemove(1)">×</button>
+                </div>
+            </div>
+            <div class="slot" data-slot="2">
+                <div class="slot-label">Image 3</div>
+                <div class="slot-drop" id="bslotDrop2" onclick="document.getElementById('bslotInp2').click()"
+                     ondragover="event.preventDefault()" ondrop="batchContextDrop(event,2)">
+                    <span class="slot-placeholder">+</span>
+                </div>
+                <input type="file" id="bslotInp2" accept="image/*" style="display:none">
+                <div class="slot-filled" id="bslotFilled2" style="display:none">
+                    <img id="bslotImg2">
+                    <button class="slot-remove" onclick="batchContextRemove(2)">×</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="sec batch-only" style="display:none">
         <div class="sec-label"><span class="icon">✏️</span> EDIT INSTRUCTION
             <span class="sec-label-count">applied to each selected image</span>
         </div>
-        <textarea class="custom-prompt" id="batchPrompt" placeholder="Describe the edit to apply to every selected image...&#10;e.g. &quot;Remove the background&quot;&#10;or &quot;Convert to oil painting style&quot;" rows="4" oninput="updateGenButton()"></textarea>
+        <textarea class="custom-prompt" id="batchPrompt" placeholder="Describe the edit to apply to every selected image...&#10;e.g. &quot;Remove the background&quot;&#10;or &quot;Put the subject from image 1 into image 2's scene&quot;" rows="4" oninput="updateGenButton()"></textarea>
     </div>
 
     <!-- SHARED SETTINGS -->
@@ -2038,6 +2076,18 @@ function initDrop(){
             binp.value = '';
         });
     }
+
+    // Shared-context slots for batch mode (Image 2 / Image 3). Drop is
+    // handled inline via batchContextDrop; this wires the click-to-pick
+    // file input change event for each slot.
+    for (const slotIdx of [1, 2]) {
+        const inp = $(`bslotInp${slotIdx}`);
+        if (!inp) continue;
+        inp.addEventListener('change', () => {
+            if (inp.files.length) batchContextUpload(slotIdx, inp.files[0]);
+            inp.value = '';
+        });
+    }
 }
 
 async function uploadFile(file){
@@ -2352,6 +2402,67 @@ let _activeBatch = null;
 // entry: {id, url, w, h, fname, selected}.
 let _batchInputs = [];
 
+// Shared-context slots. These are uploaded once and reused as image 2 /
+// image 3 across every batch job — lets the user write compositional
+// prompts like "put the subject from image 1 into the scene in image 2"
+// and have image 2 be the same reference across all N outputs.
+// Indexed 1 and 2 to match the UI labels ("Image 2" / "Image 3").
+let _batchContext = { 1: null, 2: null };
+
+// Upload a file into a shared-context slot.
+async function batchContextUpload(slotIdx, file){
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    const dims = await readImageDimensions(file);
+    const fd = new FormData();
+    fd.append('image', file);
+    try {
+        const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
+        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        const d = await r.json();
+        if (d.error) { showNotif(d.error, 'error'); return; }
+        _batchContext[slotIdx] = {
+            id: d.id, url: d.url,
+            w: d.w || dims.w, h: d.h || dims.h,
+            fname: file.name,
+        };
+        renderBatchContext();
+        log(`Batch context slot ${slotIdx + 1} (Image ${slotIdx + 1}): ${file.name}`);
+    } catch (e) {
+        showNotif('Upload failed: ' + e.message, 'error');
+    }
+}
+
+// Drop handler for shared-context slots
+function batchContextDrop(ev, slotIdx){
+    ev.preventDefault();
+    const f = ev.dataTransfer.files[0];
+    if (f) batchContextUpload(slotIdx, f);
+}
+
+function batchContextRemove(slotIdx){
+    _batchContext[slotIdx] = null;
+    renderBatchContext();
+}
+
+function renderBatchContext(){
+    for (const slotIdx of [1, 2]) {
+        const ctx = _batchContext[slotIdx];
+        const drop = $(`bslotDrop${slotIdx}`);
+        const filled = $(`bslotFilled${slotIdx}`);
+        const img = $(`bslotImg${slotIdx}`);
+        if (!drop || !filled || !img) continue;
+        if (ctx) {
+            drop.style.display = 'none';
+            filled.style.display = '';
+            img.src = ctx.url;
+        } else {
+            drop.style.display = '';
+            filled.style.display = 'none';
+            img.src = '';
+        }
+    }
+}
+
 function renderBatchInputs(){
     const grid = $('batchInputsGrid');
     const controls = $('batchSelectControls');
@@ -2493,9 +2604,17 @@ async function generateBatchEdits(){
     let submitted = 0;
     for (let i = 0; i < selected.length; i++) {
         const inp = selected[i];
+        // image_ids order matters: pipeline labels them as image 1, 2, 3.
+        // The primary (this iteration's selected input) is always image 1.
+        // Shared context fills 2/3 if present. If only slot 2 (Image 3) is
+        // filled without slot 1 (Image 2), we skip the gap — send it as
+        // image 2 so the pipeline sees a contiguous list.
+        const imageIds = [inp.id];
+        if (_batchContext[1]) imageIds.push(_batchContext[1].id);
+        if (_batchContext[2]) imageIds.push(_batchContext[2].id);
         const payload = {
             mode: 'edit',
-            image_ids: [inp.id],
+            image_ids: imageIds,
             prompt, negative_prompt: negative, seed,
             guidance_scale: cfg, inference_steps: steps,
             lora_lightning: lightning,
