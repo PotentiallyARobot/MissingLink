@@ -3236,38 +3236,47 @@ function renderQueue(){
             const total = j.totalSteps || 0;
 
             if (j.status === 'queued') {
+                // DB is 'queued' — row created but worker hasn't dispatched
+                // to Modal yet (happens in the few ms before status='waiting').
+                // Rarely seen; same UX as waiting.
                 statusIcon = '⏳'; statusText = 'Queued';
                 const waited = Math.floor((now - j.submittedAt) / 1000);
-                // Show position relative to other users' jobs, not total
-                // queue depth (user doesn't care about their own jobs ahead
-                // of this one; they see those in their own list).
                 const ahead = j.othersAhead || 0;
                 subtext = ahead > 0
                     ? `${ahead} ahead · ${waited}s`
                     : `${j.mode.toUpperCase()} · ${waited}s`;
                 pct = 2;
             } else if (j.status === 'waiting') {
+                // DB is 'waiting' — dispatched to Modal, no stage ping yet.
+                // If GPU is cold, Modal is cold-booting (can take 60-90s);
+                // otherwise job is sitting in Modal's input queue.
                 const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
-                statusIcon = '⏳'; statusText = 'Queued';
-                const ahead = j.othersAhead || 0;
-                subtext = ahead > 0
-                    ? `${ahead} ahead · ${waited}s`
-                    : `${j.mode.toUpperCase()} · ${waited}s`;
+                if (_gpuState && _gpuState.state === 'cold') {
+                    statusIcon = '🔌'; statusText = 'Waiting for GPU to start';
+                    subtext = `Cold boot · ${waited}s`;
+                } else if (_gpuState && _gpuState.state === 'warming') {
+                    statusIcon = '🔌'; statusText = 'Waiting for GPU to start';
+                    subtext = `Warming · ${waited}s`;
+                } else {
+                    statusIcon = '⏳'; statusText = 'Queued';
+                    const ahead = j.othersAhead || 0;
+                    subtext = ahead > 0
+                        ? `${ahead} ahead · ${waited}s`
+                        : `${j.mode.toUpperCase()} · ${waited}s`;
+                }
                 pct = 5;
             } else if (j.status === 'running') {
                 const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
                 if (stage === 'accepted') {
-                    // Thread started on Modal but hasn't acquired _pipe_lock
-                    // yet. Could be the first job to land (lock free) or
-                    // waiting for an earlier batch job. Either way: "in line".
+                    // Thread started on Modal, lock not yet acquired. If the
+                    // lock is held (another batch job running), we pinged
+                    // 'accepted' before trying the non-blocking acquire.
                     statusIcon = '⏳'; statusText = 'Queued';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 4;
                 } else if (stage === 'waiting_for_gpu') {
-                    // Explicit stage: _work tried to grab _pipe_lock non-
-                    // blocking, failed, pinged this, now waiting in earnest.
-                    // User knows the GPU is busy with someone earlier in
-                    // their own batch.
+                    // Non-blocking acquire failed, explicitly waiting for
+                    // the pipe_lock to free up behind an earlier job.
                     statusIcon = '⏳'; statusText = 'Waiting for GPU';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 5;
