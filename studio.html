@@ -107,14 +107,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
 .history-modal-title{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px;flex:1}
 .history-modal-head .modal-close{position:relative;top:0;right:0;width:28px;height:28px;font-size:14px}
-.history-grid{flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;align-content:start}
-.history-grid::-webkit-scrollbar{width:8px}
-.history-grid::-webkit-scrollbar-track{background:var(--surface-2)}
-.history-grid::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
-.history-grid::-webkit-scrollbar-thumb:hover{background:var(--border)}
-.history-modal-foot{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:center}
-.history-load-more{padding:8px 20px;background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;border-radius:6px;cursor:pointer;transition:background .15s}
-.history-load-more:hover{background:var(--gold-dim);border-color:var(--gold);color:var(--gold)}
+/* Scrollable body inside modal — the grid lives here and auto-loads more
+   items as the user scrolls to the bottom via IntersectionObserver. */
+.history-modal-body{flex:1;overflow-y:auto;padding:20px;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
+.history-modal-body::-webkit-scrollbar{width:8px}
+.history-modal-body::-webkit-scrollbar-track{background:var(--surface-2)}
+.history-modal-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+.history-modal-body::-webkit-scrollbar-thumb:hover{background:var(--border)}
+.history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;align-content:start}
+/* Sentinel shown as a loading pill at the bottom. When visible and
+   intersects viewport, triggers loadMoreHistory(). */
+.history-sentinel{grid-column:1/-1;padding:20px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-top:10px}
+.history-sentinel::before{content:"";display:inline-block;width:12px;height:12px;border:2px solid var(--surface-3);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
 .history-loading,.history-empty{grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px}
 .history-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative;cursor:pointer;transition:all .15s;display:flex;flex-direction:column}
 .history-card:hover{border-color:var(--gold);transform:translateY(-2px)}
@@ -656,11 +661,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="history-modal-title">Your Generations <span id="historyModalCount" class="q-count">—</span></div>
             <button class="modal-close" onclick="closeHistoryModal()">×</button>
         </div>
-        <div id="historyModalGrid" class="history-grid">
-            <div class="history-loading">Loading…</div>
-        </div>
-        <div class="history-modal-foot">
-            <button id="historyLoadMore" class="history-load-more" style="display:none" onclick="loadMoreHistory()">Load more</button>
+        <!-- Scrollable body: the grid scrolls INSIDE this div so the modal
+             chrome (head/foot) stays fixed. IntersectionObserver uses this as
+             its root so the sentinel triggers off scroll within this element,
+             not the page. -->
+        <div class="history-modal-body">
+            <div id="historyModalGrid" class="history-grid">
+                <div class="history-loading">Loading…</div>
+            </div>
+            <!-- Sentinel element: observed by IntersectionObserver. When it
+                 scrolls into view, loadMoreHistory fires. Renders as a small
+                 loading pill at the bottom of the grid. -->
+            <div id="historyScrollSentinel" class="history-sentinel" style="display:none"></div>
         </div>
     </div>
 </div>
@@ -1982,35 +1994,92 @@ function toggleHistoryMinimized(){
 
 // ───────────── Full history modal ─────────────
 
+// IntersectionObserver that triggers loadMoreHistory when the user scrolls
+// near the bottom of the grid. Created once, reused across modal open/close.
+let _historyScrollObserver = null;
+
 function openHistoryModal(){
     $('historyModal').style.display = 'flex';
-    // Refresh from server on open so it's always current
-    syncHistory({ limit: 20, offset: 0 });
-    renderHistoryModal();
+    // Refresh from server on open so it's always current. Reset pagination
+    // state so we don't append stale results on top of an old list.
+    _historyItems = [];
+    _historyTotal = 0;
+    const grid = $('historyModalGrid');
+    if (grid) grid.innerHTML = `<div class="history-empty">Loading…</div>`;
+    renderHistoryModal();  // paints the empty state + header
+    syncHistory({ limit: 20, offset: 0 }).then(() => {
+        renderHistoryModal();
+        setupHistoryInfiniteScroll();
+    });
 }
 
 function closeHistoryModal(){
     $('historyModal').style.display = 'none';
+    // Disconnect the observer when modal closes so we're not watching an
+    // off-screen element. Re-created on next open.
+    if (_historyScrollObserver) {
+        _historyScrollObserver.disconnect();
+        _historyScrollObserver = null;
+    }
+}
+
+// Attach (or re-attach) the IntersectionObserver that drives infinite scroll.
+// Watches the bottom sentinel inside the modal's scroll container; when the
+// sentinel intersects the viewport, call loadMoreHistory.
+function setupHistoryInfiniteScroll(){
+    const sentinel = $('historyScrollSentinel');
+    if (!sentinel) return;
+    const root = sentinel.closest('.history-modal-body') || null;
+    if (_historyScrollObserver) _historyScrollObserver.disconnect();
+    _historyScrollObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            // Only fire if there's more to load and we're not mid-load
+            if (_historyLoading) continue;
+            if (_historyItems.length >= _historyTotal) continue;
+            loadMoreHistory();
+        }
+    }, { root, rootMargin: '200px 0px' });  // trigger 200px before hit
+    _historyScrollObserver.observe(sentinel);
 }
 
 function renderHistoryModal(){
     const grid = $('historyModalGrid');
     const countEl = $('historyModalCount');
-    const loadMore = $('historyLoadMore');
+    const sentinel = $('historyScrollSentinel');
     countEl.textContent = _historyTotal > 0 ? `${_historyItems.length} of ${_historyTotal}` : '—';
 
     if (!_historyItems.length) {
         grid.innerHTML = `<div class="history-empty">No generations yet — create one to see it here</div>`;
-        loadMore.style.display = 'none';
+        if (sentinel) sentinel.style.display = 'none';
         return;
     }
 
-    grid.innerHTML = '';
+    // Incremental render: only append cards for jobs not already in the grid.
+    // Each card carries data-job-id so we can diff cheaply. This preserves
+    // loading="lazy" image state and scroll position as new pages arrive.
+    const existingIds = new Set();
+    for (const card of grid.querySelectorAll('.history-card')) {
+        existingIds.add(card.dataset.jobId);
+    }
+
+    // Remove cards whose jobs no longer exist (e.g. after a delete)
+    const currentIds = new Set(_historyItems.map(j => j.id));
+    for (const card of Array.from(grid.querySelectorAll('.history-card'))) {
+        if (!currentIds.has(card.dataset.jobId)) card.remove();
+    }
+    // Remove the "Loading..." placeholder if it's still there
+    const placeholder = grid.querySelector('.history-empty');
+    if (placeholder) placeholder.remove();
+
+    // Append new cards in order
     for (const j of _historyItems) {
+        if (existingIds.has(j.id)) continue;
         const when = j.finished_at || j.created_at || 0;
         const whenLabel = when ? timeAgo(when * 1000) : '';
         const card = document.createElement('div');
         card.className = 'history-card';
+        card.dataset.jobId = j.id;
         card.onclick = (ev) => {
             if (ev.target.closest('.history-card-delete')) return;
             restoreFromHistory(j);
@@ -2027,26 +2096,31 @@ function renderHistoryModal(){
         grid.appendChild(card);
     }
 
-    loadMore.style.display = _historyItems.length < _historyTotal ? '' : 'none';
+    // Show a skeleton/spinner sentinel if more to load, hide when done
+    if (sentinel) {
+        const hasMore = _historyItems.length < _historyTotal;
+        sentinel.style.display = hasMore ? '' : 'none';
+        sentinel.textContent = hasMore ? 'Loading more…' : '';
+    }
 }
 
 async function loadMoreHistory(){
     if (_historyLoading) return;
     _historyLoading = true;
-    $('historyLoadMore').disabled = true;
-    $('historyLoadMore').textContent = 'Loading…';
+    const sentinel = $('historyScrollSentinel');
+    if (sentinel) sentinel.textContent = 'Loading more…';
     try {
         await syncHistory({ limit: 20, offset: _historyItems.length });
+        renderHistoryModal();
     } finally {
         _historyLoading = false;
-        $('historyLoadMore').disabled = false;
-        $('historyLoadMore').textContent = 'Load more';
     }
 }
 
 // Delete a completed generation (soft-delete server-side; removes R2 object too).
 async function deleteHistoryItem(jobId){
-    if (!confirm('Delete this generation? This cannot be undone.')) return;
+    const ok = await showConfirm('Delete this generation? This cannot be undone.', { confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
     try {
         const r = await fetchT(`${API}/api/studio/job/${jobId}`, { method: 'DELETE' }, 6000);
         const d = await r.json();
