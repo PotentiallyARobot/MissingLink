@@ -372,6 +372,23 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     backdrop-filter:blur(6px);
 }
 .batch-tile.done:hover::after{opacity:1;transform:scale(1)}
+/* Edit-this-view button — sits LEFT of the expand icon. Only visible on
+   hover of a done tile. Click fires editBatchSlot(i), which uploads this
+   tile's image as the edit-mode input and arms the result-routing flag. */
+.batch-tile-edit{
+    position:absolute;top:6px;right:32px;z-index:4;
+    width:22px;height:22px;padding:0;border-radius:4px;
+    background:rgba(17,17,20,.85);color:var(--gold);
+    font-size:11px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--border);
+    cursor:pointer;opacity:0;transform:scale(.8);transition:all .2s;
+    backdrop-filter:blur(6px);
+    font-family:inherit;
+}
+.batch-tile.done:hover .batch-tile-edit{opacity:1;transform:scale(1)}
+.batch-tile-edit:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.batch-tile-edit.busy{opacity:1!important;animation:pulse 1s infinite}
 /* Action bar — top-right overlay while batch is active */
 .batch-footer{position:absolute;top:10px;right:10px;display:flex;gap:4px;z-index:5;background:rgba(17,17,20,.92);padding:5px;border-radius:8px;border:1px solid var(--border);backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,0,0,.4)}
 .batch-action-btn{background:none;border:none;color:var(--text);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;padding:7px 10px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;-webkit-tap-highlight-color:transparent}
@@ -1603,6 +1620,11 @@ async function pollQueue(){
                         thumb: null,
                         result: null,
                         submittedAt: (srvJob.created_at||0)*1000,
+                        // Batch marker from server — critical for post-reload:
+                        // without this, batch jobs finishing after a reload
+                        // would be treated as stray singles and clobber any
+                        // restored batch grid the user has open.
+                        batchId: srvJob.batch_id || null,
                     };
                     myJobs.unshift(existing);
                     startJobPoll(srvJob.id);
@@ -1615,6 +1637,8 @@ async function pollQueue(){
                 existing.totalSteps = srvJob.total_steps;
                 existing.othersAhead = srvJob.others_ahead || 0;
                 existing.globalPosition = srvJob.global_position;
+                // Sync batchId too in case server added it retroactively
+                if (srvJob.batch_id && !existing.batchId) existing.batchId = srvJob.batch_id;
                 if(srvJob.started_at && !existing.startedAt){
                     existing.startedAt = srvJob.started_at * 1000;
                 }
@@ -1678,6 +1702,8 @@ function handleJobTerminal(jobId, d){
         // Batch routing: active batch → fill grid slot; orphan batch → silent
         // hand-off to history; otherwise single-result showResult.
         let handledByBatch = false;
+        // Case 1: this job is a member of the active batch (submitted via
+        // All 6 Angles) — fill its pre-allocated grid slot.
         if (_activeBatch && d.result) {
             const shot = _activeBatch.shots.find(s => s.jobId === jobId);
             if (shot) {
@@ -1691,9 +1717,48 @@ function handleJobTerminal(jobId, d){
                 handledByBatch = true;
             }
         }
+        // Case 2: this job was launched via the ✎ edit-a-view button on
+        // a batch tile. It's NOT a batch-member (it's a plain edit-mode
+        // generation), but we want its result to replace the tile that
+        // kicked it off rather than clobber the main single-image view.
+        if (!handledByBatch && _activeBatch && d.result && job.editTargetSlot) {
+            const { slotIdx, batchId } = job.editTargetSlot;
+            // Only apply if the user is still looking at the same batch.
+            // If they closed it or started a new batch, silently drop the
+            // result into history (already persisted server-side).
+            if (_activeBatch.id === batchId && _activeBatch.shots[slotIdx]) {
+                const shot = _activeBatch.shots[slotIdx];
+                shot.status = 'done';
+                shot.url = d.result.url;
+                shot.w = d.result.w;
+                shot.h = d.result.h;
+                shot.seed = d.result.seed;
+                shot.elapsed = d.result.elapsed;
+                // Force the tile's <img> to pick up the new URL. The existing
+                // reveal logic in renderBatchGrid handles this correctly —
+                // it'll see img.src !== shot.url and re-load with the
+                // shimmer + fade-in transition.
+                const tileImg = document.querySelector(`[data-slot="${slotIdx}"] img`);
+                if (tileImg) tileImg.src = '';  // clear to force re-attach
+                renderBatchGrid();
+                handledByBatch = true;
+                log(`View ${slotIdx + 1} updated with edit`, 'success');
+            }
+        }
         if (!handledByBatch) {
             if (job.batchId) {
-                log(`Job ${jobId} done (orphaned batch job, in history)`, 'success');
+                // Batch job that isn't part of the currently-displayed batch
+                // (e.g. completed post-reload, user viewing a different batch
+                // from history). Safe in history, don't surface here.
+                log(`Job ${jobId} done (batch job — see history)`, 'success');
+            } else if (_activeBatch) {
+                // Single-result landing while the user is viewing a batch
+                // grid. Don't clobber their view — the result is persisted
+                // in history either way. This matters especially after a
+                // page reload: any in-flight jobs from before the reload
+                // complete here and would otherwise wipe the batch view
+                // the user just restored.
+                log(`Job ${jobId} done (in history — batch view kept)`, 'success');
             } else if (d.result) {
                 showResult(d.result);
             }
@@ -2025,6 +2090,17 @@ async function doGenerate(){
         // Remove any duplicate
         myJobs = myJobs.filter(j => j.id !== d.job_id);
 
+        // If this generation was launched via the "edit this tile" flow,
+        // capture the target slot so the completion handler updates the
+        // grid tile instead of replacing the main viewport.
+        const editTarget = _editingBatchSlot;
+        if (editTarget) {
+            // Clear the in-flight state now — we've snapshotted it into the
+            // job record. A second click on another tile won't re-submit to
+            // the same slot by accident.
+            _editingBatchSlot = null;
+        }
+
         myJobs.unshift({
             id: d.job_id,
             status: 'waiting',
@@ -2034,6 +2110,7 @@ async function doGenerate(){
             submittedAt: Date.now(),
             startedAt: Date.now(),
             snapshot,
+            editTargetSlot: editTarget,   // {slotIdx, batchId} or null
         });
         if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
         renderQueue();
@@ -2075,6 +2152,53 @@ const ALL_ANGLES_BATCH = [
 // but the individual jobs persist in history as normal.
 // Schema: { id, started, shots: [{ label, prompt, jobId, status, url }], inputUrl }
 let _activeBatch = null;
+
+// When the user clicks the ✎ edit button on a batch tile, we set this to
+// { slotIdx, batchId } so the next Generate submission knows to route its
+// result back into the matching grid tile instead of replacing the main
+// single-image viewport. Cleared after submission.
+let _editingBatchSlot = null;
+
+// Click handler for the ✎ button on a batch tile. Loads that view's image
+// into the Edit sidebar as the first edit-slot input, switches modes, and
+// arms _editingBatchSlot so the next Generate updates this tile in place.
+async function editBatchSlot(slotIdx){
+    if (!_activeBatch) return;
+    const shot = _activeBatch.shots[slotIdx];
+    if (!shot || !shot.url) return;
+    const btn = document.querySelector(`[data-slot="${slotIdx}"] .batch-tile-edit`);
+    if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+    try {
+        // Fetch the tile's image as a Blob and re-upload it so we have a
+        // fresh R2-backed image_id the pipeline can consume. (The existing
+        // output URLs are stable but the upload endpoint is the only way
+        // to obtain an image_id the edit pipeline accepts.)
+        const r = await fetchT(shot.url, null, 15000);
+        const blob = await r.blob();
+        const fname = `view-${slotIdx + 1}-${Date.now()}.png`;
+        const file = new File([blob], fname, { type: blob.type || 'image/png' });
+        // Switch to Edit mode first so the upload lands in the edit slot flow
+        setMode('edit');
+        // Clear all edit slots and upload into slot 0 as the primary input
+        for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
+        await uploadToSlot(0, file);
+        // Arm the routing flag
+        _editingBatchSlot = { slotIdx, batchId: _activeBatch.id };
+        // Prefill the edit prompt with a helpful starter the user can replace
+        const cp = $('customPrompt');
+        if (cp && !cp.value.trim()) {
+            cp.placeholder = `Describe the change for "${shot.label}"… (e.g. "add red accents")`;
+            cp.focus();
+        }
+        log(`Editing view ${slotIdx + 1} · ${shot.label}`);
+        showNotif(`Editing "${shot.label}" — describe the change and click Generate.`);
+    } catch (e) {
+        log('Edit-view failed: ' + e.message, 'error');
+        showNotif('Could not load that view for editing.', 'error');
+    } finally {
+        if (btn) { btn.classList.remove('busy'); btn.disabled = false; }
+    }
+}
 
 async function generateAllAngles(){
     if(!_user){ $('loginModal').classList.add('open'); return; }
@@ -2250,13 +2374,24 @@ function renderBatchGrid(){
                 <div class="batch-tile-placeholder"></div>
                 <img style="display:none" loading="lazy" alt="">
                 <div class="batch-tile-label"></div>
+                <button class="batch-tile-edit" title="Edit this view" aria-label="Edit this view" style="display:none">✎</button>
             `;
+            // Edit button click — stop propagation so it doesn't trigger the
+            // tile's zoom-to-modal onclick.
+            const editBtn = tile.querySelector('.batch-tile-edit');
+            editBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                editBatchSlot(i);
+            });
             grid.appendChild(tile);
         }
         const img = tile.querySelector('img');
         const placeholder = tile.querySelector('.batch-tile-placeholder');
         const label = tile.querySelector('.batch-tile-label');
+        const editBtn = tile.querySelector('.batch-tile-edit');
         label.textContent = shot.label;
+        // Show edit button only when the tile has a completed image
+        if (editBtn) editBtn.style.display = shot.url ? '' : 'none';
 
         if (shot.url) {
             doneCount++;
@@ -3460,6 +3595,18 @@ function restoreBatchFromHistory(items){
             seed: it.seed, elapsed: it.elapsed,
         };
     });
+    // Wipe any existing grid DOM before we swap state. renderBatchGrid does
+    // incremental updates keyed by data-slot; stale tiles from a previous
+    // batch would get re-used and their <img> might already have matching
+    // src values, which would short-circuit the reveal logic and leave the
+    // tiles blank. A clean slate guarantees a fresh render.
+    const oldGrid = document.getElementById('batchGrid');
+    if (oldGrid) oldGrid.remove();
+    const oldFooter = document.getElementById('batchFooter');
+    if (oldFooter) oldFooter.remove();
+    const oldProg = document.getElementById('batchProgress');
+    if (oldProg) oldProg.remove();
+
     _activeBatch = {
         id: sorted[0].batch_id || ('restored_' + Date.now()),
         started: (sorted[0].created_at || 0) * 1000,
