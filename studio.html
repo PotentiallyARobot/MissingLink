@@ -212,6 +212,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .mk-tbox-btn-primary:hover{background:#f5b301}
 .mk-tbox-btn-primary:disabled{opacity:.5;cursor:not-allowed}
 
+/* When there are unapplied strokes, the Apply button pulses with a gold
+   ring so the user sees there's work waiting to be baked in. Generate
+   also auto-applies pending strokes, so this is a visual signal rather
+   than a hard gate. */
+.mk-tbox-btn-primary.mk-has-strokes{
+    animation:mkApplyPulse 1.5s ease-in-out infinite;
+}
+@keyframes mkApplyPulse{
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232,169,23,.65); }
+    50%      { box-shadow: 0 0 0 6px rgba(232,169,23,0); }
+}
+
 @media (max-width: 700px){
     .mk-toolbox{right:12px;top:80px;width:56px}
     .mk-toolbox-body{padding:6px;gap:6px}
@@ -1368,9 +1380,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <input type="range" id="mkSize" min="2" max="60" value="12" title="Drag to change brush / box / eraser size (2–60 px)">
         </div>
         <div class="mk-tbox-row mk-tbox-row-actions">
-            <button class="mk-tbox-btn" onclick="markupUndo()"  title="Undo last stroke">↶</button>
-            <button class="mk-tbox-btn" onclick="markupClear()" title="Clear ALL marks and start fresh">🗑</button>
-            <button class="mk-tbox-btn mk-tbox-btn-primary" onclick="markupApply()" title="Bake marks into Image 1. The composited image becomes the new input — reference the colored regions in your prompt.">✓ Apply</button>
+            <button class="mk-tbox-btn" onclick="markupUndo()"  title="Undo last stroke">↶ Undo</button>
+            <button class="mk-tbox-btn" onclick="markupClear()" title="Clear ALL marks and start fresh">🗑 Clear</button>
         </div>
     </div>
 </div>
@@ -2833,31 +2844,36 @@ function markupPointerUp(){
         _markup.strokes.push(_markup.currentStroke);
     }
     _markup.currentStroke = null;
+    _updateApplyButtonState();
 }
 
 function markupUndo(){
     if (!_markup.active) return;
     _markup.strokes.pop();
     paintRedraw();
+    _updateApplyButtonState();
 }
 
 function markupClear(){
     if (!_markup.active) return;
     _markup.strokes = [];
     paintRedraw();
+    _updateApplyButtonState();
 }
 
-async function markupApply(){
-    if (!_markup.active) return;
+async function markupApply(opts){
+    opts = opts || {};
+    if (!_markup.active) return false;
     if (!_markup.strokes.length) {
-        showNotif('Draw something first, then click Apply.', 'error');
-        return;
+        if (!opts.silent) showNotif('Draw something first, then click Apply.', 'error');
+        return false;
     }
     const slot = slots[_markup.slotIdx];
-    if (!slot) { _exitMarkupMode(); return; }
+    if (!slot) { _exitMarkupMode(); return false; }
 
-    const applyBtn = document.querySelector('.mk-btn-primary');
-    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Uploading…'; }
+    const applyBtn = document.querySelector('.mk-tbox-btn-primary');
+    const origLabel = applyBtn ? applyBtn.textContent : '';
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = '…'; }
 
     try {
         const sourceImg = new Image();
@@ -2881,13 +2897,36 @@ async function markupApply(){
 
         await uploadToSlot(_markup.slotIdx, file);
 
-        _exitMarkupMode();
-        showNotif('Markup applied. Reference colored regions in your prompt (e.g. "the red box").', 'success');
+        if (opts.keepMarkup) {
+            // Auto-apply path: the new composited image has replaced slot 1's
+            // url, so refreshMarkupMode will reload the editor with the baked-
+            // in marks visible + strokes cleared. We don't exit markup since
+            // the user is about to generate and may iterate.
+            _markup.strokes = [];
+            _updateApplyButtonState();
+            paintRedraw();
+        } else {
+            _exitMarkupMode();
+            if (!opts.silent) {
+                showNotif('Markup applied. Reference colored regions in your prompt (e.g. "the red box").', 'success');
+            }
+        }
+        return true;
     } catch (e) {
-        showNotif('Failed to apply markup: ' + e.message, 'error');
+        if (!opts.silent) showNotif('Failed to apply markup: ' + e.message, 'error');
+        return false;
     } finally {
-        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Apply to Image 1'; }
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = origLabel || '✓ Apply'; }
     }
+}
+
+// Apply button pulses when there are unapplied strokes so the user sees
+// it's waiting on them. Called after every stroke / undo / clear.
+function _updateApplyButtonState(){
+    const applyBtn = document.querySelector('.mk-tbox-btn-primary');
+    if (!applyBtn) return;
+    const has = _markup.active && _markup.strokes.length > 0;
+    applyBtn.classList.toggle('mk-has-strokes', has);
 }
 
 function _markupInitControls(){
@@ -3096,6 +3135,17 @@ async function doGenerate(){
     // selected input becomes its own job routed through _activeBatch.
     if (currentMode === 'batch') {
         return generateBatchEdits();
+    }
+    // Auto-apply any pending markup strokes first. Without this, the user
+    // can draw marks, hit Generate, and wonder why the model ignored their
+    // red X — the strokes exist only on the canvas overlay until Apply
+    // bakes them into the image. So we silently bake on their behalf.
+    if (_markup && _markup.active && _markup.strokes && _markup.strokes.length) {
+        const ok = await markupApply({ silent: true, keepMarkup: true });
+        if (!ok) {
+            showNotif('Could not apply markup before generating. Try again.', 'error');
+            return;
+        }
     }
     if(_user.tokens<100){ showBuyModal(); return; }
 
