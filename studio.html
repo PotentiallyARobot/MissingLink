@@ -66,109 +66,103 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 .dropzone{border:1.5px dashed var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
 
-/* ── Paint (markup) button on slot 0 ──────────────────────────────── */
-.slot-paint{
-    position:absolute;top:6px;right:32px;z-index:3;
-    width:22px;height:22px;padding:0;
-    background:rgba(17,17,20,.85);color:var(--gold);
-    border:1px solid var(--border);border-radius:4px;
-    font-size:11px;line-height:1;cursor:pointer;
-    display:flex;align-items:center;justify-content:center;
-    backdrop-filter:blur(6px);transition:all .12s;
-}
-.slot-paint:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
-
-/* ── Inline markup activity (lives inside the output area) ─────────
-   When the user clicks 🖌 on slot 0, the output area transforms into
-   an editing workspace: toolbar at the top, image in the middle with
-   a transparent drawing canvas pinned precisely on top of it. The
-   image's existing viewer behavior is suspended until the user either
-   Applies or Cancels. */
-.output-area.markup-active{
-    display:grid;
-    grid-template-rows:auto 1fr auto;
-    align-items:stretch;justify-items:stretch;
-    padding:0;
-}
+/* ── Inline markup activity ──────────────────────────────────────
+   When Edit mode is active and slot 1 has an image, the output area
+   becomes a markup workspace: the image loads into #outImg and a
+   transparent canvas overlays it at pixel-exact size. The toolbox is
+   a separate floating window (see .mk-toolbox below). */
 .output-area.markup-active #outImg{
-    max-width:100%;max-height:100%;object-fit:contain;
-    cursor:default;pointer-events:none;
-    justify-self:center;align-self:center;
-    grid-row:2;
+    pointer-events:none;  /* don't trigger the zoom modal while drawing */
+    cursor:default;
 }
 .output-area.markup-active #outPh{display:none!important}
 .output-area.markup-active .queue-overlay,
 .output-area.markup-active .history-overlay{display:none!important}
 
-/* Top toolbar — docked, full width */
-.markup-toolbar{
-    grid-row:1;
-    display:flex;gap:14px;align-items:center;
-    padding:8px 14px;background:var(--surface-2);
-    border-bottom:1px solid var(--border);
-    flex-wrap:wrap;
-    animation:mkSlide .2s ease-out;
-}
-@keyframes mkSlide{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
-.mk-group{display:flex;flex-direction:column;gap:3px;min-width:0}
-.mk-label{
-    font-family:var(--font-mono);font-size:9px;letter-spacing:.8px;
-    text-transform:uppercase;color:var(--text-muted);font-weight:600;
-}
-.mk-colors{display:flex;gap:4px}
-.mk-color{
-    width:22px;height:22px;border-radius:4px;padding:0;
-    border:2px solid transparent;cursor:pointer;transition:all .12s;
-}
-.mk-color:hover{transform:scale(1.08)}
-.mk-color.active{border-color:var(--text);box-shadow:0 0 0 2px var(--surface-2),0 0 0 3px var(--gold)}
-.mk-modes{display:flex;gap:4px}
-.mk-mode{
-    padding:4px 9px;font-size:10.5px;font-weight:500;
-    background:var(--surface-3);color:var(--text-muted);
-    border:1px solid var(--border);border-radius:4px;cursor:pointer;transition:all .12s;
-    font-family:inherit;
-}
-.mk-mode:hover{color:var(--text)}
-.mk-mode.active{background:var(--gold);color:#0a0a0c;border-color:var(--gold);font-weight:600}
-#mkSize{width:120px;accent-color:var(--gold)}
-.mk-spacer{flex:1;min-width:0}
-.mk-actions{display:flex;gap:6px;flex-shrink:0}
-.mk-btn{
-    padding:6px 12px;font-size:11px;font-weight:600;
-    background:var(--surface-3);color:var(--text);
-    border:1px solid var(--border);border-radius:4px;cursor:pointer;
-    transition:all .12s;font-family:inherit;
-}
-.mk-btn:hover{background:var(--surface);border-color:var(--border-strong)}
-.mk-btn.mk-btn-primary{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
-.mk-btn.mk-btn-primary:hover{background:#f5b301}
-.mk-btn.mk-btn-primary:disabled{opacity:.5;cursor:not-allowed}
-
-/* Hint strip at bottom — non-blocking, matches existing progress-pill aesthetic */
-.markup-hint{
-    grid-row:3;
-    padding:8px 14px;
-    background:var(--surface);
-    border-top:1px solid var(--border);
-    color:var(--text-muted);font-size:11.5px;line-height:1.4;
-    text-align:center;
-}
-.markup-hint em{color:var(--gold);font-style:normal;font-weight:500}
-
-/* Canvas overlay — pixel-exactly on top of the image. Positioned
-   absolutely relative to output-area, coords set by JS. */
 #markupCanvas{
     cursor:crosshair;
-    touch-action:none;  /* prevent scroll-pan while drawing on mobile */
+    touch-action:none;  /* prevent scroll-pan on mobile while drawing */
 }
 
+/* ── Floating toolbox (Photoshop-style) ────────────────────────── */
+.mk-toolbox{
+    position:fixed;z-index:200;
+    top:100px;right:24px;width:64px;
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;
+    box-shadow:0 12px 36px rgba(0,0,0,.5),0 0 0 1px rgba(232,169,23,.06);
+    user-select:none;
+    animation:mkToolboxPop .18s ease-out;
+}
+@keyframes mkToolboxPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
+.mk-toolbox-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:5px 8px;background:var(--surface-2);
+    border-bottom:1px solid var(--border);border-radius:8px 8px 0 0;
+    cursor:move;
+}
+.mk-toolbox-title{
+    font-size:10px;font-weight:600;color:var(--text);
+    letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.mk-toolbox-collapse{
+    width:18px;height:18px;padding:0;background:transparent;border:none;
+    color:var(--text-muted);font-size:14px;line-height:1;cursor:pointer;
+    border-radius:3px;flex-shrink:0;
+}
+.mk-toolbox-collapse:hover{color:var(--text);background:var(--surface-3)}
+.mk-toolbox.collapsed .mk-toolbox-body{display:none}
+.mk-toolbox.collapsed .mk-toolbox-head{border-bottom:none;border-radius:8px}
+.mk-toolbox.collapsed .mk-toolbox-collapse::before{content:"+"}
+.mk-toolbox:not(.collapsed) .mk-toolbox-collapse{font-size:16px}
+
+.mk-toolbox-body{
+    padding:8px;display:flex;flex-direction:column;gap:8px;
+}
+.mk-tbox-row{display:flex;gap:4px;justify-content:center;flex-wrap:wrap}
+.mk-tbox-row-colors .mk-color{
+    width:20px;height:20px;border-radius:4px;padding:0;
+    border:2px solid transparent;cursor:pointer;transition:all .1s;
+}
+.mk-tbox-row-colors .mk-color:hover{transform:scale(1.1)}
+.mk-tbox-row-colors .mk-color.active{
+    border-color:var(--text);
+    box-shadow:0 0 0 1px var(--surface),0 0 0 2px var(--gold);
+}
+.mk-tbox-row-tools .mk-tool{
+    width:22px;height:22px;padding:0;
+    font-size:12px;line-height:1;
+    background:var(--surface-3);color:var(--text);
+    border:1px solid var(--border);border-radius:4px;
+    cursor:pointer;transition:all .1s;
+    display:flex;align-items:center;justify-content:center;
+}
+.mk-tbox-row-tools .mk-tool:hover{border-color:var(--border-strong)}
+.mk-tbox-row-tools .mk-tool.active{
+    background:var(--gold);border-color:var(--gold);color:#0a0a0c;
+}
+.mk-tbox-row-size{flex-direction:column;gap:2px;align-items:stretch}
+.mk-tbox-label{
+    font-family:var(--font-mono);font-size:8.5px;letter-spacing:.5px;
+    color:var(--text-muted);text-align:center;font-weight:600;
+    text-transform:uppercase;
+}
+#mkSize{width:100%;accent-color:var(--gold);margin:0}
+.mk-tbox-row-actions{flex-direction:column;gap:3px;padding-top:4px;border-top:1px solid var(--border)}
+.mk-tbox-btn{
+    padding:5px 0;font-size:10.5px;font-weight:600;
+    background:var(--surface-3);color:var(--text);
+    border:1px solid var(--border);border-radius:3px;cursor:pointer;
+    transition:all .1s;font-family:inherit;width:100%;
+}
+.mk-tbox-btn:hover{background:var(--surface-2);border-color:var(--border-strong)}
+.mk-tbox-btn-primary{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.mk-tbox-btn-primary:hover{background:#f5b301}
+.mk-tbox-btn-primary:disabled{opacity:.5;cursor:not-allowed}
+
 @media (max-width: 700px){
-    .markup-toolbar{gap:8px;padding:6px 10px}
-    #mkSize{width:80px}
-    .mk-btn{padding:5px 9px;font-size:10.5px}
-    .markup-hint{font-size:10.5px;padding:6px 10px}
-    .mk-label{display:none}  /* tight mobile — drop labels */
+    .mk-toolbox{right:12px;top:80px;width:56px}
+    .mk-toolbox-body{padding:6px;gap:6px}
 }
 
 /* ── Batch mode UI ────────────────────────────────────────────── */
@@ -1034,7 +1028,6 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="slot-filled" style="display:none">
                 <img id="slotImg0" onclick="openModal(this.src)">
                 <span class="slot-num-badge">1</span>
-                <button class="slot-paint" onclick="enterMarkupMode(0)" title="Mark up this image with colored regions to reference in your prompt">🖌</button>
                 <button class="slot-remove" onclick="removeSlot(0)">×</button>
             </div>
         </div>
@@ -1152,7 +1145,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <label class="check-row"><input type="checkbox" id="chkRand"> Randomize Seed</label>
         <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5"><input type="number" class="sv" id="vCfg" value="1" min="1" max="8" step="0.5"></div>
         <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
-        <div class="slider-row camera-only"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row camera-only"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
     </div>
 
@@ -1193,47 +1186,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
 
-        <!-- Markup overlay — activated by the 🖌 button. Canvas sits
-             on top of outImg at the image's rendered size so the user
-             draws directly on the image as it appears. Hidden by default. -->
+        <!-- Markup overlay — canvas sits on top of outImg at pixel-exact
+             size so the user draws directly on the image. Hidden when
+             markup mode is inactive. -->
         <canvas id="markupCanvas" style="display:none;position:absolute;cursor:crosshair;pointer-events:auto;z-index:10"></canvas>
-
-        <!-- Inline toolbar, shown only during markup activity. -->
-        <div class="markup-toolbar" id="markupToolbar" style="display:none">
-            <div class="mk-group">
-                <label class="mk-label">Color</label>
-                <div class="mk-colors" id="mkColors">
-                    <button class="mk-color active" data-color="red" style="background:#ef4444" title="Red"></button>
-                    <button class="mk-color" data-color="blue" style="background:#3b82f6" title="Blue"></button>
-                    <button class="mk-color" data-color="green" style="background:#22c55e" title="Green"></button>
-                    <button class="mk-color" data-color="yellow" style="background:#eab308" title="Yellow"></button>
-                </div>
-            </div>
-            <div class="mk-group">
-                <label class="mk-label">Tool</label>
-                <div class="mk-modes" id="mkModes">
-                    <button class="mk-mode active" data-mode="brush" title="Freehand brush">✏️ Brush</button>
-                    <button class="mk-mode" data-mode="rect" title="Rectangle box">⬛ Box</button>
-                    <button class="mk-mode" data-mode="eraser" title="Eraser">🧽 Erase</button>
-                </div>
-            </div>
-            <div class="mk-group">
-                <label class="mk-label">Size <span id="mkSizeVal">12</span>px</label>
-                <input type="range" id="mkSize" min="2" max="60" value="12">
-            </div>
-            <div class="mk-spacer"></div>
-            <div class="mk-actions">
-                <button class="mk-btn" onclick="markupUndo()" title="Undo last stroke">↶ Undo</button>
-                <button class="mk-btn" onclick="markupClear()" title="Clear all marks">Clear</button>
-                <button class="mk-btn" onclick="markupCancel()">Cancel</button>
-                <button class="mk-btn mk-btn-primary" onclick="markupApply()">✓ Apply to Image 1</button>
-            </div>
-        </div>
-
-        <!-- Help hint that hovers at the bottom during markup. -->
-        <div class="markup-hint" id="markupHint" style="display:none">
-            Draw colored regions, then reference them in your prompt — e.g. <em>"change what's in the red box to a mountain"</em>
-        </div>
 
         <!-- Cold-boot overlay — renders when the GPU container is warming
              up. Shows real stage info + an elapsed-time progress bar so
@@ -1304,6 +1260,38 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 </div>
 
 <!-- NOTIFICATION / CONFIRM MODAL (replaces native alert / confirm) -->
+<!-- Floating markup toolbox — compact, draggable, Photoshop-style. Lives
+     at document root so it can float anywhere on screen. Hidden until
+     the user enters Edit mode with an image in slot 1. -->
+<div id="markupToolbox" class="mk-toolbox" style="display:none">
+    <div class="mk-toolbox-head" id="markupToolboxHead">
+        <span class="mk-toolbox-title">🖌 Markup</span>
+        <button class="mk-toolbox-collapse" id="markupToolboxCollapse" title="Collapse">−</button>
+    </div>
+    <div class="mk-toolbox-body">
+        <div class="mk-tbox-row mk-tbox-row-colors" id="mkColors">
+            <button class="mk-color active" data-color="red" style="background:#ef4444" title="Red"></button>
+            <button class="mk-color" data-color="blue" style="background:#3b82f6" title="Blue"></button>
+            <button class="mk-color" data-color="green" style="background:#22c55e" title="Green"></button>
+            <button class="mk-color" data-color="yellow" style="background:#eab308" title="Yellow"></button>
+        </div>
+        <div class="mk-tbox-row mk-tbox-row-tools" id="mkModes">
+            <button class="mk-tool active" data-mode="brush" title="Brush">✏️</button>
+            <button class="mk-tool" data-mode="rect" title="Box">⬛</button>
+            <button class="mk-tool" data-mode="eraser" title="Erase">🧽</button>
+        </div>
+        <div class="mk-tbox-row mk-tbox-row-size">
+            <label class="mk-tbox-label">Size <span id="mkSizeVal">12</span></label>
+            <input type="range" id="mkSize" min="2" max="60" value="12">
+        </div>
+        <div class="mk-tbox-row mk-tbox-row-actions">
+            <button class="mk-tbox-btn" onclick="markupUndo()" title="Undo">↶</button>
+            <button class="mk-tbox-btn" onclick="markupClear()" title="Clear all">🗑</button>
+            <button class="mk-tbox-btn mk-tbox-btn-primary" onclick="markupApply()" title="Apply marks to Image 1">✓ Apply</button>
+        </div>
+    </div>
+</div>
+
 <div id="notifModal" class="modal" style="display:none" onclick="if(event.target===this) _notifCancel()">
     <div id="notifPanel" class="notif-panel">
         <div class="notif-title" id="notifTitle">Notice</div>
@@ -1899,6 +1887,10 @@ function setMode(mode){
                  :                     'Upload multiple images and describe one edit to apply to each';
     $('outPh').textContent = phText;
     updateGenButton();
+    // Markup auto-activates when (edit mode + slot 0 has image), deactivates
+    // otherwise. Declarative so we don't have to orchestrate enter/exit from
+    // every call site.
+    if (typeof refreshMarkupMode === 'function') refreshMarkupMode();
 }
 
 function updateGenButton(){
@@ -2492,22 +2484,23 @@ async function uploadToSlot(i,file){
         renderSlot(i);
         updateGenButton();
         persistSlots();
+        if (i === 0) refreshMarkupMode();
     }catch(e){ showNotif('Upload failed. Check your connection and try again.', 'error'); }
 }
 
-function removeSlot(i){ slots[i]=null; renderSlot(i); updateGenButton(); persistSlots(); }
+function removeSlot(i){ slots[i]=null; renderSlot(i); updateGenButton(); persistSlots(); if(i===0) refreshMarkupMode(); }
 
 // ═══════════════════════════════════════════════════════════════════
 // INLINE MARKUP ACTIVITY
-// Clicking 🖌 on slot 0 transforms the main output area into an
-// editing workspace: the slot image loads into #outImg, a transparent
-// canvas overlays it pixel-exactly, and the markup toolbar docks at
-// the top of the area. User draws colored marks, then Apply composites
-// them into the source image, re-uploads the result, and swaps slot 0's
-// input_id to the composite. Cancel exits without changes.
-// Qwen-Image-Edit-2511 handles the visual-region editing: user writes
-// a prompt that references "the red box" etc. and the model targets
-// those colored areas.
+// Edit mode + image in slot 1 = markup is automatically active. The
+// output area becomes an editing surface: slot 0's image loads into
+// #outImg, a transparent canvas overlays it pixel-exactly, and a
+// compact draggable toolbox (Photoshop-style) floats in the corner.
+// User draws colored marks and clicks Apply. Composited image is
+// re-uploaded and swapped into slot 0; strokes clear for next round.
+// Exiting Edit mode or removing slot 0 deactivates markup.
+// Qwen-Image-Edit-2511 visually sees the colored regions and edits
+// them when the user's prompt references them ("the red box", etc.).
 // ═══════════════════════════════════════════════════════════════════
 
 const _markup = {
@@ -2523,12 +2516,29 @@ const _markup = {
     _resizeHandler: null,
 };
 
-function enterMarkupMode(slotIdx){
-    const slot = slots[slotIdx];
-    if (!slot || !slot.url) {
-        showNotif('Upload an image to slot 1 first.', 'error');
-        return;
+// Called on any state change that could affect whether markup should be
+// live: mode switch, slot 0 upload/remove, Apply, etc. Declarative — you
+// don't call enter/exit directly anymore.
+function refreshMarkupMode(){
+    const shouldBeActive = (currentMode === 'edit') && !!(slots[0] && slots[0].url);
+    if (shouldBeActive && !_markup.active) _enterMarkupMode(0);
+    else if (!shouldBeActive && _markup.active) _exitMarkupMode();
+    else if (shouldBeActive && _markup.active && slots[0] && slots[0].url) {
+        // Slot 0 image changed (e.g. user re-uploaded or Applied a composite)
+        // — refresh the editor's source image if needed, keeping strokes
+        // cleared so the user starts fresh on the new image.
+        const img = $('outImg');
+        if (img.src !== slots[0].url) {
+            _markup.strokes = [];
+            img.onload = () => { _markupSizeCanvas(); paintRedraw(); };
+            img.src = slots[0].url;
+        }
     }
+}
+
+function _enterMarkupMode(slotIdx){
+    const slot = slots[slotIdx];
+    if (!slot || !slot.url) return;
     if (_markup.active) return;
 
     _markup.slotIdx = slotIdx;
@@ -2537,14 +2547,15 @@ function enterMarkupMode(slotIdx){
     _markup.drawing = false;
     _markup.currentStroke = null;
 
+    // Save prior output-area state so we can restore it if the user
+    // leaves edit mode or removes the slot image.
     _markup._prevState = {
         outImgSrc: $('outImg').src,
         outImgDisplay: $('outImg').style.display,
         outPhDisplay: $('outPh').style.display,
     };
 
-    const area = $('outputArea');
-    area.classList.add('markup-active');
+    $('outputArea').classList.add('markup-active');
 
     const img = $('outImg');
     const canvas = $('markupCanvas');
@@ -2555,12 +2566,14 @@ function enterMarkupMode(slotIdx){
     if (img.complete && img.naturalWidth > 0) onReady();
 
     canvas.style.display = '';
-    $('markupToolbar').style.display = '';
-    $('markupHint').style.display = '';
+    // Show floating toolbox (body-level, independent of output area)
+    const toolbox = $('markupToolbox');
+    if (toolbox) toolbox.style.display = '';
 
+    // Reset tool selection UI to defaults (red / brush / size 12)
     document.querySelectorAll('#mkColors .mk-color').forEach(b =>
         b.classList.toggle('active', b.dataset.color === 'red'));
-    document.querySelectorAll('#mkModes .mk-mode').forEach(b =>
+    document.querySelectorAll('#mkModes .mk-tool').forEach(b =>
         b.classList.toggle('active', b.dataset.mode === 'brush'));
     _markup.color = '#ef4444';
     _markup.mode = 'brush';
@@ -2574,16 +2587,14 @@ function enterMarkupMode(slotIdx){
     window.addEventListener('resize', _markup._resizeHandler);
 }
 
-function markupCancel(){ _exitMarkupMode(); }
-
 function _exitMarkupMode(){
     if (!_markup.active) return;
     _markup.active = false;
 
     $('outputArea').classList.remove('markup-active');
     $('markupCanvas').style.display = 'none';
-    $('markupToolbar').style.display = 'none';
-    $('markupHint').style.display = 'none';
+    const toolbox = $('markupToolbox');
+    if (toolbox) toolbox.style.display = 'none';
 
     const prev = _markup._prevState || {};
     const img = $('outImg');
@@ -2781,15 +2792,17 @@ function _markupInitControls(){
             btn.classList.add('active');
             const colorMap = { red:'#ef4444', blue:'#3b82f6', green:'#22c55e', yellow:'#eab308' };
             _markup.color = colorMap[btn.dataset.color] || '#ef4444';
+            // Picking a color while in eraser snaps back to brush — otherwise
+            // the color change is silent.
             if (_markup.mode === 'eraser') {
                 const brushBtn = document.querySelector('#mkModes [data-mode="brush"]');
                 if (brushBtn) brushBtn.click();
             }
         });
     });
-    document.querySelectorAll('#mkModes .mk-mode').forEach(btn => {
+    document.querySelectorAll('#mkModes .mk-tool').forEach(btn => {
         btn.addEventListener('click', () => {
-            document.querySelectorAll('#mkModes .mk-mode').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('#mkModes .mk-tool').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             _markup.mode = btn.dataset.mode;
         });
@@ -2810,6 +2823,62 @@ function _markupInitControls(){
         canvas.addEventListener('touchstart', markupPointerDown, { passive:false });
         canvas.addEventListener('touchmove', markupPointerMove, { passive:false });
         canvas.addEventListener('touchend', markupPointerUp);
+    }
+
+    // Draggable toolbox — header is the grab area. Constrained to the
+    // viewport so it can't be dragged fully off-screen.
+    const tb = $('markupToolbox');
+    const head = $('markupToolboxHead');
+    if (tb && head) {
+        let dragState = null;
+        const onDown = (e) => {
+            // Clicks on the collapse button shouldn't start a drag
+            if (e.target.closest('.mk-toolbox-collapse')) return;
+            const pt = e.touches ? e.touches[0] : e;
+            const rect = tb.getBoundingClientRect();
+            dragState = {
+                startX: pt.clientX, startY: pt.clientY,
+                origLeft: rect.left, origTop: rect.top,
+            };
+            tb.style.right = 'auto';  // switch anchor to left so we can follow cursor
+            tb.style.left = rect.left + 'px';
+            tb.style.top = rect.top + 'px';
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('touchmove', onMove, { passive:false });
+            document.addEventListener('mouseup', onUp);
+            document.addEventListener('touchend', onUp);
+        };
+        const onMove = (e) => {
+            if (!dragState) return;
+            if (e.cancelable) e.preventDefault();
+            const pt = e.touches ? e.touches[0] : e;
+            const nx = dragState.origLeft + (pt.clientX - dragState.startX);
+            const ny = dragState.origTop + (pt.clientY - dragState.startY);
+            // Keep at least the header visible
+            const maxX = window.innerWidth - 40;
+            const maxY = window.innerHeight - 30;
+            tb.style.left = Math.max(-tb.offsetWidth + 40, Math.min(maxX, nx)) + 'px';
+            tb.style.top  = Math.max(0, Math.min(maxY, ny)) + 'px';
+        };
+        const onUp = () => {
+            dragState = null;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('touchmove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('touchend', onUp);
+        };
+        head.addEventListener('mousedown', onDown);
+        head.addEventListener('touchstart', onDown, { passive:true });
+    }
+
+    // Collapse toggle — shrinks toolbox to just the header bar to
+    // get out of the way without fully closing markup mode.
+    const collapseBtn = $('markupToolboxCollapse');
+    if (collapseBtn && tb) {
+        collapseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tb.classList.toggle('collapsed');
+        });
     }
 }
 
@@ -2903,6 +2972,13 @@ async function doGenerate(){
             randomize_seed:$('chkRand').checked,
             guidance_scale:parseFloat($('rngCfg').value),
             inference_steps:parseInt($('rngSteps').value),
+            // Must send lora_lightning explicitly — otherwise Modal falls
+            // back to its Pydantic default of 1.0, which clamps CFG to 1.0
+            // (see modal_app.py's lightning-engaged guard) and produces the
+            // overcooked/high-contrast look even when the user has
+            // explicitly set Lightning to 0. Angles LoRA is intentionally
+            // omitted: the server forces it to 0.0 in non-camera modes.
+            lora_lightning:parseFloat($('rngLoraLightning').value),
             width:parseInt($('inpWidth').value)||0,
             height:parseInt($('inpHeight').value)||0,
         };
@@ -4736,9 +4812,35 @@ function renderQueue(){
                         pct = 30;
                     }
                 } else if (stage === 'encoding') {
-                    statusIcon = '💾'; statusText = 'Saving output';
+                    // The Modal container pinged "encoding" when it was about
+                    // to PNG-encode + callback. In practice, encoding is <1s
+                    // and callback is <500ms — but if the callback retry
+                    // loop is running, stage_at stays stale and the user
+                    // sees the elapsed climb. Switch wording once we pass
+                    // a "normal" encoding duration so the user sees we've
+                    // noticed the stall.
+                    if (elapsed > 45) {
+                        statusIcon = '⚠️'; statusText = 'Delivery issue, retrying';
+                    } else if (elapsed > 15) {
+                        statusIcon = '📮'; statusText = 'Finalizing';
+                    } else {
+                        statusIcon = '💾'; statusText = 'Saving output';
+                    }
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 92;
+                } else if (stage === 'callback' || (stage && stage.indexOf && stage.indexOf('callback_retry_') === 0)) {
+                    // Modal is in the callback-delivery phase. If we see a
+                    // retry stage, surface the attempt number so the user
+                    // knows something's wrong but it's being handled.
+                    const retryMatch = stage && stage.match && stage.match(/callback_retry_(\d+)/);
+                    if (retryMatch) {
+                        statusIcon = '⚠️';
+                        statusText = `Retry ${retryMatch[1]}/5`;
+                    } else {
+                        statusIcon = '📮'; statusText = 'Delivering result';
+                    }
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 95;
                 } else {
                     statusIcon = '⚡'; statusText = 'Generating';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
