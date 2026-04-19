@@ -76,12 +76,64 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     cursor:default;
 }
 .output-area.markup-active #outPh{display:none!important}
-.output-area.markup-active .queue-overlay,
-.output-area.markup-active .history-overlay{display:none!important}
+/* Queue + history overlays stay visible during markup — the toolbox is
+   a floating window in its own corner, so the user still needs to see
+   generation progress and prior results. */
 
 #markupCanvas{
     cursor:crosshair;
     touch-action:none;  /* prevent scroll-pan on mobile while drawing */
+}
+
+.mk-toolbox-help{
+    width:18px;height:18px;padding:0;background:transparent;border:1px solid var(--border);
+    color:var(--text-muted);font-size:10px;line-height:1;cursor:pointer;
+    border-radius:50%;flex-shrink:0;margin-right:4px;font-weight:700;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;
+    transition:all .12s;
+}
+.mk-toolbox-help:hover{color:var(--gold);border-color:var(--gold)}
+.mk-toolbox-help.active{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+
+/* Markup help popover — anchored next to the toolbox */
+.mk-help{
+    position:fixed;z-index:201;
+    width:320px;max-width:calc(100vw - 32px);
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    box-shadow:0 12px 36px rgba(0,0,0,.5),0 0 0 1px rgba(232,169,23,.06);
+    font-size:12px;line-height:1.5;
+    animation:mkToolboxPop .18s ease-out;
+}
+.mk-help-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:8px 12px;background:var(--surface-2);
+    border-bottom:1px solid var(--border);border-radius:8px 8px 0 0;
+    font-size:11px;font-weight:700;color:var(--text);letter-spacing:.3px;
+}
+.mk-help-close{
+    width:20px;height:20px;padding:0;background:transparent;border:none;
+    color:var(--text-muted);font-size:15px;line-height:1;cursor:pointer;border-radius:3px;
+}
+.mk-help-close:hover{background:var(--surface-3);color:var(--text)}
+.mk-help-body{padding:12px;color:var(--text)}
+.mk-help-body p{margin:0 0 10px;color:var(--text-muted)}
+.mk-help-body p:last-child{margin-bottom:0}
+.mk-help-color-row{
+    display:flex;gap:10px;align-items:flex-start;
+    padding:8px 0;border-top:1px solid var(--border);font-size:11.5px;
+}
+.mk-help-color-row:first-of-type{border-top:none;padding-top:4px}
+.mk-help-color-row div{flex:1;min-width:0}
+.mk-help-color-row b{color:var(--text);font-weight:700}
+.mk-help-color-row em{display:block;color:var(--text-muted);font-style:italic;margin-top:3px;font-size:11px}
+.mk-help-swatch{
+    width:14px;height:14px;border-radius:3px;flex-shrink:0;margin-top:2px;
+    box-shadow:0 0 0 1px var(--border);
+}
+.mk-help-note{
+    margin-top:10px!important;padding:8px 10px;border-radius:5px;
+    background:var(--surface-2);border:1px solid var(--border);
+    font-size:10.5px;color:var(--text-muted)!important;line-height:1.45;
 }
 
 /* ── Floating toolbox (Photoshop-style) ────────────────────────── */
@@ -165,22 +217,37 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     .mk-toolbox-body{padding:6px;gap:6px}
 }
 
-/* ── Batch mode UI ────────────────────────────────────────────── */
-.batch-inputs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+/* ── Batch mode UI ──────────────────────────────────────────────
+   Uploaded batch images render in the main output area as a grid of
+   equal-sized square tiles. auto-fill + minmax lets the grid adapt to
+   container width without us writing breakpoint media queries — on a
+   wide screen you get 5 columns; on a narrow one, 2 or 3. */
+.batch-inputs-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+    gap:10px;
+    padding:16px;
+    width:100%;height:100%;
+    overflow-y:auto;
+    align-content:start;    /* tiles pinned to top, don't stretch vertically */
+    box-sizing:border-box;
+}
 .batch-inputs-grid:empty{display:none}
 .batch-input-tile{
-    position:relative;aspect-ratio:1/1;border-radius:5px;overflow:hidden;
+    position:relative;aspect-ratio:1/1;border-radius:6px;overflow:hidden;
     background:var(--surface-3);border:2px solid var(--border);cursor:pointer;
     transition:all .12s;
 }
 .batch-input-tile:hover{border-color:var(--border-strong)}
 .batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+/* object-fit:cover gives every tile the exact same visual size regardless
+   of the source image's aspect ratio — center-crop view. */
 .batch-input-tile img{width:100%;height:100%;object-fit:cover;pointer-events:none}
 .batch-input-tile .bit-check{
-    position:absolute;top:4px;left:4px;width:16px;height:16px;border-radius:3px;
-    background:rgba(0,0,0,.6);border:1.5px solid #fff;
+    position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:4px;
+    background:rgba(0,0,0,.65);border:2px solid #fff;
     display:flex;align-items:center;justify-content:center;
-    color:#fff;font-size:11px;font-weight:700;line-height:1;
+    color:#fff;font-size:13px;font-weight:700;line-height:1;
     backdrop-filter:blur(4px);
     transition:all .12s;
 }
@@ -188,9 +255,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-input-tile .bit-check::before{content:""}
 .batch-input-tile.selected .bit-check::before{content:"✓"}
 .batch-input-tile .bit-remove{
-    position:absolute;top:4px;right:4px;width:18px;height:18px;border-radius:50%;
-    background:rgba(0,0,0,.7);border:none;color:#fff;cursor:pointer;
-    font-size:11px;line-height:1;padding:0;
+    position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;
+    background:rgba(0,0,0,.75);border:none;color:#fff;cursor:pointer;
+    font-size:13px;line-height:1;padding:0;
     display:flex;align-items:center;justify-content:center;
     opacity:0;transition:opacity .12s;
 }
@@ -198,10 +265,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-input-tile .bit-remove:hover{background:rgba(239,68,68,.9)}
 .batch-input-tile .bit-label{
     position:absolute;bottom:0;left:0;right:0;
-    padding:3px 5px;
-    background:linear-gradient(180deg,transparent,rgba(0,0,0,.75));
-    color:#fff;font-size:9px;font-weight:500;text-align:center;
+    padding:6px 8px;
+    background:linear-gradient(180deg,transparent,rgba(0,0,0,.8));
+    color:#fff;font-size:11px;font-weight:500;
     pointer-events:none;
+    display:flex;justify-content:space-between;align-items:flex-end;gap:4px;
+}
+.batch-input-tile .bit-label-num{
+    font-family:var(--font-mono);font-weight:700;color:var(--gold);
+}
+.batch-input-tile .bit-label-name{
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    opacity:.85;
 }
 .batch-select-controls{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
 .batch-mini-btn{
@@ -1076,10 +1151,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="dropzone-hint">Drop multiple images here<br><span style="font-size:10px;color:var(--text-dim)">or click to select</span></div>
             <input type="file" id="batchFileInput" accept="image/*" multiple style="display:none">
         </div>
-        <!-- Grid of thumbnails, each with a select checkbox and remove ✕ button.
-             Only rendered when there are inputs. -->
-        <div class="batch-inputs-grid" id="batchInputsGrid"></div>
-        <!-- Bulk-select / clear-all controls. Hidden when no inputs. -->
+        <!-- Bulk-select / clear-all controls. Hidden when no inputs. The
+             thumbnail grid itself is rendered inside the main output area
+             (see #batchInputsGrid below) so the user can see all uploaded
+             images at a reasonable size. -->
         <div class="batch-select-controls" id="batchSelectControls" style="display:none">
             <button type="button" class="batch-mini-btn" onclick="batchSelectAll(true)">Select all</button>
             <button type="button" class="batch-mini-btn" onclick="batchSelectAll(false)">Deselect all</button>
@@ -1186,6 +1261,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
 
+        <!-- Batch-mode input grid — user's uploaded images shown as
+             equal-sized tiles in a responsive grid so they can see what
+             they're working with at a reasonable size. Rendered by
+             renderBatchInputs(). Hidden when not in batch mode OR when
+             a batch result grid has taken over this area. -->
+        <div class="batch-inputs-grid" id="batchInputsGrid" style="display:none"></div>
+
         <!-- Markup overlay — canvas sits on top of outImg at pixel-exact
              size so the user draws directly on the image. Hidden when
              markup mode is inactive. -->
@@ -1266,29 +1348,47 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 <div id="markupToolbox" class="mk-toolbox" style="display:none">
     <div class="mk-toolbox-head" id="markupToolboxHead">
         <span class="mk-toolbox-title">🖌 Markup</span>
-        <button class="mk-toolbox-collapse" id="markupToolboxCollapse" title="Collapse">−</button>
+        <button class="mk-toolbox-help" id="markupToolboxHelp" title="How markup works" aria-label="Help">?</button>
+        <button class="mk-toolbox-collapse" id="markupToolboxCollapse" title="Collapse toolbox">−</button>
     </div>
     <div class="mk-toolbox-body">
         <div class="mk-tbox-row mk-tbox-row-colors" id="mkColors">
-            <button class="mk-color active" data-color="red" style="background:#ef4444" title="Red"></button>
-            <button class="mk-color" data-color="blue" style="background:#3b82f6" title="Blue"></button>
-            <button class="mk-color" data-color="green" style="background:#22c55e" title="Green"></button>
-            <button class="mk-color" data-color="yellow" style="background:#eab308" title="Yellow"></button>
+            <button class="mk-color active" data-color="red"    style="background:#ef4444" title="Red — use for the area you want to CHANGE. Example: &quot;replace what's in the red box with a sunset&quot;"></button>
+            <button class="mk-color" data-color="blue"   style="background:#3b82f6" title="Blue — use for areas to KEEP unchanged. Example: &quot;keep everything in the blue area exactly as it is&quot;"></button>
+            <button class="mk-color" data-color="green"  style="background:#22c55e" title="Green — use to FOCUS ON or HIGHLIGHT a detail. Example: &quot;enhance the green circled area with more detail&quot;"></button>
+            <button class="mk-color" data-color="yellow" style="background:#eab308" title="Yellow — use for a SECOND reference region. Example: &quot;match the lighting of the yellow box&quot;"></button>
         </div>
         <div class="mk-tbox-row mk-tbox-row-tools" id="mkModes">
-            <button class="mk-tool active" data-mode="brush" title="Brush">✏️</button>
-            <button class="mk-tool" data-mode="rect" title="Box">⬛</button>
-            <button class="mk-tool" data-mode="eraser" title="Erase">🧽</button>
+            <button class="mk-tool active" data-mode="brush"  title="Brush — freehand paint. Drag to mark irregular shapes or outlines.">✏️</button>
+            <button class="mk-tool"        data-mode="rect"   title="Box — rectangular region. Click-drag to draw a box around the area. Qwen's preferred callout shape.">⬛</button>
+            <button class="mk-tool"        data-mode="eraser" title="Eraser — remove marks. Size uses the same slider below.">🧽</button>
         </div>
         <div class="mk-tbox-row mk-tbox-row-size">
-            <label class="mk-tbox-label">Size <span id="mkSizeVal">12</span></label>
-            <input type="range" id="mkSize" min="2" max="60" value="12">
+            <label class="mk-tbox-label" title="Brush / box stroke width in pixels">Size <span id="mkSizeVal">12</span></label>
+            <input type="range" id="mkSize" min="2" max="60" value="12" title="Drag to change brush / box / eraser size (2–60 px)">
         </div>
         <div class="mk-tbox-row mk-tbox-row-actions">
-            <button class="mk-tbox-btn" onclick="markupUndo()" title="Undo">↶</button>
-            <button class="mk-tbox-btn" onclick="markupClear()" title="Clear all">🗑</button>
-            <button class="mk-tbox-btn mk-tbox-btn-primary" onclick="markupApply()" title="Apply marks to Image 1">✓ Apply</button>
+            <button class="mk-tbox-btn" onclick="markupUndo()"  title="Undo last stroke">↶</button>
+            <button class="mk-tbox-btn" onclick="markupClear()" title="Clear ALL marks and start fresh">🗑</button>
+            <button class="mk-tbox-btn mk-tbox-btn-primary" onclick="markupApply()" title="Bake marks into Image 1. The composited image becomes the new input — reference the colored regions in your prompt.">✓ Apply</button>
         </div>
+    </div>
+</div>
+
+<!-- Markup help popover — anchored to the ? button in the toolbox head.
+     Explains the convention for what each color does. Hidden by default. -->
+<div id="markupHelp" class="mk-help" style="display:none">
+    <div class="mk-help-head">
+        <span>How markup works</span>
+        <button class="mk-help-close" onclick="toggleMarkupHelp(false)" title="Close">×</button>
+    </div>
+    <div class="mk-help-body">
+        <p>Draw colored regions on your image. Then reference them in your prompt by color — the model will target exactly those areas.</p>
+        <div class="mk-help-color-row"><span class="mk-help-swatch" style="background:#ef4444"></span><div><b>Red</b> — the area you want to <b>change</b><br><em>"Replace what's in the red box with a mountain"</em></div></div>
+        <div class="mk-help-color-row"><span class="mk-help-swatch" style="background:#3b82f6"></span><div><b>Blue</b> — what to <b>preserve</b><br><em>"Keep everything in blue exactly the same"</em></div></div>
+        <div class="mk-help-color-row"><span class="mk-help-swatch" style="background:#22c55e"></span><div><b>Green</b> — <b>focus on</b> or highlight<br><em>"Enhance the detail in the green area"</em></div></div>
+        <div class="mk-help-color-row"><span class="mk-help-swatch" style="background:#eab308"></span><div><b>Yellow</b> — a <b>second reference</b><br><em>"Match the yellow area's color palette"</em></div></div>
+        <p class="mk-help-note">Colors are visual labels — the model sees them and matches your prompt. You can use any color for anything; these are just conventions.</p>
     </div>
 </div>
 
@@ -1891,6 +1991,9 @@ function setMode(mode){
     // otherwise. Declarative so we don't have to orchestrate enter/exit from
     // every call site.
     if (typeof refreshMarkupMode === 'function') refreshMarkupMode();
+    // Show the batch inputs grid in the output area when we enter batch
+    // mode; hide it otherwise so Camera/Edit aren't polluted by it.
+    if (typeof renderBatchInputs === 'function') renderBatchInputs();
 }
 
 function updateGenButton(){
@@ -2595,6 +2698,8 @@ function _exitMarkupMode(){
     $('markupCanvas').style.display = 'none';
     const toolbox = $('markupToolbox');
     if (toolbox) toolbox.style.display = 'none';
+    // Close the help popover too — it only makes sense while markup is up.
+    if (typeof toggleMarkupHelp === 'function') toggleMarkupHelp(false);
 
     const prev = _markup._prevState || {};
     const img = $('outImg');
@@ -2880,6 +2985,61 @@ function _markupInitControls(){
             tb.classList.toggle('collapsed');
         });
     }
+
+    // Help popover — toggled by the ? button in the toolbox header.
+    const helpBtn = $('markupToolboxHelp');
+    if (helpBtn) {
+        helpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleMarkupHelp();
+        });
+    }
+    // Click anywhere outside the help popover (except the help button
+    // itself) closes it. We use mousedown so it fires before any button
+    // clicks inside other UI.
+    document.addEventListener('mousedown', (e) => {
+        const help = $('markupHelp');
+        if (!help || help.style.display === 'none') return;
+        if (e.target.closest('#markupHelp') || e.target.closest('#markupToolboxHelp')) return;
+        toggleMarkupHelp(false);
+    });
+}
+
+// Show or hide the markup help popover. Position it adjacent to the
+// toolbox (prefer to the left; fall back to below if no room). Called
+// with no args to toggle, or (false) to force-close.
+function toggleMarkupHelp(force){
+    const help = $('markupHelp');
+    const tb = $('markupToolbox');
+    const helpBtn = $('markupToolboxHelp');
+    if (!help || !tb) return;
+    const currentlyOpen = help.style.display !== 'none';
+    const wantOpen = (typeof force === 'boolean') ? force : !currentlyOpen;
+    if (!wantOpen) {
+        help.style.display = 'none';
+        if (helpBtn) helpBtn.classList.remove('active');
+        return;
+    }
+    // Position: try to place to the LEFT of the toolbox so it doesn't
+    // cover the image. If there isn't room on the left, put it below.
+    const rect = tb.getBoundingClientRect();
+    const helpWidth = 320;
+    const margin = 8;
+    let left, top;
+    if (rect.left >= helpWidth + margin) {
+        left = rect.left - helpWidth - margin;
+        top = rect.top;
+    } else {
+        left = rect.left;
+        top = rect.bottom + margin;
+    }
+    // Clamp within viewport
+    left = Math.max(margin, Math.min(window.innerWidth - helpWidth - margin, left));
+    top = Math.max(margin, Math.min(window.innerHeight - 200, top));
+    help.style.left = left + 'px';
+    help.style.top = top + 'px';
+    help.style.display = '';
+    if (helpBtn) helpBtn.classList.add('active');
 }
 
 // Write slots to localStorage so uploaded images survive a page refresh.
@@ -3175,6 +3335,24 @@ function renderBatchInputs(){
     const countEl = $('batchInputsCount');
     if (!grid) return;
     grid.innerHTML = '';
+
+    // Visibility rules: the grid should ONLY show when in batch mode AND
+    // there are uploads AND no active batch-result grid is taking over.
+    // If we're not in batch mode, the grid is hidden regardless so Camera
+    // and Edit modes aren't polluted by stale batch state.
+    const inBatchMode = (typeof currentMode !== 'undefined' && currentMode === 'batch');
+    const hasActiveResults = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
+    const shouldShow = inBatchMode && _batchInputs.length > 0 && !hasActiveResults;
+    grid.style.display = shouldShow ? '' : 'none';
+
+    // Placeholder text should hide whenever the grid is filling the area
+    const outPh = $('outPh');
+    if (outPh && shouldShow) outPh.style.display = 'none';
+    else if (outPh && inBatchMode && _batchInputs.length === 0 && !hasActiveResults) {
+        // Empty batch state — show the placeholder prompt
+        outPh.style.display = '';
+    }
+
     if (_batchInputs.length === 0) {
         if (controls) controls.style.display = 'none';
         if (countEl) countEl.textContent = '';
@@ -3184,18 +3362,27 @@ function renderBatchInputs(){
     const selected = _batchInputs.filter(b => b.selected).length;
     if (controls) controls.style.display = '';
     if (countEl) countEl.textContent = `${selected}/${_batchInputs.length} selected`;
+
     _batchInputs.forEach((inp, i) => {
         const tile = document.createElement('div');
         tile.className = 'batch-input-tile' + (inp.selected ? ' selected' : '');
         tile.title = inp.fname || `Image ${i + 1}`;
+        // Filename is shown in the bottom-left so the user can tell the
+        // tiles apart at a glance, especially useful with many uploads
+        // that share similar subject matter.
+        const fname = inp.fname || '';
+        // Strip common extensions to save label space
+        const displayName = fname.replace(/\.(png|jpe?g|webp|gif|bmp)$/i, '');
         tile.innerHTML = `
             <img src="${inp.url}" alt="">
             <div class="bit-check"></div>
             <button type="button" class="bit-remove" title="Remove this image">×</button>
-            <div class="bit-label">${i + 1}</div>
+            <div class="bit-label">
+                <span class="bit-label-num">${i + 1}</span>
+                <span class="bit-label-name">${displayName}</span>
+            </div>
         `;
         tile.onclick = (e) => {
-            // Remove button stops propagation itself
             inp.selected = !inp.selected;
             renderBatchInputs();
         };
