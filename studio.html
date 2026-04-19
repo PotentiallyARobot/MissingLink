@@ -66,6 +66,111 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 .dropzone{border:1.5px dashed var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
 
+/* ── Paint (markup) button on slot 0 ──────────────────────────────── */
+.slot-paint{
+    position:absolute;top:6px;right:32px;z-index:3;
+    width:22px;height:22px;padding:0;
+    background:rgba(17,17,20,.85);color:var(--gold);
+    border:1px solid var(--border);border-radius:4px;
+    font-size:11px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    backdrop-filter:blur(6px);transition:all .12s;
+}
+.slot-paint:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+
+/* ── Inline markup activity (lives inside the output area) ─────────
+   When the user clicks 🖌 on slot 0, the output area transforms into
+   an editing workspace: toolbar at the top, image in the middle with
+   a transparent drawing canvas pinned precisely on top of it. The
+   image's existing viewer behavior is suspended until the user either
+   Applies or Cancels. */
+.output-area.markup-active{
+    display:grid;
+    grid-template-rows:auto 1fr auto;
+    align-items:stretch;justify-items:stretch;
+    padding:0;
+}
+.output-area.markup-active #outImg{
+    max-width:100%;max-height:100%;object-fit:contain;
+    cursor:default;pointer-events:none;
+    justify-self:center;align-self:center;
+    grid-row:2;
+}
+.output-area.markup-active #outPh{display:none!important}
+.output-area.markup-active .queue-overlay,
+.output-area.markup-active .history-overlay{display:none!important}
+
+/* Top toolbar — docked, full width */
+.markup-toolbar{
+    grid-row:1;
+    display:flex;gap:14px;align-items:center;
+    padding:8px 14px;background:var(--surface-2);
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+    animation:mkSlide .2s ease-out;
+}
+@keyframes mkSlide{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.mk-group{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mk-label{
+    font-family:var(--font-mono);font-size:9px;letter-spacing:.8px;
+    text-transform:uppercase;color:var(--text-muted);font-weight:600;
+}
+.mk-colors{display:flex;gap:4px}
+.mk-color{
+    width:22px;height:22px;border-radius:4px;padding:0;
+    border:2px solid transparent;cursor:pointer;transition:all .12s;
+}
+.mk-color:hover{transform:scale(1.08)}
+.mk-color.active{border-color:var(--text);box-shadow:0 0 0 2px var(--surface-2),0 0 0 3px var(--gold)}
+.mk-modes{display:flex;gap:4px}
+.mk-mode{
+    padding:4px 9px;font-size:10.5px;font-weight:500;
+    background:var(--surface-3);color:var(--text-muted);
+    border:1px solid var(--border);border-radius:4px;cursor:pointer;transition:all .12s;
+    font-family:inherit;
+}
+.mk-mode:hover{color:var(--text)}
+.mk-mode.active{background:var(--gold);color:#0a0a0c;border-color:var(--gold);font-weight:600}
+#mkSize{width:120px;accent-color:var(--gold)}
+.mk-spacer{flex:1;min-width:0}
+.mk-actions{display:flex;gap:6px;flex-shrink:0}
+.mk-btn{
+    padding:6px 12px;font-size:11px;font-weight:600;
+    background:var(--surface-3);color:var(--text);
+    border:1px solid var(--border);border-radius:4px;cursor:pointer;
+    transition:all .12s;font-family:inherit;
+}
+.mk-btn:hover{background:var(--surface);border-color:var(--border-strong)}
+.mk-btn.mk-btn-primary{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.mk-btn.mk-btn-primary:hover{background:#f5b301}
+.mk-btn.mk-btn-primary:disabled{opacity:.5;cursor:not-allowed}
+
+/* Hint strip at bottom — non-blocking, matches existing progress-pill aesthetic */
+.markup-hint{
+    grid-row:3;
+    padding:8px 14px;
+    background:var(--surface);
+    border-top:1px solid var(--border);
+    color:var(--text-muted);font-size:11.5px;line-height:1.4;
+    text-align:center;
+}
+.markup-hint em{color:var(--gold);font-style:normal;font-weight:500}
+
+/* Canvas overlay — pixel-exactly on top of the image. Positioned
+   absolutely relative to output-area, coords set by JS. */
+#markupCanvas{
+    cursor:crosshair;
+    touch-action:none;  /* prevent scroll-pan while drawing on mobile */
+}
+
+@media (max-width: 700px){
+    .markup-toolbar{gap:8px;padding:6px 10px}
+    #mkSize{width:80px}
+    .mk-btn{padding:5px 9px;font-size:10.5px}
+    .markup-hint{font-size:10.5px;padding:6px 10px}
+    .mk-label{display:none}  /* tight mobile — drop labels */
+}
+
 /* ── Batch mode UI ────────────────────────────────────────────── */
 .batch-inputs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
 .batch-inputs-grid:empty{display:none}
@@ -561,6 +666,69 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 .output-area{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:200px;overflow:hidden}
 .output-area img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}
+
+/* ── Cold-boot startup overlay ──────────────────────────────────── */
+.startup-overlay{
+    position:absolute;inset:0;z-index:50;
+    background:rgba(10,10,12,.82);backdrop-filter:blur(4px);
+    display:flex;align-items:center;justify-content:center;
+    padding:20px;
+    animation:startupFadeIn .3s ease-out;
+}
+@keyframes startupFadeIn{from{opacity:0}to{opacity:1}}
+.startup-card{
+    max-width:440px;width:100%;padding:28px 28px 22px;
+    background:linear-gradient(180deg,var(--surface-2),var(--surface));
+    border:1px solid var(--border);
+    border-radius:12px;
+    box-shadow:0 20px 60px rgba(0,0,0,.55),0 0 0 1px rgba(232,169,23,.08);
+    text-align:center;
+    display:flex;flex-direction:column;align-items:center;gap:12px;
+}
+.startup-spinner{
+    width:40px;height:40px;border-radius:50%;
+    border:3px solid var(--border);border-top-color:var(--gold);
+    animation:startupSpin 1s linear infinite;
+    margin-bottom:4px;
+}
+@keyframes startupSpin{to{transform:rotate(360deg)}}
+.startup-title{
+    font-size:16px;font-weight:700;color:var(--text);letter-spacing:-.01em;
+}
+.startup-sub{
+    font-size:12px;color:var(--text-muted);line-height:1.55;max-width:360px;
+}
+.startup-bar-outer{
+    width:100%;height:6px;border-radius:3px;background:var(--surface-3);
+    overflow:hidden;margin-top:8px;position:relative;
+}
+.startup-bar-inner{
+    height:100%;background:linear-gradient(90deg,var(--gold),#f5b301);
+    border-radius:3px;
+    width:0%;
+    transition:width .6s ease-out;
+    position:relative;
+}
+/* Shimmer overlay so the bar visibly moves even if the elapsed% hasn't
+   ticked up in the last second. Gives a strong "still working" signal. */
+.startup-bar-inner::after{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(90deg,transparent 20%,rgba(255,255,255,.35) 50%,transparent 80%);
+    background-size:200% 100%;
+    animation:startupShimmer 1.4s ease-in-out infinite;
+}
+@keyframes startupShimmer{
+    0%{background-position:200% 0}
+    100%{background-position:-200% 0}
+}
+.startup-meta{
+    display:flex;align-items:center;justify-content:space-between;
+    width:100%;margin-top:2px;
+    font-family:var(--font-mono);font-size:10px;
+    color:var(--text-muted);letter-spacing:.3px;
+}
+.startup-stage{text-transform:uppercase;font-weight:600;color:var(--gold)}
+.startup-elapsed{color:var(--text-dim);font-variant-numeric:tabular-nums}
 .out-placeholder{color:var(--text-muted);font-size:11px;font-family:var(--font-mono)}
 .gen-overlay{position:absolute;inset:0;background:rgba(9,9,11,.88);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:5}
 .gen-overlay.active{display:flex}
@@ -866,6 +1034,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="slot-filled" style="display:none">
                 <img id="slotImg0" onclick="openModal(this.src)">
                 <span class="slot-num-badge">1</span>
+                <button class="slot-paint" onclick="enterMarkupMode(0)" title="Mark up this image with colored regions to reference in your prompt">🖌</button>
                 <button class="slot-remove" onclick="removeSlot(0)">×</button>
             </div>
         </div>
@@ -1023,6 +1192,67 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="output-area" id="outputArea" style="position:relative">
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
+
+        <!-- Markup overlay — activated by the 🖌 button. Canvas sits
+             on top of outImg at the image's rendered size so the user
+             draws directly on the image as it appears. Hidden by default. -->
+        <canvas id="markupCanvas" style="display:none;position:absolute;cursor:crosshair;pointer-events:auto;z-index:10"></canvas>
+
+        <!-- Inline toolbar, shown only during markup activity. -->
+        <div class="markup-toolbar" id="markupToolbar" style="display:none">
+            <div class="mk-group">
+                <label class="mk-label">Color</label>
+                <div class="mk-colors" id="mkColors">
+                    <button class="mk-color active" data-color="red" style="background:#ef4444" title="Red"></button>
+                    <button class="mk-color" data-color="blue" style="background:#3b82f6" title="Blue"></button>
+                    <button class="mk-color" data-color="green" style="background:#22c55e" title="Green"></button>
+                    <button class="mk-color" data-color="yellow" style="background:#eab308" title="Yellow"></button>
+                </div>
+            </div>
+            <div class="mk-group">
+                <label class="mk-label">Tool</label>
+                <div class="mk-modes" id="mkModes">
+                    <button class="mk-mode active" data-mode="brush" title="Freehand brush">✏️ Brush</button>
+                    <button class="mk-mode" data-mode="rect" title="Rectangle box">⬛ Box</button>
+                    <button class="mk-mode" data-mode="eraser" title="Eraser">🧽 Erase</button>
+                </div>
+            </div>
+            <div class="mk-group">
+                <label class="mk-label">Size <span id="mkSizeVal">12</span>px</label>
+                <input type="range" id="mkSize" min="2" max="60" value="12">
+            </div>
+            <div class="mk-spacer"></div>
+            <div class="mk-actions">
+                <button class="mk-btn" onclick="markupUndo()" title="Undo last stroke">↶ Undo</button>
+                <button class="mk-btn" onclick="markupClear()" title="Clear all marks">Clear</button>
+                <button class="mk-btn" onclick="markupCancel()">Cancel</button>
+                <button class="mk-btn mk-btn-primary" onclick="markupApply()">✓ Apply to Image 1</button>
+            </div>
+        </div>
+
+        <!-- Help hint that hovers at the bottom during markup. -->
+        <div class="markup-hint" id="markupHint" style="display:none">
+            Draw colored regions, then reference them in your prompt — e.g. <em>"change what's in the red box to a mountain"</em>
+        </div>
+
+        <!-- Cold-boot overlay — renders when the GPU container is warming
+             up. Shows real stage info + an elapsed-time progress bar so
+             the user has a clear signal that something is happening and
+             how long is left. Hidden when the GPU is ready. -->
+        <div class="startup-overlay" id="startupOverlay" style="display:none">
+            <div class="startup-card">
+                <div class="startup-spinner"></div>
+                <div class="startup-title" id="startupTitle">Starting GPU…</div>
+                <div class="startup-sub" id="startupSub">Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.</div>
+                <div class="startup-bar-outer">
+                    <div class="startup-bar-inner" id="startupBarInner"></div>
+                </div>
+                <div class="startup-meta">
+                    <span class="startup-stage" id="startupStage">Connecting…</span>
+                    <span class="startup-elapsed" id="startupElapsed">0s</span>
+                </div>
+            </div>
+        </div>
 
         <!-- Queue overlay (top-right of output area) -->
         <div class="queue-overlay" id="queueOverlay">
@@ -1376,8 +1606,11 @@ let slots=[null,null,null];
 let myJobs=[]; // {id, status, mode, thumb, result}
 let pollTimers={}; // jobId → interval
 // Server-synced GPU state from /api/studio/status — updated by pollStatus.
-// Shape: { state: 'cold'|'warming'|'ready', warming_for_s, ready_age_s }
-let _gpuState = { state: 'cold', warming_for_s: 0, ready_age_s: null };
+// Shape: { state: 'unknown'|'cold'|'warming'|'ready', warming_for_s, ready_age_s }
+// Starts as 'unknown' (not 'cold') so the header badge displays the neutral
+// "Connecting…" label until the first status poll resolves, rather than
+// briefly claiming the GPU is cold before we actually know.
+let _gpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
 // Server-synced history (done jobs). Shape: [{id, mode, prompt, url, w, h, elapsed, seed, created_at, finished_at}].
 // Separate from myJobs (which tracks in-flight + ephemeral state) so history
 // survives page reloads and is authoritative per user.
@@ -1758,9 +1991,10 @@ function updateHeaderStatusBadge(connected){
     if (!connected) {
         dot.className = 'dot off';
         label.textContent = 'Offline';
+        renderStartupOverlay();
         return;
     }
-    const state = _gpuState.state || 'cold';
+    const state = _gpuState.state || 'unknown';
     if (state === 'ready') {
         dot.className = 'dot on';
         label.textContent = 'GPU ready';
@@ -1786,8 +2020,6 @@ function updateHeaderStatusBadge(connected){
         if (stage === 'registering' && _gpuState.startup_total > 0) {
             text = `Registering ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
         } else if (stage === 'compiling') {
-            // Slow real compile. Show elapsed seconds so the user can see
-            // it's progressing, even though there's no per-block progress.
             const age = _gpuState.startup_age_s || 0;
             text = age > 0 ? `Compiling kernels · ${age}s` : 'Compiling kernels';
         } else if (stage && stageMap[stage]) {
@@ -1797,12 +2029,96 @@ function updateHeaderStatusBadge(connected){
         }
         label.textContent = text;
     } else {
-        // Cold state: container has scaled to zero (Modal scaledown_window
-        // fires after 30 min idle). Label as "Connecting…" rather than the
-        // old "GPU cold" — more accurate about what clicking Generate will
-        // trigger (cold-boot, ~90s) and doesn't misleadingly say "ready".
+        // Cold OR unknown — both render as "Connecting…". Unknown happens
+        // briefly on page load before the first /status poll resolves.
         dot.className = 'dot cold';
         label.textContent = 'Connecting…';
+    }
+    renderStartupOverlay();
+}
+
+// ── Cold-boot progress overlay ──────────────────────────────────────
+// Shown in the main output area while the GPU container is starting up.
+// The progress bar reflects elapsed time against a 120s expected total
+// (typical cold-boot: compile cached = ~60-90s, cold cache = ~120s+).
+// Real stage labels from _gpuState drive the "STAGE" caption so the user
+// sees actual progress, not just a fake animation.
+
+// First time we saw a non-ready state for this warm cycle. We use this
+// rather than startup_age_s from the server so the bar keeps moving
+// smoothly between polls (startup_age_s updates at poll cadence only).
+let _startupFirstSeen = null;
+
+function renderStartupOverlay(){
+    const overlay = $('startupOverlay');
+    if (!overlay) return;
+    const state = _gpuState.state || 'unknown';
+    const shouldShow = (state === 'cold' || state === 'warming');
+
+    if (!shouldShow) {
+        // GPU is ready (or unknown + offline). Hide overlay and reset timer.
+        overlay.style.display = 'none';
+        _startupFirstSeen = null;
+        return;
+    }
+
+    // Show overlay. Capture first-seen time so elapsed is client-consistent.
+    if (_startupFirstSeen === null) _startupFirstSeen = Date.now();
+    overlay.style.display = '';
+
+    const clientElapsed = Math.floor((Date.now() - _startupFirstSeen) / 1000);
+    // Prefer server-reported startup_age_s if it's larger (user may have
+    // arrived mid-warmup), otherwise use client-side clock.
+    const serverAge = _gpuState.startup_age_s || 0;
+    const elapsed = Math.max(clientElapsed, serverAge);
+
+    // Expected total: 120s is a safe estimate that covers warm-cache cold-
+    // boots (60-90s) and fresh compile (150s+) without the bar ever visibly
+    // completing before Modal says ready. Once we hit 95% we hold there so
+    // the bar doesn't sit at 100% for 30s looking broken.
+    const EXPECTED_TOTAL_S = 120;
+    const rawPct = (elapsed / EXPECTED_TOTAL_S) * 100;
+    const pct = Math.min(95, Math.max(2, rawPct));
+
+    const stageLabels = {
+        booting:              'Starting container',
+        loading_transformer:  'Loading model weights',
+        loading_text_encoder: 'Loading text encoder',
+        building_pipeline:    'Building pipeline',
+        registering:          'Registering kernels',
+        compiling:            'Compiling kernels',
+        warming_up:           'Final warmup',
+        ready:                'GPU ready',
+    };
+    const stage = _gpuState.startup_stage;
+    let stageText;
+    if (state === 'cold') {
+        stageText = 'Connecting…';
+    } else if (stage === 'registering' && _gpuState.startup_total > 0) {
+        stageText = `Registering · ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
+    } else if (stage && stageLabels[stage]) {
+        stageText = stageLabels[stage];
+    } else {
+        stageText = 'Warming up…';
+    }
+
+    const stageEl = $('startupStage');
+    const elapsedEl = $('startupElapsed');
+    const barEl = $('startupBarInner');
+    const titleEl = $('startupTitle');
+    const subEl = $('startupSub');
+    if (stageEl) stageEl.textContent = stageText;
+    if (elapsedEl) elapsedEl.textContent = `${elapsed}s`;
+    if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
+    if (titleEl) titleEl.textContent = state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
+    if (subEl) {
+        if (elapsed > 60) {
+            subEl.textContent = "Almost there — finishing up. You can prepare your prompt and settings while this completes.";
+        } else if (elapsed > 30) {
+            subEl.textContent = "The GPU is booting. This takes about 90 seconds. Feel free to prepare your inputs below.";
+        } else {
+            subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+        }
     }
 }
 
@@ -2180,6 +2496,322 @@ async function uploadToSlot(i,file){
 }
 
 function removeSlot(i){ slots[i]=null; renderSlot(i); updateGenButton(); persistSlots(); }
+
+// ═══════════════════════════════════════════════════════════════════
+// INLINE MARKUP ACTIVITY
+// Clicking 🖌 on slot 0 transforms the main output area into an
+// editing workspace: the slot image loads into #outImg, a transparent
+// canvas overlays it pixel-exactly, and the markup toolbar docks at
+// the top of the area. User draws colored marks, then Apply composites
+// them into the source image, re-uploads the result, and swaps slot 0's
+// input_id to the composite. Cancel exits without changes.
+// Qwen-Image-Edit-2511 handles the visual-region editing: user writes
+// a prompt that references "the red box" etc. and the model targets
+// those colored areas.
+// ═══════════════════════════════════════════════════════════════════
+
+const _markup = {
+    active: false,
+    slotIdx: 0,
+    color: '#ef4444',
+    mode: 'brush',
+    size: 12,
+    strokes: [],
+    drawing: false,
+    currentStroke: null,
+    _prevState: null,
+    _resizeHandler: null,
+};
+
+function enterMarkupMode(slotIdx){
+    const slot = slots[slotIdx];
+    if (!slot || !slot.url) {
+        showNotif('Upload an image to slot 1 first.', 'error');
+        return;
+    }
+    if (_markup.active) return;
+
+    _markup.slotIdx = slotIdx;
+    _markup.active = true;
+    _markup.strokes = [];
+    _markup.drawing = false;
+    _markup.currentStroke = null;
+
+    _markup._prevState = {
+        outImgSrc: $('outImg').src,
+        outImgDisplay: $('outImg').style.display,
+        outPhDisplay: $('outPh').style.display,
+    };
+
+    const area = $('outputArea');
+    area.classList.add('markup-active');
+
+    const img = $('outImg');
+    const canvas = $('markupCanvas');
+    img.style.display = '';
+    const onReady = () => { _markupSizeCanvas(); paintRedraw(); };
+    img.onload = onReady;
+    img.src = slot.url;
+    if (img.complete && img.naturalWidth > 0) onReady();
+
+    canvas.style.display = '';
+    $('markupToolbar').style.display = '';
+    $('markupHint').style.display = '';
+
+    document.querySelectorAll('#mkColors .mk-color').forEach(b =>
+        b.classList.toggle('active', b.dataset.color === 'red'));
+    document.querySelectorAll('#mkModes .mk-mode').forEach(b =>
+        b.classList.toggle('active', b.dataset.mode === 'brush'));
+    _markup.color = '#ef4444';
+    _markup.mode = 'brush';
+    _markup.size = 12;
+    const sizeInput = $('mkSize');
+    if (sizeInput) sizeInput.value = 12;
+    const sizeVal = $('mkSizeVal');
+    if (sizeVal) sizeVal.textContent = '12';
+
+    _markup._resizeHandler = () => { _markupSizeCanvas(); paintRedraw(); };
+    window.addEventListener('resize', _markup._resizeHandler);
+}
+
+function markupCancel(){ _exitMarkupMode(); }
+
+function _exitMarkupMode(){
+    if (!_markup.active) return;
+    _markup.active = false;
+
+    $('outputArea').classList.remove('markup-active');
+    $('markupCanvas').style.display = 'none';
+    $('markupToolbar').style.display = 'none';
+    $('markupHint').style.display = 'none';
+
+    const prev = _markup._prevState || {};
+    const img = $('outImg');
+    img.onload = null;
+    if (prev.outImgSrc) {
+        img.src = prev.outImgSrc;
+        img.style.display = prev.outImgDisplay || '';
+    } else {
+        img.removeAttribute('src');
+        img.style.display = 'none';
+    }
+    $('outPh').style.display = prev.outPhDisplay || '';
+    _markup._prevState = null;
+
+    if (_markup._resizeHandler) {
+        window.removeEventListener('resize', _markup._resizeHandler);
+        _markup._resizeHandler = null;
+    }
+    _markup.strokes = [];
+}
+
+function _markupSizeCanvas(){
+    const img = $('outImg');
+    const canvas = $('markupCanvas');
+    if (!img || !canvas || !img.naturalWidth) return;
+    const area = $('outputArea');
+    const areaRect = area.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.style.width = imgRect.width + 'px';
+    canvas.style.height = imgRect.height + 'px';
+    canvas.style.left = (imgRect.left - areaRect.left) + 'px';
+    canvas.style.top = (imgRect.top - areaRect.top) + 'px';
+}
+
+function _mkCtx(){ return $('markupCanvas').getContext('2d'); }
+
+function paintRedraw(){
+    if (!_markup.active) return;
+    const canvas = $('markupCanvas');
+    const ctx = _mkCtx();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const s of _markup.strokes) _drawStroke(ctx, s);
+}
+
+function _drawStroke(ctx, s){
+    if (s.type === 'stroke') {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = s.size;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < s.points.length; i++) {
+            const p = s.points[i];
+            if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+    } else if (s.type === 'rect') {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = s.size;
+        const x1 = Math.min(s.start.x, s.end.x);
+        const y1 = Math.min(s.start.y, s.end.y);
+        const w  = Math.abs(s.end.x - s.start.x);
+        const h  = Math.abs(s.end.y - s.start.y);
+        ctx.strokeRect(x1, y1, w, h);
+    } else if (s.type === 'erase') {
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineWidth = s.size;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < s.points.length; i++) {
+            const p = s.points[i];
+            if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function _mkCoords(ev){
+    const canvas = $('markupCanvas');
+    const rect = canvas.getBoundingClientRect();
+    const pt = ev.touches ? ev.touches[0] : ev;
+    return {
+        x: (pt.clientX - rect.left) * (canvas.width / rect.width),
+        y: (pt.clientY - rect.top)  * (canvas.height / rect.height),
+    };
+}
+
+function markupPointerDown(ev){
+    if (!_markup.active) return;
+    ev.preventDefault();
+    const pt = _mkCoords(ev);
+    _markup.drawing = true;
+    if (_markup.mode === 'brush') {
+        _markup.currentStroke = { type:'stroke', color:_markup.color, size:_markup.size, points:[pt] };
+    } else if (_markup.mode === 'eraser') {
+        _markup.currentStroke = { type:'erase', size:_markup.size * 1.6, points:[pt] };
+    } else if (_markup.mode === 'rect') {
+        _markup.currentStroke = {
+            type:'rect', color:_markup.color,
+            size:Math.max(3, Math.min(8, _markup.size / 3)),
+            start:pt, end:pt
+        };
+    }
+}
+
+function markupPointerMove(ev){
+    if (!_markup.active || !_markup.drawing || !_markup.currentStroke) return;
+    ev.preventDefault();
+    const pt = _mkCoords(ev);
+    if (_markup.currentStroke.type === 'stroke' || _markup.currentStroke.type === 'erase') {
+        _markup.currentStroke.points.push(pt);
+    } else if (_markup.currentStroke.type === 'rect') {
+        _markup.currentStroke.end = pt;
+    }
+    paintRedraw();
+    _drawStroke(_mkCtx(), _markup.currentStroke);
+}
+
+function markupPointerUp(){
+    if (!_markup.active || !_markup.drawing) return;
+    _markup.drawing = false;
+    if (_markup.currentStroke) {
+        if ((_markup.currentStroke.type === 'stroke' || _markup.currentStroke.type === 'erase')
+            && _markup.currentStroke.points.length < 2) {
+            _markup.currentStroke = null;
+            return;
+        }
+        _markup.strokes.push(_markup.currentStroke);
+    }
+    _markup.currentStroke = null;
+}
+
+function markupUndo(){
+    if (!_markup.active) return;
+    _markup.strokes.pop();
+    paintRedraw();
+}
+
+function markupClear(){
+    if (!_markup.active) return;
+    _markup.strokes = [];
+    paintRedraw();
+}
+
+async function markupApply(){
+    if (!_markup.active) return;
+    if (!_markup.strokes.length) {
+        showNotif('Draw something first, then click Apply.', 'error');
+        return;
+    }
+    const slot = slots[_markup.slotIdx];
+    if (!slot) { _exitMarkupMode(); return; }
+
+    const applyBtn = document.querySelector('.mk-btn-primary');
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Uploading…'; }
+
+    try {
+        const sourceImg = new Image();
+        sourceImg.crossOrigin = 'anonymous';
+        await new Promise((resolve, reject) => {
+            sourceImg.onload = resolve;
+            sourceImg.onerror = () => reject(new Error('Failed to load source image'));
+            sourceImg.src = slot.url;
+        });
+
+        const out = document.createElement('canvas');
+        out.width = sourceImg.naturalWidth;
+        out.height = sourceImg.naturalHeight;
+        const octx = out.getContext('2d');
+        octx.drawImage(sourceImg, 0, 0);
+        octx.drawImage($('markupCanvas'), 0, 0);
+
+        const blob = await new Promise(res => out.toBlob(res, 'image/png'));
+        if (!blob) throw new Error('Canvas export failed');
+        const file = new File([blob], `markup-${Date.now()}.png`, { type:'image/png' });
+
+        await uploadToSlot(_markup.slotIdx, file);
+
+        _exitMarkupMode();
+        showNotif('Markup applied. Reference colored regions in your prompt (e.g. "the red box").', 'success');
+    } catch (e) {
+        showNotif('Failed to apply markup: ' + e.message, 'error');
+    } finally {
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Apply to Image 1'; }
+    }
+}
+
+function _markupInitControls(){
+    document.querySelectorAll('#mkColors .mk-color').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#mkColors .mk-color').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const colorMap = { red:'#ef4444', blue:'#3b82f6', green:'#22c55e', yellow:'#eab308' };
+            _markup.color = colorMap[btn.dataset.color] || '#ef4444';
+            if (_markup.mode === 'eraser') {
+                const brushBtn = document.querySelector('#mkModes [data-mode="brush"]');
+                if (brushBtn) brushBtn.click();
+            }
+        });
+    });
+    document.querySelectorAll('#mkModes .mk-mode').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#mkModes .mk-mode').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _markup.mode = btn.dataset.mode;
+        });
+    });
+    const sizeInput = $('mkSize');
+    if (sizeInput) {
+        sizeInput.addEventListener('input', () => {
+            _markup.size = parseInt(sizeInput.value);
+            const v = $('mkSizeVal'); if (v) v.textContent = sizeInput.value;
+        });
+    }
+    const canvas = $('markupCanvas');
+    if (canvas) {
+        canvas.addEventListener('mousedown', markupPointerDown);
+        canvas.addEventListener('mousemove', markupPointerMove);
+        canvas.addEventListener('mouseup', markupPointerUp);
+        canvas.addEventListener('mouseleave', markupPointerUp);
+        canvas.addEventListener('touchstart', markupPointerDown, { passive:false });
+        canvas.addEventListener('touchmove', markupPointerMove, { passive:false });
+        canvas.addEventListener('touchend', markupPointerUp);
+    }
+}
 
 // Write slots to localStorage so uploaded images survive a page refresh.
 // We store only the R2 refs (id/url/filename/w/h), not the actual image bytes.
@@ -4583,11 +5215,13 @@ function escapeHtml(s){
 }
 
 // Tick once a second while anything needs live timing: active jobs counting
-// up, or GPU warming progress bar filling in.
+// up, the GPU warming (for the header badge + queue rows), or the cold-boot
+// overlay (elapsed counter + progress bar).
 setInterval(() => {
     const hasActive = myJobs.some(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running');
-    const warming = _gpuState.state === 'warming';
+    const warming = _gpuState.state === 'warming' || _gpuState.state === 'cold';
     if (hasActive || warming) renderQueue();
+    if (warming) renderStartupOverlay();
 }, 1000);
 
 function restoreJobState(jobId){
@@ -4758,6 +5392,13 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraLightning',  'vLoraLightning');
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
     checkAuth();
+    // Inline markup activity — wire toolbar controls + canvas pointer events
+    _markupInitControls();
+    // Paint the header badge IMMEDIATELY so the user sees "Connecting…"
+    // (and the cold-boot overlay, if applicable) without waiting for the
+    // first /status poll to resolve. Without this the badge stays blank /
+    // or defaults to "GPU ready" briefly on first page load.
+    updateHeaderStatusBadge(true);
     pollStatus();
     pollQueue();
     setInterval(pollStatus,5000);
