@@ -2653,9 +2653,20 @@ const _markup = {
 // don't call enter/exit directly anymore.
 function refreshMarkupMode(){
     const shouldBeActive = (currentMode === 'edit') && !!(slots[0] && slots[0].url);
-    if (shouldBeActive && !_markup.active) _enterMarkupMode(0);
-    else if (!shouldBeActive && _markup.active) _exitMarkupMode();
-    else if (shouldBeActive && _markup.active && slots[0] && slots[0].url) {
+    // _suppressAutoEnter is set by showResult() to prevent immediate re-
+    // entry of markup mode after a successful generation — so the result
+    // stays visible. The flag is cleared here because every call site of
+    // refreshMarkupMode represents a genuine user action (upload, remove
+    // slot, mode switch). If the user's action still satisfies
+    // shouldBeActive, markup will re-activate this call as expected.
+    const suppress = _markup._suppressAutoEnter === true;
+    _markup._suppressAutoEnter = false;
+
+    if (shouldBeActive && !_markup.active) {
+        if (!suppress) _enterMarkupMode(0);
+    } else if (!shouldBeActive && _markup.active) {
+        _exitMarkupMode();
+    } else if (shouldBeActive && _markup.active && slots[0] && slots[0].url) {
         // Slot 0 image changed (e.g. user re-uploaded or Applied a composite)
         // — refresh the markup background if needed, keeping strokes cleared
         // so the user starts fresh on the new image. Operates on #markupBgImg,
@@ -5664,6 +5675,17 @@ function showResult(d){
     // jobs are safe in history (grouped by batch_id) so the user can
     // restore the full set by clicking the grouped history card.
     if (_activeBatch) clearBatchGrid();
+
+    // Exit markup so the result is visible in the main viewer. Set a
+    // latch so refreshMarkupMode doesn't immediately re-enter markup
+    // while slot 0 is still populated. The latch is cleared by any
+    // explicit user action on slot 0 (upload / remove) or by switching
+    // modes — at which point markup may re-activate if appropriate.
+    if (_markup && _markup.active) {
+        _markup._suppressAutoEnter = true;
+        _exitMarkupMode();
+    }
+
     $('outImg').src=d.url; $('outImg').style.display='';
     $('outPh').style.display='none';
     $('rngSeed').value=d.seed; $('vSeed').value=d.seed;
