@@ -66,24 +66,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 .dropzone{border:1.5px dashed var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
 
-/* ── Inline markup activity ──────────────────────────────────────
-   When Edit mode is active and slot 1 has an image, the output area
-   becomes a markup workspace: the slot image loads into #markupBgImg
-   (NOT #outImg — the result viewer stays untouched), and a transparent
-   canvas overlays it at pixel-exact size. The toolbox is a separate
-   floating window (see .mk-toolbox below). */
-.output-area.markup-active #outImg{
-    /* Result viewer is hidden while markup is active — the user is working
-       on the input image (shown in #markupBgImg). Exiting markup mode
-       (removing slot 0, switching to camera/batch) unhides outImg and the
-       previous result reappears. */
-    display:none!important;
-}
-.output-area.markup-active #outPh{display:none!important}
-/* Queue + history overlays stay visible during markup — the toolbox is
-   a floating window in its own corner, so the user still needs to see
-   generation progress and prior results. */
-
+/* ── Markup ────────────────────────────────────────────────────
+   Markup is opened per-slot via a pencil icon. Clicking it opens the
+   markup modal showing the slot image full-screen with a drawing canvas
+   on top and the floating toolbox for brush/color/size controls. Apply
+   composites and replaces the slot's image. */
 #markupCanvas{
     cursor:crosshair;
     touch-action:none;  /* prevent scroll-pan on mobile while drawing */
@@ -333,6 +320,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .slot-remove{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.8);color:var(--white);font-size:12px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;opacity:0}
 .img-slot:hover .slot-remove{opacity:1}
 .slot-remove:hover{background:var(--red)}
+/* Pencil button to open markup for this specific slot. Always visible when
+   the slot is filled (unlike slot-remove which appears on hover). */
+.slot-markup{position:absolute;top:10px;left:10px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.7);color:var(--white);font-size:13px;line-height:1;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0}
+.slot-markup:hover{background:var(--gold);color:#000}
 
 .custom-prompt{width:100%;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--text);font-family:var(--font-body);font-size:12px;line-height:1.5;outline:none;resize:vertical;min-height:80px;transition:border-color .15s}
 .custom-prompt:focus{border-color:var(--gold)}
@@ -346,6 +337,16 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 /* Full-history modal */
 .modal{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:40px}
+/* Markup modal — a full-screen overlay that shows the slot image huge,
+   with the existing markup canvas drawn on top and the floating toolbox
+   available for drawing. Apply composites + replaces the slot's image. */
+.markup-modal-panel{position:relative;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.markup-modal-stage{position:relative;flex:1;width:100%;display:flex;align-items:center;justify-content:center;min-height:0}
+#markupModalImg{max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none}
+.markup-modal-close{position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.7);color:var(--white);font-size:18px;border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10010}
+.markup-modal-close:hover{background:var(--red)}
+.markup-modal-footer{display:flex;gap:10px;padding:12px 20px;align-items:center;justify-content:center;flex:0 0 auto}
+.markup-modal-footer .mk-tbox-btn,.markup-modal-footer .mk-tbox-btn-primary{min-width:110px}
 .history-modal-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(1200px,95vw);height:min(85vh,800px);display:flex;flex-direction:column;overflow:hidden;position:relative}
 .history-modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
 .history-modal-title{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px;flex:1}
@@ -1119,6 +1120,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="slot-filled" style="display:none">
                 <img id="slotImg0" onclick="openModal(this.src)">
                 <span class="slot-num-badge">1</span>
+                <button class="slot-markup" onclick="event.stopPropagation();openMarkupModal(0)" title="Draw on this image to mark areas for your prompt">✏️</button>
                 <button class="slot-remove" onclick="removeSlot(0)">×</button>
             </div>
         </div>
@@ -1131,6 +1133,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="slot-filled" style="display:none">
                 <img id="slotImg1" onclick="openModal(this.src)">
                 <span class="slot-num-badge">2</span>
+                <button class="slot-markup" onclick="event.stopPropagation();openMarkupModal(1)" title="Draw on this image to mark areas for your prompt">✏️</button>
                 <button class="slot-remove" onclick="removeSlot(1)">×</button>
             </div>
         </div>
@@ -1143,6 +1146,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <div class="slot-filled" style="display:none">
                 <img id="slotImg2" onclick="openModal(this.src)">
                 <span class="slot-num-badge">3</span>
+                <button class="slot-markup" onclick="event.stopPropagation();openMarkupModal(2)" title="Draw on this image to mark areas for your prompt">✏️</button>
                 <button class="slot-remove" onclick="removeSlot(2)">×</button>
             </div>
         </div>
@@ -1277,14 +1281,6 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
 
-        <!-- Dedicated markup background image. Lives underneath the markup
-             canvas when markup mode is active. Hidden otherwise. This is
-             SEPARATE from #outImg so that entering/exiting markup mode
-             never touches the output viewer. Previously these were the
-             same element, causing the main image to flicker/change
-             unexpectedly when slots were added/removed. -->
-        <img id="markupBgImg" style="display:none;position:absolute;left:0;right:0;top:0;bottom:0;margin:auto;max-width:100%;max-height:100%;object-fit:contain;pointer-events:none;z-index:9">
-
         <!-- Batch-mode input grid — user's uploaded images shown as
              equal-sized tiles in a responsive grid so they can see what
              they're working with at a reasonable size. Rendered by
@@ -1292,9 +1288,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
              a batch result grid has taken over this area. -->
         <div class="batch-inputs-grid" id="batchInputsGrid" style="display:none"></div>
 
-        <!-- Markup overlay — canvas sits on top of outImg at pixel-exact
-             size so the user draws directly on the image. Hidden when
-             markup mode is inactive. -->
+        <!-- Markup canvas — lives here in the DOM but is moved into the
+             markup modal when the user opens markup for a slot, then
+             moved back on close. Single canvas element, reused. -->
         <canvas id="markupCanvas" style="display:none;position:absolute;cursor:crosshair;pointer-events:auto;z-index:10"></canvas>
 
         <!-- Cold-boot overlay — renders when the GPU container is warming
@@ -1412,6 +1408,28 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div class="mk-help-color-row"><span class="mk-help-swatch" style="background:#22c55e"></span><div><b>Green</b> — <b>focus on</b> or highlight<br><em>"Enhance the detail in the green area"</em></div></div>
         <div class="mk-help-color-row"><span class="mk-help-swatch" style="background:#eab308"></span><div><b>Yellow</b> — a <b>second reference</b><br><em>"Match the yellow area's color palette"</em></div></div>
         <p class="mk-help-note">Colors are visual labels — the model sees them and matches your prompt. You can use any color for anything; these are just conventions.</p>
+    </div>
+</div>
+
+<!-- MARKUP MODAL — opened by clicking the pencil icon on a slot. Shows
+     the slot image full-screen with the markup canvas on top. The
+     existing floating toolbox (mkColors/mkModes/mkSize/etc) is reused
+     and remains visible while the modal is open so the user has all
+     their drawing tools. Apply composites and replaces the slot image. -->
+<div id="markupModal" class="modal" style="display:none" onclick="if(event.target===this) closeMarkupModal()">
+    <div class="markup-modal-panel" onclick="event.stopPropagation()">
+        <button class="markup-modal-close" onclick="closeMarkupModal()" title="Close (Esc)">×</button>
+        <div class="markup-modal-stage" id="markupModalStage">
+            <img id="markupModalImg" alt="Image to mark up">
+            <!-- markupCanvas lives inside the output area but we move it
+                 into markupModalStage when the modal opens, then move it
+                 back on close. Single canvas element, reused by both
+                 contexts, so strokes + tool state are consistent. -->
+        </div>
+        <div class="markup-modal-footer">
+            <button class="mk-tbox-btn" onclick="closeMarkupModal()">Cancel</button>
+            <button class="mk-tbox-btn mk-tbox-btn-primary" onclick="markupApply()">✓ Apply to Image</button>
+        </div>
     </div>
 </div>
 
@@ -2623,14 +2641,12 @@ async function uploadToSlot(i,file){
 function removeSlot(i){ slots[i]=null; renderSlot(i); updateGenButton(); persistSlots(); if(i===0) refreshMarkupMode(); }
 
 // ═══════════════════════════════════════════════════════════════════
-// INLINE MARKUP ACTIVITY
-// Edit mode + image in slot 1 = markup is automatically active. The
-// output area becomes an editing surface: slot 0's image loads into
-// #outImg, a transparent canvas overlays it pixel-exactly, and a
-// compact draggable toolbox (Photoshop-style) floats in the corner.
-// User draws colored marks and clicks Apply. Composited image is
-// re-uploaded and swapped into slot 0; strokes clear for next round.
-// Exiting Edit mode or removing slot 0 deactivates markup.
+// PER-SLOT MARKUP (modal-based)
+// Each slot has a pencil icon; clicking it opens the markup modal
+// showing that slot's image big, with the existing floating toolbox
+// and a pixel-exact drawing canvas on top. User draws colored marks,
+// clicks Apply, and the composited image replaces that slot.
+// No auto-activate — markup is entered only by explicit click.
 // Qwen-Image-Edit-2511 visually sees the colored regions and edits
 // them when the user's prompt references them ("the red box", etc.).
 // ═══════════════════════════════════════════════════════════════════
@@ -2644,46 +2660,24 @@ const _markup = {
     strokes: [],
     drawing: false,
     currentStroke: null,
-    _prevState: null,
     _resizeHandler: null,
 };
 
-// Called on any state change that could affect whether markup should be
-// live: mode switch, slot 0 upload/remove, Apply, etc. Declarative — you
-// don't call enter/exit directly anymore.
+// No-op: auto-activate is gone. Kept as a no-op so legacy call sites
+// (mode switch, upload, remove) don't blow up. If markup is open and
+// the slot under it is removed, we close the modal as a courtesy.
 function refreshMarkupMode(){
-    const shouldBeActive = (currentMode === 'edit') && !!(slots[0] && slots[0].url);
-    // _suppressAutoEnter is set by showResult() to prevent immediate re-
-    // entry of markup mode after a successful generation — so the result
-    // stays visible. The flag is cleared here because every call site of
-    // refreshMarkupMode represents a genuine user action (upload, remove
-    // slot, mode switch). If the user's action still satisfies
-    // shouldBeActive, markup will re-activate this call as expected.
-    const suppress = _markup._suppressAutoEnter === true;
-    _markup._suppressAutoEnter = false;
-
-    if (shouldBeActive && !_markup.active) {
-        if (!suppress) _enterMarkupMode(0);
-    } else if (!shouldBeActive && _markup.active) {
-        _exitMarkupMode();
-    } else if (shouldBeActive && _markup.active && slots[0] && slots[0].url) {
-        // Slot 0 image changed (e.g. user re-uploaded or Applied a composite)
-        // — refresh the markup background if needed, keeping strokes cleared
-        // so the user starts fresh on the new image. Operates on #markupBgImg,
-        // NOT #outImg (which belongs to the result viewer).
-        const bgImg = $('markupBgImg');
-        if (bgImg.src !== slots[0].url) {
-            _markup.strokes = [];
-            bgImg.onload = () => { _markupSizeCanvas(); paintRedraw(); };
-            bgImg.src = slots[0].url;
-        }
+    if (_markup.active && (slots[_markup.slotIdx] === null || !slots[_markup.slotIdx])) {
+        closeMarkupModal();
     }
 }
 
-function _enterMarkupMode(slotIdx){
+// Open the markup modal for a specific slot. Public entry point —
+// called by the pencil icon on each slot tile.
+function openMarkupModal(slotIdx){
     const slot = slots[slotIdx];
     if (!slot || !slot.url) return;
-    if (_markup.active) return;
+    if (_markup.active) closeMarkupModal();  // re-open on a different slot
 
     _markup.slotIdx = slotIdx;
     _markup.active = true;
@@ -2691,22 +2685,26 @@ function _enterMarkupMode(slotIdx){
     _markup.drawing = false;
     _markup.currentStroke = null;
 
-    $('outputArea').classList.add('markup-active');
-
-    // Markup uses its OWN background image element (#markupBgImg) —
-    // completely independent from #outImg which belongs to the result
-    // viewer. This prevents markup activity from hijacking the output
-    // display when slots are added/removed.
-    const bgImg = $('markupBgImg');
+    // Move the existing markupCanvas element into the modal's stage so
+    // the same canvas + tool state is reused. On close we move it back.
+    const stage = $('markupModalStage');
     const canvas = $('markupCanvas');
-    bgImg.style.display = '';
-    const onReady = () => { _markupSizeCanvas(); paintRedraw(); };
-    bgImg.onload = onReady;
-    bgImg.src = slot.url;
-    if (bgImg.complete && bgImg.naturalWidth > 0) onReady();
-
+    const img = $('markupModalImg');
+    stage.appendChild(canvas);
     canvas.style.display = '';
-    // Show floating toolbox (body-level, independent of output area)
+    canvas.style.position = 'absolute';
+    canvas.style.cursor = 'crosshair';
+    canvas.style.pointerEvents = 'auto';
+    canvas.style.zIndex = '10';
+
+    const onReady = () => { _markupSizeCanvas(); paintRedraw(); };
+    img.onload = onReady;
+    img.src = slot.url;
+    if (img.complete && img.naturalWidth > 0) onReady();
+
+    // Show modal + floating toolbox
+    $('markupModal').style.display = '';
+    $('markupModal').classList.add('open');
     const toolbox = $('markupToolbox');
     if (toolbox) toolbox.style.display = '';
 
@@ -2727,23 +2725,30 @@ function _enterMarkupMode(slotIdx){
     window.addEventListener('resize', _markup._resizeHandler);
 }
 
-function _exitMarkupMode(){
+// Close the markup modal without applying. Moves the canvas back to
+// its original home in the output area (display:none) so it's ready
+// for the next open.
+function closeMarkupModal(){
     if (!_markup.active) return;
     _markup.active = false;
 
-    $('outputArea').classList.remove('markup-active');
-    $('markupCanvas').style.display = 'none';
+    const canvas = $('markupCanvas');
+    canvas.style.display = 'none';
+    // Move canvas back to output area so its HTML home is stable
+    const outputArea = $('outputArea');
+    if (outputArea && canvas.parentNode !== outputArea) outputArea.appendChild(canvas);
+
+    const modal = $('markupModal');
+    modal.classList.remove('open');
+    modal.style.display = 'none';
+
     const toolbox = $('markupToolbox');
     if (toolbox) toolbox.style.display = 'none';
-    // Close the help popover too — it only makes sense while markup is up.
     if (typeof toggleMarkupHelp === 'function') toggleMarkupHelp(false);
 
-    // Hide the markup background image. #outImg is completely untouched
-    // — whatever result was being shown stays shown.
-    const bgImg = $('markupBgImg');
-    bgImg.onload = null;
-    bgImg.style.display = 'none';
-    bgImg.removeAttribute('src');
+    const img = $('markupModalImg');
+    img.onload = null;
+    img.removeAttribute('src');
 
     if (_markup._resizeHandler) {
         window.removeEventListener('resize', _markup._resizeHandler);
@@ -2752,19 +2757,21 @@ function _exitMarkupMode(){
     _markup.strokes = [];
 }
 
+// Size + position the markupCanvas pixel-exactly over whichever image
+// is currently hosting the markup (the modal's image when open).
 function _markupSizeCanvas(){
-    const img = $('markupBgImg');
+    const img = $('markupModalImg');
     const canvas = $('markupCanvas');
     if (!img || !canvas || !img.naturalWidth) return;
-    const area = $('outputArea');
-    const areaRect = area.getBoundingClientRect();
+    const stage = $('markupModalStage');
+    const stageRect = stage.getBoundingClientRect();
     const imgRect = img.getBoundingClientRect();
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
     canvas.style.width = imgRect.width + 'px';
     canvas.style.height = imgRect.height + 'px';
-    canvas.style.left = (imgRect.left - areaRect.left) + 'px';
-    canvas.style.top = (imgRect.top - areaRect.top) + 'px';
+    canvas.style.left = (imgRect.left - stageRect.left) + 'px';
+    canvas.style.top = (imgRect.top - stageRect.top) + 'px';
 }
 
 function _mkCtx(){ return $('markupCanvas').getContext('2d'); }
@@ -2881,17 +2888,16 @@ function markupClear(){
     _updateApplyButtonState();
 }
 
-async function markupApply(opts){
-    opts = opts || {};
+async function markupApply(){
     if (!_markup.active) return false;
     if (!_markup.strokes.length) {
-        if (!opts.silent) showNotif('Draw something first, then click Apply.', 'error');
+        showNotif('Draw something first, then click Apply.', 'error');
         return false;
     }
     const slot = slots[_markup.slotIdx];
-    if (!slot) { _exitMarkupMode(); return false; }
+    if (!slot) { closeMarkupModal(); return false; }
 
-    const applyBtn = document.querySelector('.mk-tbox-btn-primary');
+    const applyBtn = document.querySelector('.markup-modal-footer .mk-tbox-btn-primary');
     const origLabel = applyBtn ? applyBtn.textContent : '';
     if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = '…'; }
 
@@ -2915,28 +2921,16 @@ async function markupApply(opts){
         if (!blob) throw new Error('Canvas export failed');
         const file = new File([blob], `markup-${Date.now()}.png`, { type:'image/png' });
 
-        await uploadToSlot(_markup.slotIdx, file);
-
-        if (opts.keepMarkup) {
-            // Auto-apply path: the new composited image has replaced slot 1's
-            // url, so refreshMarkupMode will reload the editor with the baked-
-            // in marks visible + strokes cleared. We don't exit markup since
-            // the user is about to generate and may iterate.
-            _markup.strokes = [];
-            _updateApplyButtonState();
-            paintRedraw();
-        } else {
-            _exitMarkupMode();
-            if (!opts.silent) {
-                showNotif('Markup applied. Reference colored regions in your prompt (e.g. "the red box").', 'success');
-            }
-        }
+        const slotIdx = _markup.slotIdx;
+        await uploadToSlot(slotIdx, file);
+        closeMarkupModal();
+        showNotif('Markup applied. Reference colored regions in your prompt (e.g. "the red box").', 'success');
         return true;
     } catch (e) {
-        if (!opts.silent) showNotif('Failed to apply markup: ' + e.message, 'error');
+        showNotif('Failed to apply markup: ' + e.message, 'error');
         return false;
     } finally {
-        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = origLabel || '✓ Apply'; }
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = origLabel || '✓ Apply to Image'; }
     }
 }
 
@@ -3123,7 +3117,7 @@ function renderSlot(i){
 function openModal(src){ if(!src) return; $('modalImg').src=src; $('imgModal').classList.add('open'); }
 function closeModal(){ $('imgModal').classList.remove('open'); }
 document.addEventListener('keydown',e=>{
-    if(e.key==='Escape'){ closeModal(); closeBuyModal(); }
+    if(e.key==='Escape'){ closeModal(); closeBuyModal(); closeMarkupModal(); }
 });
 
 // ── Use output as input ───────────────────────────
@@ -3151,17 +3145,14 @@ function toggleLock(){
 // ── Generate ──────────────────────────────────────
 // Single source of truth for per-mode LoRA weights. Used at every
 // submission site so the payload is always explicit — no reliance on
-// backend defaults.
-//
-// DIAGNOSTIC MODE (2026-04-19): angles always reads from the slider,
-// regardless of mode. Normally edit/batch would force angles=0, but
-// we're testing whether edit mode with angles=0.9 (the camera default,
-// known-working in camera mode) produces clean output. If it does, the
-// cartoon look in edit mode is caused by angles=0, not by angles>0.
-// Revert once we have data.
+// backend defaults. Camera mode uses both Lightning (fast distillation)
+// and Angles (pose control). Edit/Batch modes use only Lightning —
+// Angles is a camera-pose adapter and actively interferes with edits.
 function loraPayload(mode){
     const lightning = parseFloat($('rngLoraLightning').value) || 0;
-    const angles = parseFloat($('rngLoraAngles').value) || 0;
+    const angles = (mode === 'camera')
+        ? (parseFloat($('rngLoraAngles').value) || 0)
+        : 0;
     return { lora_lightning: lightning, lora_angles: angles };
 }
 
@@ -3171,17 +3162,6 @@ async function doGenerate(){
     // selected input becomes its own job routed through _activeBatch.
     if (currentMode === 'batch') {
         return generateBatchEdits();
-    }
-    // Auto-apply any pending markup strokes first. Without this, the user
-    // can draw marks, hit Generate, and wonder why the model ignored their
-    // red X — the strokes exist only on the canvas overlay until Apply
-    // bakes them into the image. So we silently bake on their behalf.
-    if (_markup && _markup.active && _markup.strokes && _markup.strokes.length) {
-        const ok = await markupApply({ silent: true, keepMarkup: true });
-        if (!ok) {
-            showNotif('Could not apply markup before generating. Try again.', 'error');
-            return;
-        }
     }
     if(_user.tokens<100){ showBuyModal(); return; }
 
@@ -5675,16 +5655,6 @@ function showResult(d){
     // jobs are safe in history (grouped by batch_id) so the user can
     // restore the full set by clicking the grouped history card.
     if (_activeBatch) clearBatchGrid();
-
-    // Exit markup so the result is visible in the main viewer. Set a
-    // latch so refreshMarkupMode doesn't immediately re-enter markup
-    // while slot 0 is still populated. The latch is cleared by any
-    // explicit user action on slot 0 (upload / remove) or by switching
-    // modes — at which point markup may re-activate if appropriate.
-    if (_markup && _markup.active) {
-        _markup._suppressAutoEnter = true;
-        _exitMarkupMode();
-    }
 
     $('outImg').src=d.url; $('outImg').style.display='';
     $('outPh').style.display='none';
