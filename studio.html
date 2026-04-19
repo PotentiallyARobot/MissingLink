@@ -2158,11 +2158,18 @@ let _startupFirstSeen = null;
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
-    const state = _gpuState.state || 'unknown';
-    const shouldShow = (state === 'cold' || state === 'warming');
+    // Only show the cold-boot overlay during ACTIVE container setup —
+    // signaled by a real startup_stage that hasn't reached 'ready' yet.
+    // Relying on _gpuState.state (which flips to 'cold' after ~30s of
+    // inactivity between jobs) produced false cold-boot flashes in the
+    // gap between consecutive jobs, when the container is actually alive
+    // and about to pick up the next task.
+    const stage = _gpuState.startup_stage;
+    const stageAge = _gpuState.startup_age_s || 0;
+    const inStartup = !!stage && stage !== 'ready' && stageAge < 600;
+    const shouldShow = inStartup;
 
     if (!shouldShow) {
-        // GPU is ready (or unknown + offline). Hide overlay and reset timer.
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         return;
@@ -3131,17 +3138,17 @@ function toggleLock(){
 // ── Generate ──────────────────────────────────────
 // Single source of truth for per-mode LoRA weights. Used at every
 // submission site so the payload is always explicit — no reliance on
-// backend defaults. Camera mode uses both Lightning (fast distillation)
-// and Angles (pose control). Edit/Batch modes use only Lightning —
-// Angles is a camera-pose adapter and actively interferes with edits.
+// backend defaults.
 //
-// Returns an object you can spread into a payload:
-//   { lora_lightning: 1.0, lora_angles: 0.0 }
+// DIAGNOSTIC MODE (2026-04-19): angles always reads from the slider,
+// regardless of mode. Normally edit/batch would force angles=0, but
+// we're testing whether edit mode with angles=0.9 (the camera default,
+// known-working in camera mode) produces clean output. If it does, the
+// cartoon look in edit mode is caused by angles=0, not by angles>0.
+// Revert once we have data.
 function loraPayload(mode){
     const lightning = parseFloat($('rngLoraLightning').value) || 0;
-    const angles = (mode === 'camera')
-        ? (parseFloat($('rngLoraAngles').value) || 0)
-        : 0;
+    const angles = parseFloat($('rngLoraAngles').value) || 0;
     return { lora_lightning: lightning, lora_angles: angles };
 }
 
@@ -5567,8 +5574,14 @@ function escapeHtml(s){
 setInterval(() => {
     const hasActive = myJobs.some(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running');
     const warming = _gpuState.state === 'warming' || _gpuState.state === 'cold';
+    // Distinguish "container is actively booting" (show full overlay) from
+    // "badge says stale cold" (just refresh the queue). The overlay is tied
+    // to an actual startup_stage heartbeat, not the derived state.
+    const stage = _gpuState.startup_stage;
+    const stageAge = _gpuState.startup_age_s || 0;
+    const inStartup = !!stage && stage !== 'ready' && stageAge < 600;
     if (hasActive || warming) renderQueue();
-    if (warming) renderStartupOverlay();
+    if (inStartup) renderStartupOverlay();
 }, 1000);
 
 function restoreJobState(jobId){
