@@ -3129,6 +3129,22 @@ function toggleLock(){
 }
 
 // ── Generate ──────────────────────────────────────
+// Single source of truth for per-mode LoRA weights. Used at every
+// submission site so the payload is always explicit — no reliance on
+// backend defaults. Camera mode uses both Lightning (fast distillation)
+// and Angles (pose control). Edit/Batch modes use only Lightning —
+// Angles is a camera-pose adapter and actively interferes with edits.
+//
+// Returns an object you can spread into a payload:
+//   { lora_lightning: 1.0, lora_angles: 0.0 }
+function loraPayload(mode){
+    const lightning = parseFloat($('rngLoraLightning').value) || 0;
+    const angles = (mode === 'camera')
+        ? (parseFloat($('rngLoraAngles').value) || 0)
+        : 0;
+    return { lora_lightning: lightning, lora_angles: angles };
+}
+
 async function doGenerate(){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     // Batch mode delegates to its own dedicated submission routine — each
@@ -3162,8 +3178,7 @@ async function doGenerate(){
             randomize_seed:$('chkRand').checked,
             guidance_scale:parseFloat($('rngCfg').value),
             inference_steps:parseInt($('rngSteps').value),
-            lora_lightning:parseFloat($('rngLoraLightning').value),
-            lora_angles:parseFloat($('rngLoraAngles').value),
+            ...loraPayload('camera'),
             width:parseInt($('inpWidth').value)||0,
             height:parseInt($('inpHeight').value)||0,
         };
@@ -3182,13 +3197,7 @@ async function doGenerate(){
             randomize_seed:$('chkRand').checked,
             guidance_scale:parseFloat($('rngCfg').value),
             inference_steps:parseInt($('rngSteps').value),
-            // Must send lora_lightning explicitly — otherwise Modal falls
-            // back to its Pydantic default of 1.0, which clamps CFG to 1.0
-            // (see modal_app.py's lightning-engaged guard) and produces the
-            // overcooked/high-contrast look even when the user has
-            // explicitly set Lightning to 0. Angles LoRA is intentionally
-            // omitted: the server forces it to 0.0 in non-camera modes.
-            lora_lightning:parseFloat($('rngLoraLightning').value),
+            ...loraPayload('edit'),
             width:parseInt($('inpWidth').value)||0,
             height:parseInt($('inpHeight').value)||0,
         };
@@ -3560,7 +3569,7 @@ async function generateBatchEdits(){
             image_ids: imageIds,
             prompt, negative_prompt: negative, seed,
             guidance_scale: cfg, inference_steps: steps,
-            lora_lightning: lightning,
+            ...loraPayload('edit'),
             // Preserve the input's own dimensions per-job so each output
             // matches its source. If the inputs vary in aspect ratio, this
             // avoids stretching them all into one fixed shape.
@@ -3778,8 +3787,7 @@ async function generateAllAngles(){
             randomize_seed: false,
             guidance_scale: cfg,
             inference_steps: steps,
-            lora_lightning: lightning,
-            lora_angles: angles,
+            ...loraPayload('camera'),
             width,
             height,
             batch_id: batchId,
@@ -3788,7 +3796,7 @@ async function generateAllAngles(){
             mode: 'camera',
             prompt, negative_prompt: negative, seed,
             guidance_scale: cfg, inference_steps: steps,
-            lora_lightning: lightning, lora_angles: angles,
+            ...loraPayload('camera'),
             width, height,
             input_image_id: imageId, input_image_url: imageUrl,
             edit_slots: null,
