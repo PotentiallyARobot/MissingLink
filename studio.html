@@ -68,12 +68,16 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 /* ── Inline markup activity ──────────────────────────────────────
    When Edit mode is active and slot 1 has an image, the output area
-   becomes a markup workspace: the image loads into #outImg and a
-   transparent canvas overlays it at pixel-exact size. The toolbox is
-   a separate floating window (see .mk-toolbox below). */
+   becomes a markup workspace: the slot image loads into #markupBgImg
+   (NOT #outImg — the result viewer stays untouched), and a transparent
+   canvas overlays it at pixel-exact size. The toolbox is a separate
+   floating window (see .mk-toolbox below). */
 .output-area.markup-active #outImg{
-    pointer-events:none;  /* don't trigger the zoom modal while drawing */
-    cursor:default;
+    /* Result viewer is hidden while markup is active — the user is working
+       on the input image (shown in #markupBgImg). Exiting markup mode
+       (removing slot 0, switching to camera/batch) unhides outImg and the
+       previous result reappears. */
+    display:none!important;
 }
 .output-area.markup-active #outPh{display:none!important}
 /* Queue + history overlays stay visible during markup — the toolbox is
@@ -1272,6 +1276,14 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="output-area" id="outputArea" style="position:relative">
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
+
+        <!-- Dedicated markup background image. Lives underneath the markup
+             canvas when markup mode is active. Hidden otherwise. This is
+             SEPARATE from #outImg so that entering/exiting markup mode
+             never touches the output viewer. Previously these were the
+             same element, causing the main image to flicker/change
+             unexpectedly when slots were added/removed. -->
+        <img id="markupBgImg" style="display:none;position:absolute;left:0;right:0;top:0;bottom:0;margin:auto;max-width:100%;max-height:100%;object-fit:contain;pointer-events:none;z-index:9">
 
         <!-- Batch-mode input grid — user's uploaded images shown as
              equal-sized tiles in a responsive grid so they can see what
@@ -2645,13 +2657,14 @@ function refreshMarkupMode(){
     else if (!shouldBeActive && _markup.active) _exitMarkupMode();
     else if (shouldBeActive && _markup.active && slots[0] && slots[0].url) {
         // Slot 0 image changed (e.g. user re-uploaded or Applied a composite)
-        // — refresh the editor's source image if needed, keeping strokes
-        // cleared so the user starts fresh on the new image.
-        const img = $('outImg');
-        if (img.src !== slots[0].url) {
+        // — refresh the markup background if needed, keeping strokes cleared
+        // so the user starts fresh on the new image. Operates on #markupBgImg,
+        // NOT #outImg (which belongs to the result viewer).
+        const bgImg = $('markupBgImg');
+        if (bgImg.src !== slots[0].url) {
             _markup.strokes = [];
-            img.onload = () => { _markupSizeCanvas(); paintRedraw(); };
-            img.src = slots[0].url;
+            bgImg.onload = () => { _markupSizeCanvas(); paintRedraw(); };
+            bgImg.src = slots[0].url;
         }
     }
 }
@@ -2667,23 +2680,19 @@ function _enterMarkupMode(slotIdx){
     _markup.drawing = false;
     _markup.currentStroke = null;
 
-    // Save prior output-area state so we can restore it if the user
-    // leaves edit mode or removes the slot image.
-    _markup._prevState = {
-        outImgSrc: $('outImg').src,
-        outImgDisplay: $('outImg').style.display,
-        outPhDisplay: $('outPh').style.display,
-    };
-
     $('outputArea').classList.add('markup-active');
 
-    const img = $('outImg');
+    // Markup uses its OWN background image element (#markupBgImg) —
+    // completely independent from #outImg which belongs to the result
+    // viewer. This prevents markup activity from hijacking the output
+    // display when slots are added/removed.
+    const bgImg = $('markupBgImg');
     const canvas = $('markupCanvas');
-    img.style.display = '';
+    bgImg.style.display = '';
     const onReady = () => { _markupSizeCanvas(); paintRedraw(); };
-    img.onload = onReady;
-    img.src = slot.url;
-    if (img.complete && img.naturalWidth > 0) onReady();
+    bgImg.onload = onReady;
+    bgImg.src = slot.url;
+    if (bgImg.complete && bgImg.naturalWidth > 0) onReady();
 
     canvas.style.display = '';
     // Show floating toolbox (body-level, independent of output area)
@@ -2718,18 +2727,12 @@ function _exitMarkupMode(){
     // Close the help popover too — it only makes sense while markup is up.
     if (typeof toggleMarkupHelp === 'function') toggleMarkupHelp(false);
 
-    const prev = _markup._prevState || {};
-    const img = $('outImg');
-    img.onload = null;
-    if (prev.outImgSrc) {
-        img.src = prev.outImgSrc;
-        img.style.display = prev.outImgDisplay || '';
-    } else {
-        img.removeAttribute('src');
-        img.style.display = 'none';
-    }
-    $('outPh').style.display = prev.outPhDisplay || '';
-    _markup._prevState = null;
+    // Hide the markup background image. #outImg is completely untouched
+    // — whatever result was being shown stays shown.
+    const bgImg = $('markupBgImg');
+    bgImg.onload = null;
+    bgImg.style.display = 'none';
+    bgImg.removeAttribute('src');
 
     if (_markup._resizeHandler) {
         window.removeEventListener('resize', _markup._resizeHandler);
@@ -2739,7 +2742,7 @@ function _exitMarkupMode(){
 }
 
 function _markupSizeCanvas(){
-    const img = $('outImg');
+    const img = $('markupBgImg');
     const canvas = $('markupCanvas');
     if (!img || !canvas || !img.naturalWidth) return;
     const area = $('outputArea');
@@ -3195,14 +3198,7 @@ async function doGenerate(){
         if(!prompt){ showNotif('Please enter an edit instruction before generating.'); return; }
         thumbUrl=filled[0].url;
         payload={
-            // DIAGNOSTIC (2026-04-19): submitting edit mode as 'camera'
-            // to test whether the mode string itself causes the cartoon
-            // output. Everything else stays edit-mode (slot images,
-            // customPrompt textarea, edit-mode LoRA values). If output
-            // is clean with this flip, something about mode='edit' in
-            // the backend is the variable. If still cartoon, the mode
-            // string isn't the cause and the bug is elsewhere.
-            mode:'camera',
+            mode:'edit',
             image_ids:filled.map(s=>s.id),
             prompt,
             negative_prompt:$('negPrompt').value.trim(),
