@@ -1387,13 +1387,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
             <button class="mk-color"        data-color="yellow" style="background:#eab308" title="Yellow — SECOND reference. Example: 'match the lighting of the yellow box'"></button>
         </div>
         <div class="mk-tbox-row mk-tbox-row-tools" id="mkModes">
-            <button class="mk-tool active" data-mode="brush"  title="Brush — freehand paint">✏️</button>
-            <button class="mk-tool"        data-mode="rect"   title="Box — rectangular region (Qwen's preferred callout shape)">⬛</button>
+            <button class="mk-tool"        data-mode="brush"  title="Brush — freehand paint">✏️</button>
+            <button class="mk-tool active" data-mode="rect"   title="Box — rectangular region (Qwen's preferred callout shape)">⬛</button>
             <button class="mk-tool"        data-mode="eraser" title="Eraser — remove marks">🧽</button>
         </div>
         <div class="mk-tbox-row mk-tbox-row-size">
-            <label class="mk-tbox-label" title="Stroke width in pixels">Size <span id="mkSizeVal">12</span></label>
-            <input type="range" id="mkSize" min="2" max="60" value="12" title="Drag to change brush / box / eraser size (2–60 px)">
+            <label class="mk-tbox-label" title="Stroke width in pixels">Size <span id="mkSizeVal">4</span></label>
+            <input type="range" id="mkSize" min="2" max="60" value="4" title="Drag to change brush / box / eraser size (2–60 px)">
         </div>
         <div class="mk-tbox-row mk-tbox-row-actions">
             <button class="mk-tbox-btn" onclick="markupUndo()"  title="Undo last stroke">↶ Undo</button>
@@ -2674,10 +2674,15 @@ function removeSlot(i){
 
 
 // Write slots to localStorage so uploaded images survive a page refresh.
-// We store only the R2 refs (id/url/filename/w/h), not the actual image bytes.
+// We store only the R2 refs (id/url/filename/w/h), not the actual image bytes
+// and NOT the transient _markupThumbUrl dataURL (can be 100KB+).
 function persistSlots(){
     try {
-        const nonEmpty = slots.map(s => s || null);
+        const nonEmpty = slots.map(s => {
+            if (!s) return null;
+            const { _markupThumbUrl, ...rest } = s;
+            return rest;
+        });
         localStorage.setItem('studio_slots', JSON.stringify(nonEmpty));
     } catch (e) {}
 }
@@ -2685,7 +2690,15 @@ function persistSlots(){
 function renderSlot(i){
     const el=$('slot'+i); if(!el) return;
     const empt=el.querySelector('.slot-empty'),fil=el.querySelector('.slot-filled');
-    if(slots[i]){ empt.style.display='none'; fil.style.display=''; $('slotImg'+i).src=slots[i].url; }
+    if(slots[i]){
+        empt.style.display='none'; fil.style.display='';
+        // If a markup preview has been applied, show the composited
+        // dataURL as the thumbnail. The underlying slots[i].url is
+        // never overwritten — it's still the source of truth for
+        // generation and for rebuilding the preview on re-markup.
+        const displayUrl = slots[i]._markupThumbUrl || slots[i].url;
+        $('slotImg'+i).src = displayUrl;
+    }
     else { empt.style.display=''; fil.style.display='none'; }
     const count=slots.filter(s=>s!==null).length;
     if($('slotCounter')) $('slotCounter').textContent=`${count} / 3`;
@@ -2716,8 +2729,8 @@ const _markup = {
     active: false,
     slotIdx: -1,
     color: '#ef4444',
-    mode: 'brush',
-    size: 12,
+    mode: 'rect',
+    size: 4,
     strokes: [],           // working copy; on Apply, copied back to _slotStrokes[slotIdx]
     drawing: false,
     currentStroke: null,
@@ -2750,16 +2763,17 @@ function openMarkupModal(slotIdx){
         _markup._initialized = true;
     }
 
-    // Reset tool UI to defaults (red / brush / size 12)
+    // Reset tool UI to defaults (red / box / size 4 — matches Qwen's
+    // documented thin-rectangle callout technique).
     document.querySelectorAll('#mkColors .mk-color').forEach(b =>
         b.classList.toggle('active', b.dataset.color === 'red'));
     document.querySelectorAll('#mkModes .mk-tool').forEach(b =>
-        b.classList.toggle('active', b.dataset.mode === 'brush'));
+        b.classList.toggle('active', b.dataset.mode === 'rect'));
     _markup.color = '#ef4444';
-    _markup.mode = 'brush';
-    _markup.size = 12;
-    if ($('mkSize')) $('mkSize').value = 12;
-    if ($('mkSizeVal')) $('mkSizeVal').textContent = '12';
+    _markup.mode = 'rect';
+    _markup.size = 4;
+    if ($('mkSize')) $('mkSize').value = 4;
+    if ($('mkSizeVal')) $('mkSizeVal').textContent = '4';
 
     // Show modal + toolbox
     $('markupModal').style.display = '';
@@ -2782,13 +2796,13 @@ function openMarkupModal(slotIdx){
 
 // Close the markup modal. If applySave=true, save working strokes back
 // to the slot; otherwise discard changes. Always tears down the canvas
-// and toolbox.
-function closeMarkupModal(applySave){
+// and toolbox. Async because Apply builds a thumbnail preview via an
+// offscreen canvas (needs image-load await).
+async function closeMarkupModal(applySave){
     if (!_markup.active) return;
-    if (applySave && _markup.slotIdx >= 0) {
-        _slotStrokes[_markup.slotIdx] = JSON.parse(JSON.stringify(_markup.strokes));
-        // Refresh the slot UI so the pencil badge updates
-        renderSlot(_markup.slotIdx);
+    const savedSlotIdx = _markup.slotIdx;   // captured before we reset state
+    if (applySave && savedSlotIdx >= 0) {
+        _slotStrokes[savedSlotIdx] = JSON.parse(JSON.stringify(_markup.strokes));
     }
 
     _markup.active = false;
@@ -2812,6 +2826,26 @@ function closeMarkupModal(applySave){
     if (_markup._resizeHandler) {
         window.removeEventListener('resize', _markup._resizeHandler);
         _markup._resizeHandler = null;
+    }
+
+    // Apply → build the thumbnail preview for this slot (or drop any
+    // existing preview if the user applied an empty stroke set). Done
+    // AFTER tearing down the canvas so the UI feels snappy — the thumb
+    // updates once the dataURL is ready. Errors are non-fatal: the
+    // thumb simply stays on the original image.
+    if (applySave && savedSlotIdx >= 0 && slots[savedSlotIdx]) {
+        const strokes = _slotStrokes[savedSlotIdx] || [];
+        if (strokes.length) {
+            try {
+                const dataUrl = await _makeMarkupThumbDataUrl(savedSlotIdx);
+                if (dataUrl) slots[savedSlotIdx]._markupThumbUrl = dataUrl;
+                else delete slots[savedSlotIdx]._markupThumbUrl;
+            } catch (e) { delete slots[savedSlotIdx]._markupThumbUrl; }
+        } else {
+            // Applied with no strokes → clear any previous preview.
+            delete slots[savedSlotIdx]._markupThumbUrl;
+        }
+        renderSlot(savedSlotIdx);
     }
 }
 
@@ -2949,6 +2983,17 @@ function markupClear(){
     if (!_markup.active) return;
     _markup.strokes = [];
     paintRedraw();
+    // Clearing inside the modal is a "start over" — also wipe the
+    // saved strokes and any thumbnail preview for this slot, so the
+    // slot thumbnail returns to the original immediately. The user
+    // can still Cancel to close without applying; the stored strokes
+    // are cleared but that matches their intent (they clicked Clear).
+    const i = _markup.slotIdx;
+    if (i >= 0) {
+        if (_slotStrokes[i]) _slotStrokes[i] = [];
+        if (slots[i]) delete slots[i]._markupThumbUrl;
+        renderSlot(i);
+    }
 }
 
 // One-time event wiring for the toolbox + canvas pointer events.
@@ -2958,11 +3003,12 @@ function _markupInitControls(){
             document.querySelectorAll('#mkColors .mk-color').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             _markup.color = COLOR_HEX[btn.dataset.color] || '#ef4444';
-            // Picking a color implicitly switches away from eraser
+            // Picking a color implicitly switches away from eraser.
+            // Fall back to rect (the default tool) for consistency.
             if (_markup.mode === 'eraser') {
-                _markup.mode = 'brush';
+                _markup.mode = 'rect';
                 document.querySelectorAll('#mkModes .mk-tool').forEach(b =>
-                    b.classList.toggle('active', b.dataset.mode === 'brush'));
+                    b.classList.toggle('active', b.dataset.mode === 'rect'));
             }
         });
     });
@@ -3062,6 +3108,49 @@ async function _compositeSlotWithStrokes(slotIdx){
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     return { id: d.id, url: d.url, filename: d.filename, w: d.w || slot.w, h: d.h || slot.h };
+}
+
+// Client-only: build a thumbnail-sized dataURL of the slot image with
+// strokes composited on top. Used ONLY for the slot-thumbnail preview
+// after Apply — does NOT upload, does NOT change slots[i].url. Scaled
+// down so the dataURL is small (thumbnails display at ~120px anyway).
+async function _makeMarkupThumbDataUrl(slotIdx){
+    const slot = slots[slotIdx];
+    const strokes = _slotStrokes[slotIdx] || [];
+    if (!slot || !slot.url || !strokes.length) return null;
+
+    const sourceImg = new Image();
+    sourceImg.crossOrigin = 'anonymous';
+    try {
+        await new Promise((resolve, reject) => {
+            sourceImg.onload = resolve;
+            sourceImg.onerror = () => reject(new Error('thumb source load failed'));
+            sourceImg.src = slot.url;
+        });
+    } catch (e) { return null; }
+
+    // Cap longer edge at 512px. Strokes were captured at the image's
+    // natural resolution, so scale them proportionally here.
+    const maxEdge = 512;
+    const nw = sourceImg.naturalWidth, nh = sourceImg.naturalHeight;
+    const scale = Math.min(1, maxEdge / Math.max(nw, nh));
+    const tw = Math.max(1, Math.round(nw * scale));
+    const th = Math.max(1, Math.round(nh * scale));
+
+    const c = document.createElement('canvas');
+    c.width = tw; c.height = th;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(sourceImg, 0, 0, tw, th);
+    // Transform so strokes (in source-resolution coordinates) render at
+    // the scaled size correctly.
+    ctx.save();
+    ctx.scale(scale, scale);
+    for (const s of strokes) _drawStroke(ctx, s);
+    ctx.restore();
+
+    try {
+        return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) { return null; }
 }
 
 // ── Modal ─────────────────────────────────────────
@@ -3188,11 +3277,14 @@ async function doGenerate(){
             width:parseInt($('inpWidth').value)||0,
             height:parseInt($('inpHeight').value)||0,
         };
-        // Clear strokes on slots we just composited. Next time the user
-        // opens markup on those slots it'll be a fresh canvas.
+        // Clear strokes AND the thumbnail markup preview on slots we
+        // just composited. Next time the user opens markup on those
+        // slots it'll be a fresh canvas, and the thumb reverts to the
+        // original image.
         for (const i of slotsWithStrokes) {
             _slotStrokes[i] = [];
-            renderSlot(i);  // clears the pencil badge
+            if (slots[i]) delete slots[i]._markupThumbUrl;
+            renderSlot(i);  // clears the pencil badge + reverts thumb
         }
     }
 
