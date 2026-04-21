@@ -1996,7 +1996,13 @@ async function doBuyTokens(){
 }
 
 // ── Mode ──────────────────────────────────────────
-function setMode(mode){
+// opts.skipAutoPopulate: when true, the camera→edit convenience that
+// drops the current camera input into slot 0 is skipped. Programmatic
+// callers (editBatchSlot, restoreJobState) set this because they're
+// about to place their OWN image in slot 0 and don't want a race between
+// this function's async fetch and their synchronous slot writes.
+function setMode(mode, opts){
+    opts = opts || {};
     const prevMode = currentMode;
     // If user leaves Edit mode, end any "editing view N" session — a Camera
     // generation should produce a fresh single-image output, not try to
@@ -2041,19 +2047,29 @@ function setMode(mode){
     // mode; hide it otherwise so Camera/Edit aren't polluted by it.
     if (typeof renderBatchInputs === 'function') renderBatchInputs();
 
-    // Camera → Edit: auto-populate slot 1 with the last generation output
-    // so the user doesn't have to manually re-upload it. Always overwrites
-    // slot 1 (no conditional on emptiness) — the user explicitly asked for
-    // this behavior. If there's no generation output yet (#outImg.src is
-    // empty), we leave slots alone.
-    if (prevMode === 'camera' && mode === 'edit') {
-        const outUrl = $('outImg').src;
-        if (outUrl && $('outImg').style.display !== 'none' && lastOutputFilename) {
+    // Camera → Edit: auto-populate slot 0 with the ORIGINAL camera input
+    // (what the user uploaded), NOT the generated output. The "Use as Input"
+    // button (useAsInput) is the explicit mechanism for pushing the output
+    // into an edit slot — duplicating that here caused two problems:
+    //   1. It overwrote slot 0 with the generation result instead of the
+    //      source image, which isn't what editing usually starts from.
+    //   2. If the user then clicked "Use as Input", useAsInput's
+    //      findIndex(s=>s===null) put the same output into slot 1, so
+    //      the generate payload (slots.filter(s=>s!==null)) sent the
+    //      same image twice.
+    // Always overwrites slot 0. If there's no camera input, leave slots alone.
+    // Suppressed when opts.skipAutoPopulate is set — see editBatchSlot and
+    // restoreJobState, which place their own image in slot 0 and would
+    // race this fetch.
+    if (prevMode === 'camera' && mode === 'edit' && !opts.skipAutoPopulate) {
+        if (imageUrl && imageId) {
             (async () => {
                 try {
-                    const r = await fetchT(outUrl, null, 10000);
+                    const r = await fetchT(imageUrl, null, 10000);
                     const blob = await r.blob();
-                    const file = new File([blob], lastOutputFilename, { type: 'image/png' });
+                    // Derive a filename from the URL path; fall back if none.
+                    const name = (imageUrl.split('/').pop() || '').split('?')[0] || 'input.png';
+                    const file = new File([blob], name, { type: blob.type || 'image/png' });
                     await uploadToSlot(0, file);
                 } catch (e) {
                     // Silent — this is a convenience, not a critical path.
@@ -3797,8 +3813,12 @@ async function editBatchSlot(slotIdx){
         const blob = await r.blob();
         const fname = `view-${slotIdx + 1}-${Date.now()}.png`;
         const file = new File([blob], fname, { type: blob.type || 'image/png' });
-        // Switch to Edit mode first so the upload lands in the edit slot flow
-        setMode('edit');
+        // Switch to Edit mode first so the upload lands in the edit slot flow.
+        // skipAutoPopulate: otherwise setMode's camera→edit convenience would
+        // fire-and-forget a fetch of the camera input and race with our
+        // uploadToSlot below — whichever server round-trip finished last
+        // would win slot 0.
+        setMode('edit', { skipAutoPopulate: true });
         // Clear all edit slots and upload into slot 0 as the primary input
         for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
         await uploadToSlot(0, file);
@@ -5704,7 +5724,11 @@ function restoreJobState(jobId){
     // Restore input state
     const s=job.snapshot;
     if(!s) return;
-    setMode(s.mode);
+    // skipAutoPopulate: restoreJobState writes slots[] directly below for
+    // edit-mode restores, and a camera-mode restore obviously shouldn't
+    // touch edit slots either. Either way, the camera→edit convenience
+    // inside setMode must not fire here.
+    setMode(s.mode, { skipAutoPopulate: true });
     if(s.mode==='camera' && s.input_image_id){
         imageId=s.input_image_id; imageUrl=s.input_image_url;
         $('dropzone').style.display='none';
