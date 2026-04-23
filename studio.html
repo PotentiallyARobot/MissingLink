@@ -1235,6 +1235,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
         <div class="slider-row"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row camera-only"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
     <div class="sec">
@@ -1495,7 +1496,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
                 <span style="color:var(--green)">💸 ~$0.02 per image</span>
             </div>
             <div style="display:inline-flex;gap:6px;padding:3px 10px;background:var(--gold-dim);border:1px solid var(--gold);border-radius:20px;font-family:var(--font-mono);font-size:9px;color:var(--gold)">
-                <span>🎁</span><span><b>500 free tokens</b>, start with 5 generations</span>
+                <span>🎁</span><span><b>1000 free tokens</b>, start with 10 generations</span>
             </div>
         </div>
 
@@ -3204,12 +3205,21 @@ function toggleLock(){
 // backend defaults. Camera mode uses both Lightning (fast distillation)
 // and Angles (pose control). Edit/Batch modes use only Lightning —
 // Angles is a camera-pose adapter and actively interferes with edits.
+// Anything2Real is mode-agnostic (style→photo conversion works for
+// both camera reprojection and free-form edits), so we pass its slider
+// value verbatim regardless of mode — 0 means off, so inactive unless
+// the user explicitly raised it.
 function loraPayload(mode){
     const lightning = parseFloat($('rngLoraLightning').value) || 0;
     const angles = (mode === 'camera')
         ? (parseFloat($('rngLoraAngles').value) || 0)
         : 0;
-    return { lora_lightning: lightning, lora_angles: angles };
+    const anything2real = parseFloat($('rngLoraAnything2Real').value) || 0;
+    return {
+        lora_lightning: lightning,
+        lora_angles: angles,
+        lora_anything2real: anything2real,
+    };
 }
 
 async function doGenerate(){
@@ -3317,6 +3327,7 @@ async function doGenerate(){
         inference_steps: payload.inference_steps,
         lora_lightning: payload.lora_lightning,
         lora_angles: payload.lora_angles,
+        lora_anything2real: payload.lora_anything2real,
         width: payload.width,
         height: payload.height,
         input_image_id: currentMode==='camera' ? imageId : null,
@@ -5749,8 +5760,13 @@ function restoreJobState(jobId){
     // New per-LoRA sliders. Fall back to legacy single lora_scale if snapshot is old.
     const lightVal = (s.lora_lightning != null) ? s.lora_lightning : 1.0;
     const anglesVal = (s.lora_angles != null) ? s.lora_angles : (s.lora_scale != null ? s.lora_scale : 0.9);
+    // Anything2Real defaults to 0 on restore — older snapshots predate
+    // this field, and 0 (off) is the correct neutral for a user who
+    // never opted in.
+    const a2rVal = (s.lora_anything2real != null) ? s.lora_anything2real : 0;
     $('rngLoraLightning').value = lightVal; $('vLoraLightning').value = lightVal;
     $('rngLoraAngles').value = anglesVal; $('vLoraAngles').value = anglesVal;
+    $('rngLoraAnything2Real').value = a2rVal; $('vLoraAnything2Real').value = a2rVal;
     if(s.width) $('inpWidth').value=s.width;
     if(s.height) $('inpHeight').value=s.height;
     updateGenButton();
@@ -5888,6 +5904,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngSteps',          'vSteps');
     bindSliderPair('rngLoraLightning',  'vLoraLightning');
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
+    bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
     checkAuth();
     // Paint the header badge IMMEDIATELY so the user sees "Connecting…"
     // (and the cold-boot overlay, if applicable) without waiting for the
