@@ -867,12 +867,52 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-tile-edit:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 .batch-tile-edit.busy{opacity:1!important;animation:pulse 1s infinite}
 /* Action bar — top-right overlay while batch is active */
-.batch-footer{position:absolute;top:10px;right:10px;display:flex;gap:4px;z-index:5;background:rgba(17,17,20,.92);padding:5px;border-radius:8px;border:1px solid var(--border);backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,0,0,.4)}
+/* Batch action toolbar — draggable + minimizable. The user can grab
+   the ⋮⋮ grip and reposition the toolbar anywhere over the batch grid;
+   position persists across reloads via localStorage. The − button
+   collapses it to a compact pill so it stops covering tile content;
+   click the pill to expand again. The × button is still destructive
+   (it discards the whole batch), but it's now visually de-emphasized
+   and tooltipped so users don't reach for it when they just want to
+   move it out of the way. */
+.batch-footer{
+    position:absolute;top:10px;right:10px;display:flex;gap:4px;z-index:5;
+    background:rgba(17,17,20,.92);padding:5px;border-radius:8px;
+    border:1px solid var(--border);backdrop-filter:blur(8px);
+    box-shadow:0 4px 20px rgba(0,0,0,.4);
+    user-select:none;
+    /* When dragged, JS sets `left` (and `right:auto`) directly via inline
+       style. The CSS default (top/right) is the first-paint position. */
+}
+.batch-footer.dragging{cursor:grabbing!important;transition:none}
+.batch-footer.minimized{padding:2px;gap:0}
+.batch-footer.minimized .batch-action-btn:not(.batch-action-restore){display:none}
+.batch-footer-grip{
+    display:flex;align-items:center;justify-content:center;
+    padding:0 6px;color:var(--text-dim);font-size:13px;
+    cursor:grab;letter-spacing:-2px;line-height:1;
+    border-radius:5px;transition:color .12s,background .12s;
+    -webkit-user-select:none;user-select:none;
+}
+.batch-footer-grip:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.batch-footer.dragging .batch-footer-grip{cursor:grabbing;color:var(--gold)}
+.batch-footer.minimized .batch-footer-grip{display:none}
 .batch-action-btn{background:none;border:none;color:var(--text);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;padding:7px 10px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;-webkit-tap-highlight-color:transparent}
 .batch-action-btn:hover:not(:disabled){background:var(--gold-dim);color:var(--gold)}
 .batch-action-btn:disabled{opacity:.35;cursor:not-allowed}
-.batch-action-btn.batch-action-close{padding:7px 9px;font-size:14px;color:var(--text-muted)}
-.batch-action-btn.batch-action-close:hover{background:rgba(239,68,68,.15);color:var(--red)}
+.batch-action-btn.batch-action-min{padding:7px 9px;font-size:14px;color:var(--text-muted);line-height:.6}
+.batch-action-btn.batch-action-min:hover{background:var(--gold-dim);color:var(--gold)}
+.batch-action-btn.batch-action-close{padding:7px 9px;font-size:14px;color:var(--text-muted);opacity:.6}
+.batch-action-btn.batch-action-close:hover{background:rgba(239,68,68,.15);color:var(--red);opacity:1}
+/* The pill shown when the toolbar is minimized — a single button that
+   restores the bar to its full state. Always rendered but only visible
+   when .minimized is set (display rule above hides everything else). */
+.batch-action-btn.batch-action-restore{
+    display:none;padding:6px 12px;font-size:12px;color:var(--gold);
+    background:transparent;
+}
+.batch-footer.minimized .batch-action-btn.batch-action-restore{display:flex}
+.batch-action-btn.batch-action-restore:hover{background:var(--gold-dim)}
 .batch-action-btn.busy{background:var(--gold-dim);color:var(--gold);pointer-events:none}
 .batch-action-btn.busy::before{content:"";width:10px;height:10px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;margin-right:3px}
 /* Live progress indicator bottom-center while batch is in progress */
@@ -5052,6 +5092,8 @@ function renderBatchGrid(){
             footer.id = 'batchFooter';
             footer.className = 'batch-footer';
             footer.innerHTML = `
+                <div class="batch-footer-grip" title="Drag to move">⋮⋮</div>
+                <button class="batch-action-btn batch-action-restore" title="Expand toolbar">⚙ <span>Tools</span></button>
                 <button class="batch-action-btn" id="btnDownloadAll" onclick="downloadBatchAll()" title="Download all images">
                     ⬇ <span>Download</span>
                 </button>
@@ -5064,11 +5106,34 @@ function renderBatchGrid(){
                 <button class="batch-action-btn" id="btnProductize" onclick="productizeBatch()" title="Turn this into a product page with price, reviews, and a Buy Now button">
                     🏷 <span>Productize</span>
                 </button>
-                <button class="batch-action-btn batch-action-close" id="btnCloseBatch" onclick="clearBatchGrid()" title="Close">
+                <button class="batch-action-btn batch-action-min" id="btnMinBatch" title="Minimize toolbar">−</button>
+                <button class="batch-action-btn batch-action-close" id="btnCloseBatch" title="Discard batch (clears all results)">
                     ×
                 </button>
             `;
             area.appendChild(footer);
+            // Wire up the new draggable + minimize behaviors. Close is
+            // wired here too (instead of inline onclick) so we can ask
+            // for confirmation before doing the destructive clear.
+            initBatchFooterDrag(footer);
+            const restoreBtn = footer.querySelector('.batch-action-restore');
+            const minBtn = footer.querySelector('#btnMinBatch');
+            const closeBtn = footer.querySelector('#btnCloseBatch');
+            if (restoreBtn) restoreBtn.onclick = () => setBatchFooterMinimized(false);
+            if (minBtn) minBtn.onclick = () => setBatchFooterMinimized(true);
+            if (closeBtn) closeBtn.onclick = () => {
+                // Confirm before throwing away the user's results — this
+                // is a one-way operation and was previously labelled "Close"
+                // which made it look like a minimize.
+                if (confirm('Discard this batch and clear all results?')) {
+                    clearBatchGrid();
+                }
+            };
+            // Restore minimized state on first creation. Position is
+            // restored inside initBatchFooterDrag.
+            if (localStorage.getItem('batchFooterMin') === '1') {
+                setBatchFooterMinimized(true);
+            }
         }
         // Disable actions that require ALL shots done (GIF + embed) until
         // all images have arrived. Download works with whatever's done.
@@ -5793,6 +5858,138 @@ function _copyEmbedText(inputId, btn){
 }
 
 // Clear the batch grid and return the main output area to its default state.
+// Batch toolbar drag handler. Position is persisted to localStorage so
+// the user's preferred location survives reloads. We track movement
+// against the parent (#outputArea) rather than the viewport so the
+// toolbar stays inside the visible work area. On window/area resize the
+// stored position is reapplied with bounds-checking — if the saved
+// coords would put the toolbar offscreen, it snaps back to the visible
+// region.
+function initBatchFooterDrag(footer){
+    if (!footer || footer._dragInit) return;
+    footer._dragInit = true;
+    const grip = footer.querySelector('.batch-footer-grip');
+    if (!grip) return;
+    const STORAGE_KEY = 'batchFooterPos';
+
+    // Apply a saved position, clamped to the parent's bounds. Returns
+    // true if a saved position was applied so the caller knows whether
+    // to fall back to the default top/right CSS placement.
+    function applySaved(){
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        let pos; try { pos = JSON.parse(raw); } catch { return false; }
+        if (typeof pos.left !== 'number' || typeof pos.top !== 'number') return false;
+        const parent = footer.offsetParent || footer.parentElement;
+        if (!parent) return false;
+        const pw = parent.clientWidth, ph = parent.clientHeight;
+        const fw = footer.offsetWidth, fh = footer.offsetHeight;
+        const margin = 4;
+        const left = Math.max(margin, Math.min(pw - fw - margin, pos.left));
+        const top  = Math.max(margin, Math.min(ph - fh - margin, pos.top));
+        footer.style.left = left + 'px';
+        footer.style.top = top + 'px';
+        footer.style.right = 'auto';
+        return true;
+    }
+    // Wait one frame so offsetWidth/Height are correct (the footer was
+    // just appended). Then apply any saved position.
+    requestAnimationFrame(() => applySaved());
+
+    let dragging = false;
+    let startX = 0, startY = 0;
+    let startLeft = 0, startTop = 0;
+    function onPointerDown(e){
+        // Only react to primary button / first touch — ignore right-click
+        // and middle-click so they don't get hijacked.
+        if (e.button !== undefined && e.button !== 0) return;
+        const parent = footer.offsetParent || footer.parentElement;
+        if (!parent) return;
+        const rect = footer.getBoundingClientRect();
+        const parentRect = parent.getBoundingClientRect();
+        startLeft = rect.left - parentRect.left;
+        startTop = rect.top - parentRect.top;
+        startX = e.clientX;
+        startY = e.clientY;
+        dragging = true;
+        footer.classList.add('dragging');
+        // Switch to absolute positioning anchored to top-left so the drag
+        // math is straightforward (right:auto suppresses the default).
+        footer.style.left = startLeft + 'px';
+        footer.style.top = startTop + 'px';
+        footer.style.right = 'auto';
+        // Capture the pointer so we keep getting events even when the
+        // cursor leaves the grip element.
+        if (grip.setPointerCapture && e.pointerId !== undefined) {
+            try { grip.setPointerCapture(e.pointerId); } catch {}
+        }
+        e.preventDefault();
+    }
+    function onPointerMove(e){
+        if (!dragging) return;
+        const parent = footer.offsetParent || footer.parentElement;
+        if (!parent) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const pw = parent.clientWidth, ph = parent.clientHeight;
+        const fw = footer.offsetWidth, fh = footer.offsetHeight;
+        const margin = 4;
+        const newLeft = Math.max(margin, Math.min(pw - fw - margin, startLeft + dx));
+        const newTop  = Math.max(margin, Math.min(ph - fh - margin, startTop + dy));
+        footer.style.left = newLeft + 'px';
+        footer.style.top = newTop + 'px';
+    }
+    function onPointerUp(e){
+        if (!dragging) return;
+        dragging = false;
+        footer.classList.remove('dragging');
+        if (grip.releasePointerCapture && e.pointerId !== undefined) {
+            try { grip.releasePointerCapture(e.pointerId); } catch {}
+        }
+        // Persist final position. Reads from inline style (which is what
+        // we just set during drag) rather than computed style.
+        const left = parseFloat(footer.style.left) || 0;
+        const top  = parseFloat(footer.style.top)  || 0;
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ left, top })); } catch {}
+    }
+    grip.addEventListener('pointerdown', onPointerDown);
+    grip.addEventListener('pointermove', onPointerMove);
+    grip.addEventListener('pointerup', onPointerUp);
+    grip.addEventListener('pointercancel', onPointerUp);
+    // Re-clamp on window resize so the toolbar doesn't end up off-canvas
+    // if the user shrinks their window.
+    window.addEventListener('resize', () => {
+        if (footer.style.left) applySaved();
+    });
+}
+
+// Toggle the minimized state of the batch toolbar. Minimized = compact
+// pill that shows only a "Tools" restore button; expanded = full toolbar.
+// State is persisted so refreshes restore the user's preference.
+function setBatchFooterMinimized(min){
+    const footer = $('batchFooter');
+    if (!footer) return;
+    footer.classList.toggle('minimized', !!min);
+    try { localStorage.setItem('batchFooterMin', min ? '1' : '0'); } catch {}
+    // After resizing the toolbar (which the .minimized class does), the
+    // saved position might now be invalid (e.g. minimized at the right
+    // edge → expanded would overflow). Re-clamp.
+    requestAnimationFrame(() => {
+        const raw = localStorage.getItem('batchFooterPos');
+        if (!raw || !footer.style.left) return;
+        const parent = footer.offsetParent || footer.parentElement;
+        if (!parent) return;
+        const pw = parent.clientWidth, ph = parent.clientHeight;
+        const fw = footer.offsetWidth, fh = footer.offsetHeight;
+        const margin = 4;
+        const cur = { left: parseFloat(footer.style.left) || 0, top: parseFloat(footer.style.top) || 0 };
+        const left = Math.max(margin, Math.min(pw - fw - margin, cur.left));
+        const top  = Math.max(margin, Math.min(ph - fh - margin, cur.top));
+        footer.style.left = left + 'px';
+        footer.style.top = top + 'px';
+    });
+}
+
 function clearBatchGrid(){
     _activeBatch = null;
     // End any sticky "edit this view" session — the target tile is gone.
