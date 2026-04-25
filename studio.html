@@ -88,6 +88,17 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     position:relative;aspect-ratio:1/1;border-radius:6px;overflow:hidden;
     background:var(--surface-3);border:2px solid var(--border);cursor:pointer;
     transition:all .12s;
+    /* ──────────────────────────────────────────────────────────────────
+       min-width/min-height 0 is critical here: the inner <img> (manga
+       pages, photo uploads, etc.) reports its intrinsic size as
+       min-content. Grid items default to `min-height: auto`, which means
+       "don't shrink below min-content". Without this override the grid
+       track sizing algorithm would treat each tile as needing 1500-2000px
+       of height, blowing up rows and causing tiles to overlap once the
+       upload count exceeds a single row. With min-* set to 0 the cell
+       respects aspect-ratio:1/1 and the column track width.
+       ────────────────────────────────────────────────────────────────── */
+    min-width:0;min-height:0;
 }
 .batch-input-tile:hover{border-color:var(--border-strong)}
 .batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
@@ -701,6 +712,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     border:1px solid var(--border);border-radius:8px;overflow:hidden;
     display:flex;flex-direction:column;cursor:default;
     transition:border-color .2s,transform .2s,box-shadow .2s;
+    /* See the matching comment on .batch-input-tile — same fix for the
+       same min-content-from-<img> grid track-sizing bug. */
+    min-width:0;min-height:0;
     /* Staggered fade-in for each tile as it becomes available. Applied
        as a transition, not a keyframe — so it only animates when the
        image URL first populates (via the .just-arrived class toggle). */
@@ -4771,6 +4785,22 @@ async function generateAllAngles(){
 // to expand into the full-screen image modal.
 function renderBatchGrid(){
     const area = $('outputArea');
+    // The input grid (#batchInputsGrid) and the output grid (#batchGrid)
+    // are siblings inside #outputArea. Without this sync, starting a batch
+    // would leave the input grid visible BEHIND the output grid — a
+    // pre-existing bug because _activeBatch is set in two places that call
+    // only renderBatchGrid(). Centralizing the toggle here means the two
+    // grids can never drift out of sync regardless of who triggered the
+    // re-render. Re-show is handled by renderBatchInputs() — it owns the
+    // "should I be visible" decision when no active batch is in flight.
+    const inputGrid = $('batchInputsGrid');
+    if (inputGrid) {
+        if (_activeBatch) {
+            inputGrid.style.display = 'none';
+        } else if (typeof renderBatchInputs === 'function') {
+            renderBatchInputs();
+        }
+    }
     if (!_activeBatch) {
         // Clean up if a batch was cancelled/cleared — restore single-image view
         const grid = $('batchGrid');
