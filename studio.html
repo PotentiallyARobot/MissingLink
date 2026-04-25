@@ -75,14 +75,28 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-inputs-grid{
     position:absolute;inset:10px;
     display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+    /* Column count is set as a CSS variable by renderBatchInputs() based
+       on the upload count — picked to minimize "orphan" tiles in the last
+       row (e.g. 9 uploads → 3 cols → perfect 3×3 instead of 4 cols with 1
+       lonely tile). Fallback `auto-fill` is responsive in case JS hasn't
+       set --batch-cols yet (first paint, edge cases). */
+    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(180px, 1fr));
     gap:10px;
     padding:16px;
     overflow-y:auto;
     align-content:start;    /* tiles pinned to top, don't stretch vertically */
     box-sizing:border-box;
     z-index:1;
+    /* Themed scrollbar — matches the .history-modal-body pattern used
+       elsewhere in this file. Without these, the browser/OS chrome
+       scrollbar punches through the dark UI and looks jarring. */
+    scrollbar-width:thin;
+    scrollbar-color:var(--surface-3) transparent;
 }
+.batch-inputs-grid::-webkit-scrollbar{width:8px}
+.batch-inputs-grid::-webkit-scrollbar-track{background:transparent}
+.batch-inputs-grid::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+.batch-inputs-grid::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
 .batch-inputs-grid:empty{display:none}
 .batch-input-tile{
     position:relative;aspect-ratio:1/1;border-radius:6px;overflow:hidden;
@@ -691,18 +705,27 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     grid-column:1/span 2;grid-row:1/span 2;
 }
 /* Batch-edit: variable number of uploaded images, uniform tile grid.
-   auto-fill + minmax adapts to any count without media queries. Rows
-   scroll vertically via overflow-y on the grid container itself.
+   Column count is also driven by --batch-cols (set by renderBatchGrid)
+   so the output grid mirrors the input grid's chosen layout — keeping
+   the visual mapping 1-to-1 from input tile to output tile. Falls back
+   to auto-fill if the variable isn't set yet.
    !important used defensively — the hero-slot rule doesn't apply here
    (it's scoped under [data-kind="angles"]), but browsers caching stale
    CSS or widget overrides could still leak the 3-column layout. */
 .batch-grid[data-kind="batch-edit"]{
-    grid-template-columns:repeat(auto-fill,minmax(220px,1fr))!important;
+    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(220px, 1fr))!important;
     grid-template-rows:none!important;
     grid-auto-rows:minmax(180px,1fr)!important;
     overflow-y:auto;
     align-content:start;
+    /* Themed scrollbar — see matching block on .batch-inputs-grid */
+    scrollbar-width:thin;
+    scrollbar-color:var(--surface-3) transparent;
 }
+.batch-grid[data-kind="batch-edit"]::-webkit-scrollbar{width:8px}
+.batch-grid[data-kind="batch-edit"]::-webkit-scrollbar-track{background:transparent}
+.batch-grid[data-kind="batch-edit"]::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+.batch-grid[data-kind="batch-edit"]::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
 .batch-grid[data-kind="batch-edit"] .batch-tile[data-slot="0"]{
     grid-column:auto!important;
     grid-row:auto!important;
@@ -3705,12 +3728,36 @@ function bslotFileChange(slotIdx){
     inp.value = '';   // allow re-picking same file
 }
 
+// Pick a column count that minimizes orphan tiles in the last row of
+// a tile grid. For N items, scan columns from ceil(√N) up to a sensible
+// cap, and pick the count that leaves the fewest empty slots on the
+// last row. Used by both renderBatchInputs() and renderBatchGrid() so
+// the two grids share the same visual mapping per item.
+//   N=9  → 3 (perfect 3×3)        N=8  → 4 (perfect 2×4)
+//   N=12 → 4 (perfect 3×4)        N=7  → 4 (one orphan, best possible)
+// Cap (6) keeps tiles from getting tiny when there are lots of uploads.
+function bestBatchColumnCount(N){
+    if (N <= 0) return 1;
+    if (N <= 6) return N;  // single-row layout for small batches
+    const startCols = Math.ceil(Math.sqrt(N));
+    const maxCols = 6;
+    let best = startCols;
+    let bestOrphans = (N % best === 0) ? 0 : (best - (N % best));
+    for (let c = startCols; c <= maxCols; c++) {
+        const orphans = (N % c === 0) ? 0 : (c - (N % c));
+        if (orphans < bestOrphans) { best = c; bestOrphans = orphans; }
+    }
+    return best;
+}
+
 function renderBatchInputs(){
     const grid = $('batchInputsGrid');
     const controls = $('batchSelectControls');
     const countEl = $('batchInputsCount');
     if (!grid) return;
     grid.innerHTML = '';
+
+    grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_batchInputs.length)));
 
     // Visibility rules: the grid should ONLY show when in batch mode AND
     // there are uploads AND no active batch-result grid is taking over.
@@ -4828,6 +4875,15 @@ function renderBatchGrid(){
     // one with a different kind.
     grid.dataset.kind = _activeBatch.kind || 'angles';
 
+    // For batch-edit, mirror the same column-count heuristic the input
+    // grid uses — same N tiles, same orphan-avoidance, same visual mapping.
+    // The 'angles' kind has its own fixed 3×3 hero layout and should NOT
+    // get this var, so we explicitly clear it in that case.
+    if ((_activeBatch.kind || 'angles') === 'batch-edit') {
+        grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_activeBatch.shots.length)));
+    } else {
+        grid.style.removeProperty('--batch-cols');
+    }
     // Build/update 6 tile elements in place (don't wipe — we want the already-
     // rendered images to stay displayed while new ones populate).
     let doneCount = 0;
