@@ -886,6 +886,30 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-tile.done:hover .batch-tile-edit{opacity:1;transform:scale(1)}
 .batch-tile-edit:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 .batch-tile-edit.busy{opacity:1!important;animation:pulse 1s infinite}
+/* Retry button — sits prominently in the center of failed/cancelled
+   tiles. Unlike the edit/critique buttons which are hover-revealed, the
+   retry button is ALWAYS visible because the tile state demands action.
+   Pulses subtly while retrying so the user gets feedback without losing
+   the position of the click target. */
+.batch-tile-retry{
+    position:absolute;left:50%;top:55%;transform:translate(-50%,-50%);
+    z-index:4;
+    padding:6px 14px;border-radius:5px;
+    background:var(--surface-2);color:var(--gold);
+    border:1px solid var(--gold);
+    font-family:var(--font-mono);font-size:10px;font-weight:700;
+    letter-spacing:.5px;text-transform:uppercase;
+    cursor:pointer;transition:all .15s;
+    display:flex;align-items:center;gap:5px;
+    backdrop-filter:blur(6px);
+    box-shadow:0 2px 8px rgba(0,0,0,.4);
+}
+.batch-tile-retry:hover{background:var(--gold);color:#0a0a0c}
+.batch-tile-retry.busy{
+    opacity:.7;cursor:wait;animation:pulse 1s infinite;
+    pointer-events:none;
+}
+.batch-tile-retry::before{content:"↻";font-size:13px;line-height:1}
 /* Action bar — top-right overlay while batch is active */
 /* Batch action toolbar — draggable + minimizable. The user can grab
    the ⋮⋮ grip and reposition the toolbar anywhere over the batch grid;
@@ -3692,6 +3716,17 @@ async function doGenerate(){
             $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
         }
 
+        // Single-image generation — tear down any batch grid that's
+        // currently displayed so the new result owns the stage. Without
+        // this, the completion poller's "preserve batch view" guard
+        // (intended to protect post-reload races) suppresses showResult
+        // and the new image silently lands in history. Also drops any
+        // pending angle shots that were waiting for slots to free up,
+        // so they don't keep generating into a no-longer-visible grid.
+        if (_activeBatch) {
+            clearBatchGrid();
+        }
+
         // Remove any duplicate
         myJobs = myJobs.filter(j => j.id !== d.job_id);
 
@@ -4568,61 +4603,52 @@ async function aiCritiqueOutputTile(slotIdx, btnEl){
 // Re-queue a single batch slot with a (usually critique-refined) prompt.
 // We replay the existing /api/studio/generate flow against just that
 // slot. The polling already in place will fill the tile when done.
+//
+// Uses the payload stashed at original-submit time so this works
+// uniformly for both angle and batch-edit modes — previous version
+// hardcoded mode='edit' which broke critique-driven retry on angle
+// batches and assumed _batchInputs was populated (true only for
+// batch-edit mode). Now: mutate prompt on the stashed payload, route
+// through the same retry queue retryFailedShot uses.
 async function retryBatchSlot(slotIdx, refinedPrompt){
     if (!_activeBatch || !_activeBatch.shots[slotIdx]) return;
     const shot = _activeBatch.shots[slotIdx];
-    const inp = _batchInputs.find(b => b.url === shot.inputUrl);
-    if (!inp) {
-        showNotif('Cannot retry — original input no longer available.', 'error');
+    if (!shot.payload) {
+        showNotif('Cannot retry — no submission params stored for this shot.', 'error');
         return;
     }
+    if (!_user) { $('loginModal').classList.add('open'); return; }
     if (_user.tokens < 100) {
         showNotif('Need 100 tokens to retry.', 'error');
         showBuyModal();
         return;
     }
-    // Reset visual state to pending so renderBatchGrid shows the loader again.
-    shot.status = 'pending';
-    shot.url = null;
-    shot.jobId = null;
+    // Patch the stashed payload with the new prompt before re-submission.
+    // Also patch the snapshot if present — keeps history accurate so a
+    // later "restore from history" gets the refined prompt, not the original.
+    shot.payload = { ...shot.payload, prompt: refinedPrompt };
+    if (shot.snapshot) shot.snapshot = { ...shot.snapshot, prompt: refinedPrompt };
     shot.prompt = refinedPrompt;
+    // Clear any AI-critique state since the prompt has changed; a stale
+    // 'flagged' badge would mislead the user about a fresh tile.
     shot.aiFlagged = false;
     shot.aiCritique = null;
+    // Reset visual state and route through the standard retry path.
+    shot.status = 'pending';
+    shot.jobId = null;
+    shot.url = null;
     renderBatchGrid();
-
-    const seed = parseInt($('rngSeed').value) || 42;
-    const negative = $('negPrompt').value.trim();
-    const cfg = parseFloat($('rngCfg').value);
-    const steps = parseInt($('rngSteps').value);
-    const imageIds = [inp.id];
-    if (_batchContext[1]) imageIds.push(_batchContext[1].id);
-    if (_batchContext[2]) imageIds.push(_batchContext[2].id);
-    const payload = {
-        mode: 'edit',
-        image_ids: imageIds,
-        prompt: refinedPrompt, negative_prompt: negative, seed,
-        guidance_scale: cfg, inference_steps: steps,
-        ...loraPayload('edit'),
-        width: inp.w || 0, height: inp.h || 0,
-        batch_id: _activeBatch.id,
-    };
-    try {
-        const r = await fetchT(`${API}/api/studio/generate`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload),
-        }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
-        const d = await r.json();
-        if (d.error) { showNotif(d.error, 'error'); shot.status = 'error'; renderBatchGrid(); return; }
-        shot.jobId = d.job_id;
-        shot.status = 'queued';
-        renderBatchGrid();
+    _pendingAngleShots.unshift({
+        shotIdx,
+        payload: shot.payload,
+        snapshot: shot.snapshot,
+        label: shot.label,
+    });
+    const ok = await submitNextPendingAngle();
+    if (ok) {
         showNotif('Retry queued — tile will refresh when ready.');
-    } catch (e) {
-        shot.status = 'error';
-        renderBatchGrid();
-        showNotif('Retry submission failed: ' + (e.message || e), 'error');
+    } else if (_pendingAngleShots.some(p => p.shotIdx === slotIdx)) {
+        showNotif('Retry queued — will start when a slot frees up.');
     }
 }
 
@@ -4659,6 +4685,11 @@ async function maybeAutoQa(slotIdx){
     if (!_activeBatch || !_activeBatch.shots[slotIdx]) return;
     const shot = _activeBatch.shots[slotIdx];
     if (!shot.url || shot.aiCritique) return;  // already done
+    // Snapshot the batch id at fetch time so we can detect if the user
+    // cleared the batch (or started a new one) while our request was
+    // in flight. Without this guard we'd mutate stale shot state on a
+    // batch the user is no longer looking at.
+    const batchIdAtStart = _activeBatch.id;
     try {
         const r = await fetchT(`${API}/api/studio/ai-critique`, {
             method: 'POST',
@@ -4672,9 +4703,16 @@ async function maybeAutoQa(slotIdx){
         if (!r.ok) return;
         const d = await r.json();
         if (d.error) return;
+        // Re-check the batch is still the same one we started against.
+        // If the user cleared the grid or started a new batch, just drop
+        // the result on the floor — the auto-QA flag would be meaningless
+        // attached to a different/missing shot.
+        if (!_activeBatch || _activeBatch.id !== batchIdAtStart) return;
+        if (!_activeBatch.shots[slotIdx]) return;
+        const liveShot = _activeBatch.shots[slotIdx];
         const bucket = d.bucket || (d.score >= 80 ? 'good' : d.score >= 50 ? 'ok' : 'bad');
-        shot.aiCritique = d;
-        shot.aiFlagged = bucket === 'bad';
+        liveShot.aiCritique = d;
+        liveShot.aiFlagged = bucket === 'bad';
         renderBatchGrid();
     } catch (e) { /* silent — auto-QA is best-effort */ }
 }
@@ -4769,6 +4807,12 @@ async function generateBatchEdits(){
             width: inp.w || 0, height: inp.h || 0,
             batch_id: batchId,
         };
+        // Stash retry info on the shot. If this submission fails (or the
+        // job later errors during processing), the user can hit Retry on
+        // the tile and we'll re-submit with these exact params, independent
+        // of any sidebar-state changes since the original.
+        _activeBatch.shots[i].payload = payload;
+        _activeBatch.shots[i].inputId = inp.id;
         try {
             const r = await fetchT(`${API}/api/studio/generate`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -4882,6 +4926,12 @@ async function editBatchSlot(slotIdx){
     if (!_activeBatch) return;
     const shot = _activeBatch.shots[slotIdx];
     if (!shot || !shot.url) return;
+    // Capture batch identity BEFORE setMode runs — setMode('edit') from
+    // camera mode triggers clearBatchGrid() which nulls _activeBatch.
+    // Without this snapshot, the _editingBatchSlot assignment below would
+    // throw on _activeBatch.id (now null).
+    const sourceBatchId = _activeBatch.id;
+    const sourceLabel = shot.label;
     const btn = document.querySelector(`[data-slot="${slotIdx}"] .batch-tile-edit`);
     if (btn) { btn.classList.add('busy'); btn.disabled = true; }
     try {
@@ -4902,16 +4952,18 @@ async function editBatchSlot(slotIdx){
         // Clear all edit slots and upload into slot 0 as the primary input
         for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
         await uploadToSlot(0, file);
-        // Arm the routing flag — sticky until user explicitly exits.
-        _editingBatchSlot = { slotIdx, batchId: _activeBatch.id };
+        // Arm the routing flag — sticky until user explicitly exits. Uses
+        // the captured-before-setMode batch id so the eventual generation
+        // routes back to the right (potentially history-restored) batch.
+        _editingBatchSlot = { slotIdx, batchId: sourceBatchId };
         renderEditingSlotBanner();
         // Prefill the edit prompt with a helpful starter the user can replace
         const cp = $('customPrompt');
         if (cp && !cp.value.trim()) {
-            cp.placeholder = `Describe the change for "${shot.label}"… (e.g. "add red accents")`;
+            cp.placeholder = `Describe the change for "${sourceLabel}"… (e.g. "add red accents")`;
             cp.focus();
         }
-        log(`Editing view ${slotIdx + 1} · ${shot.label}`);
+        log(`Editing view ${slotIdx + 1} · ${sourceLabel}`);
     } catch (e) {
         log('Edit-view failed: ' + e.message, 'error');
         showNotif('Could not load that view for editing.', 'error');
@@ -5010,6 +5062,11 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
             jobId: null,
             status: 'pending',
             url: null,
+            // Per-shot inputUrl mirrors the batch-edit shape so all the
+            // tile-rendering + AI-critique code can use shot.inputUrl
+            // uniformly. For angle batches every shot uses the same input
+            // (the camera-mode source image), so we point them all at it.
+            inputUrl: imageUrl,
         })),
     };
     renderBatchGrid();
@@ -5058,9 +5115,20 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
         // will submit these one-by-one as earlier shots finish.
         if (submitted >= initialBudget) {
             _pendingAngleShots.push({ shotIdx: i, payload, snapshot, label: shot.label });
+            // Also stash the payload+snapshot ON the shot itself so a
+            // later retry (after a failure) doesn't need to re-derive it
+            // from sidebar state — which may have drifted between submit
+            // and retry-click.
+            _activeBatch.shots[i].payload = payload;
+            _activeBatch.shots[i].snapshot = snapshot;
             stashed++;
             continue;
         }
+
+        // Stash retry info before submission so an immediate failure
+        // (which sets status='error') still has everything it needs.
+        _activeBatch.shots[i].payload = payload;
+        _activeBatch.shots[i].snapshot = snapshot;
 
         try {
             const r = await fetchT(`${API}/api/studio/generate`, {
@@ -5176,11 +5244,19 @@ async function submitNextPendingAngle(){
         }
         _activeBatch.shots[shotIdx].jobId = d.job_id;
         _activeBatch.shots[shotIdx].status = 'queued';
+        // Mode + thumbnail must match what the original submission used —
+        // otherwise the queue-panel + history rendering for a retried
+        // batch-edit shot would mislabel it as a 'camera' job and show
+        // the wrong thumbnail. Read both off the payload (the source of
+        // truth that flows from the original submission).
+        const jobMode = (payload && payload.mode) || 'camera';
+        const shot = _activeBatch.shots[shotIdx];
+        const jobThumb = (shot && shot.inputUrl) || imageUrl || null;
         myJobs.unshift({
             id: d.job_id,
             status: 'waiting',
-            mode: 'camera',
-            thumb: imageUrl,
+            mode: jobMode,
+            thumb: jobThumb,
             result: null,
             submittedAt: Date.now(),
             startedAt: Date.now(),
@@ -5200,20 +5276,125 @@ async function submitNextPendingAngle(){
     }
 }
 
-// Render (or update) the 3×2 grid in the main output area for the active
+// Retry a single failed/cancelled shot. Re-uses the payload + snapshot
+// stashed on the shot at original-submit time, so the retry uses the
+// EXACT params the original submission used (not whatever the sidebar
+// currently shows — important since the user may have changed prompts
+// or settings since the batch started).
+//
+// The actual submission goes through the same _pendingAngleShots queue
+// that the initial-batch overflow uses: this keeps retry, drain, and
+// initial-submit on a single code path. If the server's queue has room,
+// submitNextPendingAngle picks it up immediately; otherwise it waits in
+// FIFO order behind any other pending shots and gets drained as slots
+// free up via the completion poller.
+async function retryFailedShot(slotIdx, btnEl){
+    if (!_activeBatch || !_activeBatch.shots[slotIdx]) return;
+    const shot = _activeBatch.shots[slotIdx];
+    if (shot.status !== 'error' && shot.status !== 'cancelled') return;
+    if (!shot.payload) {
+        showNotif('Cannot retry — no submission params stored for this shot.', 'error');
+        return;
+    }
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    // Generation cost is 100 tokens regardless of mode. Without this
+    // check the API call would 402 and show the buy modal anyway, but
+    // the tile would visually flicker through 'pending' first which is
+    // confusing. Catching it here gives instant feedback.
+    if (_user.tokens < 100) { showBuyModal(); return; }
+
+    if (btnEl) { btnEl.classList.add('busy'); btnEl.disabled = true; }
+
+    // Reset visual state to pending so the tile shows the loading shimmer
+    // again. The next renderBatchGrid call (immediately below) does the
+    // visual swap; the actual submission happens after.
+    shot.status = 'pending';
+    shot.jobId = null;
+    shot.url = null;
+    renderBatchGrid();
+
+    // Push to the front of the pending queue so retries are prioritized
+    // over any other queued shots (a user explicitly clicked Retry; they
+    // shouldn't have to wait behind shots that haven't had their first
+    // chance yet). Then drain.
+    _pendingAngleShots.unshift({
+        shotIdx,
+        payload: shot.payload,
+        snapshot: shot.snapshot,
+        label: shot.label,
+    });
+    const ok = await submitNextPendingAngle();
+    if (!ok && _pendingAngleShots.some(p => p.shotIdx === slotIdx)) {
+        // Still pending — server queue was full. The completion poller
+        // will pick it up automatically. Surface a hint so the user
+        // doesn't think nothing happened.
+        showNotif('Retry queued — will start when a slot frees up.');
+    }
+    // Button busy class is removed via the re-render above (the button
+    // itself was hidden once status flipped to 'pending'). No explicit
+    // cleanup needed.
+}
+
+// "Retry all failed" — used by the toolbar action. Iterates every shot
+// in error or cancelled state and queues each via the same retry path.
+// Order matters: we walk left-to-right so the visual order of retries
+// matches reading order on the grid. Unlike single retryFailedShot
+// (which front-loads to prioritize the explicit click), retry-all
+// appends to the END of the pending queue so the relative order of
+// the failed tiles is preserved when the server queue is saturated.
+async function retryAllFailedShots(){
+    if (!_activeBatch) return;
+    const failed = [];
+    for (let i = 0; i < _activeBatch.shots.length; i++) {
+        const s = _activeBatch.shots[i];
+        if ((s.status === 'error' || s.status === 'cancelled') && s.payload) {
+            failed.push(i);
+        }
+    }
+    if (!failed.length) {
+        showNotif('No failed shots to retry.');
+        return;
+    }
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    // Sanity check tokens up front. 100 / shot.
+    const needed = failed.length * 100;
+    if (_user.tokens < needed) {
+        showNotif(`Need ${needed} tokens to retry ${failed.length} shots; you have ${_user.tokens}.`, 'error');
+        showBuyModal();
+        return;
+    }
+    log(`Retrying ${failed.length} failed shot${failed.length === 1 ? '' : 's'}…`);
+    // Append all to the pending queue first (preserving left-to-right
+    // visual order), flip tile state to pending so the spinner returns,
+    // then drain. Drain submits as many as the server accepts; the rest
+    // are picked up by the completion poller automatically.
+    for (const idx of failed) {
+        const shot = _activeBatch.shots[idx];
+        shot.status = 'pending';
+        shot.jobId = null;
+        shot.url = null;
+        _pendingAngleShots.push({
+            shotIdx: idx,
+            payload: shot.payload,
+            snapshot: shot.snapshot,
+            label: shot.label,
+        });
+    }
+    renderBatchGrid();
+    // Drain as far as the server lets us.
+    while (_pendingAngleShots.length) {
+        const ok = await submitNextPendingAngle();
+        if (!ok) break;  // 429, 401, 402, etc. — completion poller will resume
+    }
+}
+
+
+// Render (or update) the grid in the main output area for the active
 // batch. Each slot shows an image once its job completes; a skeleton/spinner
 // is shown while the job is still queued or running. Click a finished slot
 // to expand into the full-screen image modal.
 function renderBatchGrid(){
     const area = $('outputArea');
-    // The input grid (#batchInputsGrid) and the output grid (#batchGrid)
-    // are siblings inside #outputArea. Without this sync, starting a batch
-    // would leave the input grid visible BEHIND the output grid — a
-    // pre-existing bug because _activeBatch is set in two places that call
-    // only renderBatchGrid(). Centralizing the toggle here means the two
-    // grids can never drift out of sync regardless of who triggered the
-    // re-render. Re-show is handled by renderBatchInputs() — it owns the
-    // "should I be visible" decision when no active batch is in flight.
     const inputGrid = $('batchInputsGrid');
     if (inputGrid) {
         if (_activeBatch) {
@@ -5278,6 +5459,7 @@ function renderBatchGrid(){
                 <div class="batch-tile-label"></div>
                 <button class="batch-tile-critique" title="Critique this result — LLM scores it and suggests a refined prompt" aria-label="Critique this result" style="display:none">🔬</button>
                 <button class="batch-tile-edit" title="Edit this view" aria-label="Edit this view" style="display:none">✎</button>
+                <button class="batch-tile-retry" title="Retry this shot" aria-label="Retry this shot" style="display:none">Retry</button>
             `;
             // Edit button click — stop propagation so it doesn't trigger the
             // tile's zoom-to-modal onclick.
@@ -5294,6 +5476,13 @@ function renderBatchGrid(){
                 ev.stopPropagation();
                 aiCritiqueOutputTile(i, critBtn);
             });
+            // Retry button — re-submits the failed/cancelled shot using
+            // the payload stashed at original-submit time.
+            const retryBtn = tile.querySelector('.batch-tile-retry');
+            retryBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                retryFailedShot(i, retryBtn);
+            });
             grid.appendChild(tile);
         }
         const img = tile.querySelector('.batch-tile-output');
@@ -5302,6 +5491,7 @@ function renderBatchGrid(){
         const label = tile.querySelector('.batch-tile-label');
         const editBtn = tile.querySelector('.batch-tile-edit');
         const critBtn = tile.querySelector('.batch-tile-critique');
+        const retryBtn = tile.querySelector('.batch-tile-retry');
         label.textContent = shot.label;
         // Populate the input preview immediately — so the tile shows the
         // source image the whole time the job is pending/queued/running.
@@ -5318,6 +5508,13 @@ function renderBatchGrid(){
             // Restore flagged state from any prior critique (auto-QA stores
             // it on the shot so re-renders don't lose the visual flag).
             critBtn.classList.toggle('flagged', !!shot.aiFlagged);
+        }
+        // Show retry button only when the tile is in a failed/cancelled
+        // state AND we have a stashed payload to re-submit. (Restored-from-
+        // history shots have no payload, so retry isn't meaningful there.)
+        if (retryBtn) {
+            const canRetry = (shot.status === 'error' || shot.status === 'cancelled') && !!shot.payload;
+            retryBtn.style.display = canRetry ? '' : 'none';
         }
 
         if (shot.url) {
@@ -5430,6 +5627,9 @@ function renderBatchGrid(){
             footer.innerHTML = `
                 <div class="batch-footer-grip" title="Drag to move">⋮⋮</div>
                 <button class="batch-action-btn batch-action-restore" title="Expand toolbar">⚙ <span>Tools</span></button>
+                <button class="batch-action-btn" id="btnRetryFailed" onclick="retryAllFailedShots()" title="Retry all failed shots in this batch" style="display:none;color:var(--gold)">
+                    ↻ <span>Retry failed</span>
+                </button>
                 <button class="batch-action-btn" id="btnDownloadAll" onclick="downloadBatchAll()" title="Download all images">
                     ⬇ <span>Download</span>
                 </button>
@@ -5479,6 +5679,23 @@ function renderBatchGrid(){
         if (gifBtn)   gifBtn.disabled   = !allDone;
         if (embedBtn) embedBtn.disabled = !allDone;
         if (prodBtn)  prodBtn.disabled  = !allDone;
+
+        // Retry-failed toolbar button — show when there's at least one
+        // failed/cancelled shot AND it has a retryable payload. The button
+        // count chip shows users how many failures are about to be retried
+        // so they don't have to count tiles by eye.
+        const retryAllBtn = $('btnRetryFailed');
+        if (retryAllBtn) {
+            const failedCount = _activeBatch.shots.filter(s =>
+                (s.status === 'error' || s.status === 'cancelled') && s.payload
+            ).length;
+            if (failedCount > 0) {
+                retryAllBtn.style.display = '';
+                retryAllBtn.innerHTML = `↻ <span>Retry ${failedCount} failed</span>`;
+            } else {
+                retryAllBtn.style.display = 'none';
+            }
+        }
     } else if (footer) {
         footer.remove();
     }
@@ -6338,6 +6555,9 @@ function clearBatchGrid(){
     }
     const grid = $('batchGrid');    if (grid) grid.remove();
     const footer = $('batchFooter'); if (footer) footer.remove();
+    // Progress pill ('Rendering 5/20', etc) — was previously left orphaned
+    // in the work area when a batch was cleared via doGenerate's takeover.
+    const prog = $('batchProgress'); if (prog) prog.remove();
     $('outPh').style.display = $('outImg').src ? 'none' : '';
     $('outImg').style.display = $('outImg').src ? '' : 'none';
 }
