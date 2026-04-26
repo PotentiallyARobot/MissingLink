@@ -1536,6 +1536,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles20" onclick="generateAllAngles20()" disabled style="margin-top:6px">
             🎬 All 20 Angles
         </button>
+        <!-- Full 96-pose canonical set: every prompt the LoRA was trained
+             on (8 azimuths × 4 elevations × 3 distances). Same client-side
+             queue draining as the 20-angle flow handles the 12-job cap. -->
+        <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles96" onclick="generateAllAngles96()" disabled style="margin-top:6px">
+            🌐 All 96 Angles
+        </button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
             <span style="color:var(--text-muted)">Cost</span>
             <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.02</span>
@@ -1547,6 +1553,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
             <span style="color:var(--text-muted)">All 20 Angles</span>
             <span style="color:var(--gold);font-weight:700">🪙 2000 tokens</span>
+        </div>
+        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
+            <span style="color:var(--text-muted)">All 96 Angles</span>
+            <span style="color:var(--gold);font-weight:700">🪙 9600 tokens</span>
         </div>
         <div class="token-cost" id="balanceLine" style="display:none;justify-content:space-between;padding:4px 0 0">
             <span style="color:var(--text-muted)">Balance</span>
@@ -2431,6 +2441,16 @@ function updateGenButton(){
         else if (_user.tokens < 2000) { btnAll20.disabled = true; btnAll20.textContent = '🪙 Need 2000 tokens'; }
         else if (activeCount >= MAX_QUEUED) { btnAll20.disabled = true; btnAll20.textContent = '⏳ Queue full'; }
         else { btnAll20.disabled = false; btnAll20.textContent = '🎬 All 20 Angles'; }
+    }
+
+    // All-96-Angles button: same gating shape, 9600 tokens. Same client-side
+    // drain handles the queue overflow.
+    const btnAll96 = $('btnAllAngles96');
+    if (btnAll96) {
+        if (currentMode !== 'camera' || !imageId) { btnAll96.disabled = true; btnAll96.textContent = '🌐 All 96 Angles'; }
+        else if (_user.tokens < 9600) { btnAll96.disabled = true; btnAll96.textContent = '🪙 Need 9600 tokens'; }
+        else if (activeCount >= MAX_QUEUED) { btnAll96.disabled = true; btnAll96.textContent = '⏳ Queue full'; }
+        else { btnAll96.disabled = false; btnAll96.textContent = '🌐 All 96 Angles'; }
     }
 }
 
@@ -3707,64 +3727,151 @@ async function doGenerate(){
     }
 }
 
-// ── Generate All 6 Angles ─────────────────────────────
-// Submits 6 jobs that present the subject in visually distinct ways. Rather
-// than 6 flat rotations at the same eye-level medium-shot (which produce a
-// boring clockwise pan), we vary ALL three parameters — azimuth, elevation,
-// and distance — so each shot looks genuinely different and together they
-// form a cinematic look-around set.
-//
-// Shape: { az, el, dist, label } where label is what gets injected into the
-// prompt template "<sks> {az} {el} {dist}".
-const ALL_ANGLES_BATCH = [
-    // 1. Hero front — classic eye-level medium shot for baseline reference
-    { az: 'front view',                 el: 'eye-level shot',  dist: 'medium shot', label: 'Front · Eye Level' },
-    // 2. Three-quarter hero with close intimacy — the "portrait" angle
-    { az: 'front-right quarter view',   el: 'eye-level shot',  dist: 'close-up',    label: 'Front-R · Close-up' },
-    // 3. Low hero shot from the side — dramatic, cinematic
-    { az: 'right side view',            el: 'low-angle shot',  dist: 'medium shot', label: 'Right · Low' },
-    // 4. Top-down from behind — reveals rear silhouette, rare angle
-    { az: 'back view',                  el: 'high-angle shot', dist: 'wide shot',   label: 'Back · High · Wide' },
-    // 5. Left profile, elevated medium — like a film establishing shot
-    { az: 'left side view',             el: 'elevated shot',   dist: 'medium shot', label: 'Left · Elevated' },
-    // 6. Wide environmental shot from front-left — subject + context
-    { az: 'front-left quarter view',    el: 'eye-level shot',  dist: 'wide shot',   label: 'Front-L · Wide' },
+// ── Canonical 96-pose set from fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA ──
+// Source: https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA
+// Format: <sks> {azimuth} {elevation} {distance}
+// 8 azimuths × 4 elevations × 3 distances = 96 distinct poses.
+// Stored as plain string arrays so the 6-angle, 20-angle and 96-angle
+// presets — and prompt→label reverse lookup — all derive from the same
+// source of truth. Token order in the prompt is azimuth, elevation,
+// distance, exactly as the LoRA was trained.
+const ANGLES_AZ = [
+    'front view',
+    'front-right quarter view',
+    'right side view',
+    'back-right quarter view',
+    'back view',
+    'back-left quarter view',
+    'left side view',
+    'front-left quarter view',
+];
+const ANGLES_EL = [
+    'low-angle shot',     // -30°
+    'eye-level shot',     //   0°
+    'elevated shot',      //  30°
+    'high-angle shot',    //  60°
+];
+const ANGLES_DIST = [
+    'close-up',           // ×0.6
+    'medium shot',        // ×1.0
+    'wide shot',          // ×1.8
 ];
 
-// Comprehensive 20-shot survey. Built to give film-coverage-style breadth
-// while staying meaningfully different across every shot. Structure:
-//   - 8 cardinal/intercardinal azimuths at eye-level medium (the "rotation")
-//   - 4 high-angle shots at the cardinals (top-down feel without going full overhead)
-//   - 4 low-angle shots at the cardinals (heroic / threatening framing)
-//   - 4 specialty shots: hero close-up, full-body wide, dutch-style mix, environmental
-// The label is what shows in the tile badge; az/el/dist get joined into the
-// "<sks> {az} {el} {dist}" prompt the camera-LoRA was trained on.
-const ALL_ANGLES_BATCH_20 = [
-    // ── Row 1: 8-direction eye-level rotation (the comprehensive base) ──
-    { az: 'front view',                 el: 'eye-level shot',  dist: 'medium shot', label: 'Front' },
-    { az: 'front-right quarter view',   el: 'eye-level shot',  dist: 'medium shot', label: 'Front-Right' },
-    { az: 'right side view',            el: 'eye-level shot',  dist: 'medium shot', label: 'Right' },
-    { az: 'back-right quarter view',    el: 'eye-level shot',  dist: 'medium shot', label: 'Back-Right' },
-    { az: 'back view',                  el: 'eye-level shot',  dist: 'medium shot', label: 'Back' },
-    { az: 'back-left quarter view',     el: 'eye-level shot',  dist: 'medium shot', label: 'Back-Left' },
-    { az: 'left side view',             el: 'eye-level shot',  dist: 'medium shot', label: 'Left' },
-    { az: 'front-left quarter view',    el: 'eye-level shot',  dist: 'medium shot', label: 'Front-Left' },
-    // ── Row 2: high-angle cardinals (looking down at subject) ──
-    { az: 'front view',                 el: 'high-angle shot', dist: 'medium shot', label: 'Front · High' },
-    { az: 'right side view',            el: 'high-angle shot', dist: 'medium shot', label: 'Right · High' },
-    { az: 'back view',                  el: 'high-angle shot', dist: 'medium shot', label: 'Back · High' },
-    { az: 'left side view',             el: 'high-angle shot', dist: 'medium shot', label: 'Left · High' },
-    // ── Row 3: low-angle cardinals (looking up at subject) ──
-    { az: 'front view',                 el: 'low-angle shot',  dist: 'medium shot', label: 'Front · Low' },
-    { az: 'right side view',            el: 'low-angle shot',  dist: 'medium shot', label: 'Right · Low' },
-    { az: 'back view',                  el: 'low-angle shot',  dist: 'medium shot', label: 'Back · Low' },
-    { az: 'left side view',             el: 'low-angle shot',  dist: 'medium shot', label: 'Left · Low' },
-    // ── Row 4: 4 specialty shots that round out a portfolio ──
-    { az: 'front-right quarter view',   el: 'eye-level shot',  dist: 'close-up',    label: 'Hero Close-up' },
-    { az: 'front view',                 el: 'eye-level shot',  dist: 'wide shot',   label: 'Front · Wide' },
-    { az: 'back-left quarter view',     el: 'high-angle shot', dist: 'wide shot',   label: 'Back-L · High · Wide' },
-    { az: 'front-left quarter view',    el: 'low-angle shot',  dist: 'close-up',    label: 'Front-L · Low · Close' },
+// Short-form abbreviations used in tile labels. Keyed by the canonical
+// long-form so we never have to keep the two lists in sync separately.
+const _AZ_SHORT = {
+    'front view':                'Front',
+    'front-right quarter view':  'Front-R',
+    'right side view':           'Right',
+    'back-right quarter view':   'Back-R',
+    'back view':                 'Back',
+    'back-left quarter view':    'Back-L',
+    'left side view':            'Left',
+    'front-left quarter view':   'Front-L',
+};
+const _EL_SHORT = {
+    'low-angle shot':  'Low',
+    'eye-level shot':  'Eye',
+    'elevated shot':   'Elevated',
+    'high-angle shot': 'High',
+};
+const _DIST_SHORT = {
+    'close-up':    'Close',
+    'medium shot': 'Medium',
+    'wide shot':   'Wide',
+};
+
+// Build a {prompt → label} lookup for every one of the 96 poses, plus
+// helpers to construct shot specs for any chosen subset. Doing this
+// once at module load lets us reverse-derive labels from a stored
+// prompt without case-by-case heuristics.
+const ANGLES_LOOKUP = (function buildLookup(){
+    const out = {};
+    for (const az of ANGLES_AZ) {
+        for (const el of ANGLES_EL) {
+            for (const dist of ANGLES_DIST) {
+                const prompt = `<sks> ${az} ${el} ${dist}`;
+                const label = `${_AZ_SHORT[az]} · ${_EL_SHORT[el]} · ${_DIST_SHORT[dist]}`;
+                out[prompt] = { az, el, dist, label, prompt };
+            }
+        }
+    }
+    return out;
+})();
+
+// Build a shot spec from raw parts. Used both by the preset arrays
+// below AND by history-restore to reconstruct the right labels.
+function _shotFromParts(az, el, dist){
+    const prompt = `<sks> ${az} ${el} ${dist}`;
+    return ANGLES_LOOKUP[prompt] || {
+        az, el, dist, prompt,
+        label: `${_AZ_SHORT[az] || az} · ${_EL_SHORT[el] || el} · ${_DIST_SHORT[dist] || dist}`,
+    };
+}
+// Submits N jobs that present the subject from N visually-distinct
+// camera positions. All prompts come from the canonical 96-pose set
+// above, so the LoRA always receives one of the exact strings it was
+// trained on. Shape: { az, el, dist, label, prompt }.
+
+// 6-shot "highlight reel" — a curated subset that varies all three
+// axes for visual variety in a small set. NOT every shot is unique
+// across azimuth — that's intentional, this is a "best of" rather
+// than a survey.
+const ALL_ANGLES_BATCH = [
+    _shotFromParts('front view',                'eye-level shot',  'medium shot'),
+    _shotFromParts('front-right quarter view',  'eye-level shot',  'close-up'),
+    _shotFromParts('right side view',           'low-angle shot',  'medium shot'),
+    _shotFromParts('back view',                 'high-angle shot', 'wide shot'),
+    _shotFromParts('left side view',            'elevated shot',   'medium shot'),
+    _shotFromParts('front-left quarter view',   'eye-level shot',  'wide shot'),
 ];
+
+// 20-shot "comprehensive coverage" — eye-level rotation across all 8
+// azimuths, plus high+low cardinals, plus 4 specialty shots. Built
+// from the canonical lookup so prompts are guaranteed valid LoRA
+// inputs the model was actually trained on.
+const ALL_ANGLES_BATCH_20 = [
+    // Eye-level full rotation — 8 azimuths
+    _shotFromParts('front view',                'eye-level shot',  'medium shot'),
+    _shotFromParts('front-right quarter view',  'eye-level shot',  'medium shot'),
+    _shotFromParts('right side view',           'eye-level shot',  'medium shot'),
+    _shotFromParts('back-right quarter view',   'eye-level shot',  'medium shot'),
+    _shotFromParts('back view',                 'eye-level shot',  'medium shot'),
+    _shotFromParts('back-left quarter view',    'eye-level shot',  'medium shot'),
+    _shotFromParts('left side view',            'eye-level shot',  'medium shot'),
+    _shotFromParts('front-left quarter view',   'eye-level shot',  'medium shot'),
+    // High-angle cardinals
+    _shotFromParts('front view',                'high-angle shot', 'medium shot'),
+    _shotFromParts('right side view',           'high-angle shot', 'medium shot'),
+    _shotFromParts('back view',                 'high-angle shot', 'medium shot'),
+    _shotFromParts('left side view',            'high-angle shot', 'medium shot'),
+    // Low-angle cardinals
+    _shotFromParts('front view',                'low-angle shot',  'medium shot'),
+    _shotFromParts('right side view',           'low-angle shot',  'medium shot'),
+    _shotFromParts('back view',                 'low-angle shot',  'medium shot'),
+    _shotFromParts('left side view',            'low-angle shot',  'medium shot'),
+    // 4 specialty shots
+    _shotFromParts('front-right quarter view',  'eye-level shot',  'close-up'),
+    _shotFromParts('front view',                'eye-level shot',  'wide shot'),
+    _shotFromParts('back-left quarter view',    'high-angle shot', 'wide shot'),
+    _shotFromParts('front-left quarter view',   'low-angle shot',  'close-up'),
+];
+
+// Full 96-pose grid — every combination the LoRA supports. Iteration
+// order: azimuth (outer), elevation (middle), distance (inner) — chosen
+// so visually-related shots (same direction, different framing) sit
+// next to each other in the grid.
+const ALL_ANGLES_BATCH_96 = (function build96(){
+    const out = [];
+    for (const az of ANGLES_AZ) {
+        for (const el of ANGLES_EL) {
+            for (const dist of ANGLES_DIST) {
+                out.push(_shotFromParts(az, el, dist));
+            }
+        }
+    }
+    return out;
+})();
 
 // State for an in-flight batch. Lives in memory only — reloading wipes it,
 // but the individual jobs persist in history as normal.
@@ -3859,8 +3966,17 @@ function bslotFileChange(slotIdx){
 function bestBatchColumnCount(N){
     if (N <= 0) return 1;
     if (N <= 6) return N;  // single-row layout for small batches
-    const startCols = Math.ceil(Math.sqrt(N));
-    const maxCols = 6;
+    // Cap the column count so individual tiles don't shrink to nothing on
+    // big batches (e.g. the 96-pose set). For N=96 we want a manageable
+    // grid like 8×12 — not a 10-wide row of tiny squares. We use 8 (the
+    // azimuth count) as the cap because every "column slice" of the 96
+    // grid corresponds to one azimuth direction, which is a meaningful
+    // visual grouping for users to scan.
+    const maxCols = 8;
+    // Start at min(ceil(√N), maxCols) — for typical small batches this
+    // is sqrt-like; for big batches it's capped so we don't pick a
+    // value larger than maxCols and skip the whole loop.
+    const startCols = Math.min(maxCols, Math.ceil(Math.sqrt(N)));
     let best = startCols;
     let bestOrphans = (N % best === 0) ? 0 : (best - (N % best));
     for (let c = startCols; c <= maxCols; c++) {
@@ -4818,6 +4934,10 @@ async function generateAllAngles(){
 
 async function generateAllAngles20(){
     return generateAngleBatch(ALL_ANGLES_BATCH_20, '🎬 All 20 Angles', $('btnAllAngles20'));
+}
+
+async function generateAllAngles96(){
+    return generateAngleBatch(ALL_ANGLES_BATCH_96, '🌐 All 96 Angles', $('btnAllAngles96'));
 }
 
 // Shared implementation. `angles` is the list of {az, el, dist, label}
@@ -6889,16 +7009,27 @@ function restoreFromHistory(j){
     log(`Restored output from generation ${j.id}`);
 }
 
-// Restore a full 6-angle batch from history. We rebuild the _activeBatch
+// Restore a full angle batch from history. We rebuild the _activeBatch
 // object from the history entries so the same renderBatchGrid used during
-// a live batch displays all 6 finished shots with their labels. Click-to-
-// expand works, Download-all works, Share works.
+// a live batch displays all finished shots with their labels. Click-to-
+// expand works, Download-all works, Share works, and the per-tile ✎
+// edit button still drops the user into Edit mode with the chosen view
+// preloaded into slot 0 (see editBatchSlot).
+//
+// Picks the right grid layout based on shot count:
+//   - exactly 6 angle shots  → 'angles' (the cinematic 3×3 hero+5)
+//   - any other angle count  → 'angles-many' (uniform grid, scrollable)
+//   - batch-edit batches     → 'batch-edit'
+// This is the bug fix for restored 20- and 96-angle batches: previously
+// they all came back as 'angles', which only renders 6 tiles (slot 0 is
+// a 2×2 hero), causing 11 or 87 of the tiles to overflow off-grid.
 function restoreBatchFromHistory(items){
     if (!items || !items.length) return;
     // Sort by created_at so shot 1 (earliest submit) is first
     const sorted = [...items].sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
     // Derive friendly labels by matching each item's prompt back to the
-    // canonical shot list. Fallback to raw prompt fragment if no match.
+    // canonical 96-pose lookup. Falls back to the heuristic for any
+    // legacy stored prompts that don't match exactly.
     const shots = sorted.map((it, idx) => {
         const label = _deriveShotLabel(it.prompt) || `View ${idx + 1}`;
         return {
@@ -6909,6 +7040,9 @@ function restoreBatchFromHistory(items){
             url: it.url,
             w: it.w, h: it.h,
             seed: it.seed, elapsed: it.elapsed,
+            // Per-shot input image URL — used by renderBatchGrid to show
+            // an input preview next to each output (mirrors live batch UI).
+            inputUrl: it.input_image_url || null,
         };
     });
     // Wipe any existing grid DOM before we swap state. renderBatchGrid does
@@ -6924,43 +7058,75 @@ function restoreBatchFromHistory(items){
     if (oldProg) oldProg.remove();
 
     const restoredBatchId = sorted[0].batch_id || ('restored_' + Date.now());
+    // Pick grid kind. batch-edit batches keep their dedicated layout;
+    // angle batches with !=6 shots use 'angles-many' (uniform grid),
+    // because the 3×3 hero+5 layout is hard-coded for 6 tiles.
+    let kind;
+    if (restoredBatchId.startsWith('bedit_')) {
+        kind = 'batch-edit';
+    } else if (shots.length === 6) {
+        kind = 'angles';
+    } else {
+        kind = 'angles-many';
+    }
     _activeBatch = {
         id: restoredBatchId,
-        kind: restoredBatchId.startsWith('bedit_') ? 'batch-edit' : 'angles',
+        kind,
         started: (sorted[0].created_at || 0) * 1000,
-        inputUrl: null,  // input image isn't stored per-job result
+        // First item's input image — used by editBatchSlot when no per-shot
+        // input was stored. (Tile-level shot.url is the OUTPUT image, which
+        // is what editBatchSlot uses for the upload regardless.)
+        inputUrl: sorted[0].input_image_url || sorted[0].thumb || null,
         shots,
         restored: true,  // flag so we know this came from history
     };
     renderBatchGrid();
-    log(`Restored ${sorted.length}-angle batch from history`);
+    log(`Restored ${sorted.length}-shot batch from history (${kind})`);
 }
 
-// Try to map a prompt like "<sks> front-right quarter view eye-level shot close-up"
-// back to a human label like "Front-R · Close-up". Done heuristically — if the
-// prompt doesn't match any of our canonical 6 shots, we fall back to a generic
-// "View N" label in the caller.
+// Try to map a stored prompt like "<sks> front-right quarter view eye-level shot close-up"
+// back to a human label like "Front-R · Eye · Close". First try the exact
+// canonical 96-pose lookup (covers every prompt the LoRA was trained on);
+// fall back to a substring heuristic for legacy stored prompts that may
+// not match a canonical pose verbatim (older 6-angle entries used slightly
+// different label text in the grid but the prompt token order is stable).
 function _deriveShotLabel(prompt){
     if (!prompt) return null;
+    // Fast path: exact match against any of the 96 canonical prompts.
+    const exact = ANGLES_LOOKUP[prompt.trim()];
+    if (exact) return exact.label;
+    // Fallback: heuristic substring scan. Used for older history entries
+    // where the prompt may have had a stray newline / extra spacing /
+    // legacy phrasing that doesn't match the canonical lookup byte-for-byte.
     const p = prompt.toLowerCase();
-    // Cheap mapping: detect azimuth keyword, abbreviate for display
-    const az =
-        p.includes('front-right') ? 'Front-R' :
-        p.includes('front-left')  ? 'Front-L' :
-        p.includes('front')       ? 'Front'   :
-        p.includes('back')        ? 'Back'    :
-        p.includes('right side')  ? 'Right'   :
-        p.includes('left side')   ? 'Left'    :
-        null;
-    if (!az) return null;
-    const mod =
-        p.includes('close-up')     ? 'Close-up' :
-        p.includes('wide shot')    ? 'Wide'     :
-        p.includes('low-angle')    ? 'Low'      :
-        p.includes('high-angle')   ? 'High · Wide' :
-        p.includes('elevated')     ? 'Elevated' :
-        'Eye Level';
-    return `${az} · ${mod}`;
+    let foundAz = null;
+    for (const az of ANGLES_AZ) {
+        if (p.includes(az)) { foundAz = az; break; }
+    }
+    if (!foundAz) {
+        // Last-ditch loose match
+        if (p.includes('front-right')) foundAz = 'front-right quarter view';
+        else if (p.includes('front-left')) foundAz = 'front-left quarter view';
+        else if (p.includes('back-right')) foundAz = 'back-right quarter view';
+        else if (p.includes('back-left')) foundAz = 'back-left quarter view';
+        else if (p.includes('right side')) foundAz = 'right side view';
+        else if (p.includes('left side')) foundAz = 'left side view';
+        else if (p.includes('back')) foundAz = 'back view';
+        else if (p.includes('front')) foundAz = 'front view';
+    }
+    if (!foundAz) return null;
+    let foundEl = null;
+    for (const el of ANGLES_EL) {
+        if (p.includes(el)) { foundEl = el; break; }
+    }
+    let foundDist = null;
+    for (const d of ANGLES_DIST) {
+        if (p.includes(d)) { foundDist = d; break; }
+    }
+    const azS = _AZ_SHORT[foundAz];
+    const elS = foundEl ? _EL_SHORT[foundEl] : null;
+    const dS  = foundDist ? _DIST_SHORT[foundDist] : null;
+    return [azS, elS, dS].filter(Boolean).join(' · ');
 }
 
 // Soft-delete all jobs in a batch. Each one hits the existing single-delete
