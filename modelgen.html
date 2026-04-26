@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modelgen — TRELLIS test</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #0e0e10;
+    color: #e8e8ea;
+    padding: 24px;
+    max-width: 900px;
+    margin-inline: auto;
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+  .subtitle { color: #8a8a92; margin-bottom: 24px; font-size: 13px; }
+  .panel {
+    background: #1a1a1d;
+    border: 1px solid #2a2a2e;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #b0b0b8; text-transform: uppercase; letter-spacing: 0.04em; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  input[type="file"] {
+    background: #2a2a2e;
+    border: 1px solid #3a3a40;
+    color: #e8e8ea;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font: inherit;
+    flex: 1;
+    min-width: 200px;
+  }
+  input[type="file"]::file-selector-button {
+    background: #3a3a40;
+    border: 0; color: #e8e8ea;
+    padding: 4px 10px; margin-right: 12px;
+    border-radius: 4px; font: inherit; cursor: pointer;
+  }
+  button {
+    background: #4f6dd6;
+    border: 0; color: white;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font: inherit; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover:not(:disabled) { background: #5d7be0; }
+  button:disabled { background: #2a2a2e; color: #555; cursor: not-allowed; }
+  button.danger { background: #c94545; }
+  button.danger:hover:not(:disabled) { background: #d65555; }
+  button.success { background: #4ca64c; }
+  button.success:hover:not(:disabled) { background: #56b656; }
+  .secondary { background: #3a3a40; }
+  .secondary:hover:not(:disabled) { background: #45454c; }
+  .status-line {
+    font-family: ui-monospace, SF Mono, Consolas, monospace;
+    font-size: 12px;
+    color: #b0b0b8;
+    word-break: break-all;
+  }
+  .status-line strong { color: #e8e8ea; }
+  .status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: #3a3a40;
+    color: #e8e8ea;
+  }
+  .status-badge.queued, .status-badge.running_preview, .status-badge.running_finalize, .status-badge.finalize_queued { background: #b8830f; color: #fff; }
+  .status-badge.preview_ready { background: #4f6dd6; }
+  .status-badge.done { background: #4ca64c; }
+  .status-badge.failed { background: #c94545; }
+  .status-badge.discarded { background: #6a6a72; }
+  video, model-viewer {
+    width: 100%;
+    background: #0e0e10;
+    border-radius: 6px;
+    margin-top: 8px;
+    display: block;
+  }
+  model-viewer { height: 480px; --poster-color: #0e0e10; }
+  .timings {
+    font-family: ui-monospace, SF Mono, Consolas, monospace;
+    font-size: 11px;
+    color: #8a8a92;
+    margin-top: 8px;
+    white-space: pre-wrap;
+  }
+  .err {
+    background: #3a1010;
+    border: 1px solid #c94545;
+    color: #f8c8c8;
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-top: 8px;
+    font-size: 13px;
+  }
+  .hidden { display: none !important; }
+  a { color: #7d96ec; }
+  .preview-thumb { max-width: 200px; max-height: 200px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<h1>Modelgen test</h1>
+<div class="subtitle">TRELLIS.2 image-to-3D — preview-gate workflow. You must be logged in to studio.</div>
+
+<!-- ── UPLOAD ── -->
+<div class="panel">
+  <h2>1. Upload image</h2>
+  <div class="row">
+    <input type="file" id="imageInput" accept="image/png,image/jpeg,image/webp">
+    <button id="submitBtn" disabled>Generate</button>
+  </div>
+  <img id="thumb" class="preview-thumb hidden" style="margin-top:12px" alt="">
+</div>
+
+<!-- ── STATUS ── -->
+<div class="panel hidden" id="statusPanel">
+  <h2>2. Status</h2>
+  <div class="status-line">Job: <strong id="jobIdEl">—</strong></div>
+  <div class="status-line" style="margin-top:6px">
+    State: <span class="status-badge" id="statusBadge">—</span>
+    <span id="elapsedEl" style="margin-left:8px"></span>
+  </div>
+  <div id="errBox" class="err hidden"></div>
+  <div class="timings" id="timingsEl"></div>
+</div>
+
+<!-- ── PREVIEW + APPROVE/REJECT ── -->
+<div class="panel hidden" id="previewPanel">
+  <h2>3. Preview — approve or reject</h2>
+  <video id="previewVideo" controls autoplay loop muted playsinline></video>
+  <div class="row" style="margin-top:12px">
+    <button id="approveBtn" class="success">Approve → finalize</button>
+    <button id="rejectBtn" class="danger">Reject → discard</button>
+  </div>
+</div>
+
+<!-- ── FINAL GLB ── -->
+<div class="panel hidden" id="finalPanel">
+  <h2>4. Final GLB</h2>
+  <model-viewer id="modelViewer"
+    auto-rotate camera-controls
+    shadow-intensity="0.6" exposure="0.9"
+    environment-image="neutral"
+    style="height:480px">
+  </model-viewer>
+  <div class="row" style="margin-top:12px">
+    <a id="downloadLink" download><button>Download GLB</button></a>
+    <button id="newGenBtn" class="secondary">Start a new gen</button>
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────────────────────────────
+// State
+// ──────────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+let currentJobId = null;
+let pollAbort = false;
+let submitStartedAt = 0;
+
+// ──────────────────────────────────────────────────────────────────────
+// Image upload + preview
+// ──────────────────────────────────────────────────────────────────────
+$("imageInput").addEventListener("change", (e) => {
+  const f = e.target.files?.[0];
+  if (!f) {
+    $("submitBtn").disabled = true;
+    $("thumb").classList.add("hidden");
+    return;
+  }
+  $("submitBtn").disabled = false;
+  const url = URL.createObjectURL(f);
+  $("thumb").src = url;
+  $("thumb").classList.remove("hidden");
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────
+async function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      // result is "data:image/png;base64,XXXXX..." — strip the prefix
+      const s = r.result.toString();
+      const i = s.indexOf(",");
+      resolve(i >= 0 ? s.slice(i + 1) : s);
+    };
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function api(path, options = {}) {
+  const resp = await fetch(path, {
+    credentials: "include",
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  let data;
+  try { data = await resp.json(); }
+  catch { data = { ok: false, error: `non-JSON response (${resp.status})` }; }
+  if (!resp.ok || data.ok === false) {
+    const msg = data.error || `HTTP ${resp.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function showError(msg) {
+  $("errBox").textContent = msg;
+  $("errBox").classList.remove("hidden");
+}
+function clearError() {
+  $("errBox").classList.add("hidden");
+  $("errBox").textContent = "";
+}
+
+function setStatus(status) {
+  const badge = $("statusBadge");
+  badge.textContent = status || "—";
+  badge.className = "status-badge " + (status || "");
+}
+
+function fmtTimings(t) {
+  if (!t) return "";
+  const lines = [];
+  if (t.preview) {
+    lines.push("Stage 1 (preview):");
+    for (const [k, v] of Object.entries(t.preview)) {
+      lines.push(`  ${k.padEnd(20)} ${(+v).toFixed(2)}s`);
+    }
+  }
+  if (t.finalize) {
+    lines.push("Stage 2 (finalize):");
+    for (const [k, v] of Object.entries(t.finalize)) {
+      lines.push(`  ${k.padEnd(20)} ${(+v).toFixed(2)}s`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function fmtElapsed() {
+  if (!submitStartedAt) return "";
+  return `(${((Date.now() - submitStartedAt) / 1000).toFixed(0)}s elapsed)`;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Submit
+// ──────────────────────────────────────────────────────────────────────
+$("submitBtn").addEventListener("click", async () => {
+  const f = $("imageInput").files?.[0];
+  if (!f) return;
+  $("submitBtn").disabled = true;
+  clearError();
+
+  try {
+    const b64 = await fileToBase64(f);
+    submitStartedAt = Date.now();
+
+    $("statusPanel").classList.remove("hidden");
+    setStatus("submitting");
+    $("jobIdEl").textContent = "—";
+
+    const resp = await api("/api/trellis/generate", {
+      method: "POST",
+      body: JSON.stringify({ image_b64: b64 }),
+    });
+
+    currentJobId = resp.job_id;
+    pollAbort = false;
+    $("jobIdEl").textContent = currentJobId;
+    setStatus(resp.status || "queued");
+    pollLoop();
+  } catch (e) {
+    showError(`Submit failed: ${e.message}`);
+    setStatus("failed");
+    $("submitBtn").disabled = false;
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Poll loop
+// ──────────────────────────────────────────────────────────────────────
+async function pollLoop() {
+  while (!pollAbort && currentJobId) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (pollAbort) break;
+
+    let data;
+    try {
+      data = await api(`/api/trellis/job/${currentJobId}`);
+    } catch (e) {
+      showError(`Poll error: ${e.message}`);
+      continue;  // keep trying — could be transient
+    }
+
+    setStatus(data.status);
+    $("elapsedEl").textContent = fmtElapsed();
+    $("timingsEl").textContent = fmtTimings(data.timings);
+    if (data.error) showError(data.error);
+
+    // Preview ready — show MP4 + approve/reject
+    if (data.status === "preview_ready" && data.preview_url) {
+      $("previewVideo").src = data.preview_url;
+      $("previewPanel").classList.remove("hidden");
+    }
+
+    // Done — show GLB
+    if (data.status === "done" && data.glb_url) {
+      $("modelViewer").src = data.glb_url;
+      $("downloadLink").href = data.glb_url;
+      $("downloadLink").setAttribute("download", `${currentJobId}.glb`);
+      $("finalPanel").classList.remove("hidden");
+      $("approveBtn").disabled = true;
+      $("rejectBtn").disabled = true;
+      break;
+    }
+
+    // Terminal failure / rejection
+    if (["failed", "discarded"].includes(data.status)) {
+      $("approveBtn").disabled = true;
+      $("rejectBtn").disabled = true;
+      $("submitBtn").disabled = false;
+      break;
+    }
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Approve / reject
+// ──────────────────────────────────────────────────────────────────────
+$("approveBtn").addEventListener("click", async () => {
+  if (!currentJobId) return;
+  $("approveBtn").disabled = true;
+  $("rejectBtn").disabled = true;
+  clearError();
+  try {
+    await api(`/api/trellis/job/${currentJobId}/finalize`, { method: "POST" });
+    setStatus("finalize_queued");
+    // poll loop is still running — it'll pick up the new state
+  } catch (e) {
+    showError(`Approve failed: ${e.message}`);
+    $("approveBtn").disabled = false;
+    $("rejectBtn").disabled = false;
+  }
+});
+
+$("rejectBtn").addEventListener("click", async () => {
+  if (!currentJobId) return;
+  $("approveBtn").disabled = true;
+  $("rejectBtn").disabled = true;
+  clearError();
+  try {
+    await api(`/api/trellis/job/${currentJobId}/discard`, { method: "POST" });
+    setStatus("discarded");
+    pollAbort = true;
+    $("submitBtn").disabled = false;
+  } catch (e) {
+    showError(`Reject failed: ${e.message}`);
+    $("approveBtn").disabled = false;
+    $("rejectBtn").disabled = false;
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Reset for next gen
+// ──────────────────────────────────────────────────────────────────────
+$("newGenBtn").addEventListener("click", () => {
+  pollAbort = true;
+  currentJobId = null;
+  $("imageInput").value = "";
+  $("submitBtn").disabled = true;
+  $("thumb").classList.add("hidden");
+  $("statusPanel").classList.add("hidden");
+  $("previewPanel").classList.add("hidden");
+  $("finalPanel").classList.add("hidden");
+  $("approveBtn").disabled = false;
+  $("rejectBtn").disabled = false;
+  $("previewVideo").src = "";
+  $("modelViewer").src = "";
+  clearError();
+});
+</script>
+</body>
+</html>
