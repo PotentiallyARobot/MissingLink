@@ -2360,17 +2360,41 @@ function setMode(mode, opts){
                  : mode === 'edit'   ? 'Add image(s) and describe your edit'
                  :                     'Upload multiple images and describe one edit to apply to each';
     $('outPh').textContent = phText;
-    updateGenButton();
 
-    // Leaving batch mode: re-show #outImg so the last single-image result
-    // (if any) is visible again. renderBatchInputs() hides it when IN
-    // batch mode; this undoes that when going back to camera/edit.
-    if (prevMode === 'batch' && mode !== 'batch') {
-        const outImg = $('outImg');
-        if (outImg && outImg.src && !outImg.src.endsWith('#')) {
-            outImg.style.display = '';
-        }
+    // Normalize stage visibility. Without this, switching modes can leave
+    // both the placeholder text AND a stale generated image visible at
+    // the same time (the airship-with-"Upload an image" overlay bug):
+    //   * outPh text is updated above but its display is never touched
+    //   * outImg keeps whatever display it had from the previous mode
+    //   * resultBar shows seed/dims for an image that may no longer be
+    //     the "active" result for this mode
+    // Rule we enforce here: if a real result image is loaded and we're
+    // entering a mode that owns single-image output (camera/edit), show
+    // outImg and hide outPh. Otherwise show outPh and hide outImg. The
+    // batch-mode renderBatchInputs branch handles its own visibility
+    // (hides both when there's a batch grid taking the stage).
+    const outImg = $('outImg');
+    const outPh  = $('outPh');
+    const resultBar = $('resultBar');
+    const hasResultImg = !!(outImg && outImg.src && !outImg.src.endsWith('#'));
+    if (mode === 'batch') {
+        // batch grid will be rendered by renderBatchInputs() below, but
+        // until/unless there's a grid, we want a clean placeholder, not
+        // a leftover camera result hanging around behind the grid.
+        if (outImg) outImg.style.display = 'none';
+        if (outPh)  outPh.style.display  = '';
+        if (resultBar) resultBar.style.display = 'none';
+    } else if (hasResultImg) {
+        if (outImg) outImg.style.display = '';
+        if (outPh)  outPh.style.display  = 'none';
+        if (resultBar) resultBar.style.display = 'flex';
+    } else {
+        if (outImg) outImg.style.display = 'none';
+        if (outPh)  outPh.style.display  = '';
+        if (resultBar) resultBar.style.display = 'none';
     }
+
+    updateGenButton();
 
     // Show the batch inputs grid in the output area when we enter batch
     // mode; hide it otherwise so Camera/Edit aren't polluted by it.
