@@ -5,7 +5,15 @@
 <title>missinglink — modelgen</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.png">
-<script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 <style>
 :root{
   --gold:#E8A917;--gold-light:#F5C842;--gold-dark:#C48E0E;--gold-dim:rgba(232,169,23,.08);
@@ -104,8 +112,17 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .preview-viewport canvas{display:block;width:100%;height:100%;image-rendering:auto}
 .preview-hint{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:1px;pointer-events:none;opacity:.7}
 
-/* model-viewer (final GLB) */
-model-viewer{width:min(700px,90%);aspect-ratio:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;--poster-color:transparent;--progress-bar-color:var(--gold)}
+/* Three.js GLB viewer */
+.glb-viewer{width:min(700px,90%);aspect-ratio:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;position:relative;overflow:hidden;cursor:grab}
+.glb-viewer.dragging{cursor:grabbing}
+.glb-viewer canvas{display:block;width:100%;height:100%}
+.glb-viewer .hud{position:absolute;top:10px;left:10px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);background:rgba(9,9,11,.5);padding:4px 8px;border-radius:3px;pointer-events:none;letter-spacing:1px}
+.glb-viewer .hud .mode{color:var(--gold)}
+.glb-viewer .toolbar{position:absolute;bottom:10px;right:10px;display:flex;gap:4px}
+.glb-viewer .tb-btn{cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:5px 9px;border:1px solid var(--border);border-radius:3px;background:rgba(17,17,19,.85);color:var(--text-dim);transition:.1s;backdrop-filter:blur(4px)}
+.glb-viewer .tb-btn:hover{border-color:var(--gold);color:var(--gold)}
+.glb-viewer .tb-btn.active{background:var(--gold);color:var(--black);border-color:var(--gold)}
+.glb-viewer .tb-spin{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:1px}
 
 /* Action bar below viewer */
 .action-bar{padding:12px 24px 24px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
@@ -274,9 +291,7 @@ model-viewer{width:min(700px,90%);aspect-ratio:1;background:var(--surface);borde
 
 <div class="toast-stack" id="toastStack"></div>
 
-<script>
-// ────────────────────────────────────────────────────────────
-// State
+<script type="module">
 // ────────────────────────────────────────────────────────────
 const STATE = {
   user: null,           // {id, email, name, picture, tokens}
@@ -524,23 +539,260 @@ function bindSpriteDrag(){
 }
 
 // ────────────────────────────────────────────────────────────
-// Final GLB viewer
+// Final GLB viewer (three.js with fast-proxy on drag)
 // ────────────────────────────────────────────────────────────
+let _glbViewer = null;  // {dispose, setMode}
 function showGlbViewer(glbUrl){
+  if (_glbViewer) { try { _glbViewer.dispose(); } catch(e) {} _glbViewer = null; }
   const vp = document.getElementById('mainViewport');
   vp.innerHTML = `
-    <model-viewer
-      src="${glbUrl}"
-      camera-controls
-      auto-rotate
-      auto-rotate-delay="2000"
-      shadow-intensity="1"
-      exposure="1"
-      environment-image="neutral"
-      camera-orbit="0deg 75deg auto"
-      style="width:min(700px,90%);aspect-ratio:1">
-    </model-viewer>
+    <div class="glb-viewer" id="glbViewer">
+      <canvas id="glbCanvas"></canvas>
+      <div class="hud"><span class="mode" id="glbMode">PBR</span> · <span id="glbStats">—</span></div>
+      <div class="tb-spin" id="glbLoading">LOADING…</div>
+      <div class="toolbar">
+        <button class="tb-btn" title="Reset view" onclick="_glbViewer && _glbViewer.resetCamera()">⟲</button>
+        <button class="tb-btn" id="glbProxyBtn" title="Toggle drag proxy mode" onclick="_glbViewer && _glbViewer.cycleProxy()">FLAT</button>
+      </div>
+    </div>
   `;
+  initThreeViewer(glbUrl);
+}
+
+async function initThreeViewer(glbUrl){
+  const THREE = await import('three');
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+  const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+
+  const container = document.getElementById('glbViewer');
+  const canvas = document.getElementById('glbCanvas');
+  if (!container || !canvas) return;
+
+  // Renderer + scene + camera
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+  // Cheap pre-baked indoor environment for PBR reflections
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
+  camera.position.set(0, 0.4, 2.0);
+
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.target.set(0, 0, 0);
+
+  // Subtle key light for the proxy mode (basic mat doesn't use environment)
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambient);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+  dir.position.set(2, 3, 2);
+  scene.add(dir);
+
+  // ── Resize handling ──────────────────────────────────────
+  function resize(){
+    const w = container.clientWidth, h = container.clientHeight;
+    if (w === 0 || h === 0) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  resize();
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
+
+  // ── Load GLB ─────────────────────────────────────────────
+  const loader = new GLTFLoader();
+  let modelGroup = null;
+  let pbrMeshes = [];   // [{mesh, originalMaterial}]
+  let proxyMeshes = []; // [{mesh, flatMaterial, pointsObj}]
+  let totalVerts = 0;
+  let totalTris = 0;
+  let initialCameraPos = null;
+  let initialCameraTarget = null;
+
+  loader.load(glbUrl, (gltf) => {
+    modelGroup = gltf.scene;
+    scene.add(modelGroup);
+
+    // Compute bounding box, center + scale model into a unit-ish box.
+    const bbox = new THREE.Box3().setFromObject(modelGroup);
+    const size = bbox.getSize(new THREE.Vector3());
+    const center = bbox.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const targetSize = 1.0;
+    const scale = targetSize / maxDim;
+    modelGroup.position.sub(center.multiplyScalar(scale));
+    modelGroup.scale.setScalar(scale);
+
+    // Build proxy versions per mesh: a flat-shaded mesh + a Points cloud,
+    // sharing the same BufferGeometry (no extra GPU memory).
+    modelGroup.traverse(obj => {
+      if (obj.isMesh) {
+        const geom = obj.geometry;
+        // Cache the original PBR material reference so we can swap back.
+        const originalMat = obj.material;
+
+        // Pull a representative color from the texture for the proxy material.
+        // If no texture, use the material color.
+        let proxyColor = new THREE.Color(0xc8c8c8);
+        if (originalMat && originalMat.map) {
+          // Best-effort: sample the diffuse texture once to get a base tone.
+          try {
+            const img = originalMat.map.image;
+            if (img && img.complete && img.width > 0) {
+              const c = document.createElement('canvas');
+              c.width = 16; c.height = 16;
+              const ctx = c.getContext('2d');
+              ctx.drawImage(img, 0, 0, 16, 16);
+              const data = ctx.getImageData(8, 8, 1, 1).data;
+              proxyColor = new THREE.Color(data[0]/255, data[1]/255, data[2]/255);
+            }
+          } catch(e) {}
+        } else if (originalMat && originalMat.color) {
+          proxyColor = originalMat.color.clone();
+        }
+
+        // Flat-shaded proxy material — cheap, preserves silhouette + faceting.
+        const flatMat = new THREE.MeshLambertMaterial({
+          color: proxyColor,
+          flatShading: true,
+        });
+
+        // Points cloud, second proxy option.
+        const pointsMat = new THREE.PointsMaterial({
+          color: proxyColor,
+          size: 0.005,
+          sizeAttenuation: true,
+        });
+        const pointsObj = new THREE.Points(geom, pointsMat);
+        pointsObj.position.copy(obj.position);
+        pointsObj.rotation.copy(obj.rotation);
+        pointsObj.scale.copy(obj.scale);
+        pointsObj.visible = false;
+        obj.parent.add(pointsObj);
+
+        pbrMeshes.push({ mesh: obj, originalMaterial: originalMat });
+        proxyMeshes.push({ mesh: obj, flatMaterial: flatMat, pointsObj });
+
+        if (geom.index) totalTris += geom.index.count / 3;
+        else if (geom.attributes.position) totalTris += geom.attributes.position.count / 3;
+        if (geom.attributes.position) totalVerts += geom.attributes.position.count;
+      }
+    });
+
+    // Hide loading overlay
+    const loadingEl = document.getElementById('glbLoading');
+    if (loadingEl) loadingEl.style.display = 'none';
+    // Stats
+    const statsEl = document.getElementById('glbStats');
+    if (statsEl) {
+      const v = totalVerts >= 1000 ? (totalVerts/1000).toFixed(0) + 'k' : totalVerts;
+      const t = totalTris  >= 1000 ? (totalTris /1000).toFixed(0) + 'k' : totalTris;
+      statsEl.textContent = `${v}v / ${t}f`;
+    }
+
+    initialCameraPos = camera.position.clone();
+    initialCameraTarget = controls.target.clone();
+  }, undefined, (err) => {
+    console.error('GLB load failed', err);
+    const loadingEl = document.getElementById('glbLoading');
+    if (loadingEl) loadingEl.textContent = 'LOAD FAILED';
+  });
+
+  // ── Render mode (PBR / FLAT / POINTS) ────────────────────
+  let proxyType = 'flat';   // user preference: 'flat' | 'points'
+  let currentMode = 'pbr';  // active mode: 'pbr' | 'flat' | 'points'
+
+  function applyMode(mode) {
+    currentMode = mode;
+    for (const { mesh, originalMaterial } of pbrMeshes) {
+      if (mode === 'pbr') mesh.material = originalMaterial;
+    }
+    for (const { mesh, flatMaterial, pointsObj } of proxyMeshes) {
+      if (mode === 'flat') {
+        mesh.material = flatMaterial;
+        mesh.visible = true;
+        pointsObj.visible = false;
+      } else if (mode === 'points') {
+        mesh.visible = false;
+        pointsObj.visible = true;
+      } else {
+        mesh.visible = true;
+        pointsObj.visible = false;
+      }
+    }
+    const modeEl = document.getElementById('glbMode');
+    if (modeEl) modeEl.textContent = mode.toUpperCase();
+  }
+
+  function cycleProxy() {
+    proxyType = (proxyType === 'flat') ? 'points' : 'flat';
+    const btn = document.getElementById('glbProxyBtn');
+    if (btn) btn.textContent = proxyType.toUpperCase();
+    // If currently in proxy mode, swap to the new proxy type immediately.
+    if (currentMode !== 'pbr') applyMode(proxyType);
+  }
+
+  function resetCamera() {
+    if (!initialCameraPos) return;
+    camera.position.copy(initialCameraPos);
+    controls.target.copy(initialCameraTarget);
+    controls.update();
+  }
+
+  // ── Drag detection → swap to proxy ───────────────────────
+  let idleTimer = null;
+  controls.addEventListener('start', () => {
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    container.classList.add('dragging');
+    if (pbrMeshes.length > 0) applyMode(proxyType);
+  });
+  controls.addEventListener('end', () => {
+    container.classList.remove('dragging');
+    if (idleTimer) clearTimeout(idleTimer);
+    // Wait 150ms after the user stops to swap back — handles accidental
+    // micro-pauses mid-drag without flickering between modes.
+    idleTimer = setTimeout(() => {
+      if (pbrMeshes.length > 0) applyMode('pbr');
+      idleTimer = null;
+    }, 150);
+  });
+
+  // ── Animation loop ───────────────────────────────────────
+  let alive = true;
+  function tick() {
+    if (!alive) return;
+    requestAnimationFrame(tick);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  tick();
+
+  _glbViewer = {
+    cycleProxy,
+    resetCamera,
+    dispose() {
+      alive = false;
+      ro.disconnect();
+      controls.dispose();
+      pmrem.dispose();
+      renderer.dispose();
+      // Free per-mesh proxy materials we created
+      for (const { flatMaterial, pointsObj } of proxyMeshes) {
+        flatMaterial.dispose();
+        pointsObj.material.dispose();
+      }
+    },
+  };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -656,6 +908,7 @@ function newGen(){
   STATE.currentJobId = null;
   setActionBar(null);
   setProgress(false);
+  if (_glbViewer) { try { _glbViewer.dispose(); } catch(e) {} _glbViewer = null; }
   document.getElementById('mainViewport').innerHTML = `
     <div class="empty-state" id="emptyState">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M12 2L2 7L12 12L22 7L12 2Z"/><path d="M2 17L12 22L22 17"/><path d="M2 12L12 17L22 12"/></svg>
@@ -782,6 +1035,21 @@ function updateStartupOverlay(s){
     STATE.startupShowAt = 0;
   }
 }
+
+// ────────────────────────────────────────────────────────────
+// Boot
+// ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// Expose onclick handlers globally (script is type=module so these
+// would otherwise be scoped to the module).
+// ────────────────────────────────────────────────────────────
+Object.assign(window, {
+  signIn, signOut, toggleAdvanced, submitGen,
+  approveJob, discardJob, loadExistingJob, newGen,
+});
+Object.defineProperty(window, '_glbViewer', {
+  get(){ return _glbViewer; },
+});
 
 // ────────────────────────────────────────────────────────────
 // Boot
