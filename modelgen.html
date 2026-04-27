@@ -490,11 +490,17 @@ function showSpritePreview(meta, url){
   STATE.spriteMeta = meta;
   STATE.spriteFrame = 0;
   const img = new Image();
-  img.crossOrigin = 'anonymous';
+  // No crossOrigin attr: we only drawImage from this — never read back pixels —
+  // so we don't need CORS, and not setting it lets the load succeed even if the
+  // server doesn't send Access-Control-Allow-Origin.
   img.onload = () => {
     STATE.spriteImg = img;
     drawSpriteFrame();
     bindSpriteDrag();
+  };
+  img.onerror = (e) => {
+    console.error('Sprite atlas load failed', url, e);
+    toast('Preview image failed to load', 'error');
   };
   img.src = url;
 }
@@ -503,12 +509,17 @@ function drawSpriteFrame(){
   const canvas = document.getElementById('previewCanvas');
   if (!canvas) return;
   const m = STATE.spriteMeta;
+  // GPU emits {cols, rows, frame_w, frame_h, n_frames}; we accept either
+  // (cols/grid_w, rows/grid_h) for backwards compat with older atlases.
+  const cols = m.cols ?? m.grid_w ?? 1;
+  const rows = m.rows ?? m.grid_h ?? 1;
   const w = m.frame_w, h = m.frame_h;
+  if (!w || !h) { console.warn('sprite_meta missing frame_w/h', m); return; }
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   const f = ((STATE.spriteFrame % m.n_frames) + m.n_frames) % m.n_frames;
-  const col = f % m.grid_w;
-  const row = Math.floor(f / m.grid_w);
+  const col = f % cols;
+  const row = Math.floor(f / cols);
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(STATE.spriteImg, col*w, row*h, w, h, 0, 0, w, h);
 }
