@@ -83,14 +83,15 @@
   .status-badge.done { background: #4ca64c; }
   .status-badge.failed { background: #c94545; }
   .status-badge.discarded { background: #6a6a72; }
-  video, model-viewer {
+  model-viewer {
     width: 100%;
     background: #0e0e10;
     border-radius: 6px;
     margin-top: 8px;
     display: block;
+    height: 480px;
+    --poster-color: #0e0e10;
   }
-  model-viewer { height: 480px; --poster-color: #0e0e10; }
   .timings {
     font-family: ui-monospace, SF Mono, Consolas, monospace;
     font-size: 11px;
@@ -110,6 +111,41 @@
   .hidden { display: none !important; }
   a { color: #7d96ec; }
   .preview-thumb { max-width: 200px; max-height: 200px; border-radius: 6px; }
+
+  /* Interactive viewer */
+  .viewer-wrap {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: #000;
+    border-radius: 6px;
+    margin-top: 8px;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+    position: relative;
+  }
+  .viewer-wrap.grabbing { cursor: grabbing; }
+  .viewer-wrap canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+  }
+  .viewer-hint {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.6);
+    color: #c8c8d0;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+    transition: opacity 0.4s;
+  }
+  .viewer-hint.faded { opacity: 0; }
 </style>
 </head>
 <body>
@@ -141,8 +177,11 @@
 
 <!-- ── PREVIEW + APPROVE/REJECT ── -->
 <div class="panel hidden" id="previewPanel">
-  <h2>3. Preview — approve or reject</h2>
-  <video id="previewVideo" controls autoplay loop muted playsinline></video>
+  <h2>3. Preview — drag to rotate, then approve or reject</h2>
+  <div class="viewer-wrap" id="viewerWrap">
+    <canvas id="viewerCanvas"></canvas>
+    <div class="viewer-hint" id="viewerHint">drag to rotate · auto-rotates when idle</div>
+  </div>
   <div class="row" style="margin-top:12px">
     <button id="approveBtn" class="success">Approve → finalize</button>
     <button id="rejectBtn" class="danger">Reject → discard</button>
@@ -155,8 +194,7 @@
   <model-viewer id="modelViewer"
     auto-rotate camera-controls
     shadow-intensity="0.6" exposure="0.9"
-    environment-image="neutral"
-    style="height:480px">
+    environment-image="neutral">
   </model-viewer>
   <div class="row" style="margin-top:12px">
     <a id="downloadLink" download><button>Download GLB</button></a>
@@ -172,9 +210,134 @@ const $ = (id) => document.getElementById(id);
 let currentJobId = null;
 let pollAbort = false;
 let submitStartedAt = 0;
+let viewer = null;  // SpriteViewer instance
 
 // ──────────────────────────────────────────────────────────────────────
-// Image upload + preview
+// SpriteViewer — interactive sprite sheet rotation
+// ──────────────────────────────────────────────────────────────────────
+class SpriteViewer {
+  constructor(canvas, hintEl, wrapEl, url, meta) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.hintEl = hintEl;
+    this.wrapEl = wrapEl;
+    this.meta = meta;  // {cols, rows, frame_w, frame_h, n_frames}
+    this.atlas = null;
+    this.currentFrame = 0;
+    this.targetFrame = 0;     // smoothly interpolated toward
+    this.dragStartX = 0;
+    this.dragStartFrame = 0;
+    this.isDragging = false;
+    this.lastInteractionAt = 0;
+    this.autoRotateActive = true;
+    this.rafId = null;
+    this.hintFaded = false;
+
+    this.canvas.width = meta.frame_w;
+    this.canvas.height = meta.frame_h;
+
+    this._loadAtlas(url);
+    this._bindEvents();
+    this._loop();
+  }
+
+  _loadAtlas(url) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      this.atlas = img;
+      this._render();
+    };
+    img.onerror = (e) => {
+      console.error("atlas load failed", e);
+    };
+    img.src = url;
+  }
+
+  _bindEvents() {
+    const onPointerDown = (e) => {
+      this.isDragging = true;
+      this.autoRotateActive = false;
+      this.dragStartX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+      this.dragStartFrame = this.currentFrame;
+      this.wrapEl.classList.add("grabbing");
+      this._fadeHint();
+      e.preventDefault();
+    };
+    const onPointerMove = (e) => {
+      if (!this.isDragging) return;
+      const x = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+      const dx = x - this.dragStartX;
+      // Drag distance equal to canvas width = full rotation
+      const rect = this.canvas.getBoundingClientRect();
+      const fracDelta = -dx / rect.width;  // negative for natural drag direction
+      const nFrames = this.meta.n_frames;
+      let newFrame = this.dragStartFrame + fracDelta * nFrames;
+      // Wrap around
+      newFrame = ((newFrame % nFrames) + nFrames) % nFrames;
+      this.targetFrame = newFrame;
+      this.currentFrame = newFrame;
+      this._render();
+      this.lastInteractionAt = Date.now();
+      e.preventDefault();
+    };
+    const onPointerUp = () => {
+      if (!this.isDragging) return;
+      this.isDragging = false;
+      this.wrapEl.classList.remove("grabbing");
+      this.lastInteractionAt = Date.now();
+    };
+
+    this.wrapEl.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", onPointerUp);
+    this.wrapEl.addEventListener("touchstart", onPointerDown, { passive: false });
+    window.addEventListener("touchmove", onPointerMove, { passive: false });
+    window.addEventListener("touchend", onPointerUp);
+  }
+
+  _loop() {
+    const now = Date.now();
+    // Auto-rotate when idle (>2s since last drag)
+    if (!this.isDragging && (now - this.lastInteractionAt > 2000)) {
+      this.autoRotateActive = true;
+      // Advance ~15 fps
+      this.targetFrame = (this.currentFrame + 60 / 60 / 4) % this.meta.n_frames;
+      this.currentFrame = this.targetFrame;
+      this._render();
+    }
+    this.rafId = requestAnimationFrame(() => this._loop());
+  }
+
+  _fadeHint() {
+    if (this.hintFaded) return;
+    this.hintFaded = true;
+    this.hintEl.classList.add("faded");
+    setTimeout(() => { this.hintEl.style.display = "none"; }, 500);
+  }
+
+  _render() {
+    if (!this.atlas) return;
+    const { cols, frame_w, frame_h, n_frames } = this.meta;
+    const idx = Math.floor(this.currentFrame) % n_frames;
+    const r = Math.floor(idx / cols);
+    const c = idx % cols;
+    this.ctx.clearRect(0, 0, frame_w, frame_h);
+    this.ctx.drawImage(
+      this.atlas,
+      c * frame_w, r * frame_h, frame_w, frame_h,  // src
+      0, 0, frame_w, frame_h,                       // dst
+    );
+  }
+
+  destroy() {
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.atlas = null;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Image upload + thumb preview
 // ──────────────────────────────────────────────────────────────────────
 $("imageInput").addEventListener("change", (e) => {
   const f = e.target.files?.[0];
@@ -196,7 +359,6 @@ async function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => {
-      // result is "data:image/png;base64,XXXXX..." — strip the prefix
       const s = r.result.toString();
       const i = s.indexOf(",");
       resolve(i >= 0 ? s.slice(i + 1) : s);
@@ -307,7 +469,7 @@ async function pollLoop() {
       data = await api(`/api/trellis/job/${currentJobId}`);
     } catch (e) {
       showError(`Poll error: ${e.message}`);
-      continue;  // keep trying — could be transient
+      continue;
     }
 
     setStatus(data.status);
@@ -315,9 +477,16 @@ async function pollLoop() {
     $("timingsEl").textContent = fmtTimings(data.timings);
     if (data.error) showError(data.error);
 
-    // Preview ready — show MP4 + approve/reject
-    if (data.status === "preview_ready" && data.preview_url) {
-      $("previewVideo").src = data.preview_url;
+    // Preview ready — show interactive sprite viewer
+    if (data.status === "preview_ready" && data.preview_url && data.sprite_meta) {
+      if (viewer) viewer.destroy();
+      viewer = new SpriteViewer(
+        $("viewerCanvas"),
+        $("viewerHint"),
+        $("viewerWrap"),
+        data.preview_url,
+        data.sprite_meta,
+      );
       $("previewPanel").classList.remove("hidden");
     }
 
@@ -353,7 +522,6 @@ $("approveBtn").addEventListener("click", async () => {
   try {
     await api(`/api/trellis/job/${currentJobId}/finalize`, { method: "POST" });
     setStatus("finalize_queued");
-    // poll loop is still running — it'll pick up the new state
   } catch (e) {
     showError(`Approve failed: ${e.message}`);
     $("approveBtn").disabled = false;
@@ -384,6 +552,7 @@ $("rejectBtn").addEventListener("click", async () => {
 $("newGenBtn").addEventListener("click", () => {
   pollAbort = true;
   currentJobId = null;
+  if (viewer) { viewer.destroy(); viewer = null; }
   $("imageInput").value = "";
   $("submitBtn").disabled = true;
   $("thumb").classList.add("hidden");
@@ -392,8 +561,9 @@ $("newGenBtn").addEventListener("click", () => {
   $("finalPanel").classList.add("hidden");
   $("approveBtn").disabled = false;
   $("rejectBtn").disabled = false;
-  $("previewVideo").src = "";
   $("modelViewer").src = "";
+  $("viewerHint").style.display = "";
+  $("viewerHint").classList.remove("faded");
   clearError();
 });
 </script>
