@@ -146,7 +146,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .queue-item{pointer-events:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:6px}
 .queue-item.new{animation:slideIn .25s ease}
 @keyframes slideIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
-.queue-item .top{display:flex;justify-content:space-between;align-items:center}
+.queue-item .top{display:flex;align-items:center;gap:8px}
+.queue-item .qthumb{width:36px;height:36px;border-radius:4px;object-fit:cover;background:var(--surface-3);border:1px solid var(--border);flex:none}
+.queue-item .qthumb-empty{}
+.queue-item .qmeta{display:flex;flex-direction:column;flex:1;gap:2px;min-width:0}
 .queue-item .id{color:var(--text-muted);font-size:9px}
 .queue-item .stage{color:var(--gold);text-transform:uppercase;letter-spacing:.5px;font-size:9px}
 .queue-item .bar{height:3px;background:var(--surface-3);border-radius:1px;overflow:hidden}
@@ -894,15 +897,33 @@ async function approveJob(jobId){
   } catch(e) { toast('Network error', 'error'); }
 }
 async function discardJob(jobId){
-  setActionBar(`<button class="btn" disabled>Discarding...</button>`);
+  const isActive = (STATE.currentJobId === jobId);
+  // Only show the "Discarding..." button for the active job; queue-item
+  // discards happen silently and the queue overlay updates from polling.
+  const prevActionBar = isActive ? document.getElementById('actionBar').innerHTML : null;
+  if (isActive) setActionBar(`<button class="btn" disabled>Discarding...</button>`);
   try {
     const r = await fetch(`/api/trellis/job/${jobId}/discard`, { method: 'POST', credentials: 'include' });
     const d = await r.json();
-    if (!d.ok) { toast(d.error || 'Discard failed', 'error'); return; }
-    if (STATE.currentJobId === jobId) {
-      newGen();
+    if (!d.ok) {
+      toast(d.error || 'Discard failed', 'error');
+      if (isActive && prevActionBar !== null) setActionBar(prevActionBar);
+      return;
     }
-  } catch(e) { toast('Network error', 'error'); }
+    if (d.refunded > 0) {
+      toast(`Discarded — ${d.refunded} tokens refunded`, 'success');
+      refreshTokens();
+    } else {
+      toast('Discarded');
+    }
+    if (isActive) newGen();
+    // Force the queue to re-render this cycle (drop the cached signature)
+    _lastQueueSig = '';
+    pollQueue();
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+    if (isActive && prevActionBar !== null) setActionBar(prevActionBar);
+  }
 }
 function newGen(){
   STATE.currentJobId = null;
@@ -951,15 +972,19 @@ function renderQueue(jobs){
     const stageLabel = STAGE_LABELS[j.stage] || j.stage || j.status;
     const showThis = STATE.currentJobId === j.id ? '' :
       `<button class="qbtn" onclick="loadExistingJob('${j.id}')">View</button>`;
-    // Only items whose ID we haven't seen before get the animation — re-renders
-    // of existing items render without animation, so they don't flash in/out.
     const isNew = !_seenJobIds.has(j.id);
     _seenJobIds.add(j.id);
+    const thumb = j.thumb_url
+      ? `<img class="qthumb" src="${j.thumb_url}" alt="" onerror="this.style.display='none'">`
+      : `<div class="qthumb qthumb-empty"></div>`;
     return `
       <div class="queue-item${isNew ? ' new' : ''}">
         <div class="top">
-          <span class="stage">${stageLabel}</span>
-          <span class="id">${j.id.slice(0, 8)}</span>
+          ${thumb}
+          <div class="qmeta">
+            <div class="stage">${stageLabel}</div>
+            <div class="id">${j.id.slice(0, 8)}</div>
+          </div>
         </div>
         <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
         <div class="actions">
