@@ -104,11 +104,6 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .mini-btn{cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:6px 8px;border:1px solid var(--border);border-radius:3px;background:var(--surface-2);color:var(--text-dim);transition:.1s;flex:none}
 .mini-btn:hover{border-color:var(--gold);color:var(--gold)}
 
-.advanced-toggle{cursor:pointer;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:6px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);text-align:center;letter-spacing:1px;transition:.15s}
-.advanced-toggle:hover{color:var(--gold)}
-.advanced{display:none;flex-direction:column;gap:14px}
-.advanced.open{display:flex}
-
 .gen-btn{margin-top:auto;cursor:pointer;font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:1.5px;padding:14px;background:var(--gold);color:var(--black);border:none;border-radius:6px;transition:.15s;text-transform:uppercase}
 .gen-btn:hover:not(:disabled){background:var(--gold-light)}
 .gen-btn:disabled{background:var(--surface-3);color:var(--text-muted);cursor:not-allowed}
@@ -325,32 +320,30 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       <div class="field-hint">Max 16.7M (nvdiffrast hard limit)</div>
     </div>
 
-    <div class="advanced-toggle" onclick="toggleAdvanced()" id="advancedToggle">▼ Advanced</div>
-    <div class="advanced" id="advanced">
-      <div class="field">
-        <label>Pipeline Type</label>
-        <select id="pipelineType">
-          <option value="512" selected>Standard 512³ (~30s, less VRAM)</option>
-          <option value="1024_cascade">High 1024³ (~60s, more detail)</option>
-        </select>
-      </div>
-      <div class="field">
-        <label class="checkbox-label">
-          <input type="checkbox" id="remesh" checked>
-          <span>Apply Remesh (cleaner topology)</span>
-        </label>
-      </div>
-      <div class="field">
-        <label>Remesh Band <span class="val" id="remeshBandVal">1.0</span></label>
-        <input type="range" id="remeshBand" min="0.5" max="2.0" step="0.1" value="1.0">
-      </div>
-      <div class="field">
-        <label>Seed <span class="val" id="seedDisplay">random</span></label>
-        <div class="seed-row">
-          <input type="number" id="seedInput" placeholder="Random" min="0" max="2147483647">
-          <button type="button" class="mini-btn" onclick="randomSeed()">🎲</button>
-          <button type="button" class="mini-btn" onclick="clearSeed()">×</button>
-        </div>
+    <h2>Pipeline</h2>
+    <div class="field">
+      <label>Pipeline Type</label>
+      <select id="pipelineType">
+        <option value="512" selected>Standard 512³ (~30s, less VRAM)</option>
+        <option value="1024_cascade">High 1024³ (~60s, more detail)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" id="remesh" checked>
+        <span>Apply Remesh (cleaner topology)</span>
+      </label>
+    </div>
+    <div class="field">
+      <label>Remesh Band <span class="val" id="remeshBandVal">1.0</span></label>
+      <input type="range" id="remeshBand" min="0.5" max="2.0" step="0.1" value="1.0">
+    </div>
+    <div class="field">
+      <label>Seed <span class="val" id="seedDisplay">random</span></label>
+      <div class="seed-row">
+        <input type="number" id="seedInput" placeholder="Random" min="0" max="2147483647">
+        <button type="button" class="mini-btn" onclick="randomSeed()">🎲</button>
+        <button type="button" class="mini-btn" onclick="clearSeed()">×</button>
       </div>
     </div>
 
@@ -689,13 +682,6 @@ document.getElementById('seedInput').addEventListener('input', (e) => {
   document.getElementById('seedDisplay').textContent = v === '' ? 'random' : v;
 });
 
-function toggleAdvanced(){
-  const adv = document.getElementById('advanced');
-  const tog = document.getElementById('advancedToggle');
-  const open = adv.classList.toggle('open');
-  if (tog) tog.textContent = open ? '▲ Advanced' : '▼ Advanced';
-}
-
 // ────────────────────────────────────────────────────────────
 // Submit gen
 // ────────────────────────────────────────────────────────────
@@ -855,6 +841,8 @@ function showGlbViewer(glbUrl){
       <div class="hud"><span class="mode" id="glbMode">PBR</span> · <span id="glbStats">—</span></div>
       <div class="tb-spin" id="glbLoading">LOADING…</div>
       <div class="toolbar">
+        <button class="tb-btn" title="Zoom in" onclick="_glbViewer && _glbViewer.zoomIn()">+</button>
+        <button class="tb-btn" title="Zoom out" onclick="_glbViewer && _glbViewer.zoomOut()">−</button>
         <button class="tb-btn" title="Reset view" onclick="_glbViewer && _glbViewer.resetCamera()">⟲</button>
         <button class="tb-btn" id="glbProxyBtn" title="Toggle drag proxy mode" onclick="_glbViewer && _glbViewer.cycleProxy()">FLAT</button>
       </div>
@@ -867,37 +855,64 @@ async function initThreeViewer(glbUrl){
   const THREE = await import('three');
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
   const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+  const { RGBELoader } = await import('three/addons/loaders/RGBELoader.js');
   const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
 
   const container = document.getElementById('glbViewer');
   const canvas = document.getElementById('glbCanvas');
   if (!container || !canvas) return;
 
-  // Renderer + scene + camera
+  // Renderer + scene + camera. ACES tone mapping + sRGB output color space
+  // matches what TRELLIS's own render_utils.make_pbr_vis_frames uses, so the
+  // browser preview tonally matches the GLB you'd get rendered offline.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.1;
+  // Bumped from 1.1 → 1.4. PBR materials with metallic + low-frequency HDRI
+  // lighting tend to read dim with tone mapping at 1.0; 1.4 puts midtones
+  // back where they should be without blowing highlights.
+  renderer.toneMappingExposure = 1.4;
 
   const scene = new THREE.Scene();
   scene.background = null;
-  // Cheap pre-baked indoor environment for PBR reflections
   const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+
+  // Start with the cheap RoomEnvironment so something renders immediately
+  // while the real HDRI loads in the background. As soon as the HDRI is
+  // ready, swap scene.environment to the higher-quality version.
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-  const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
-  camera.position.set(0, 0.4, 2.0);
+  // Real HDRI environment for production-quality PBR. Polyhaven's
+  // royalty-free studio HDRI gives even illumination + reasonable specular
+  // reflections. Loaded async — the swap is seamless (same PMREM target).
+  // If load fails (offline / blocked), we keep the RoomEnvironment fallback.
+  const HDRI_URL = 'https://threejs.org/examples/textures/equirectangular/royal_esplanade_1k.hdr';
+  new RGBELoader().load(HDRI_URL, (hdrTex) => {
+    hdrTex.mapping = THREE.EquirectangularReflectionMapping;
+    const envMap = pmrem.fromEquirectangular(hdrTex).texture;
+    scene.environment = envMap;
+    hdrTex.dispose();
+  }, undefined, () => {
+    console.warn('[viewer] HDRI load failed — falling back to RoomEnvironment');
+  });
+
+  // Camera will be positioned via fit-to-content once the model loads.
+  // Default position is just a placeholder until then.
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+  camera.position.set(0, 0, 3);
 
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.target.set(0, 0, 0);
 
-  // Subtle key light for the proxy mode (basic mat doesn't use environment)
-  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  // Direct lights for the PROXY mode (flat/points) only. PBR mode uses the
+  // HDRI environment for lighting and these are largely dwarfed by it.
+  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
   scene.add(ambient);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.5);
   dir.position.set(2, 3, 2);
   scene.add(dir);
 
@@ -927,15 +942,46 @@ async function initThreeViewer(glbUrl){
     modelGroup = gltf.scene;
     scene.add(modelGroup);
 
-    // Compute bounding box, center + scale model into a unit-ish box.
+    // Center the model at origin (translate so its bounding-box center
+    // sits at 0,0,0) but DON'T scale it. Instead we'll position the camera
+    // based on the bounding sphere — that way the camera always frames the
+    // model regardless of its actual world units (TRELLIS exports vary).
     const bbox = new THREE.Box3().setFromObject(modelGroup);
-    const size = bbox.getSize(new THREE.Vector3());
     const center = bbox.getCenter(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const targetSize = 1.0;
-    const scale = targetSize / maxDim;
-    modelGroup.position.sub(center.multiplyScalar(scale));
-    modelGroup.scale.setScalar(scale);
+    const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+    modelGroup.position.sub(center);
+    // Update bbox after translation so subsequent code sees the centered version
+    bbox.translate(center.clone().negate());
+    sphere.center.set(0, 0, 0);
+
+    // Fit-to-content camera placement. Given the bounding sphere radius R
+    // and vertical FOV α, the camera distance D needed to fit the sphere
+    // with a margin m (e.g. 0.85 = use 85% of frame) is:
+    //   D = R / (m * tan(α/2)) for vertical fit
+    // We also account for horizontal aspect ratio so wide viewports don't
+    // crop the model on the sides.
+    const fovRad = (camera.fov * Math.PI) / 180;
+    const aspect = container.clientWidth / Math.max(1, container.clientHeight);
+    const margin = 0.7;  // model fills ~70% of frame, leaves headroom for orbit
+    const distV = sphere.radius / Math.tan(fovRad / 2) / margin;
+    const distH = sphere.radius / Math.tan(fovRad / 2) / margin / Math.min(1, aspect);
+    const distance = Math.max(distV, distH);
+    // Camera looks slightly down-from-front for hero-shot framing.
+    // Direction: 30° azimuth, 15° elevation above horizon.
+    const az = Math.PI / 6;     // 30°
+    const el = Math.PI / 12;    // 15°
+    camera.position.set(
+      distance * Math.cos(el) * Math.sin(az),
+      distance * Math.sin(el),
+      distance * Math.cos(el) * Math.cos(az),
+    );
+    camera.near = Math.max(0.001, distance * 0.01);
+    camera.far  = distance * 100;
+    camera.updateProjectionMatrix();
+    controls.target.set(0, 0, 0);
+    controls.minDistance = sphere.radius * 0.5;
+    controls.maxDistance = distance * 4;
+    controls.update();
 
     // Build proxy versions per mesh: a flat-shaded mesh + a Points cloud,
     // sharing the same BufferGeometry (no extra GPU memory).
@@ -971,10 +1017,12 @@ async function initThreeViewer(glbUrl){
           flatShading: true,
         });
 
-        // Points cloud, second proxy option.
+        // Points cloud, second proxy option. Size scales with the
+        // bounding-sphere radius computed above so points are visible
+        // regardless of the GLB's actual world units.
         const pointsMat = new THREE.PointsMaterial({
           color: proxyColor,
-          size: 0.005,
+          size: sphere.radius * 0.005,
           sizeAttenuation: true,
         });
         const pointsObj = new THREE.Points(geom, pointsMat);
@@ -1053,6 +1101,24 @@ async function initThreeViewer(glbUrl){
     controls.update();
   }
 
+  // Zoom in/out by stepping the camera along its current view direction
+  // toward/away from the orbit target. Step factor 0.8 means each click
+  // moves the camera 20% closer (in) or 25% further (out — 1/0.8 = 1.25),
+  // which feels right for laptop trackpads where pinch-zoom is unreliable.
+  // Respects OrbitControls.minDistance / maxDistance so users can't fly
+  // through the model or zoom out into infinity.
+  function zoomBy(factor) {
+    const dir = new THREE.Vector3().subVectors(camera.position, controls.target);
+    const newDist = dir.length() * factor;
+    const clamped = Math.max(controls.minDistance || 0.001,
+                             Math.min(controls.maxDistance || Infinity, newDist));
+    dir.setLength(clamped);
+    camera.position.copy(controls.target).add(dir);
+    controls.update();
+  }
+  function zoomIn()  { zoomBy(0.8);   }
+  function zoomOut() { zoomBy(1.25);  }
+
   // ── Drag detection → swap to proxy ───────────────────────
   let idleTimer = null;
   controls.addEventListener('start', () => {
@@ -1084,6 +1150,8 @@ async function initThreeViewer(glbUrl){
   _glbViewer = {
     cycleProxy,
     resetCamera,
+    zoomIn,
+    zoomOut,
     dispose() {
       alive = false;
       ro.disconnect();
@@ -1697,7 +1765,7 @@ function escapeHtml(s){
 // would otherwise be scoped to the module).
 // ────────────────────────────────────────────────────────────
 Object.assign(window, {
-  signIn, signOut, toggleAdvanced, submitGen,
+  signIn, signOut, submitGen,
   approveJob, discardJob, loadExistingJob, newGen,
   randomSeed, clearSeed, applyPreset,
   retryJob, toggleHistory, loadMoreHistory, loadFromHistory,
