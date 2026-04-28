@@ -151,11 +151,23 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .btn .cost{font-size:9px;opacity:.7;margin-left:2px}
 
 /* Live progress bar */
-.progress-strip{padding:12px 24px;background:var(--surface);border-top:1px solid var(--border)}
-.progress-strip .row{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-.progress-strip .stage{color:var(--gold)}
-.progress-strip .bar{height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden}
-.progress-strip .bar-fill{height:100%;background:var(--gold);transition:width .3s ease;width:0%}
+.progress-strip{padding:14px 24px;background:var(--surface);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px}
+.progress-strip .row{display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px}
+.progress-strip .stage{color:var(--gold);font-weight:600;font-size:11px}
+.progress-strip .substage{color:var(--text-dim);margin-left:8px;text-transform:none;letter-spacing:.5px}
+.progress-strip .meta{display:flex;gap:14px;color:var(--text-muted);font-size:9px}
+.progress-strip .meta b{color:var(--text);font-weight:600;margin-left:4px}
+.progress-strip .bar{height:6px;background:var(--surface-3);border-radius:3px;overflow:hidden;position:relative}
+.progress-strip .bar-fill{height:100%;background:linear-gradient(90deg,var(--gold-dark),var(--gold) 60%,var(--gold-light));transition:width .3s ease;width:0%}
+.progress-strip .bar.indeterminate .bar-fill{width:30% !important;animation:indet 1.4s ease-in-out infinite}
+@keyframes indet{0%{margin-left:-30%}100%{margin-left:100%}}
+
+/* Per-stage breakdown: 8 segmented chips showing the pipeline */
+.stage-chips{display:flex;gap:3px;margin-top:2px}
+.stage-chip{flex:1;height:5px;background:var(--surface-3);border-radius:2px;position:relative;overflow:hidden;transition:.2s}
+.stage-chip.done{background:var(--gold)}
+.stage-chip.active{background:var(--gold-dim);border:1px solid var(--gold)}
+.stage-chip.active .chip-fill{position:absolute;inset:0;background:var(--gold);transform-origin:left;animation:none}
 
 /* ── HISTORY DRAWER ────────────────────────────────────── */
 .history-backdrop{position:fixed;inset:0;background:rgba(9,9,11,.6);backdrop-filter:blur(2px);z-index:150;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -358,10 +370,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="action-bar" id="actionBar" style="display:none"></div>
     <div class="progress-strip" id="progressStrip" style="display:none">
       <div class="row">
-        <span class="stage" id="progStage">—</span>
-        <span id="progStep">—</span>
+        <div>
+          <span class="stage" id="progStage">—</span>
+          <span class="substage" id="progSubstage"></span>
+        </div>
+        <div class="meta">
+          <span>Stage<b id="progStageCount">—</b></span>
+          <span>Step<b id="progStep">—</b></span>
+          <span>Elapsed<b id="progElapsed">0s</b></span>
+          <span>ETA<b id="progEta">—</b></span>
+        </div>
       </div>
-      <div class="bar"><div class="bar-fill" id="progFill"></div></div>
+      <div class="bar" id="progBarContainer"><div class="bar-fill" id="progFill"></div></div>
+      <div class="stage-chips" id="stageChips"></div>
     </div>
   </main>
 </div>
@@ -1103,18 +1124,123 @@ function setActionBar(html){
 // ────────────────────────────────────────────────────────────
 // Progress strip
 // ────────────────────────────────────────────────────────────
+// Pipeline stages in order, with relative time weights based on observed
+// timings on A100 with warm cache. These are rough — actual durations vary
+// with user params (steps, texture_size, vertex target). Used to compute
+// monotonically-advancing OVERALL progress so the bar doesn't reset every
+// stage transition the way per-stage % does.
+const PIPELINE_STAGES = [
+  // Preview pipeline
+  { key: 'queued',                label: 'Queued',           weight: 1, group: 'preview' },
+  { key: 'sampling_ss',           label: 'Sampling structure', weight: 8, group: 'preview' },
+  { key: 'sampling_shape',        label: 'Sampling shape',     weight: 12, group: 'preview' },
+  { key: 'sampling_tex',          label: 'Sampling texture',   weight: 10, group: 'preview' },
+  { key: 'decoding',              label: 'Decoding',           weight: 4, group: 'preview' },
+  { key: 'rendering',             label: 'Rendering preview',  weight: 6, group: 'preview' },
+  // Finalize pipeline (only runs after Approve)
+  { key: 'finalize_queued',       label: 'Finalize queued',     weight: 1, group: 'finalize' },
+  { key: 'finalize_fill_holes',   label: 'Filling holes',       weight: 2, group: 'finalize' },
+  { key: 'finalize_prepare_mesh', label: 'Preparing mesh',      weight: 8, group: 'finalize' },
+  { key: 'finalize_uv_unwrap',    label: 'UV unwrapping',       weight: 6, group: 'finalize' },
+  { key: 'finalize_bake_export',  label: 'Baking textures',     weight: 8, group: 'finalize' },
+  { key: 'finalize_uploading',    label: 'Uploading',           weight: 1, group: 'finalize' },
+];
+// Compute cumulative weight up to (but not including) each stage.
+let _cumWeight = 0;
+PIPELINE_STAGES.forEach(s => { s.cum = _cumWeight; _cumWeight += s.weight; });
+const PIPELINE_TOTAL_WEIGHT = _cumWeight;
+
+// Track elapsed since job started, for estimation.
+let _progressStartedAt = 0;
+
 function setProgress(visible, stage, step, total){
   const strip = document.getElementById('progressStrip');
-  if (!visible) { strip.style.display = 'none'; return; }
-  strip.style.display = '';
-  document.getElementById('progStage').textContent = STAGE_LABELS[stage] || stage || '—';
-  if (total > 0) {
-    document.getElementById('progStep').textContent = `${step} / ${total}`;
-    document.getElementById('progFill').style.width = (100 * step / total) + '%';
-  } else {
-    document.getElementById('progStep').textContent = '';
-    document.getElementById('progFill').style.width = '0%';
+  if (!visible) {
+    strip.style.display = 'none';
+    _progressStartedAt = 0;
+    return;
   }
+  strip.style.display = '';
+  if (!_progressStartedAt) _progressStartedAt = Date.now();
+
+  // Find this stage in the pipeline. If unknown stage, fall back to indeterminate.
+  const stageDef = PIPELINE_STAGES.find(s => s.key === stage);
+
+  // Stage label (big, gold) + substage (small, dim) — e.g. "Sampling structure / step 4 of 8"
+  const stageLabel = stageDef?.label || STAGE_LABELS[stage] || stage || '—';
+  document.getElementById('progStage').textContent = stageLabel;
+  let substage = '';
+  if (total > 0) substage = `step ${step} of ${total}`;
+  document.getElementById('progSubstage').textContent = substage;
+
+  // Stage X of Y indicator (which stage of the pipeline we're in)
+  if (stageDef) {
+    const idx = PIPELINE_STAGES.indexOf(stageDef);
+    const groupCount = PIPELINE_STAGES.filter(s => s.group === stageDef.group).length;
+    const groupIdx = PIPELINE_STAGES.filter((s, i) => i <= idx && s.group === stageDef.group).length;
+    document.getElementById('progStageCount').textContent = ` ${groupIdx}/${groupCount}`;
+  } else {
+    document.getElementById('progStageCount').textContent = ' —';
+  }
+
+  // Step X / Y (within the current stage)
+  document.getElementById('progStep').textContent = total > 0 ? ` ${step}/${total}` : ' —';
+
+  // Elapsed timer
+  const elapsedSec = Math.round((Date.now() - _progressStartedAt) / 1000);
+  document.getElementById('progElapsed').textContent =
+    ` ${elapsedSec >= 60 ? `${Math.floor(elapsedSec/60)}m ${elapsedSec%60}s` : `${elapsedSec}s`}`;
+
+  // Overall progress bar — uses pipeline-cumulative weights so the bar
+  // always advances forward, never resets between stages.
+  let overallPct = 0;
+  let isIndeterminate = false;
+  if (stageDef) {
+    const localPct = total > 0 ? (step / total) : 0;
+    const overall = (stageDef.cum + stageDef.weight * localPct) / PIPELINE_TOTAL_WEIGHT;
+    overallPct = Math.min(98, overall * 100);  // cap below 100 until done
+  } else {
+    isIndeterminate = true;
+  }
+  const barContainer = document.getElementById('progBarContainer');
+  if (isIndeterminate) {
+    barContainer.classList.add('indeterminate');
+    document.getElementById('progFill').style.width = '30%';
+  } else {
+    barContainer.classList.remove('indeterminate');
+    document.getElementById('progFill').style.width = overallPct + '%';
+  }
+
+  // ETA: linear extrapolation from elapsed × (1 - overall) / overall.
+  // Only show ETA if we have at least 5s of data and overall > 5% — too
+  // jittery before that.
+  if (overallPct > 5 && elapsedSec >= 5) {
+    const remaining = elapsedSec * (100 - overallPct) / overallPct;
+    document.getElementById('progEta').textContent =
+      ` ~${remaining >= 60 ? `${Math.floor(remaining/60)}m ${Math.round(remaining)%60}s` : `${Math.round(remaining)}s`}`;
+  } else {
+    document.getElementById('progEta').textContent = ' —';
+  }
+
+  // Stage chips — visualize the whole pipeline as 12 segmented bars
+  renderStageChips(stage, step, total);
+}
+
+function renderStageChips(currentStage, step, total){
+  const container = document.getElementById('stageChips');
+  if (!container) return;
+  // Only show chips for the relevant pipeline group (preview vs finalize).
+  // Default to preview if we can't classify the current stage.
+  const stageDef = PIPELINE_STAGES.find(s => s.key === currentStage);
+  const group = stageDef?.group || 'preview';
+  const groupStages = PIPELINE_STAGES.filter(s => s.group === group);
+  const currentIdx = groupStages.findIndex(s => s.key === currentStage);
+  container.innerHTML = groupStages.map((s, i) => {
+    let cls = '';
+    if (i < currentIdx) cls = 'done';
+    else if (i === currentIdx) cls = 'active';
+    return `<div class="stage-chip ${cls}" title="${s.label}"></div>`;
+  }).join('');
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1280,9 +1406,23 @@ function renderQueue(jobs){
 
   const el = document.getElementById('queueOverlay');
   el.innerHTML = jobs.map(j => {
-    const pct = (j.total_steps > 0) ? Math.min(100, 100 * (j.step || 0) / j.total_steps) : 0;
+    // Overall progress across the pipeline, same logic as the main bar.
+    const stageDef = PIPELINE_STAGES.find(s => s.key === j.stage);
+    let pct = 0;
+    if (stageDef) {
+      const localPct = (j.total_steps > 0) ? (j.step || 0) / j.total_steps : 0;
+      pct = Math.min(98, 100 * (stageDef.cum + stageDef.weight * localPct) / PIPELINE_TOTAL_WEIGHT);
+    } else if (j.status === 'preview_ready') {
+      pct = 100;  // Awaiting user action — pipeline complete for preview group
+    } else if (j.status === 'done') {
+      pct = 100;
+    }
     const isPreviewReady = j.status === 'preview_ready';
     const stageLabel = STAGE_LABELS[j.stage] || j.stage || j.status;
+    // Substep info if we have it ("step 3/8")
+    const substep = (j.total_steps > 0)
+      ? `<span style="color:var(--text-muted);font-size:9px"> · ${j.step || 0}/${j.total_steps}</span>`
+      : '';
     const showThis = STATE.currentJobId === j.id ? '' :
       `<button class="qbtn" onclick="loadExistingJob('${j.id}')">View</button>`;
     const isNew = !_seenJobIds.has(j.id);
@@ -1295,7 +1435,7 @@ function renderQueue(jobs){
         <div class="top">
           ${thumb}
           <div class="qmeta">
-            <div class="stage">${stageLabel}</div>
+            <div class="stage">${stageLabel}${substep}</div>
             <div class="id">${j.id.slice(0, 8)}</div>
           </div>
         </div>
@@ -1575,6 +1715,22 @@ pollGpuStatus();
 pollQueue();
 setInterval(pollGpuStatus, 2000);
 setInterval(pollQueue, 3000);
+// 1Hz tick so the progress strip's elapsed/ETA fields update every second,
+// not just every 1.5s when the job poller fires. Without this, the elapsed
+// counter looks like it's stuck during the gaps between polls.
+setInterval(() => {
+  if (_progressStartedAt && document.getElementById('progressStrip').style.display !== 'none') {
+    const elapsedSec = Math.round((Date.now() - _progressStartedAt) / 1000);
+    const elEl = document.getElementById('progElapsed');
+    if (elEl) elEl.textContent = ` ${elapsedSec >= 60 ? `${Math.floor(elapsedSec/60)}m ${elapsedSec%60}s` : `${elapsedSec}s`}`;
+  }
+  // Same for the startup overlay's elapsed counter
+  if (STATE.startupShowAt && document.getElementById('startupOverlay').classList.contains('show')) {
+    const elapsed = Math.round((Date.now() - STATE.startupShowAt) / 1000 + (STATE.gpuState.startup_age_s || 0));
+    const tEl = document.getElementById('startupTime');
+    if (tEl) tEl.textContent = elapsed + 's';
+  }
+}, 1000);
 
 </script>
 </body>
