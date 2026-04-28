@@ -225,6 +225,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .startup-bar-fill{height:100%;background:var(--gold);width:0%;transition:width .5s ease}
 .startup-meta{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px}
 .startup-stage{color:var(--gold)}
+.startup-chips{display:flex;gap:4px;margin-top:14px}
+.startup-chip{flex:1;height:5px;background:var(--surface-3);border-radius:2px;transition:.2s}
+.startup-chip.done{background:var(--gold)}
+.startup-chip.active{background:var(--gold-dim);border:1px solid var(--gold);animation:chipPulse 1.5s ease-in-out infinite}
+@keyframes chipPulse{0%,100%{opacity:.6}50%{opacity:1}}
 
 /* ── TOAST ─────────────────────────────────────────────── */
 .toast-stack{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:200}
@@ -407,6 +412,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       <span class="startup-stage" id="startupStage">CONNECTING…</span>
       <span id="startupTime">0s</span>
     </div>
+    <div class="startup-chips" id="startupChips"></div>
   </div>
 </div>
 
@@ -436,6 +442,18 @@ const COSTS = { gen: 200, finalize: 100 };
 
 // Stage label map (for live progress + queue items)
 const STAGE_LABELS = {
+  // GPU startup stages (emitted by trellis_app.py setup() during cold boot).
+  // Order observed in logs:
+  //   booting → loading_transformer → building_pipeline → registering (N/M) → ready
+  // These drive the cold-boot overlay; user sees real progress through setup.
+  booting:              'Booting container',
+  loading_transformer:  'Loading transformer (4B params)',
+  building_pipeline:    'Building pipeline',
+  registering:          'Compiling kernels',     // progress shown as "3/5 flow models"
+  compiling:            'Compiling kernels',
+  warming_up:           'Warming up',
+  ready:                'Ready',
+  // Per-job stages (emitted by _run_preview / _run_finalize).
   queued: 'Queued',
   running_preview: 'Running',
   sampling_ss: 'Sampling structure',
@@ -1538,9 +1556,22 @@ async function pollGpuStatus(){
     const r = await fetch('/api/trellis/status');
     const d = await r.json();
     if (d.ok) {
-      STATE.gpuState = d;
-      updateBadge(d);
-      updateStartupOverlay(d);
+      // Worker returns the boot stage as startup_stage, progress as
+      // startup_progress, total as startup_total. Alias to flat names so
+      // updateBadge / updateStartupOverlay can read .stage / .progress / .total
+      // without caring about the wire shape.
+      const normalized = {
+        ok: d.ok,
+        state: d.state,
+        stage: d.startup_stage || null,
+        progress: d.startup_progress || 0,
+        total: d.startup_total || 0,
+        startup_age_s: d.startup_age_s || 0,
+        heartbeat_age_s: d.heartbeat_age_s,
+      };
+      STATE.gpuState = normalized;
+      updateBadge(normalized);
+      updateStartupOverlay(normalized);
     }
   } catch(e) {}
 }
@@ -1569,39 +1600,113 @@ function updateBadge(s){
     text.textContent = 'GPU cold';
   }
 }
+// Startup pipeline weights — relative time each stage takes on cold boot,
+// derived from production logs:
+//   booting ~5s, loading_transformer ~25s, building_pipeline ~10s,
+//   registering 5x compile ~80s, ready (instant transition).
+// We use these weights to compute a monotonic overall progress bar instead
+// of letting it reset between stages.
+const STARTUP_STAGES = [
+  { key: 'booting',             label: 'Booting container',           weight: 1, msg: 'Modal is allocating an A100 and pulling the container image.' },
+  { key: 'loading_transformer', label: 'Loading transformer',         weight: 5, msg: 'Streaming 4B params from HuggingFace cache to GPU memory.' },
+  { key: 'building_pipeline',   label: 'Building pipeline',           weight: 2, msg: 'Wiring up the SS / shape SLat / texture SLat models.' },
+  { key: 'registering',         label: 'Compiling CUDA kernels',      weight: 16, msg: 'torch.compile is JIT-ing each flow model. This is the long part.' },
+  { key: 'compiling',           label: 'Compiling CUDA kernels',      weight: 16, msg: 'torch.compile is JIT-ing each flow model. This is the long part.' },
+  { key: 'warming_up',          label: 'Warming up',                  weight: 1, msg: 'Final warm-up pass before the first real job.' },
+];
+// Cumulative weight up to (but not including) each stage.
+let _startupCum = 0;
+STARTUP_STAGES.forEach(s => { s.cum = _startupCum; _startupCum += s.weight; });
+const STARTUP_TOTAL_WEIGHT = _startupCum;
+
 function updateStartupOverlay(s){
   const overlay = document.getElementById('startupOverlay');
-  const isWarmingStage = ['booting','loading_transformer','building_pipeline','registering','compiling','warming_up'].includes(s.stage);
-  // Also count "we just fired a wake but Modal hasn't reported yet" as warming
-  // for overlay purposes, so the user sees the spinner immediately on sign-in
-  // instead of waiting for Modal's first heartbeat (~10s).
+  const stageDef = STARTUP_STAGES.find(st => st.key === s.stage);
+  const isWarmingStage = !!stageDef;
   const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
-  const inWakeGap = wakeAge < 30 && (!s.stage || s.stage === 'cold' || s.stage === 'unknown');
+  const inWakeGap = wakeAge < 30 && (!s.stage || s.stage === 'cold' || s.stage === 'unknown' || s.stage === 'ready');
+  // Hide overlay only when GPU is truly ready AND we're not still in the
+  // wake gap. Otherwise keep it open through the whole boot sequence.
+  const isReady = s.stage === 'ready' && !inWakeGap;
   const isWarming = isWarmingStage || inWakeGap;
-  if (isWarming) {
-    if (!STATE.startupShowAt) STATE.startupShowAt = Date.now();
-    overlay.classList.add('show');
-    const elapsed = (Date.now() - STATE.startupShowAt) / 1000 + (s.startup_age_s || 0);
-    const expectedTotal = 180; // seconds
-    const pct = Math.min(95, 100 * elapsed / expectedTotal);
-    document.getElementById('startupFill').style.width = pct + '%';
-    let label;
-    if (isWarmingStage) {
-      label = (STAGE_LABELS[s.stage] || s.stage).toUpperCase();
-    } else {
-      label = 'STARTING…';
-    }
-    document.getElementById('startupStage').textContent = label;
-    document.getElementById('startupTime').textContent = Math.round(elapsed) + 's';
-    if (s.stage === 'registering' && s.total > 0) {
-      document.getElementById('startupMsg').textContent = `Compiling kernels (${s.progress}/${s.total})...`;
-    } else if (inWakeGap) {
-      document.getElementById('startupMsg').textContent = 'Spinning up the GPU container — usually 30-90s on warm cache, 2-3 min cold.';
-    }
-  } else {
+
+  if (isReady) {
     overlay.classList.remove('show');
     STATE.startupShowAt = 0;
+    return;
   }
+  if (!isWarming) {
+    overlay.classList.remove('show');
+    STATE.startupShowAt = 0;
+    return;
+  }
+
+  if (!STATE.startupShowAt) STATE.startupShowAt = Date.now();
+  overlay.classList.add('show');
+
+  const elapsed = (Date.now() - STATE.startupShowAt) / 1000 + (s.startup_age_s || 0);
+
+  // Overall progress: cumulative-weight position within the pipeline +
+  // any sub-stage fraction (only "registering" reports N/M).
+  let overallPct;
+  if (stageDef) {
+    let localPct = 0;
+    if (s.total > 0) localPct = (s.progress || 0) / s.total;
+    const frac = (stageDef.cum + stageDef.weight * localPct) / STARTUP_TOTAL_WEIGHT;
+    overallPct = Math.min(95, frac * 100);
+  } else {
+    // Wake-gap fallback: time-based until the first real heartbeat lands.
+    const expectedTotal = 180;
+    overallPct = Math.min(15, 100 * elapsed / expectedTotal);
+  }
+  document.getElementById('startupFill').style.width = overallPct + '%';
+
+  // Stage label (big)
+  let label;
+  if (stageDef) {
+    label = stageDef.label.toUpperCase();
+    if (s.stage === 'registering' && s.total > 0) {
+      label += ` ${s.progress}/${s.total}`;
+    }
+  } else {
+    label = 'STARTING…';
+  }
+  document.getElementById('startupStage').textContent = label;
+  document.getElementById('startupTime').textContent = Math.round(elapsed) + 's';
+
+  // Substage detail message
+  let msg;
+  if (stageDef) {
+    msg = stageDef.msg;
+    if (s.stage === 'registering' && s.total > 0) {
+      msg = `Compiling flow model ${s.progress + 1} of ${s.total} — torch.compile traces each model the first time it runs.`;
+    }
+  } else if (inWakeGap) {
+    msg = 'Spinning up the GPU container — usually 30-90s on warm cache, 2-3 min cold.';
+  } else {
+    msg = '';
+  }
+  document.getElementById('startupMsg').textContent = msg;
+
+  // Stage chips (visual breadcrumb)
+  renderStartupChips(s.stage);
+}
+
+function renderStartupChips(currentStage){
+  const container = document.getElementById('startupChips');
+  if (!container) return;
+  // Collapse 'registering' and 'compiling' into one chip — they're the same
+  // logical step, the GPU just labels it differently in different contexts.
+  const visibleStages = STARTUP_STAGES.filter(s => s.key !== 'compiling');
+  const currentIdx = visibleStages.findIndex(s =>
+    s.key === currentStage || (currentStage === 'compiling' && s.key === 'registering'),
+  );
+  container.innerHTML = visibleStages.map((s, i) => {
+    let cls = '';
+    if (i < currentIdx) cls = 'done';
+    else if (i === currentIdx) cls = 'active';
+    return `<div class="startup-chip ${cls}" title="${s.label}"></div>`;
+  }).join('');
 }
 
 // ────────────────────────────────────────────────────────────
