@@ -464,8 +464,28 @@ async function loadMe(){
     if (data.ok) {
       STATE.user = data.user;
       renderAuth(data.user);
+      // Wake the GPU on sign-in so the ~150s cold start overlaps with the
+      // user's setting-config time, not added to their wait after Generate.
+      // Skipped if GPU is already warming or ready — wake is idempotent
+      // server-side but skipping the call avoids an unnecessary round-trip.
+      maybeWakeGpu();
     }
   } catch(e) { console.error('loadMe', e); }
+}
+
+// Idempotent on the client too — only fires once per page load. The server
+// is also idempotent (Modal coalesces concurrent wakes to one container).
+let _gpuWakeFired = false;
+function maybeWakeGpu(){
+  if (_gpuWakeFired) return;
+  if (STATE.gpuState && STATE.gpuState.stage === 'ready') return;  // already warm
+  _gpuWakeFired = true;
+  fetch('/api/trellis/wake', { method: 'POST', credentials: 'include' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok && d.waking) console.log('[trellis] GPU wake nudge sent');
+    })
+    .catch(e => console.warn('[trellis] wake nudge failed (non-fatal)', e));
 }
 function renderAuth(u){
   const inEl = document.getElementById('authIn');
