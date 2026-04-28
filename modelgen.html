@@ -413,6 +413,7 @@ const STATE = {
   dragStartFrame: 0,
   gpuState: { stage: 'cold', startup_age_s: 0 },
   startupShowAt: 0,
+  wakeFiredAt: 0,         // ms timestamp of last GPU-wake nudge; used to drive the overlay during the gap before Modal's first heartbeat
   historyOpen: false,
   historyCursor: null,    // pagination — next 'before' value, null if no older
   historyLoaded: [],      // accumulated history items across pages
@@ -480,6 +481,14 @@ function maybeWakeGpu(){
   if (_gpuWakeFired) return;
   if (STATE.gpuState && STATE.gpuState.stage === 'ready') return;  // already warm
   _gpuWakeFired = true;
+  // Track when we kicked the wake so the overlay can show during the gap
+  // between firing the wake and Modal's first heartbeat (~5-15s). Without
+  // this, the overlay only opens once Modal sends 'booting', and the user
+  // sees a blank "GPU cold" badge during the silent ramp-up.
+  STATE.wakeFiredAt = Date.now();
+  // Force-update the overlay/badge with our optimistic "starting" state.
+  updateStartupOverlay(STATE.gpuState);
+  updateBadge(STATE.gpuState);
   fetch('/api/trellis/wake', { method: 'POST', credentials: 'include' })
     .then(r => r.json())
     .then(d => {
@@ -1332,6 +1341,11 @@ function updateBadge(s){
   const dot = badge.querySelector('.dot');
   const text = badge.querySelector('span:last-child');
   dot.className = 'dot';
+  // If we recently fired a wake but Modal hasn't reported yet, show "Starting"
+  // until either the timeout expires or stage transitions. Without this the
+  // user sees "GPU cold" for ~10s after sign-in even though the wake fired.
+  const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
+  const inWakeGap = wakeAge < 30 && (!s.stage || s.stage === 'cold' || s.stage === 'unknown');
   if (s.stage === 'ready') {
     dot.classList.add('ready');
     text.textContent = 'GPU ready';
@@ -1339,6 +1353,9 @@ function updateBadge(s){
     dot.classList.add('warming');
     if (s.stage === 'registering' && s.total > 0) text.textContent = `Compiling ${s.progress}/${s.total}`;
     else text.textContent = (STAGE_LABELS[s.stage] || 'Warming');
+  } else if (inWakeGap) {
+    dot.classList.add('warming');
+    text.textContent = 'Starting…';
   } else {
     dot.classList.add('cold');
     text.textContent = 'GPU cold';
@@ -1346,7 +1363,13 @@ function updateBadge(s){
 }
 function updateStartupOverlay(s){
   const overlay = document.getElementById('startupOverlay');
-  const isWarming = ['booting','loading_transformer','building_pipeline','registering','compiling','warming_up'].includes(s.stage);
+  const isWarmingStage = ['booting','loading_transformer','building_pipeline','registering','compiling','warming_up'].includes(s.stage);
+  // Also count "we just fired a wake but Modal hasn't reported yet" as warming
+  // for overlay purposes, so the user sees the spinner immediately on sign-in
+  // instead of waiting for Modal's first heartbeat (~10s).
+  const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
+  const inWakeGap = wakeAge < 30 && (!s.stage || s.stage === 'cold' || s.stage === 'unknown');
+  const isWarming = isWarmingStage || inWakeGap;
   if (isWarming) {
     if (!STATE.startupShowAt) STATE.startupShowAt = Date.now();
     overlay.classList.add('show');
@@ -1354,10 +1377,18 @@ function updateStartupOverlay(s){
     const expectedTotal = 180; // seconds
     const pct = Math.min(95, 100 * elapsed / expectedTotal);
     document.getElementById('startupFill').style.width = pct + '%';
-    document.getElementById('startupStage').textContent = (STAGE_LABELS[s.stage] || s.stage).toUpperCase();
+    let label;
+    if (isWarmingStage) {
+      label = (STAGE_LABELS[s.stage] || s.stage).toUpperCase();
+    } else {
+      label = 'STARTING…';
+    }
+    document.getElementById('startupStage').textContent = label;
     document.getElementById('startupTime').textContent = Math.round(elapsed) + 's';
     if (s.stage === 'registering' && s.total > 0) {
       document.getElementById('startupMsg').textContent = `Compiling kernels (${s.progress}/${s.total})...`;
+    } else if (inWakeGap) {
+      document.getElementById('startupMsg').textContent = 'Spinning up the GPU container — usually 30-90s on warm cache, 2-3 min cold.';
     }
   } else {
     overlay.classList.remove('show');
