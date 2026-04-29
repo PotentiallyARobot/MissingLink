@@ -272,6 +272,59 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-input-tile .bit-reverse:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold);opacity:1;transform:scale(1.08)}
 .batch-input-tile .bit-reverse.busy{animation:pulse 1s infinite;background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 
+/* Per-tile send-to-mode buttons — let the user push a batch image into
+   Camera or Edit mode for single-image work without re-uploading. Sit
+   on the BOTTOM-right so they don't compete with the existing top-right
+   button cluster (reverse-prompt + remove). Reveal on hover only — full
+   tile chrome on hover, clean visual at rest. */
+.batch-input-tile .bit-send{
+    position:absolute;bottom:6px;width:22px;height:22px;border-radius:50%;
+    background:rgba(0,0,0,.78);border:1px solid rgba(255,255,255,.25);color:#fff;cursor:pointer;
+    font-size:11px;line-height:1;padding:0;
+    display:flex;align-items:center;justify-content:center;
+    backdrop-filter:blur(4px);
+    opacity:0;transition:all .12s;
+    z-index:3;
+}
+.batch-input-tile:hover .bit-send{opacity:.92}
+.batch-input-tile .bit-send:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold);opacity:1;transform:scale(1.08)}
+.batch-input-tile .bit-send-camera{right:34px}
+.batch-input-tile .bit-send-edit{right:6px}
+/* Find-issues button — single-tile vision-check trigger. Sits left of
+   the send-to-mode buttons. Stays gold-tinted while a check is in
+   flight to make the per-tile state visible at a glance. */
+.batch-input-tile .bit-find-issues{
+    position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;
+    background:rgba(0,0,0,.78);border:1px solid rgba(255,255,255,.25);color:#fff;cursor:pointer;
+    font-size:11px;line-height:1;padding:0;
+    display:flex;align-items:center;justify-content:center;
+    backdrop-filter:blur(4px);
+    opacity:0;transition:all .12s;
+    z-index:3;
+}
+.batch-input-tile:hover .bit-find-issues{opacity:.92}
+.batch-input-tile .bit-find-issues:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold);opacity:1;transform:scale(1.08)}
+.batch-input-tile .bit-find-issues.busy{animation:pulse 1s infinite;background:var(--gold);color:#0a0a0c;border-color:var(--gold);opacity:1}
+.batch-input-tile .bit-find-issues.has-issues{background:rgba(239,68,68,.85);border-color:var(--red);color:#fff;opacity:1}
+
+/* Issue overlay — SVG with red bounding boxes drawn on top of the tile
+   image. positioning: absolute filling the tile so SVG viewBox maps to
+   the displayed image area. SVG coords are 0–100 (we ask the model for
+   percentages of image dimensions, since we don't pass intrinsic dims
+   in the prompt). pointer-events:none so the overlay doesn't intercept
+   clicks meant for selecting/removing the tile. */
+.batch-input-tile .bit-issues-overlay{
+    position:absolute;inset:0;pointer-events:none;z-index:2;
+}
+.batch-input-tile .bit-issues-overlay rect{
+    fill:rgba(239,68,68,.12);stroke:var(--red);stroke-width:1.5;stroke-dasharray:3 2;
+    vector-effect:non-scaling-stroke;
+}
+.batch-input-tile .bit-issues-overlay text{
+    fill:#fff;font-family:var(--font-mono);font-size:3.2px;font-weight:700;
+    paint-order:stroke;stroke:rgba(239,68,68,.95);stroke-width:.8;stroke-linejoin:round;
+}
+
 /* Per-output-tile critique button — slots in left of the existing
    ✎ edit button which is at right:32px. Only visible on completed
    tiles, on hover, mirroring the edit button's reveal pattern. */
@@ -505,6 +558,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .img-modal img{max-width:92vw;max-height:92vh;object-fit:contain;border-radius:4px;box-shadow:0 0 60px rgba(0,0,0,.5)}
 .modal-close{position:absolute;top:16px;right:20px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:18px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10}
 .modal-close:hover{background:rgba(255,255,255,.2)}
+/* Download button in the image modal — sits to the LEFT of the close
+   button (top:16px right:64px = 20+36+8 gap). Same visual language as
+   modal-close so the action cluster reads as a unit. Anchor (not
+   button) so the browser handles the download natively via the
+   `download` attribute — no JS blob conversion needed. */
+.modal-download{position:absolute;top:16px;right:64px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:16px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10;text-decoration:none}
+.modal-download:hover{background:var(--gold);color:#0a0a0c}
 
 /* Full-history modal */
 .modal{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:40px}
@@ -1645,7 +1705,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec">
-        <button class="gen-btn" id="btnGen" onclick="doGenerate()" disabled>⚡ GENERATE</button>
+        <button class="gen-btn" id="btnGen" onclick="doGenerate()">⚡ GENERATE</button>
         <!-- Camera mode only: one click, 6 jobs queued, one per canonical
              azimuth. Uses current elevation/distance/seed so the user has
              a coherent set they can compare side-by-side. -->
@@ -1908,6 +1968,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
 <!-- IMAGE MODAL -->
 <div class="img-modal" id="imgModal" onclick="closeModal()">
+    <a id="modalDownload" class="modal-download" download title="Download image" onclick="event.stopPropagation()" href="#">⬇</a>
     <button class="modal-close" onclick="closeModal()">×</button>
     <img id="modalImg">
 </div>
@@ -2556,40 +2617,50 @@ function setMode(mode, opts){
 function updateGenButton(){
     const MAX_QUEUED = 12;  // matches STUDIO_MAX_QUEUED on the worker
     const btnAll = $('btnAllAngles');
+    // The primary GENERATE button is NEVER disabled — clicking it always
+    // does *something* (sign-in flow, token-buy modal, error notif, or
+    // the actual generation). Disabled buttons are confusing because the
+    // user often can't tell *why* it's grayed out. Instead we keep the
+    // label contextual ("SIGN IN TO GENERATE", "QUEUE FULL", etc.) and
+    // route the click to whatever action makes sense for that state.
+    // doGenerate() at the click site does the precondition checks and
+    // surfaces a notification when the action isn't possible.
+    const gen = $('btnGen');
+    gen.disabled = false;
 
-    // Primary button state first
-    if(!_user){ $('btnGen').disabled=false; $('btnGen').textContent='🔑 SIGN IN TO GENERATE';
+    if(!_user){ gen.textContent='🔑 SIGN IN TO GENERATE';
         if(btnAll){ btnAll.disabled=true; } return; }
-    if(_user.tokens<100){ $('btnGen').disabled=false; $('btnGen').textContent='🪙 GET TOKENS';
+    if(_user.tokens<100){ gen.textContent='🪙 GET TOKENS';
         if(btnAll){ btnAll.disabled=true; } return; }
     const activeCount=myJobs.filter(j=>j.status==='queued'||j.status==='waiting'||j.status==='running').length;
-    if(activeCount>=MAX_QUEUED){ $('btnGen').disabled=true; $('btnGen').textContent=`⏳ QUEUE FULL (${activeCount}/${MAX_QUEUED})`;
+    if(activeCount>=MAX_QUEUED){ gen.textContent=`⏳ QUEUE FULL (${activeCount}/${MAX_QUEUED})`;
         if(btnAll){ btnAll.disabled=true; } return; }
-    $('btnGen').textContent='⚡ GENERATE';
+    gen.textContent='⚡ GENERATE';
     if (currentMode === 'camera') {
-        $('btnGen').disabled = !imageId;
+        // Label only — button stays clickable. doGenerate shows a notif
+        // when imageId is missing.
+        if (!imageId) gen.textContent = '⚡ GENERATE (upload an image first)';
     } else if (currentMode === 'batch') {
-        // Batch: need ≥1 selected input + prompt + enough tokens + headroom.
-        const selectedCount = _batchInputs.filter(b => b.selected).length;
+        const selectedCount = _batchInputs.filter(b => b.selected && !b._placeholder).length;
         const cp = $('batchPrompt') ? $('batchPrompt').value.trim() : '';
         const needed = selectedCount * 100;
-        if (selectedCount === 0 || !cp) {
-            $('btnGen').disabled = true;
+        if (selectedCount === 0) {
+            gen.textContent = '⚡ GENERATE (select images first)';
+        } else if (!cp) {
+            gen.textContent = `⚡ GENERATE (write a prompt first)`;
         } else if (_user.tokens < needed) {
-            $('btnGen').disabled = true;
-            $('btnGen').textContent = `🪙 NEED ${needed} TOKENS`;
+            gen.textContent = `🪙 NEED ${needed} TOKENS`;
         } else if (activeCount + selectedCount > MAX_QUEUED) {
-            $('btnGen').disabled = true;
-            $('btnGen').textContent = `⏳ NEED ${selectedCount - (MAX_QUEUED - activeCount)} FREE SLOTS`;
+            gen.textContent = `⏳ NEED ${selectedCount - (MAX_QUEUED - activeCount)} FREE SLOTS`;
         } else {
-            $('btnGen').disabled = false;
-            $('btnGen').textContent = `⚡ GENERATE ${selectedCount} × EDIT`;
+            gen.textContent = `⚡ GENERATE ${selectedCount} × EDIT`;
         }
     } else {
         // Edit mode
         const f = slots.filter(s => s !== null);
         const cp = $('customPrompt') ? $('customPrompt').value.trim() : '';
-        $('btnGen').disabled = !(f.length > 0 && cp);
+        if (f.length === 0) gen.textContent = '⚡ GENERATE (add images first)';
+        else if (!cp) gen.textContent = '⚡ GENERATE (write a prompt first)';
     }
 
     // All-Angles button: camera-mode-only, needs 600 tokens, and enough
@@ -3673,7 +3744,21 @@ async function _makeMarkupThumbDataUrl(slotIdx){
 }
 
 // ── Modal ─────────────────────────────────────────
-function openModal(src){ if(!src) return; $('modalImg').src=src; $('imgModal').classList.add('open'); }
+function openModal(src, filename){
+    if(!src) return;
+    $('modalImg').src = src;
+    // Wire the download anchor — browsers honor `download` on same-origin
+    // OR cross-origin anchors as long as the response sends a permissive
+    // CORS header (R2 + our worker do). We pass an explicit filename so
+    // the browser doesn't fall back to the URL's last-path segment, which
+    // would be an opaque uuid for R2-served outputs.
+    const dl = $('modalDownload');
+    if (dl) {
+        dl.href = src;
+        dl.setAttribute('download', filename || (src.split('/').pop().split('?')[0]) || 'image.png');
+    }
+    $('imgModal').classList.add('open');
+}
 function closeModal(){ $('imgModal').classList.remove('open'); }
 document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){ closeModal(); closeBuyModal(); if(_markup && _markup.active) closeMarkupModal(false); }
@@ -3728,14 +3813,27 @@ async function doGenerate(){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     // Batch mode delegates to its own dedicated submission routine — each
     // selected input becomes its own job routed through _activeBatch.
+    // Its own preflight checks emit notifs for missing prompt / no
+    // selection / queue full / not enough tokens.
     if (currentMode === 'batch') {
         return generateBatchEdits();
     }
     if(_user.tokens<100){ showBuyModal(); return; }
+    // Queue cap is the same for camera + edit; bail early with a notif
+    // since the button is no longer disabled in this state.
+    const MAX_QUEUED = 12;
+    const activeCount = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
+    if (activeCount >= MAX_QUEUED) {
+        showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
+        return;
+    }
 
     let payload, thumbUrl;
     if(currentMode==='camera'){
-        if(!imageId) return;
+        if(!imageId){
+            showNotif('Upload an image first.', 'error');
+            return;
+        }
         thumbUrl=imageUrl;
         payload={
             mode:'camera',
@@ -3752,7 +3850,10 @@ async function doGenerate(){
         };
     } else {
         const filled=slots.filter(s=>s!==null);
-        if(!filled.length) return;
+        if(!filled.length){
+            showNotif('Add at least one image to an edit slot first.', 'error');
+            return;
+        }
         const prompt=$('customPrompt').value.trim();
         if(!prompt){ showNotif('Please enter an edit instruction before generating.'); return; }
         thumbUrl=filled[0].url;
@@ -4232,17 +4333,57 @@ function renderBatchInputs(){
         const fname = inp.fname || '';
         // Strip common extensions to save label space
         const displayName = fname.replace(/\.(png|jpe?g|webp|gif|bmp)$/i, '');
+        // Render the issue overlay if we've previously found issues for
+        // this image. Box coords are stored as 0-100 percentages of the
+        // image's natural dimensions, so the SVG viewBox of "0 0 100 100"
+        // maps cleanly regardless of the tile's pixel size.
+        const issues = Array.isArray(inp._issues) ? inp._issues : [];
+        let overlaySvg = '';
+        if (issues.length) {
+            const rects = issues.map((iss, n) => {
+                const x = Math.max(0, Math.min(100, iss.x_pct || 0));
+                const y = Math.max(0, Math.min(100, iss.y_pct || 0));
+                const w = Math.max(1, Math.min(100 - x, iss.w_pct || 0));
+                const h = Math.max(1, Math.min(100 - y, iss.h_pct || 0));
+                // Truncate label to keep the box readable
+                const label = (iss.label || `issue ${n + 1}`).slice(0, 22);
+                return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="0.6"/>
+                        <text x="${x + 0.8}" y="${y + 4.2}">${_htmlEsc(label)}</text>`;
+            }).join('');
+            overlaySvg = `<svg class="bit-issues-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">${rects}</svg>`;
+        }
+        const issueBtnClass = issues.length ? ' has-issues' : '';
+        const issueBtnTitle = issues.length
+            ? `${issues.length} issue${issues.length === 1 ? '' : 's'} found — click to recheck`
+            : 'Find issues with vision (red rectangles)';
         tile.innerHTML = `
             <img src="${inp.url}" alt="">
+            ${overlaySvg}
             <div class="bit-check"></div>
+            <button type="button" class="bit-find-issues${issueBtnClass}" title="${issueBtnTitle}">🔍</button>
             <button type="button" class="bit-reverse" title="Reverse-prompt this image (write a prompt that could have generated it)">🔁</button>
+            <button type="button" class="bit-send bit-send-camera" title="Load in Camera mode">📷</button>
+            <button type="button" class="bit-send bit-send-edit" title="Load in Edit mode">✏️</button>
             <button type="button" class="bit-remove" title="Remove this image">×</button>
             <div class="bit-label">
                 <span class="bit-label-num">${i + 1}</span>
                 <span class="bit-label-name">${displayName}</span>
             </div>
         `;
+        // Tile click → open expanded modal (with download). Selection
+        // moves to the bit-check checkbox at top-left, matching standard
+        // image-grid UX where click = preview, checkbox = select. The
+        // existing buttons all stopPropagation so they don't trigger
+        // this handler. Placeholder tiles short-circuit (no image yet
+        // and the placeholder branch already returned earlier).
         tile.onclick = (e) => {
+            // Defensive: img.pointer-events:none means clicks on the
+            // image bubble through to the tile. Anything explicitly
+            // clickable inside (.bit-* buttons) already stopPropagation.
+            openModal(inp.url, inp.fname || `${inp.id}.png`);
+        };
+        tile.querySelector('.bit-check').onclick = (e) => {
+            e.stopPropagation();
             inp.selected = !inp.selected;
             renderBatchInputs();
         };
@@ -4255,6 +4396,18 @@ function renderBatchInputs(){
         tile.querySelector('.bit-reverse').onclick = (e) => {
             e.stopPropagation();
             aiReverseInputTile(inp, tile.querySelector('.bit-reverse'));
+        };
+        tile.querySelector('.bit-send-camera').onclick = (e) => {
+            e.stopPropagation();
+            sendBatchInputToCamera(inp);
+        };
+        tile.querySelector('.bit-send-edit').onclick = (e) => {
+            e.stopPropagation();
+            sendBatchInputToEdit(inp);
+        };
+        tile.querySelector('.bit-find-issues').onclick = (e) => {
+            e.stopPropagation();
+            findIssuesOnTile(inp, tile.querySelector('.bit-find-issues'));
         };
         grid.appendChild(tile);
     });
@@ -4269,6 +4422,72 @@ function batchSelectAll(state){
 function batchClearInputs(){
     _batchInputs = [];
     renderBatchInputs();
+}
+
+// ─── Send a batch tile into single-image modes ──────────────────
+// Lets the user pull one image out of the batch into Camera or Edit
+// mode without re-uploading. Reuses the existing upload id (R2-backed)
+// so no new bytes go through the worker — we just point setInputImage
+// or slots[0] at the same record.
+function sendBatchInputToCamera(inp){
+    if (!inp || inp._placeholder) return;
+    setMode('camera');
+    setInputImage(inp.id, inp.url, inp.w, inp.h);
+    log(`Loaded "${inp.fname || inp.id}" into Camera mode`);
+}
+function sendBatchInputToEdit(inp){
+    if (!inp || inp._placeholder) return;
+    // skipAutoPopulate so setMode's camera→edit convenience doesn't race
+    // with our own slot assignment below.
+    setMode('edit', { skipAutoPopulate: true });
+    slots[0] = {
+        id: inp.id, url: inp.url,
+        filename: inp.fname || `${inp.id}.png`,
+        w: inp.w, h: inp.h,
+    };
+    renderSlot(0);
+    persistSlots();
+    updateGenButton();
+    log(`Loaded "${inp.fname || inp.id}" into Edit mode (slot 1)`);
+}
+
+// ─── Per-tile vision check: find issues, draw red rectangles ────
+// Calls /api/studio/agent-find-issues with this image's id. Worker
+// asks gpt-5.4-mini (vision) for bounding boxes around any visual
+// issues — deformed geometry, asymmetry, missing detail, AI-generation
+// artifacts, etc. Returns coords as percentages so the SVG overlay
+// scales cleanly to whatever pixel size the tile happens to be.
+//
+// Stored on inp._issues; renderBatchInputs picks them up next render
+// and paints the SVG. Calling again re-runs the check (and replaces
+// the previous issues).
+async function findIssuesOnTile(inp, btn){
+    if (!inp || inp._placeholder) return;
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+    try {
+        const r = await fetchT(`${API}/api/studio/agent-find-issues`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_id: inp.id }),
+        }, 60_000);
+        const d = await r.json();
+        if (!d.ok) {
+            log(`Find issues failed: ${d.detail || d.error || 'unknown'}`, 'error');
+            return;
+        }
+        inp._issues = Array.isArray(d.issues) ? d.issues : [];
+        if (d.tokens_remaining !== undefined && _user) {
+            _user.tokens = d.tokens_remaining;
+            const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+        }
+        renderBatchInputs();
+        log(`Found ${inp._issues.length} issue${inp._issues.length === 1 ? '' : 's'} in ${inp.fname || inp.id}`,
+            inp._issues.length ? 'success' : '');
+    } catch (e) {
+        log(`Find issues failed: ${e.message}`, 'error');
+    } finally {
+        if (btn) { btn.classList.remove('busy'); btn.disabled = false; }
+    }
 }
 
 // Upload one file to the batch inputs list. Uses the same /api/studio/upload
@@ -5720,8 +5939,11 @@ function renderBatchGrid(){
                 if (img.complete && img.naturalWidth > 0) {
                     revealWhenLoaded();
                 }
-                // Click to expand in the existing image modal
-                tile.onclick = () => openModal(shot.url);
+                // Click to expand in the existing image modal. Pass a
+                // filename derived from the job/shot id so the modal's
+                // download button saves with a useful name instead of
+                // an opaque R2 path segment.
+                tile.onclick = () => openModal(shot.url, (shot.id || shot.job_id || 'image') + '.png');
             }
         } else if (shot.status === 'error') {
             placeholder.textContent = 'Failed';
@@ -7259,6 +7481,15 @@ function _agentBatchState(){
         w: b.w || 0,
         h: b.h || 0,
     }));
+    // Shared-context images live in _batchContext slots 1 and 2. The
+    // user adds them as persistent references that should accompany
+    // every job — e.g. a character reference for "draw 8 scenes with
+    // this character". The agent needs to know these exist so it can
+    // pass them as reference_image_ids to generate_new_images.
+    const ctx = (typeof _batchContext !== 'undefined' && _batchContext) ? _batchContext : { 1: null, 2: null };
+    const contextImages = [ctx[1], ctx[2]]
+        .filter(x => x && x.id)
+        .map(x => ({ id: x.id, filename: x.filename || `${x.id}.png`, w: x.w || 0, h: x.h || 0 }));
     const promptEl = document.getElementById('batchPrompt');
     return {
         total_images: items.length,
@@ -7266,6 +7497,7 @@ function _agentBatchState(){
         in_flight_generations: (_batchInputs || []).filter(b => b._placeholder).length,
         current_prompt: promptEl ? promptEl.value : '',
         images: items,
+        context_images: contextImages,
     };
 }
 
@@ -7365,6 +7597,7 @@ const AGENT_TOOL_HANDLERS = {
         // synthetic placeholder id so we can locate and replace it
         // even if other batch operations mutate _batchInputs while
         // this fetch is in flight (parallel generations are common).
+        const refIds = Array.isArray(args.reference_image_ids) ? args.reference_image_ids : [];
         const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
         _batchInputs.push({
             id: placeholderId,
@@ -7372,7 +7605,7 @@ const AGENT_TOOL_HANDLERS = {
             fname: 'generating…',
             selected: false,
             _placeholder: true,
-            _placeholderLabel: 'Generating',
+            _placeholderLabel: refIds.length ? `Generating (+${refIds.length} ref${refIds.length === 1 ? '' : 's'})` : 'Generating',
         });
         renderBatchInputs();
         try {
@@ -7382,7 +7615,12 @@ const AGENT_TOOL_HANDLERS = {
                 // field, and one image per call is what gives us the live
                 // streaming UX (each placeholder fills in independently
                 // when its own /generations call returns).
-                body: JSON.stringify({ prompt: args.prompt, n: 1, size: args.size || '1024x1024' }),
+                body: JSON.stringify({
+                    prompt: args.prompt,
+                    n: 1,
+                    size: args.size || '1024x1024',
+                    reference_image_ids: refIds,
+                }),
             }, 130_000);
             const d = await r.json();
             if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
@@ -7404,8 +7642,10 @@ const AGENT_TOOL_HANDLERS = {
                 const tc = document.getElementById('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
             }
             return {
-                summary: `Generated 1 new image (gpt-image-2)`,
-                result: { ok: true, generated: { id: img.id, w: img.w, h: img.h }, batch_state: _agentBatchState() },
+                summary: refIds.length
+                    ? `Generated 1 new image with ${refIds.length} reference${refIds.length === 1 ? '' : 's'} (gpt-image-2)`
+                    : `Generated 1 new image (gpt-image-2)`,
+                result: { ok: true, generated: { id: img.id, w: img.w, h: img.h, references_used: refIds }, batch_state: _agentBatchState() },
             };
         } catch (e) {
             // Mark the placeholder as errored briefly so the user sees the
@@ -7425,10 +7665,6 @@ const AGENT_TOOL_HANDLERS = {
         }
     },
     async edit_with_gpt_image(args){
-        // Same placeholder pattern as generate_new_images. The schema
-        // takes a single image_id so each call → one /edits call →
-        // one new tile. Multiple parallel calls = multiple parallel
-        // placeholders, each filling independently.
         const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
         _batchInputs.push({
             id: placeholderId,
@@ -7480,6 +7716,149 @@ const AGENT_TOOL_HANDLERS = {
             }
             throw e;
         }
+    },
+    async edit_with_qwen(args){
+        // Mirror of edit_with_gpt_image but routes through the in-house
+        // Qwen pipeline. Different from gpt-image-2 in three ways the
+        // dispatcher has to handle:
+        //   1. Async — /agent-image-edit-qwen returns a job_id, not bytes.
+        //      We poll /api/studio/job/:id until status='done' or 'error'.
+        //   2. The result.url is /api/studio/outputs/<fname>.png, not a
+        //      fresh upload — so the resulting tile id is the JOB id,
+        //      and `_qwenJob: true` flags it for any downstream code
+        //      that cares about the distinction.
+        //   3. ~15-30s typical latency vs gpt-image-2's 30-60s, but
+        //      cold-boot can push it to 90s+ so the timeout is generous.
+        const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
+        _batchInputs.push({
+            id: placeholderId,
+            url: '',
+            fname: 'editing (qwen)…',
+            selected: false,
+            _placeholder: true,
+            _placeholderLabel: 'Qwen Editing',
+        });
+        renderBatchInputs();
+        try {
+            const r = await fetchT(`${API}/api/studio/agent-image-edit-qwen`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: args.prompt, image_id: args.image_id }),
+            }, 30_000);
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.detail || d.error || 'qwen_submit_failed');
+            const jobId = d.job_id;
+            if (!jobId) throw new Error('no_job_id');
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            // Poll until terminal. 2s cadence is gentle on the worker;
+            // total wait capped at 180s so a wedged job doesn't hang
+            // the chat forever — on timeout we surface an error and
+            // the user can check History for the eventual result.
+            const deadline = Date.now() + 180_000;
+            let result = null;
+            while (Date.now() < deadline) {
+                await new Promise(res => setTimeout(res, 2000));
+                const rj = await fetchT(`${API}/api/studio/job/${jobId}`, null, 8000);
+                const dj = await rj.json();
+                if (!dj.ok) continue;
+                if (dj.status === 'done' && dj.result) { result = dj.result; break; }
+                if (dj.status === 'error' || dj.status === 'cancelled') {
+                    throw new Error(dj.error || `qwen_${dj.status}`);
+                }
+            }
+            if (!result) throw new Error('qwen_timeout');
+            // Replace placeholder. Qwen output URL is relative
+            // (/api/studio/outputs/...png), so prefix with API base.
+            const outUrl = result.url.startsWith('http') ? result.url : (API + result.url);
+            const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+            const newEntry = {
+                id: jobId, url: outUrl,
+                w: result.w || 0, h: result.h || 0,
+                fname: `${jobId}-qwen.png`,
+                selected: false,
+                _qwenJob: true,
+            };
+            if (idx !== -1) _batchInputs[idx] = newEntry;
+            else _batchInputs.push(newEntry);
+            renderBatchInputs();
+            updateGenButton();
+            return {
+                summary: `Edited image ${args.image_id} → new image ${jobId} (Qwen)`,
+                result: { ok: true, edited: { id: jobId, w: newEntry.w, h: newEntry.h, source_id: args.image_id, model: 'qwen' }, batch_state: _agentBatchState() },
+            };
+        } catch (e) {
+            const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+            if (idx !== -1) {
+                _batchInputs[idx]._placeholderError = true;
+                _batchInputs[idx]._placeholderLabel = 'Failed';
+                renderBatchInputs();
+                setTimeout(() => {
+                    const j = _batchInputs.findIndex(b => b.id === placeholderId);
+                    if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
+                }, 3000);
+            }
+            throw e;
+        }
+    },
+    async find_visual_issues(args){
+        // Vision check N images in parallel. The frontend per-tile
+        // findIssuesOnTile() already handles a single image — this is
+        // just the batch-fan-out version for agent use. Each request is
+        // its own /agent-find-issues call, fired with Promise.all so
+        // the user sees red rectangles appear simultaneously across all
+        // checked tiles, not one at a time.
+        let ids = Array.isArray(args.image_ids) ? args.image_ids : [];
+        if (!ids.length) {
+            // No ids passed → check all currently-selected images
+            ids = (_batchInputs || []).filter(b => b.selected && !b._placeholder).map(b => b.id);
+        }
+        // Cap at 8 per call to bound cost — agent description tells the
+        // model this, but enforce defensively too.
+        ids = ids.slice(0, 8);
+        if (!ids.length) {
+            return {
+                summary: 'No images to check (none selected)',
+                result: { ok: false, error: 'no_images', batch_state: _agentBatchState() },
+                error: true,
+            };
+        }
+        const results = await Promise.allSettled(ids.map(async (id) => {
+            const inp = _batchInputs.find(b => b.id === id);
+            if (!inp) throw new Error(`unknown_image:${id}`);
+            const r = await fetchT(`${API}/api/studio/agent-find-issues`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_id: id }),
+            }, 60_000);
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.detail || d.error || 'find_issues_failed');
+            inp._issues = Array.isArray(d.issues) ? d.issues : [];
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            return { id, issues: inp._issues };
+        }));
+        renderBatchInputs();
+        const successes = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+        const failures = results.filter(r => r.status === 'rejected').length;
+        const totalIssues = successes.reduce((sum, s) => sum + s.issues.length, 0);
+        const perImage = successes.map(s => ({
+            image_id: s.id,
+            issue_count: s.issues.length,
+            issues: s.issues.map(iss => ({ label: iss.label, severity: iss.severity })),
+        }));
+        return {
+            summary: `Checked ${ids.length} image${ids.length === 1 ? '' : 's'} — ${totalIssues} issue${totalIssues === 1 ? '' : 's'} found${failures ? `, ${failures} check${failures === 1 ? '' : 's'} failed` : ''}`,
+            result: {
+                ok: true,
+                checked: ids.length,
+                total_issues: totalIssues,
+                per_image: perImage,
+                batch_state: _agentBatchState(),
+            },
+        };
     },
     async recaption(){
         // Reuse the existing /api/studio/ai-caption flow but for any
@@ -7594,7 +7973,14 @@ async function _agentRunTurn(){
         // they take effect first — the model rarely interleaves these
         // anyway since they're single-state operations, but ordering
         // matters when it does (set_selection then submit_qwen_edit).
-        const PARALLEL_TOOLS = new Set(['generate_new_images', 'edit_with_gpt_image']);
+        // edit_with_qwen + find_visual_issues are also commutative
+        // (each affects its own image only), so they parallelize too.
+        const PARALLEL_TOOLS = new Set([
+            'generate_new_images',
+            'edit_with_gpt_image',
+            'edit_with_qwen',
+            'find_visual_issues',
+        ]);
         const serialCalls = toolCalls.filter(c => !PARALLEL_TOOLS.has(c.name));
         const parallelCalls = toolCalls.filter(c => PARALLEL_TOOLS.has(c.name));
 
