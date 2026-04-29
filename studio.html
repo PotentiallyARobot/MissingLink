@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MissingLink Image Editor</title>
+<title>MissingLink Image Studio</title>
 <link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png">
 <style>
-/* MissingLink Image Editor — design system */
+/* MissingLink Image Studio — design system */
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 :root{
   --gold:#E8A917;--gold-light:#F5C842;--gold-dark:#C48E0E;--gold-dim:rgba(232,169,23,.08);
@@ -479,6 +479,14 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 /* Full-history modal */
 .modal{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:40px}
+/* notifModal is the confirm/alert dialog. It must paint ABOVE every other
+   modal (historyModal, imgModal, popup-modal, ai-modal) because it can be
+   triggered from inside any of them — e.g. clicking 🗑 on a history card
+   while the history modal is open. Without this, the confirm sits behind
+   the originating modal and looks broken. 10005 is above .toast (10001)
+   and .popup-modal (10000) but below the absolute top reserved for any
+   future system-level overlay. */
+#notifModal{z-index:10005}
 .history-modal-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(1200px,95vw);height:min(85vh,800px);display:flex;flex-direction:column;overflow:hidden;position:relative}
 .history-modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
 .history-modal-title{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px;flex:1}
@@ -1096,6 +1104,22 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-overlay>*{pointer-events:auto}
 .q-section{background:rgba(17,17,19,.92);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
 .q-header{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1px;color:var(--text-muted);padding:8px 10px 6px;display:flex;align-items:center;gap:6px}
+/* Headers tagged as drag handles get a grab cursor and a faint hover hint
+   so it's obvious they're movable. The actual drag wiring is in JS — see
+   initOverlayDragging(). Buttons inside the header keep pointer:cursor via
+   the .q-clear rule below, so a stray click on Hide/Clear-all/Expand still
+   works without starting a drag. */
+.q-drag-handle{cursor:grab;user-select:none;-webkit-user-select:none}
+.q-drag-handle:hover{background:rgba(255,255,255,.025)}
+.q-drag-handle.dragging{cursor:grabbing;background:rgba(255,255,255,.04)}
+/* While dragging, suppress the body's text selection so quick mouse drags
+   don't accidentally select text in the output area underneath. */
+body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbing}
+/* When the overlay has been moved by the user, switch from right/bottom-
+   anchored CSS to absolute pixel positioning (set inline via JS). The
+   .q-positioned class flips the anchoring so left/top take effect cleanly
+   without right/bottom continuing to fight the new values. */
+.queue-overlay.q-positioned, .history-overlay.q-positioned{right:auto;bottom:auto}
 .q-global-hint{font-family:var(--font-mono);font-size:9px;font-weight:400;color:var(--text-dim);letter-spacing:.3px;text-transform:none}
 .q-count{margin-left:auto;font-weight:400;color:var(--gold)}
 .q-clear{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:10px;font-weight:600;cursor:pointer;letter-spacing:.5px;padding:5px 10px;border-radius:5px;display:inline-flex;align-items:center;gap:5px;transition:all .12s;line-height:1;white-space:nowrap}
@@ -1245,6 +1269,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         position: fixed; right: 8px; left: 8px; top: auto;
         max-width: none; width: auto;
     }
+    /* If the user dragged a panel on desktop and the localStorage value
+       persists, .q-positioned would set inline left/top that override the
+       full-width layout. Force it back here so mobile users always see the
+       full-width chips no matter what's saved. */
+    .queue-overlay.q-positioned, .history-overlay.q-positioned {
+        right: 8px !important; left: 8px !important; top: auto !important;
+    }
     .queue-overlay { bottom: calc(var(--mobile-action-h) + 4px); z-index: 80; }
     .history-overlay { bottom: calc(var(--mobile-action-h) + 4px); z-index: 70; }
     /* When the queue panel is present and visible, push history up.
@@ -1296,7 +1327,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 <header class="app-header">
     <button class="hdr-hamburger" id="btnHamburger" onclick="toggleMobileSidebar()" aria-label="Menu">☰</button>
     <img src="https://www.missinglink.build/logo.png" alt="" onerror="this.style.display='none'">
-    <h1>MISSINGLINK <span>IMAGE EDITOR</span></h1>
+    <h1>MISSINGLINK <span>IMAGE STUDIO</span></h1>
     <div class="hdr-right">
         <div id="authOut">
             <button class="hdr-btn auth-btn" onclick="loginGoogle()">🔑 SIGN IN</button>
@@ -1632,10 +1663,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <!-- Queue overlay (top-right of output area) -->
         <div class="queue-overlay" id="queueOverlay">
             <div class="q-section" id="qActiveSection" style="display:none">
-                <div class="q-header">
+                <div class="q-header q-drag-handle" data-overlay="queue">
                     <span>QUEUE <span id="queueCount" class="q-count">0/12</span></span>
                     <span id="queueGlobalHint" class="q-global-hint" style="display:none;margin-left:6px"></span>
-                    <span style="margin-left:auto">
+                    <span style="margin-left:auto;display:flex;gap:5px">
+                        <button id="queueClearAllBtn" onclick="cancelAllCancellableJobs()" class="q-clear danger" title="Cancel all pending jobs in this queue and refund their tokens" style="display:none">✕ Clear all</button>
                         <button id="queueMinBtn" onclick="toggleQueueMinimized()" class="q-clear" title="Minimize">▼ Hide</button>
                     </span>
                 </div>
@@ -1646,7 +1678,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <!-- History overlay (bottom-right of output area) -->
         <div class="history-overlay" id="historyOverlay">
             <div class="q-section" id="qHistorySection" style="display:none">
-                <div class="q-header">
+                <div class="q-header q-drag-handle" data-overlay="history">
                     <span>HISTORY <span id="historySidebarCount" class="q-count"></span></span>
                     <span style="margin-left:auto;display:flex;gap:5px">
                         <button onclick="openHistoryModal()" class="q-clear" title="Open full history">⛶ Expand</button>
@@ -1811,7 +1843,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 <div class="popup-modal" id="loginModal">
     <div class="popup-card" style="max-width:440px;padding:24px 32px">
         <div style="text-align:center;margin-bottom:18px">
-            <div style="font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:2px;color:var(--text);margin-bottom:8px">MISSINGLINK <span style="color:var(--gold)">IMAGE EDITOR</span></div>
+            <div style="font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:2px;color:var(--text);margin-bottom:8px">MISSINGLINK <span style="color:var(--gold)">IMAGE STUDIO</span></div>
             <h1 style="font-family:var(--font-body);font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.2;letter-spacing:-.3px">
                 Edit Any Image, <span style="color:var(--gold)">Instantly</span>
             </h1>
@@ -2040,7 +2072,7 @@ window.addEventListener('resize',()=>{if(!canv||!ren)return;const W=canv.clientW
 
 <script>
 // ══════════════════════════════════════════════════
-//  app.js — MissingLink Image Editor (SaaS edition)
+//  app.js — MissingLink Image Studio (SaaS edition)
 // ══════════════════════════════════════════════════
 const $=id=>document.getElementById(id);
 const API=''; // same origin
@@ -6681,6 +6713,40 @@ async function cancelJob(jobId){
     }catch(e){ showNotif('Cancel failed: ' + e.message, 'error'); }
 }
 
+// Bulk-cancel every job currently in a cancellable state. Used by the
+// "✕ Clear all" button in the queue header. Each cancellation is its own
+// DELETE round-trip — we don't have a bulk endpoint and adding one for a
+// "clear queue" UX wouldn't change the user-visible latency materially
+// since most users will only ever have a handful of jobs queued.
+//
+// Strategy: snapshot the list first (cancelJob mutates myJobs as each
+// request resolves, which would skip entries if we iterated live), then
+// fire requests sequentially so token-refund updates show up smoothly
+// in the header rather than racing each other for the last-write-wins
+// of $('tokenCount').textContent.
+async function cancelAllCancellableJobs(){
+    const targets = myJobs.filter(canCancelJob);
+    if (!targets.length) return;
+    const ok = await showConfirm(
+        `Cancel ${targets.length} pending ${targets.length === 1 ? 'job' : 'jobs'} and refund tokens?`,
+        { confirmLabel: 'Cancel all', cancelLabel: 'Keep them', danger: true }
+    );
+    if (!ok) return;
+    // Snapshot ids — cancelJob removes entries from myJobs as it goes,
+    // and we don't want to skip later ones because the array shifts.
+    const ids = targets.map(j => j.id);
+    const btn = $('queueClearAllBtn');
+    if (btn) { btn.disabled = true; btn.textContent = `✕ Cancelling ${ids.length}…`; }
+    let done = 0;
+    for (const id of ids) {
+        try { await cancelJob(id); } catch (e) { /* cancelJob already logs */ }
+        done++;
+        if (btn) btn.textContent = `✕ Cancelling ${ids.length - done}…`;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '✕ Clear all'; }
+    log(`Cleared ${done} job${done === 1 ? '' : 's'} from queue`, 'success');
+}
+
 function renderQueue(){
     const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (a.submittedAt || 0) - (b.submittedAt || 0));
     const now = Date.now();
@@ -6714,6 +6780,15 @@ function renderQueue(){
         if (minBtn) {
             minBtn.innerHTML = _queueMinimized ? '▲ Show' : '▼ Hide';
             minBtn.title = _queueMinimized ? 'Show queue tiles' : 'Hide queue tiles';
+        }
+        // Show Clear all only if there's at least one cancellable job. A job
+        // already deep into denoising (running + 'generating' stage) doesn't
+        // count — the server-side guard rejects those, and we don't want a
+        // visible button that does nothing.
+        const clearBtn = $('queueClearAllBtn');
+        if (clearBtn) {
+            const cancellableCount = activeJobs.filter(canCancelJob).length;
+            clearBtn.style.display = cancellableCount > 0 ? '' : 'none';
         }
         activeList.innerHTML = '';
 
@@ -7022,6 +7097,199 @@ function toggleQueueMinimized(){
     _queueMinimized = !_queueMinimized;
     try { localStorage.setItem('studio_queue_minimized', _queueMinimized ? '1' : '0'); } catch (e) {}
     renderQueue();
+}
+
+// ───────────── Draggable queue & history overlays ─────────────
+// The queue and history panels float over the main output area at fixed
+// corners (top-right / bottom-right). Some users want them out of the way —
+// e.g. in a different corner so a portrait output isn't covered. This block
+// wires drag-by-header for both, persists position to localStorage so the
+// choice survives refreshes, and clamps to the parent .main-area on every
+// drag and on window resize so a panel never ends up off-screen if the
+// viewport shrinks.
+//
+// Implementation notes:
+//   * We use absolute positioning relative to .main-area (the existing
+//     positioning context). The default CSS pins to right/bottom; once the
+//     user has dragged, we add .q-positioned which switches to left/top
+//     and set those values inline. This avoids both anchors fighting.
+//   * Click-vs-drag disambiguation: we only commit a drag once the pointer
+//     has moved >4px from mousedown. Below that threshold, pointerup is
+//     treated as a click — letting Hide/Expand/Clear-all buttons in the
+//     header still work normally.
+//   * Buttons inside the header are excluded from drag start (closest
+//     check) so their click handlers fire cleanly.
+//   * Touch is supported via Pointer Events, which unify mouse + touch.
+const _OVERLAY_POS_KEY = 'studio_overlay_positions';
+function _loadOverlayPositions(){
+    try {
+        const raw = localStorage.getItem(_OVERLAY_POS_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+}
+function _saveOverlayPositions(positions){
+    try { localStorage.setItem(_OVERLAY_POS_KEY, JSON.stringify(positions)); } catch (e) {}
+}
+// Clamp an (x,y) to the parent container so the panel can't be dragged
+// off-screen. Reserves a small margin so the panel doesn't sit flush
+// against the edges (and the resize handles in some browsers don't fight
+// with the scrollbar). The panel's own dimensions come from getBoundingClientRect.
+function _clampOverlayPosition(overlay, x, y){
+    const parent = overlay.offsetParent || document.querySelector('.main-area') || document.body;
+    const pRect = parent.getBoundingClientRect();
+    const oRect = overlay.getBoundingClientRect();
+    const margin = 4;
+    const maxX = Math.max(margin, pRect.width  - oRect.width  - margin);
+    const maxY = Math.max(margin, pRect.height - oRect.height - margin);
+    return {
+        x: Math.max(margin, Math.min(maxX, x)),
+        y: Math.max(margin, Math.min(maxY, y)),
+    };
+}
+function _applyOverlayPosition(overlay, pos){
+    const clamped = _clampOverlayPosition(overlay, pos.x, pos.y);
+    overlay.classList.add('q-positioned');
+    overlay.style.left = clamped.x + 'px';
+    overlay.style.top  = clamped.y + 'px';
+}
+// Re-clamp every positioned overlay on window resize. Without this, a
+// panel dragged near the right edge of a 1600px window ends up off-screen
+// on a 1024px window after a Cmd-Tab back-and-forth.
+function _reclampAllOverlays(){
+    const positions = _loadOverlayPositions();
+    let dirty = false;
+    for (const id of ['queueOverlay', 'historyOverlay']) {
+        const el = document.getElementById(id);
+        if (!el || !el.classList.contains('q-positioned')) continue;
+        const key = el.dataset.overlayKey || (id === 'queueOverlay' ? 'queue' : 'history');
+        const cur = positions[key];
+        if (!cur) continue;
+        const clamped = _clampOverlayPosition(el, cur.x, cur.y);
+        if (clamped.x !== cur.x || clamped.y !== cur.y) {
+            positions[key] = clamped;
+            dirty = true;
+        }
+        el.style.left = clamped.x + 'px';
+        el.style.top  = clamped.y + 'px';
+    }
+    if (dirty) _saveOverlayPositions(positions);
+}
+window.addEventListener('resize', _reclampAllOverlays);
+
+function initOverlayDragging(){
+    // Mobile (≤900px) pins overlays full-width to the bottom of the viewport
+    // via the media query at line ~1228. Drag-to-reposition makes no sense
+    // there — the panels span the screen width and are anchored to the
+    // mobile action bar. We also skip restoring saved positions, since a
+    // value saved on desktop would put the panel off-screen here.
+    const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+    if (isMobile()) {
+        // Even if the user later resizes wider, we don't retroactively
+        // wire dragging — the page reload to handle that is fine.
+        return;
+    }
+
+    const positions = _loadOverlayPositions();
+    // Apply any persisted positions on startup. Defer to next frame so the
+    // .main-area has its real layout dimensions (clamping needs them).
+    requestAnimationFrame(() => {
+        for (const [overlayId, key] of [['queueOverlay', 'queue'], ['historyOverlay', 'history']]) {
+            const el = document.getElementById(overlayId);
+            if (!el) continue;
+            el.dataset.overlayKey = key;
+            if (positions[key]) _applyOverlayPosition(el, positions[key]);
+        }
+    });
+
+    // Wire one pointerdown handler per drag handle. Each handle's
+    // data-overlay attr ('queue' | 'history') tells us which panel to move.
+    document.querySelectorAll('.q-drag-handle').forEach(handle => {
+        handle.addEventListener('pointerdown', (e) => {
+            // Don't start dragging if the user clicked a button inside the
+            // header — let the button's onclick fire normally.
+            if (e.target.closest('button')) return;
+            // Primary button only (mouse). For touch/pen, button is 0.
+            if (e.button !== undefined && e.button !== 0) return;
+
+            const key = handle.dataset.overlay;
+            const overlayId = key === 'queue' ? 'queueOverlay' : 'historyOverlay';
+            const overlay = document.getElementById(overlayId);
+            if (!overlay) return;
+            const parent = overlay.offsetParent || document.querySelector('.main-area') || document.body;
+            const parentRect = parent.getBoundingClientRect();
+            const oRect = overlay.getBoundingClientRect();
+            // Pointer offset within the overlay — the click point that
+            // should remain under the cursor while dragging.
+            const grabOffsetX = e.clientX - oRect.left;
+            const grabOffsetY = e.clientY - oRect.top;
+            // Initial overlay position relative to parent (works whether
+            // the overlay is currently right-anchored or already positioned).
+            const startX = oRect.left - parentRect.left;
+            const startY = oRect.top  - parentRect.top;
+
+            let started = false;
+            const onMove = (ev) => {
+                const dx = ev.clientX - e.clientX;
+                const dy = ev.clientY - e.clientY;
+                if (!started) {
+                    // 4px threshold to avoid stealing clicks. Once we cross
+                    // it, commit to drag mode for the rest of this gesture.
+                    if (Math.hypot(dx, dy) < 4) return;
+                    started = true;
+                    handle.classList.add('dragging');
+                    document.body.classList.add('q-overlay-dragging');
+                    // Capture so we still get move events if the cursor
+                    // leaves the handle (or the window).
+                    try { handle.setPointerCapture(ev.pointerId); } catch (_) {}
+                }
+                // New corner position. Use ev.clientX/Y - parentRect - grabOffset
+                // so the panel tracks the cursor by its grabbed point.
+                const newX = ev.clientX - parentRect.left - grabOffsetX;
+                const newY = ev.clientY - parentRect.top  - grabOffsetY;
+                _applyOverlayPosition(overlay, { x: newX, y: newY });
+                ev.preventDefault();
+            };
+            const onUp = (ev) => {
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
+                handle.classList.remove('dragging');
+                document.body.classList.remove('q-overlay-dragging');
+                if (started) {
+                    // Persist final clamped position
+                    const finalRect = overlay.getBoundingClientRect();
+                    const finalX = finalRect.left - parentRect.left;
+                    const finalY = finalRect.top  - parentRect.top;
+                    const clamped = _clampOverlayPosition(overlay, finalX, finalY);
+                    const all = _loadOverlayPositions();
+                    all[key] = clamped;
+                    _saveOverlayPositions(all);
+                }
+            };
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+        });
+        // Double-click the header to reset to default corner. Cheap escape
+        // hatch if the user has dragged a panel somewhere they can't reach
+        // (e.g. behind the resize handles of the result-bar). Triggers a
+        // proper layout reset rather than just clearing inline styles, so
+        // the overlay re-pins to its CSS-defined corner.
+        handle.addEventListener('dblclick', (e) => {
+            if (e.target.closest('button')) return;
+            const key = handle.dataset.overlay;
+            const overlayId = key === 'queue' ? 'queueOverlay' : 'historyOverlay';
+            const overlay = document.getElementById(overlayId);
+            if (!overlay) return;
+            overlay.classList.remove('q-positioned');
+            overlay.style.left = '';
+            overlay.style.top  = '';
+            const all = _loadOverlayPositions();
+            delete all[key];
+            _saveOverlayPositions(all);
+            log(`Reset ${key} panel position`);
+        });
+    });
 }
 
 // ───────────── Full history modal ─────────────
@@ -7605,6 +7873,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraLightning',  'vLoraLightning');
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
+    initOverlayDragging();
     checkAuth();
     // Paint the header badge IMMEDIATELY so the user sees "Connecting…"
     // (and the cold-boot overlay, if applicable) without waiting for the
@@ -7616,7 +7885,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     setInterval(pollStatus,5000);
     setInterval(pollQueue,5000);
     setInterval(checkAuth,30000);
-    log('Image Editor ready');
+    log('Image Studio ready');
 });
 
 // Restore camera-mode single input and edit-mode slots from localStorage so
