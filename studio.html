@@ -539,6 +539,81 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     paint-order:stroke;stroke:rgba(239,68,68,.95);stroke-width:.8;stroke-linejoin:round;
 }
 
+/* Find-issues iterative progress overlay — paints over the tile while
+   the multi-turn refinement loop is running. Translucent dark scrim +
+   centered "Verifying — turn 2/4" text + a thin progress bar showing
+   turn / max_turns. The user sees the loop progressing rather than a
+   single endless spinner. */
+.batch-input-tile .bit-issues-progress{
+    position:absolute;inset:0;z-index:3;
+    background:rgba(0,0,0,.65);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    color:var(--red);font-family:var(--font-mono);text-align:center;
+    pointer-events:none;
+    animation:fadeIn .15s ease
+}
+.batch-input-tile .bit-issues-progress .bip-spinner{
+    width:30px;height:30px;border-radius:50%;
+    border:3px solid rgba(239,68,68,.18);border-top-color:var(--red);
+    animation:bitSpin .85s linear infinite
+}
+.batch-input-tile .bit-issues-progress .bip-status{
+    font-size:10px;letter-spacing:1px;text-transform:uppercase;font-weight:700;
+    padding:0 12px;line-height:1.4
+}
+.batch-input-tile .bit-issues-progress .bip-bar{
+    width:65%;max-width:140px;height:3px;border-radius:2px;
+    background:rgba(239,68,68,.18);overflow:hidden
+}
+.batch-input-tile .bit-issues-progress .bip-bar-fill{
+    height:100%;background:var(--red);transition:width .25s ease
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+/* Focus-stage issue overlay — same SVG render as the tile but with
+   per-bbox ✕ dismiss buttons positioned over each rectangle. The user
+   can drop individual false positives without rerunning the analysis.
+   The buttons are HTML overlaid on the SVG (SVG <foreignObject>
+   support is spotty across mobile browsers, plain DIVs are reliable). */
+.batch-focus-issues-wrap{
+    position:absolute;inset:0;pointer-events:none;z-index:5
+}
+.batch-focus-issues-wrap svg{
+    position:absolute;inset:0;width:100%;height:100%;pointer-events:none
+}
+.batch-focus-issues-wrap svg rect{
+    fill:rgba(239,68,68,.12);stroke:var(--red);stroke-width:2;stroke-dasharray:6 4;
+    vector-effect:non-scaling-stroke
+}
+.batch-focus-issues-wrap svg text{
+    fill:#fff;font-family:var(--font-mono);font-size:3.2px;font-weight:700;
+    paint-order:stroke;stroke:rgba(239,68,68,.95);stroke-width:.8;stroke-linejoin:round
+}
+.batch-focus-issue-dismiss{
+    position:absolute;width:22px;height:22px;border-radius:50%;
+    background:rgba(239,68,68,.95);color:#fff;border:2px solid #fff;
+    font-size:12px;font-weight:700;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;pointer-events:auto;
+    box-shadow:0 2px 8px rgba(0,0,0,.4);
+    transition:transform .12s,background .12s
+}
+.batch-focus-issue-dismiss:hover{
+    background:#fff;color:var(--red);transform:scale(1.15)
+}
+.batch-focus-issue-dismiss-all{
+    position:absolute;top:60px;right:14px;z-index:12;
+    background:rgba(15,15,18,.92);border:1px solid var(--border);
+    color:var(--red);font-family:var(--font-mono);
+    font-size:10px;font-weight:600;letter-spacing:.8px;
+    padding:6px 12px;border-radius:6px;cursor:pointer;
+    backdrop-filter:blur(8px);
+    transition:all .12s
+}
+.batch-focus-issue-dismiss-all:hover{
+    background:rgba(239,68,68,.18);border-color:var(--red)
+}
+
 /* Per-output-tile critique button — slots in left of the existing
    ✎ edit button which is at right:32px. Only visible on completed
    tiles, on hover, mirroring the edit button's reveal pattern. */
@@ -5040,9 +5115,25 @@ function renderBatchInputs(){
         const issueBtnTitle = issues.length
             ? `${issues.length} issue${issues.length === 1 ? '' : 's'} found — click to recheck`
             : 'Find issues with vision (red rectangles)';
+        // Iterative-refinement progress overlay — only present while the
+        // multi-turn loop is running on this tile. The renderer is read-
+        // only with respect to inp._issuesBusy; findIssuesOnTile mutates
+        // it and calls renderBatchInputs to repaint each turn.
+        let progressOverlay = '';
+        if (inp._issuesBusy) {
+            const b = inp._issuesBusy;
+            const pct = Math.min(100, ((b.turn || 1) / (b.max || _FIND_ISSUES_MAX_TURNS)) * 100);
+            progressOverlay = `
+                <div class="bit-issues-progress">
+                    <div class="bip-spinner"></div>
+                    <div class="bip-status">${_htmlEsc(b.status || 'Working')}</div>
+                    <div class="bip-bar"><div class="bip-bar-fill" style="width:${pct.toFixed(0)}%"></div></div>
+                </div>`;
+        }
         tile.innerHTML = `
             <img src="${inp.url}" alt="">
             ${overlaySvg}
+            ${progressOverlay}
             <div class="bit-check"></div>
             <button type="button" class="bit-find-issues${issueBtnClass}" title="${issueBtnTitle}">🔍</button>
             <button type="button" class="bit-reverse" title="Reverse-prompt this image (write a prompt that could have generated it)">🔁</button>
@@ -5170,6 +5261,121 @@ function renderBatchFocusedStage(inp){
     // tile is currently bound, and bind cost is negligible at 3 buttons.
     if (toCam) toCam.onclick = () => sendBatchInputToCamera(inp);
     if (toEdit) toEdit.onclick = () => sendBatchInputToEdit(inp);
+
+    // Issue overlay in the focus stage — shows the same red bboxes the
+    // tile shows, but with per-bbox ✕ buttons so the user can drop
+    // individual false positives. The buttons are HTML positioned via
+    // percentage offsets matching the SVG coords (no foreignObject —
+    // mobile Safari support is iffy). Parent container .batch-focus-
+    // issues-wrap is sized to the visible image, NOT the wrap div, so
+    // the bboxes line up with what the user sees.
+    renderFocusedIssueOverlay(inp);
+}
+
+// Paint the issue overlay (SVG bboxes + per-issue ✕ + clear-all button)
+// into the focus stage. Re-runs on every focus-stage render and on every
+// inp._issues mutation. Positions the wrap to match the actual rendered
+// image rect, which can be smaller than the wrap div due to object-fit:
+// contain at non-square aspect ratios.
+function renderFocusedIssueOverlay(inp){
+    const stage = $('batchFocusStage');
+    if (!stage) return;
+    // Remove any prior overlay before painting the new one.
+    stage.querySelectorAll('.batch-focus-issues-wrap, .batch-focus-issue-dismiss-all').forEach(el => el.remove());
+    const issues = Array.isArray(inp._issues) ? inp._issues : [];
+    if (!issues.length) return;
+    // Wait for the image to have layout. If it's not loaded yet, hook
+    // its onload to repaint — bbox positioning needs the actual rendered
+    // pixel rect, not the natural dimensions.
+    const img = $('bfsImg');
+    if (!img) return;
+    const paint = () => {
+        // Skip if the focused tile changed underneath us mid-load
+        if (_batchFocusedId !== inp.id) return;
+        const wrap = img.parentElement;  // .batch-focus-image-wrap
+        if (!wrap) return;
+        const wrapRect = wrap.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        // Compute the image's offset within its wrap (object-fit:contain
+        // can leave letterbox space on either axis).
+        const left = imgRect.left - wrapRect.left;
+        const top = imgRect.top - wrapRect.top;
+        const width = imgRect.width;
+        const height = imgRect.height;
+        if (width < 4 || height < 4) return;  // image not yet sized
+
+        const overlay = document.createElement('div');
+        overlay.className = 'batch-focus-issues-wrap';
+        overlay.style.left = left + 'px';
+        overlay.style.top = top + 'px';
+        overlay.style.width = width + 'px';
+        overlay.style.height = height + 'px';
+        overlay.style.right = 'auto';
+        overlay.style.bottom = 'auto';
+        overlay.style.inset = 'auto';
+
+        // SVG with bboxes + labels. viewBox 0 0 100 100 + preserveAspect-
+        // Ratio:none means SVG coords scale freely to the wrap dimensions
+        // — same approach as the tile overlay.
+        const rectsSvg = issues.map((iss, n) => {
+            const x = Math.max(0, Math.min(100, iss.x_pct || 0));
+            const y = Math.max(0, Math.min(100, iss.y_pct || 0));
+            const w = Math.max(1, Math.min(100 - x, iss.w_pct || 0));
+            const h = Math.max(1, Math.min(100 - y, iss.h_pct || 0));
+            const label = (iss.label || `issue ${n + 1}`).slice(0, 22);
+            return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="0.6"/>
+                    <text x="${x + 0.8}" y="${y + 4.2}">${_htmlEsc(label)}</text>`;
+        }).join('');
+        overlay.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none">${rectsSvg}</svg>`;
+        wrap.appendChild(overlay);
+
+        // Dismiss buttons — one per issue, positioned at the top-right
+        // corner of the bbox (in pixel coords, computed from percent).
+        // Stored on the overlay so the next remove pass cleans them too.
+        issues.forEach((iss, idx) => {
+            const x = Math.max(0, Math.min(100, iss.x_pct || 0));
+            const y = Math.max(0, Math.min(100, iss.y_pct || 0));
+            const w = Math.max(1, Math.min(100 - x, iss.w_pct || 0));
+            const px = (x + w) / 100 * width - 11;   // center the 22px button on the corner
+            const py = (y) / 100 * height - 11;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'batch-focus-issue-dismiss';
+            btn.textContent = '✕';
+            btn.title = `Dismiss "${iss.label || 'issue'}"`;
+            btn.style.left = Math.max(0, Math.min(width - 22, px)) + 'px';
+            btn.style.top = Math.max(0, Math.min(height - 22, py)) + 'px';
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                inp._issues = (inp._issues || []).filter((_, k) => k !== idx);
+                renderFocusedIssueOverlay(inp);
+                renderBatchInputs();  // tile in the (hidden) grid stays in sync
+            };
+            overlay.appendChild(btn);
+        });
+
+        // Floating "Clear all" — top-right of the focus stage.
+        const clearAll = document.createElement('button');
+        clearAll.type = 'button';
+        clearAll.className = 'batch-focus-issue-dismiss-all';
+        clearAll.textContent = `✕ Clear ${issues.length} issue${issues.length === 1 ? '' : 's'}`;
+        clearAll.title = 'Remove all issue markers from this image';
+        clearAll.onclick = (e) => {
+            e.stopPropagation();
+            inp._issues = [];
+            renderFocusedIssueOverlay(inp);
+            renderBatchInputs();
+        };
+        stage.appendChild(clearAll);
+    };
+    if (img.complete && img.naturalWidth > 0) {
+        // Defer one frame so any in-progress layout completes before we
+        // measure — without this the imgRect can come back as 0×0 on
+        // the very first focus entry.
+        requestAnimationFrame(paint);
+    } else {
+        img.addEventListener('load', () => requestAnimationFrame(paint), { once: true });
+    }
 }
 
 function batchExitFocus(){
@@ -5290,40 +5496,94 @@ function sendBatchInputToEdit(inp){
 }
 
 // ─── Per-tile vision check: find issues, draw red rectangles ────
-// Calls /api/studio/agent-find-issues with this image's id. Worker
-// asks gpt-5.4-mini (vision) for bounding boxes around any visual
-// issues — deformed geometry, asymmetry, missing detail, AI-generation
-// artifacts, etc. Returns coords as percentages so the SVG overlay
-// scales cleanly to whatever pixel size the tile happens to be.
+// Calls /api/studio/agent-find-issues iteratively — first pass identifies
+// candidate issues, then up to 3 refinement passes verify them and drop
+// false positives. Vision models commonly hallucinate "AI artifacts" on
+// stylized art (the model sees something unfamiliar and assumes it's
+// broken), so the multi-turn refinement loop is what makes the bboxes
+// trustworthy. Stops early if a turn returns the same set as the prior
+// turn — no point spending tokens on a stable answer.
 //
 // Stored on inp._issues; renderBatchInputs picks them up next render
-// and paints the SVG. Calling again re-runs the check (and replaces
-// the previous issues).
+// and paints the SVG. Each turn costs the standard find-issues fee.
+const _FIND_ISSUES_MAX_TURNS = 4;
+
+// Stable signature for an issue list — used to detect convergence
+// between turns. We round to 1 decimal (1% precision) so trivial
+// floating-point drift doesn't keep the loop running forever.
+function _issuesSignature(issues){
+    if (!Array.isArray(issues) || !issues.length) return '∅';
+    return issues.map(i => {
+        const x = (Number(i.x_pct) || 0).toFixed(1);
+        const y = (Number(i.y_pct) || 0).toFixed(1);
+        const w = (Number(i.w_pct) || 0).toFixed(1);
+        const h = (Number(i.h_pct) || 0).toFixed(1);
+        return `${(i.label || '').toLowerCase()}|${x},${y},${w},${h}`;
+    }).sort().join('§');
+}
+
 async function findIssuesOnTile(inp, btn){
     if (!inp || inp._placeholder) return;
     if (!_user) { $('loginModal').classList.add('open'); return; }
     if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+    // While running, mark the inp so renderBatchInputs paints the
+    // progress overlay on the tile + focus stage. Cleared in finally.
+    inp._issuesBusy = { turn: 1, max: _FIND_ISSUES_MAX_TURNS, status: 'Looking for issues' };
+    renderBatchInputs();
     try {
-        const r = await fetchT(`${API}/api/studio/agent-find-issues`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_id: inp.id }),
-        }, 60_000);
-        const d = await r.json();
-        if (!d.ok) {
-            log(`Find issues failed: ${d.detail || d.error || 'unknown'}`, 'error');
-            return;
+        let issues = [];
+        let prevSig = '';
+        for (let turn = 1; turn <= _FIND_ISSUES_MAX_TURNS; turn++) {
+            // Update the per-tile progress overlay so the user sees the
+            // refinement loop progressing rather than a single long spin.
+            inp._issuesBusy = {
+                turn,
+                max: _FIND_ISSUES_MAX_TURNS,
+                status: turn === 1
+                    ? 'Looking for issues'
+                    : `Verifying — turn ${turn}/${_FIND_ISSUES_MAX_TURNS}`,
+            };
+            renderBatchInputs();
+
+            const r = await fetchT(`${API}/api/studio/agent-find-issues`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image_id: inp.id,
+                    // Pass current issues from turn 2 onwards. Turn 1 is
+                    // a fresh identification (no prior context).
+                    current_issues: turn === 1 ? [] : issues,
+                }),
+            }, 60_000);
+            const d = await r.json();
+            if (!d.ok) {
+                log(`Find issues failed (turn ${turn}): ${d.detail || d.error || 'unknown'}`, 'error');
+                break;
+            }
+            const newIssues = Array.isArray(d.issues) ? d.issues : [];
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+
+            const newSig = _issuesSignature(newIssues);
+            issues = newIssues;
+            // Stable answer — no change between turns means the model is
+            // confident, stop spending tokens. Also stop if the list is
+            // empty (nothing left to verify).
+            if (turn >= 2 && (newSig === prevSig || newIssues.length === 0)) {
+                break;
+            }
+            prevSig = newSig;
         }
-        inp._issues = Array.isArray(d.issues) ? d.issues : [];
-        if (d.tokens_remaining !== undefined && _user) {
-            _user.tokens = d.tokens_remaining;
-            const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
-        }
+        inp._issues = issues;
         renderBatchInputs();
-        log(`Found ${inp._issues.length} issue${inp._issues.length === 1 ? '' : 's'} in ${inp.fname || inp.id}`,
-            inp._issues.length ? 'success' : '');
+        log(`Found ${issues.length} issue${issues.length === 1 ? '' : 's'} in ${inp.fname || inp.id}`,
+            issues.length ? 'success' : '');
     } catch (e) {
         log(`Find issues failed: ${e.message}`, 'error');
     } finally {
+        delete inp._issuesBusy;
+        renderBatchInputs();
         if (btn) { btn.classList.remove('busy'); btn.disabled = false; }
     }
 }
