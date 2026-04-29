@@ -79,8 +79,15 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        on the upload count — picked to minimize "orphan" tiles in the last
        row (e.g. 9 uploads → 3 cols → perfect 3×3 instead of 4 cols with 1
        lonely tile). Fallback `auto-fill` is responsive in case JS hasn't
-       set --batch-cols yet (first paint, edge cases). */
-    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(180px, 1fr));
+       set --batch-cols yet (first paint, edge cases).
+       Max-width 320px caps each tile at a normal thumbnail size — without
+       this cap, a single tile (N=1, cols=1, 1fr) would grow to fill the
+       whole grid width, and aspect-ratio:1/1 would then match the height,
+       producing a screen-filling tile. With the cap, tiles stay at most
+       320×320 even when there are very few of them; the grid just leaves
+       empty columns to the right, which reads cleanly. */
+    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(180px, 320px));
+    justify-content:start;  /* tiles cluster left when there's leftover space */
     gap:10px;
     padding:16px;
     overflow-y:auto;
@@ -114,6 +121,27 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        ────────────────────────────────────────────────────────────────── */
     min-width:0;min-height:0;
 }
+/* Floating clear-toolbar over the batch grid — appears when the grid
+   has tiles, lets the user wipe everything without scrolling back to the
+   left panel. Positioned top-left of the batch grid container so it
+   doesn't compete with the queue + history overlays anchored to the
+   right edge. Tile count next to the button so "Clear N" is concrete. */
+.batch-grid-toolbar{
+    position:absolute;top:14px;left:14px;z-index:11;
+    display:flex;align-items:center;gap:10px;
+    padding:6px 10px;border-radius:6px;
+    background:rgba(15,15,18,.78);border:1px solid var(--border);
+    backdrop-filter:blur(6px);
+    font-family:var(--font-mono);font-size:10px;letter-spacing:1px
+}
+.batch-grid-toolbar .bgt-count{color:var(--text-2);text-transform:uppercase}
+.batch-grid-toolbar .bgt-btn{
+    background:transparent;border:1px solid var(--border-strong);color:var(--text-1);
+    font-family:var(--font-mono);font-size:10px;letter-spacing:1px;
+    padding:4px 10px;border-radius:4px;cursor:pointer;
+    transition:all .12s
+}
+.batch-grid-toolbar .bgt-btn:hover{background:var(--red);border-color:var(--red);color:#fff}
 .batch-input-tile:hover{border-color:var(--border-strong)}
 .batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 /* Pending tile — shown while an agent gen/edit is in flight so the user
@@ -1760,6 +1788,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="output-area" id="outputArea" style="position:relative">
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
+
+        <!-- Floating clear-toolbar — sits at the top-right of the batch
+             grid area. Only visible when the grid has tiles. Lets the user
+             wipe the working set without scrolling back to the BATCH INPUTS
+             panel on the left. The actual button shows the tile count so
+             "Clear 6 images" is unambiguous about what's about to vanish. -->
+        <div class="batch-grid-toolbar" id="batchGridToolbar" style="display:none">
+            <span class="bgt-count" id="bgtCount"></span>
+            <button type="button" class="bgt-btn" onclick="batchClearWithConfirm()" title="Clear the current grid. Images stay in your History so you can edit them later.">✕ Clear</button>
+        </div>
 
         <!-- Batch-mode input grid — user's uploaded images shown as
              equal-sized tiles in a responsive grid so they can see what
@@ -4276,6 +4314,24 @@ function renderBatchInputs(){
 
     grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_batchInputs.length)));
 
+    // Floating clear-toolbar — visible whenever the grid has tiles.
+    // Count excludes placeholders so the user sees "Clear 4" not "Clear 6"
+    // when 2 generations are in flight. Toolbar is hidden while leaving
+    // batch mode or while the result grid takes over.
+    const toolbar = $('batchGridToolbar');
+    const realCount = _batchInputs.filter(b => !b._placeholder).length;
+    if (toolbar) {
+        const inBatchMode2 = (typeof currentMode !== 'undefined' && currentMode === 'batch');
+        const hasActiveResults2 = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
+        if (inBatchMode2 && _batchInputs.length > 0 && !hasActiveResults2) {
+            toolbar.style.display = '';
+            const cnt = $('bgtCount');
+            if (cnt) cnt.textContent = `${realCount} image${realCount === 1 ? '' : 's'}`;
+        } else {
+            toolbar.style.display = 'none';
+        }
+    }
+
     // Visibility rules: the grid should ONLY show when in batch mode AND
     // there are uploads AND no active batch-result grid is taking over.
     // If we're not in batch mode, the grid is hidden regardless so Camera
@@ -4326,7 +4382,13 @@ function renderBatchInputs(){
             grid.appendChild(tile);
             return;
         }
-        tile.title = inp.fname || `Image ${i + 1}`;
+        // Tile title: prefer the generation prompt if present (so the
+        // user can hover any agent-generated tile to see what beat /
+        // scene description it was made from). Falls back to filename
+        // for normal uploads.
+        tile.title = inp._genPrompt
+            ? `Prompt: ${inp._genPrompt}${inp._genReferences && inp._genReferences.length ? `\n\n(${inp._genReferences.length} reference image${inp._genReferences.length === 1 ? '' : 's'} used)` : ''}`
+            : (inp.fname || `Image ${i + 1}`);
         // Filename is shown in the bottom-left so the user can tell the
         // tiles apart at a glance, especially useful with many uploads
         // that share similar subject matter.
@@ -4422,6 +4484,35 @@ function batchSelectAll(state){
 function batchClearInputs(){
     _batchInputs = [];
     renderBatchInputs();
+}
+
+// Confirm-and-clear from the floating toolbar. Lets the user wipe the
+// current grid without losing the images — they're already persisted
+// in studio_uploads + studio_jobs (see worker's agent-image-gen /
+// agent-image-edit history-row insert), so the History panel still has
+// them for later edits. The confirm message says exactly that so users
+// don't worry they're throwing work away.
+function batchClearWithConfirm(){
+    const realCount = _batchInputs.filter(b => !b._placeholder).length;
+    const pendingCount = _batchInputs.filter(b => b._placeholder).length;
+    if (realCount === 0 && pendingCount === 0) return;
+    let msg;
+    if (pendingCount > 0) {
+        msg = `Clear ${realCount} image${realCount === 1 ? '' : 's'} from the stage? `
+            + `${pendingCount} generation${pendingCount === 1 ? '' : 's'} still in progress will be cancelled visually `
+            + `but may still complete in the background. Cleared images stay in your History.`;
+    } else {
+        msg = `Clear ${realCount} image${realCount === 1 ? '' : 's'} from the stage? `
+            + `They stay in your History so you can edit them later.`;
+    }
+    if (!confirm(msg)) return;
+    batchClearInputs();
+    // Refresh history sidebar from the server so any new agent-generated
+    // entries show up immediately (the agent endpoints insert into
+    // studio_jobs but don't push to the local _historyItems).
+    if (typeof syncHistory === 'function') {
+        syncHistory().catch(() => {});
+    }
 }
 
 // ─── Send a batch tile into single-image modes ──────────────────
@@ -5017,7 +5108,9 @@ async function retryBatchSlot(slotIdx, refinedPrompt){
     shot.url = null;
     renderBatchGrid();
     _pendingAngleShots.unshift({
-        shotIdx,
+        // Same fix as retryFailedShot — earlier `shotIdx,` was a
+        // ReferenceError because the parameter is named slotIdx.
+        shotIdx: slotIdx,
         payload: shot.payload,
         snapshot: shot.snapshot,
         label: shot.label,
@@ -5695,8 +5788,13 @@ async function retryFailedShot(slotIdx, btnEl){
     // over any other queued shots (a user explicitly clicked Retry; they
     // shouldn't have to wait behind shots that haven't had their first
     // chance yet). Then drain.
+    // shotIdx here is the index into _activeBatch.shots — same value as
+    // the function parameter `slotIdx`. Earlier the shorthand `shotIdx,`
+    // referenced an undefined variable and threw silently inside the
+    // async wrapper, leaving the tile stuck in 'pending' with nothing
+    // submitted. That's why retries appeared to do nothing.
     _pendingAngleShots.unshift({
-        shotIdx,
+        shotIdx: slotIdx,
         payload: shot.payload,
         snapshot: shot.snapshot,
         label: shot.label,
@@ -7621,25 +7719,61 @@ const AGENT_TOOL_HANDLERS = {
                     size: args.size || '1024x1024',
                     reference_image_ids: refIds,
                 }),
-            }, 130_000);
+                // Match the worker's per-path timeout: ref-image generations
+                // route through /v1/images/edits and need more wall time.
+                // The +30s buffer over the worker side ensures the worker's
+                // own AbortController fires first with a useful error
+                // (openai_error / detail) rather than us giving up first
+                // and turning a real upstream failure into "operation was
+                // aborted" with no signal about WHAT failed.
+            }, refIds.length ? 270_000 : 130_000);
             const d = await r.json();
             if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
             const img = (d.images || [])[0];
             if (!img) throw new Error('no_image_returned');
+            // Build the new entry. Stash the prompt that produced this
+            // image on the tile object so the user can see what each
+            // image was made from (rendered as a hover tooltip on the
+            // tile, and also pushed into the captions cache so the
+            // agent's NEXT batch_state view shows the prompt as the
+            // image's caption — without having to call recaption).
+            const newEntry = {
+                id: img.id, url: img.url, w: img.w, h: img.h,
+                fname: img.filename,
+                selected: false,
+                _genPrompt: args.prompt,
+                _genModel: 'gpt-image-2',
+                _genReferences: refIds,
+            };
+            // Mirror into _aiSelectedCache.captions so _agentBatchState
+            // surfaces it as the caption next turn. Means a follow-up
+            // "edit scene 3 to be at night" already has the model
+            // grounded in what scene 3 actually depicts.
+            if (typeof _aiSelectedCache === 'undefined' || !_aiSelectedCache) {
+                window._aiSelectedCache = { captions: {} };
+            }
+            if (!_aiSelectedCache.captions) _aiSelectedCache.captions = {};
+            _aiSelectedCache.captions[img.id] = args.prompt;
             // Replace the placeholder in place (preserves grid position).
             const idx = _batchInputs.findIndex(b => b.id === placeholderId);
             if (idx !== -1) {
-                _batchInputs[idx] = { id: img.id, url: img.url, w: img.w, h: img.h, fname: img.filename, selected: false };
+                _batchInputs[idx] = newEntry;
             } else {
                 // Edge case: user removed the placeholder while in flight.
                 // Still add the image at the end so we don't drop it.
-                _batchInputs.push({ id: img.id, url: img.url, w: img.w, h: img.h, fname: img.filename, selected: false });
+                _batchInputs.push(newEntry);
             }
             renderBatchInputs();
             updateGenButton();
             if (d.tokens_remaining !== undefined && _user) {
                 _user.tokens = d.tokens_remaining;
                 const tc = document.getElementById('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            // Pull the new history row the worker just inserted so the
+            // image is editable later via the History panel. Fire-and-forget
+            // — failure here doesn't affect the agent flow.
+            if (typeof syncHistory === 'function') {
+                syncHistory().catch(() => {});
             }
             return {
                 summary: refIds.length
@@ -7698,6 +7832,9 @@ const AGENT_TOOL_HANDLERS = {
             if (d.tokens_remaining !== undefined && _user) {
                 _user.tokens = d.tokens_remaining;
                 const tc = document.getElementById('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            if (typeof syncHistory === 'function') {
+                syncHistory().catch(() => {});
             }
             return {
                 summary: `Edited image ${args.image_id} → new image ${img.id} (gpt-image-2)`,
