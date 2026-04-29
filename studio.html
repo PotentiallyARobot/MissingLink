@@ -169,6 +169,16 @@ body.mode-create .batch-input-tile.pending{
     aspect-ratio:1/1;
     width:min(600px, 80vw);
 }
+/* In Create mode the stage shows ONE image. The selection checkbox
+   becomes meaningless (nothing to select among) and the gold border
+   on the tile is also redundant since the focus is already implicit.
+   Hide both so the presentation reads as a single image, not "tile #1
+   of 1". The action buttons (find issues, send-to-camera, send-to-edit,
+   send-to-create, remove, reverse-prompt) all stay — they're still
+   useful for refining or repurposing this output. */
+body.mode-create .batch-input-tile .bit-check{display:none}
+body.mode-create .batch-input-tile{border-color:transparent}
+body.mode-create .batch-input-tile:hover{border-color:transparent}
 .batch-input-tile{
     position:relative;aspect-ratio:1/1;border-radius:6px;overflow:hidden;
     background:var(--surface-3);border:2px solid var(--border);cursor:pointer;
@@ -502,6 +512,7 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .batch-input-tile:hover .bit-send{opacity:.92}
 .batch-input-tile .bit-send:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold);opacity:1;transform:scale(1.08)}
+.batch-input-tile .bit-send-create{right:62px}
 .batch-input-tile .bit-send-camera{right:34px}
 .batch-input-tile .bit-send-edit{right:6px}
 /* Find-issues button — single-tile vision-check trigger. Sits left of
@@ -2184,6 +2195,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 </div>
                 <div class="batch-focus-toolbar-right">
                     <a id="bfsDownload" class="bfs-action-btn" download title="Download image" href="#">⬇</a>
+                    <button type="button" class="bfs-action-btn" id="bfsToCreate" title="Use as input in Create mode">✨</button>
                     <button type="button" class="bfs-action-btn" id="bfsToCamera" title="Load in Camera mode">📷</button>
                     <button type="button" class="bfs-action-btn" id="bfsToEdit" title="Load in Edit mode">✏️</button>
                 </div>
@@ -2958,6 +2970,21 @@ function setMode(mode, opts){
     // renderBatchInputs / showResult aren't confused by it.
     if (prevMode !== mode && typeof _activeBatch !== 'undefined' && _activeBatch) {
         clearBatchGrid();
+    }
+    // Create mode is single-image-only. Whenever the user enters or
+    // leaves it, clear the shared _batchInputs array — Batch mode's
+    // accumulated tiles shouldn't carry over into Create (visually
+    // wrong: the stage shows "1 of N" instead of just the generation),
+    // and Create's single output shouldn't bleed into Batch (the user
+    // would see one tile sitting alone in the batch grid). Both
+    // directions of the transition need the same wipe. Images stay
+    // accessible in History either way — nothing is lost, just cleared
+    // from the visible stage.
+    if (prevMode !== mode && (mode === 'generate' || prevMode === 'generate')) {
+        if (_batchInputs.length > 0) {
+            _batchInputs = [];
+            _batchFocusedId = null;
+        }
     }
     currentMode = mode;
     $('btnModeCamera').classList.toggle('active', mode === 'camera');
@@ -3774,12 +3801,14 @@ async function doGenerateMode(){
         return;
     }
     const refIds = _generateRefs.filter(r => r !== null).map(r => r.id);
-    // Push placeholder + synth job — this is the exact same flow the
-    // agent's generate_new_images uses, so the live progress + queue
-    // tile + history insertion all just work.
+    // Build the placeholder for this generation. In Create mode the
+    // stage shows ONLY the most recent generation — the prior result
+    // (if any) is replaced. Earlier generations are still accessible
+    // via History (every agent-image-gen call inserts a studio_jobs row).
+    // This is different from Batch mode, which accumulates tiles.
     const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
     const placeholderEstSec = refIds.length ? 90 : 60;
-    _batchInputs.push({
+    const newPlaceholder = {
         id: placeholderId,
         url: '',
         fname: 'generating…',
@@ -3788,7 +3817,12 @@ async function doGenerateMode(){
         _placeholderLabel: refIds.length ? `Generating (+${refIds.length} ref${refIds.length === 1 ? '' : 's'})` : 'Generating',
         _placeholderEstSec: placeholderEstSec,
         _placeholderStartedAt: Date.now(),
-    });
+    };
+    // Replace, not append — Create mode is single-image-only.
+    _batchInputs = [newPlaceholder];
+    // Drop any focus state from a prior generation so the placeholder
+    // is what the user sees rather than a stale focused image.
+    _batchFocusedId = null;
     renderBatchInputs();
     const synthJobId = 'agen_' + Math.random().toString(36).slice(2, 10);
     let thumb = null;
@@ -5000,15 +5034,15 @@ function renderBatchInputs(){
     const isCreateMode = (typeof currentMode !== 'undefined' && currentMode === 'generate');
     grid.style.setProperty('--batch-cols', String(isCreateMode ? 1 : bestBatchColumnCount(_batchInputs.length)));
 
-    // Floating clear-toolbar — visible whenever the grid has tiles.
-    // Count excludes placeholders so the user sees "Clear 4" not "Clear 6"
-    // when 2 generations are in flight. Toolbar is hidden while leaving
-    // batch mode, while the result grid takes over, OR while the focus
-    // stage is showing (the focus stage has its own back button).
+    // Floating clear-toolbar — visible whenever the grid has multiple
+    // tiles in Batch mode. Hidden in Create mode entirely: each new
+    // generation replaces the prior one, so a "clear stage" button is
+    // redundant (the X on the tile itself works) and visually clutters
+    // the single-image presentation.
     const toolbar = $('batchGridToolbar');
     const realCount = _batchInputs.filter(b => !b._placeholder).length;
     if (toolbar) {
-        if (showGrid) {
+        if (showGrid && !isCreateMode) {
             toolbar.style.display = '';
             const cnt = $('bgtCount');
             if (cnt) cnt.textContent = `${realCount} image${realCount === 1 ? '' : 's'}`;
@@ -5019,7 +5053,7 @@ function renderBatchInputs(){
     // Body class hook so the queue overlay's CSS can shift down to top:56
     // when the toolbar is occupying the top-right corner. Without this the
     // two overlap (toolbar at top:12, queue defaults to top:10).
-    document.body.classList.toggle('has-clear-toolbar', showGrid);
+    document.body.classList.toggle('has-clear-toolbar', showGrid && !isCreateMode);
 
     grid.style.display = showGrid ? '' : 'none';
 
@@ -5137,6 +5171,7 @@ function renderBatchInputs(){
             <div class="bit-check"></div>
             <button type="button" class="bit-find-issues${issueBtnClass}" title="${issueBtnTitle}">🔍</button>
             <button type="button" class="bit-reverse" title="Reverse-prompt this image (write a prompt that could have generated it)">🔁</button>
+            <button type="button" class="bit-send bit-send-create" title="Use as input in Create mode">✨</button>
             <button type="button" class="bit-send bit-send-camera" title="Load in Camera mode">📷</button>
             <button type="button" class="bit-send bit-send-edit" title="Load in Edit mode">✏️</button>
             <button type="button" class="bit-remove" title="Remove this image">×</button>
@@ -5168,6 +5203,10 @@ function renderBatchInputs(){
         tile.querySelector('.bit-reverse').onclick = (e) => {
             e.stopPropagation();
             aiReverseInputTile(inp, tile.querySelector('.bit-reverse'));
+        };
+        tile.querySelector('.bit-send-create').onclick = (e) => {
+            e.stopPropagation();
+            sendBatchInputToCreate(inp);
         };
         tile.querySelector('.bit-send-camera').onclick = (e) => {
             e.stopPropagation();
@@ -5258,9 +5297,11 @@ function renderBatchFocusedStage(inp){
         dl.setAttribute('download', inp.fname || `${inp.id}.png`);
     }
     // Re-bind action handlers each render — cheaper than tracking which
-    // tile is currently bound, and bind cost is negligible at 3 buttons.
+    // tile is currently bound, and bind cost is negligible at 4 buttons.
     if (toCam) toCam.onclick = () => sendBatchInputToCamera(inp);
     if (toEdit) toEdit.onclick = () => sendBatchInputToEdit(inp);
+    const toCreate = $('bfsToCreate');
+    if (toCreate) toCreate.onclick = () => sendBatchInputToCreate(inp);
 
     // Issue overlay in the focus stage — shows the same red bboxes the
     // tile shows, but with per-bbox ✕ buttons so the user can drop
@@ -5493,6 +5534,46 @@ function sendBatchInputToEdit(inp){
     persistSlots();
     updateGenButton();
     log(`Loaded "${inp.fname || inp.id}" into Edit mode (slot 1)`);
+}
+// Send a batch tile into Create mode as a reference image. The image is
+// already in R2 (it has an id + url), so we don't re-upload — we just
+// drop it into the first empty Create ref slot. If all 4 slots are
+// already filled the call falls back to slot 1 (overwriting the oldest
+// reference) and tells the user via a notif so they're not confused
+// about why their existing slot 1 just changed.
+//
+// Switching to Create mode happens before the slot assignment so the
+// user lands in the right view; Generate-mode panels become visible
+// and the user can immediately hit GENERATE if they want.
+function sendBatchInputToCreate(inp){
+    if (!inp || inp._placeholder) return;
+    setMode('generate');
+    // First empty slot wins. _generateRefs is fixed-length 4, so a
+    // simple findIndex(=== null) finds the lowest-indexed empty.
+    let targetSlot = _generateRefs.findIndex(r => r === null);
+    let didOverwrite = false;
+    if (targetSlot === -1) {
+        // All slots full — overwrite slot 1 (index 0) so the newest
+        // reference replaces the oldest. The user gets a notif so they
+        // know what happened instead of seeing slot 1 silently change.
+        targetSlot = 0;
+        didOverwrite = true;
+    }
+    _generateRefs[targetSlot] = {
+        id: inp.id,
+        url: inp.url,
+        filename: inp.fname || `${inp.id}.png`,
+        w: inp.w,
+        h: inp.h,
+    };
+    renderGenSlot(targetSlot);
+    genUpdateCounter();
+    updateGenButton();
+    persistGenerateState();
+    if (didOverwrite) {
+        showNotif('All 4 reference slots were full — replaced slot 1 with the newest image.', 'info');
+    }
+    log(`Loaded "${inp.fname || inp.id}" into Create mode (slot ${targetSlot + 1})`);
 }
 
 // ─── Per-tile vision check: find issues, draw red rectangles ────
