@@ -116,6 +116,35 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 }
 .batch-input-tile:hover{border-color:var(--border-strong)}
 .batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+/* Pending tile — shown while an agent gen/edit is in flight so the user
+   sees a spinning placeholder immediately instead of nothing happening
+   for 30+ seconds. The handler pushes a placeholder entry into
+   _batchInputs with _placeholder=true, then renderBatchInputs uses this
+   class. When the API call returns, the placeholder is replaced in
+   place by the real image (same array index, real id, _placeholder
+   cleared). On error the entry is removed.
+   Not interactive: no click-to-select, no remove-button, no reverse-prompt
+   button (the tile has nothing to operate on yet). */
+.batch-input-tile.pending{
+    cursor:default;border-color:var(--gold);
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;
+    background:linear-gradient(135deg,var(--surface-2),var(--surface-3))
+}
+.batch-input-tile.pending::before{
+    content:"";display:block;width:34px;height:34px;
+    border:3px solid var(--surface-3);border-top-color:var(--gold);
+    border-radius:50%;animation:agentSpin .9s linear infinite
+}
+.batch-input-tile.pending .bit-pending-label{
+    font-family:var(--font-mono);font-size:9px;letter-spacing:1px;
+    color:var(--gold);text-transform:uppercase;text-align:center;padding:0 6px
+}
+.batch-input-tile.pending.error{border-color:var(--red)}
+.batch-input-tile.pending.error::before{
+    border-color:var(--red);border-top-color:var(--red);animation:none;
+    content:"✕";font-size:18px;font-weight:700;line-height:34px
+}
+.batch-input-tile.pending.error .bit-pending-label{color:var(--red)}
 /* object-fit:cover gives every tile the exact same visual size regardless
    of the source image's aspect ratio — center-crop view. */
 .batch-input-tile img{width:100%;height:100%;object-fit:cover;pointer-events:none}
@@ -1102,6 +1131,43 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 /* History overlay (bottom-right of output area) */
 .history-overlay{position:absolute;bottom:10px;right:10px;width:240px;z-index:10;display:flex;flex-direction:column;gap:6px;pointer-events:none}
 .history-overlay>*{pointer-events:auto}
+
+/* Agent chat overlay — third floating panel, mid-right by default. Larger
+   than queue/history because the chat body needs room. Same drag system. */
+.agent-overlay{position:absolute;top:50%;right:10px;transform:translateY(-50%);width:340px;z-index:10;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.agent-overlay.q-positioned{transform:none}  /* drag clears the centering transform */
+.agent-overlay>*{pointer-events:auto}
+.agent-overlay .q-section{display:flex;flex-direction:column;max-height:480px}
+.agent-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:8px;font-size:12px;line-height:1.45;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
+.agent-body::-webkit-scrollbar{width:6px}
+.agent-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px}
+.agent-empty{color:var(--text-muted);font-size:11px;font-style:italic;padding:6px 0}
+.agent-empty em{font-style:italic;color:var(--text-dim)}
+.agent-msg{display:flex;flex-direction:column;gap:2px}
+.agent-msg-role{font-family:var(--font-mono);font-size:9px;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase}
+.agent-msg.user .agent-msg-role{color:var(--gold)}
+.agent-msg.assistant .agent-msg-role{color:var(--green)}
+.agent-msg-text{color:var(--text);white-space:pre-wrap;word-wrap:break-word}
+/* Tool-call status lines — compact, in mono, with a leading icon. We
+   intentionally don't show the full tool args/results in the chat body
+   (they'd be noisy); just the human-readable summary that the dispatcher
+   returns. The full payloads still live in conversation history sent
+   back to the model. */
+.agent-tool{display:flex;gap:6px;align-items:flex-start;font-family:var(--font-mono);font-size:10px;color:var(--text-dim);padding:2px 0}
+.agent-tool .agent-tool-icon{flex-shrink:0;color:var(--gold)}
+.agent-tool.error .agent-tool-icon{color:var(--red)}
+.agent-tool.error{color:var(--red)}
+.agent-thinking{display:flex;gap:5px;align-items:center;color:var(--text-muted);font-size:11px;font-style:italic;padding:2px 0}
+.agent-thinking::after{content:'';display:inline-block;width:14px;height:14px;border:1.5px solid var(--surface-3);border-top-color:var(--gold);border-radius:50%;animation:agentSpin .8s linear infinite}
+@keyframes agentSpin{to{transform:rotate(360deg)}}
+.agent-input-row{display:flex;gap:5px;padding:6px 8px;border-top:1px solid var(--border);align-items:flex-end;flex-shrink:0}
+.agent-input{flex:1;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:6px 8px;resize:none;outline:none;transition:border-color .12s;line-height:1.4}
+.agent-input:focus{border-color:var(--gold)}
+.agent-input:disabled{opacity:.5;cursor:wait}
+.agent-send{background:var(--gold);border:none;color:var(--black);font-size:12px;font-weight:700;width:32px;height:32px;border-radius:5px;cursor:pointer;flex-shrink:0;transition:all .12s;display:flex;align-items:center;justify-content:center}
+.agent-send:hover:not(:disabled){background:var(--gold-light);transform:translateY(-1px)}
+.agent-send:disabled{background:var(--surface-3);color:var(--text-muted);cursor:not-allowed}
+.q-section.minimized .agent-body, .q-section.minimized .agent-input-row{display:none}
 .q-section{background:rgba(17,17,19,.92);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
 .q-header{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1px;color:var(--text-muted);padding:8px 10px 6px;display:flex;align-items:center;gap:6px}
 /* Headers tagged as drag handles get a grab cursor and a faint hover hint
@@ -1265,15 +1331,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     /* Queue and history overlays: stack at bottom of viewport instead of
        top-right / bottom-right, and make them collapsible chips. */
-    .queue-overlay, .history-overlay {
+    .queue-overlay, .history-overlay, .agent-overlay {
         position: fixed; right: 8px; left: 8px; top: auto;
         max-width: none; width: auto;
     }
+    .agent-overlay { transform: none; bottom: calc(var(--mobile-action-h) + 132px); z-index: 75; }
     /* If the user dragged a panel on desktop and the localStorage value
        persists, .q-positioned would set inline left/top that override the
        full-width layout. Force it back here so mobile users always see the
        full-width chips no matter what's saved. */
-    .queue-overlay.q-positioned, .history-overlay.q-positioned {
+    .queue-overlay.q-positioned, .history-overlay.q-positioned, .agent-overlay.q-positioned {
         right: 8px !important; left: 8px !important; top: auto !important;
     }
     .queue-overlay { bottom: calc(var(--mobile-action-h) + 4px); z-index: 80; }
@@ -1686,6 +1753,28 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     </span>
                 </div>
                 <div id="qHistoryList" class="q-list"></div>
+            </div>
+        </div>
+
+        <!-- Floating batch agent chat (gpt-5.4-mini). Visible only in batch
+             mode via the .batch-only show/hide on the parent. Same drag &
+             persist machinery as queue/history (data-overlay='agent'). -->
+        <div class="agent-overlay batch-only" id="agentOverlay" style="display:none">
+            <div class="q-section" id="qAgentSection">
+                <div class="q-header q-drag-handle" data-overlay="agent">
+                    <span>✨ AGENT</span>
+                    <span style="margin-left:auto;display:flex;gap:5px">
+                        <button id="agentClearBtn" onclick="clearAgentChat()" class="q-clear" title="Clear chat history">↻ Reset</button>
+                        <button id="agentMinBtn" onclick="toggleAgentMinimized()" class="q-clear" title="Minimize">▼ Hide</button>
+                    </span>
+                </div>
+                <div class="agent-body" id="agentBody">
+                    <div class="agent-empty">Tell me what to do with the batch — generate, edit, filter, organize. e.g. "<em>generate 4 dragon concept sketches</em>", "<em>find images that look like swords and make them glow blue</em>".</div>
+                </div>
+                <div class="agent-input-row">
+                    <textarea id="agentInput" class="agent-input" rows="2" placeholder="Ask the agent…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentMessage()}"></textarea>
+                    <button class="agent-send" id="agentSendBtn" onclick="sendAgentMessage()" title="Send (Enter)">➤</button>
+                </div>
             </div>
         </div>
     </div>
@@ -4121,7 +4210,21 @@ function renderBatchInputs(){
 
     _batchInputs.forEach((inp, i) => {
         const tile = document.createElement('div');
-        tile.className = 'batch-input-tile' + (inp.selected ? ' selected' : '');
+        const isPending = !!inp._placeholder;
+        const isError = !!inp._placeholderError;
+        tile.className = 'batch-input-tile'
+            + (inp.selected ? ' selected' : '')
+            + (isPending ? ' pending' : '')
+            + (isError ? ' error' : '');
+        // Placeholder tiles get a status label and skip the interactive
+        // chrome (selection check, remove button, reverse-prompt). They
+        // are non-interactive until the real image arrives.
+        if (isPending) {
+            tile.title = inp._placeholderLabel || 'Generating…';
+            tile.innerHTML = `<div class="bit-pending-label">${inp._placeholderLabel || 'Generating'}</div>`;
+            grid.appendChild(tile);
+            return;
+        }
         tile.title = inp.fname || `Image ${i + 1}`;
         // Filename is shown in the bottom-left so the user can tell the
         // tiles apart at a glance, especially useful with many uploads
@@ -7099,6 +7202,490 @@ function toggleQueueMinimized(){
     renderQueue();
 }
 
+// Same pattern for the agent chat panel.
+let _agentMinimized = (() => {
+    try { return localStorage.getItem('studio_agent_minimized') === '1'; }
+    catch (e) { return false; }
+})();
+function toggleAgentMinimized(){
+    _agentMinimized = !_agentMinimized;
+    try { localStorage.setItem('studio_agent_minimized', _agentMinimized ? '1' : '0'); } catch (e) {}
+    const sec = document.getElementById('qAgentSection');
+    if (sec) sec.classList.toggle('minimized', _agentMinimized);
+    const btn = document.getElementById('agentMinBtn');
+    if (btn) btn.innerHTML = _agentMinimized ? '▲ Show' : '▼ Hide';
+}
+
+// ───────────── Batch agent (gpt-5.4-mini + gpt-image-2) ─────────────
+//
+// Floating chat panel that takes natural-language instructions and turns
+// them into batch operations: select images, set the edit prompt, submit
+// Qwen edits, generate new images via gpt-image-2, edit images via
+// gpt-image-2, recaption, remove. The agent is stateless — every turn
+// posts the full conversation back to /api/studio/agent-chat. The model
+// returns either a plain assistant message (loop ends) or one or more
+// function_call items (we run them locally against page state, post the
+// results back, and loop).
+//
+// Convention: every tool returns BOTH a human-readable summary (shown
+// inline in the chat as "✓ Selected 3 images") AND a structured payload
+// that the model sees. The structured payload always includes the
+// post-mutation batch state so the model has fresh ground truth on the
+// next turn — saves a separate "inspect" round-trip.
+
+let _agentMessages = [];      // OpenAI Responses input-item array
+let _agentRunning = false;    // gates re-entry while a turn is in flight
+const AGENT_MAX_TOOL_ITERATIONS = 8;  // hard cap on tool-call rounds per user message
+
+// Build a snapshot of the current batch state in a shape the model can
+// reason about. Captions come from _aiSelectedCache (populated by the
+// existing ai-select / ai-caption flows) when available — agent doesn't
+// re-run captioning unless the user asks. selected/unselected mirrors
+// _batchInputs[i].selected. The current shared prompt comes from the
+// batchPrompt textarea.
+function _agentBatchState(){
+    const captions = (typeof _aiSelectedCache !== 'undefined' && _aiSelectedCache && _aiSelectedCache.captions) || {};
+    // Placeholder entries (in-flight agent generations) are excluded from
+    // the model-facing batch state — the model shouldn't try to operate
+    // on an image that doesn't exist yet. Once the real image arrives the
+    // placeholder is replaced with a real entry and shows up here.
+    const real = (_batchInputs || []).filter(b => !b._placeholder);
+    const items = real.map((b, idx) => ({
+        index: idx + 1,
+        id: b.id,
+        filename: b.fname || `${b.id}.png`,
+        selected: !!b.selected,
+        caption: captions[b.id] || null,
+        w: b.w || 0,
+        h: b.h || 0,
+    }));
+    const promptEl = document.getElementById('batchPrompt');
+    return {
+        total_images: items.length,
+        selected_count: items.filter(i => i.selected).length,
+        in_flight_generations: (_batchInputs || []).filter(b => b._placeholder).length,
+        current_prompt: promptEl ? promptEl.value : '',
+        images: items,
+    };
+}
+
+// Append a chat bubble or status row to the visible chat body. Doesn't
+// touch _agentMessages — that's the model-facing transcript and is
+// updated separately via _agentRecord*().
+function _agentRender(kind, payload){
+    const body = document.getElementById('agentBody');
+    if (!body) return;
+    // Drop the empty-state hint on first render
+    const empty = body.querySelector('.agent-empty');
+    if (empty) empty.remove();
+    const div = document.createElement('div');
+    if (kind === 'user' || kind === 'assistant') {
+        div.className = `agent-msg ${kind}`;
+        div.innerHTML = `<div class="agent-msg-role">${kind === 'user' ? 'you' : 'agent'}</div><div class="agent-msg-text"></div>`;
+        div.querySelector('.agent-msg-text').textContent = payload;
+    } else if (kind === 'tool') {
+        div.className = 'agent-tool' + (payload.error ? ' error' : '');
+        div.innerHTML = `<span class="agent-tool-icon">${payload.error ? '✕' : '⚙'}</span><span></span>`;
+        div.querySelector('span:last-child').textContent = payload.text;
+    } else if (kind === 'thinking') {
+        div.className = 'agent-thinking';
+        div.id = 'agentThinking';
+        div.textContent = payload || 'thinking…';
+    }
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+}
+function _agentRemoveThinking(){
+    const t = document.getElementById('agentThinking');
+    if (t) t.remove();
+}
+
+// Tool dispatcher. Each handler runs locally against page state, returns
+// a { summary, result } pair: summary goes in the chat UI, result goes
+// back to the model as the function_call_output content. Errors are
+// caught here and routed to both places with kind='error' so neither
+// the model nor the user is left guessing what happened.
+const AGENT_TOOL_HANDLERS = {
+    async set_selection(args){
+        const wantedIds = new Set(Array.isArray(args.image_ids) ? args.image_ids : []);
+        let changed = 0;
+        for (const b of (_batchInputs || [])) {
+            const should = wantedIds.has(b.id);
+            if (b.selected !== should) { b.selected = should; changed++; }
+        }
+        renderBatchInputs();
+        updateGenButton();
+        const sel = (_batchInputs || []).filter(b => b.selected).length;
+        return {
+            summary: `Selected ${sel} image${sel === 1 ? '' : 's'}`,
+            result: { ok: true, selected_count: sel, changed, batch_state: _agentBatchState() },
+        };
+    },
+    async set_prompt(args){
+        const el = document.getElementById('batchPrompt');
+        if (!el) throw new Error('batchPrompt textarea missing');
+        el.value = String(args.prompt || '');
+        // Manual edit semantics — clears any previous per-image planner output
+        if (typeof _batchPerImagePrompts !== 'undefined') _batchPerImagePrompts = null;
+        updateGenButton();
+        return {
+            summary: `Set prompt: "${(args.prompt || '').slice(0, 60)}${(args.prompt || '').length > 60 ? '…' : ''}"`,
+            result: { ok: true, batch_state: _agentBatchState() },
+        };
+    },
+    async submit_qwen_edit(){
+        const sel = (_batchInputs || []).filter(b => b.selected).length;
+        if (!sel) {
+            return {
+                summary: 'No images selected — call set_selection first',
+                result: { ok: false, error: 'no_selection', batch_state: _agentBatchState() },
+                error: true,
+            };
+        }
+        const el = document.getElementById('batchPrompt');
+        if (!el || !el.value.trim()) {
+            return {
+                summary: 'No prompt set — call set_prompt first',
+                result: { ok: false, error: 'no_prompt', batch_state: _agentBatchState() },
+                error: true,
+            };
+        }
+        // Reuse the existing batch-edit submission path. It validates
+        // tokens, builds payloads, and routes results into the grid.
+        await generateBatchEdits();
+        return {
+            summary: `Submitted ${sel} edit job${sel === 1 ? '' : 's'} (Qwen)`,
+            result: { ok: true, jobs_submitted: sel, batch_state: _agentBatchState() },
+        };
+    },
+    async generate_new_images(args){
+        // Push a placeholder tile FIRST so the user sees a spinning slot
+        // appear instantly. The tile is non-interactive (no select, no
+        // remove) until the real image arrives. We track it by a
+        // synthetic placeholder id so we can locate and replace it
+        // even if other batch operations mutate _batchInputs while
+        // this fetch is in flight (parallel generations are common).
+        const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
+        _batchInputs.push({
+            id: placeholderId,
+            url: '',
+            fname: 'generating…',
+            selected: false,
+            _placeholder: true,
+            _placeholderLabel: 'Generating',
+        });
+        renderBatchInputs();
+        try {
+            const r = await fetchT(`${API}/api/studio/agent-image-gen`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                // n is forced to 1 here — the agent's tool schema has no n
+                // field, and one image per call is what gives us the live
+                // streaming UX (each placeholder fills in independently
+                // when its own /generations call returns).
+                body: JSON.stringify({ prompt: args.prompt, n: 1, size: args.size || '1024x1024' }),
+            }, 130_000);
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
+            const img = (d.images || [])[0];
+            if (!img) throw new Error('no_image_returned');
+            // Replace the placeholder in place (preserves grid position).
+            const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+            if (idx !== -1) {
+                _batchInputs[idx] = { id: img.id, url: img.url, w: img.w, h: img.h, fname: img.filename, selected: false };
+            } else {
+                // Edge case: user removed the placeholder while in flight.
+                // Still add the image at the end so we don't drop it.
+                _batchInputs.push({ id: img.id, url: img.url, w: img.w, h: img.h, fname: img.filename, selected: false });
+            }
+            renderBatchInputs();
+            updateGenButton();
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                const tc = document.getElementById('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            return {
+                summary: `Generated 1 new image (gpt-image-2)`,
+                result: { ok: true, generated: { id: img.id, w: img.w, h: img.h }, batch_state: _agentBatchState() },
+            };
+        } catch (e) {
+            // Mark the placeholder as errored briefly so the user sees the
+            // red X, then drop it after a moment so the grid doesn't fill
+            // with dead tiles. The model still gets a clean error result.
+            const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+            if (idx !== -1) {
+                _batchInputs[idx]._placeholderError = true;
+                _batchInputs[idx]._placeholderLabel = 'Failed';
+                renderBatchInputs();
+                setTimeout(() => {
+                    const j = _batchInputs.findIndex(b => b.id === placeholderId);
+                    if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
+                }, 3000);
+            }
+            throw e;
+        }
+    },
+    async edit_with_gpt_image(args){
+        // Same placeholder pattern as generate_new_images. The schema
+        // takes a single image_id so each call → one /edits call →
+        // one new tile. Multiple parallel calls = multiple parallel
+        // placeholders, each filling independently.
+        const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
+        _batchInputs.push({
+            id: placeholderId,
+            url: '',
+            fname: 'editing…',
+            selected: false,
+            _placeholder: true,
+            _placeholderLabel: 'Editing',
+        });
+        renderBatchInputs();
+        try {
+            const r = await fetchT(`${API}/api/studio/agent-image-edit`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                // Use the singular `image_id` field — the worker accepts
+                // either, but the singular form makes the per-image
+                // semantics unambiguous.
+                body: JSON.stringify({ prompt: args.prompt, image_id: args.image_id }),
+            }, 130_000);
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.detail || d.error || 'image_edit_failed');
+            const img = (d.images || [])[0];
+            if (!img) throw new Error('no_image_returned');
+            const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+            if (idx !== -1) {
+                _batchInputs[idx] = { id: img.id, url: img.url, w: img.w, h: img.h, fname: img.filename, selected: false };
+            } else {
+                _batchInputs.push({ id: img.id, url: img.url, w: img.w, h: img.h, fname: img.filename, selected: false });
+            }
+            renderBatchInputs();
+            updateGenButton();
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                const tc = document.getElementById('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            return {
+                summary: `Edited image ${args.image_id} → new image ${img.id} (gpt-image-2)`,
+                result: { ok: true, edited: { id: img.id, w: img.w, h: img.h, source_id: args.image_id }, batch_state: _agentBatchState() },
+            };
+        } catch (e) {
+            const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+            if (idx !== -1) {
+                _batchInputs[idx]._placeholderError = true;
+                _batchInputs[idx]._placeholderLabel = 'Failed';
+                renderBatchInputs();
+                setTimeout(() => {
+                    const j = _batchInputs.findIndex(b => b.id === placeholderId);
+                    if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
+                }, 3000);
+            }
+            throw e;
+        }
+    },
+    async recaption(){
+        // Reuse the existing /api/studio/ai-caption flow but for any
+        // image that doesn't yet have a caption. Captions land in
+        // _aiSelectedCache so _agentBatchState picks them up next turn.
+        const uncaptioned = (_batchInputs || []).filter(b => {
+            const cache = (typeof _aiSelectedCache !== 'undefined' && _aiSelectedCache && _aiSelectedCache.captions) || {};
+            return !cache[b.id];
+        });
+        if (!uncaptioned.length) {
+            return {
+                summary: 'All images already have captions',
+                result: { ok: true, captioned: 0, batch_state: _agentBatchState() },
+            };
+        }
+        const r = await fetchT(`${API}/api/studio/ai-caption`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_ids: uncaptioned.map(b => b.id) }),
+        }, 90_000);
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        if (typeof _aiSelectedCache === 'undefined' || !_aiSelectedCache) {
+            window._aiSelectedCache = { captions: {} };
+        }
+        if (!_aiSelectedCache.captions) _aiSelectedCache.captions = {};
+        const incoming = d.captions || {};
+        for (const id of Object.keys(incoming)) _aiSelectedCache.captions[id] = incoming[id];
+        return {
+            summary: `Captioned ${Object.keys(incoming).length} image${Object.keys(incoming).length === 1 ? '' : 's'}`,
+            result: { ok: true, captioned: Object.keys(incoming).length, batch_state: _agentBatchState() },
+        };
+    },
+    async remove_images(args){
+        const ids = new Set(Array.isArray(args.image_ids) ? args.image_ids : []);
+        const before = _batchInputs.length;
+        _batchInputs = _batchInputs.filter(b => !ids.has(b.id));
+        renderBatchInputs();
+        updateGenButton();
+        const removed = before - _batchInputs.length;
+        return {
+            summary: `Removed ${removed} image${removed === 1 ? '' : 's'} from batch`,
+            result: { ok: true, removed, batch_state: _agentBatchState() },
+        };
+    },
+};
+
+// One round-trip to the worker. Returns the parsed output items.
+async function _agentCallModel(){
+    const r = await fetchT(`${API}/api/studio/agent-chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: _agentMessages }),
+    }, 100_000);
+    const d = await r.json();
+    if (!d.ok) {
+        throw new Error(d.detail || d.error || 'agent_chat_failed');
+    }
+    return Array.isArray(d.output) ? d.output : [];
+}
+
+// Drive the agent loop: send → get output → execute tools → loop until
+// the model returns a message item with no tool calls (or we hit the
+// iteration cap, which means the agent is in a loop and we bail with a
+// note in the chat).
+async function _agentRunTurn(){
+    let iterations = 0;
+    while (iterations < AGENT_MAX_TOOL_ITERATIONS) {
+        iterations++;
+        _agentRender('thinking', iterations === 1 ? 'thinking…' : 'thinking…');
+        let output;
+        try {
+            output = await _agentCallModel();
+        } catch (e) {
+            _agentRemoveThinking();
+            _agentRender('tool', { text: `Agent call failed: ${e.message}`, error: true });
+            return;
+        }
+        _agentRemoveThinking();
+        if (!output.length) {
+            _agentRender('tool', { text: 'Agent returned no output', error: true });
+            return;
+        }
+
+        // First, push every output item back into _agentMessages so the
+        // next turn's request includes both the assistant message and
+        // any function_calls (the API requires both to be present
+        // alongside their function_call_output siblings).
+        for (const item of output) _agentMessages.push(item);
+
+        // Render assistant message text, if any
+        const messageItems = output.filter(i => i.type === 'message');
+        for (const msg of messageItems) {
+            const txt = (msg.content || [])
+                .filter(c => c.type === 'output_text')
+                .map(c => c.text || '').join('').trim();
+            if (txt) _agentRender('assistant', txt);
+        }
+
+        // If there are tool calls, run them sequentially and feed
+        // results back. Sequential rather than parallel because tools
+        // mutate shared page state (selection, batch contents) and
+        // racing them would produce nondeterministic behavior.
+        const toolCalls = output.filter(i => i.type === 'function_call');
+        if (!toolCalls.length) return;  // no tools → conversation done
+
+        // Tool dispatch. Image gen/edit calls are commutative and benefit
+        // hugely from running in parallel — 8 generate_new_images calls
+        // fired with Promise.all means 8 placeholders appear instantly
+        // and 8 OpenAI requests are in flight at once, so total wall
+        // time is ~one image's latency rather than 8x. State-mutating
+        // tools (set_selection, set_prompt, remove_images, recaption,
+        // submit_qwen_edit) are serialized BEFORE the parallel batch so
+        // they take effect first — the model rarely interleaves these
+        // anyway since they're single-state operations, but ordering
+        // matters when it does (set_selection then submit_qwen_edit).
+        const PARALLEL_TOOLS = new Set(['generate_new_images', 'edit_with_gpt_image']);
+        const serialCalls = toolCalls.filter(c => !PARALLEL_TOOLS.has(c.name));
+        const parallelCalls = toolCalls.filter(c => PARALLEL_TOOLS.has(c.name));
+
+        // Single helper that runs one call, posts the visible status
+        // line into the chat, and returns the function_call_output item
+        // to push back into the conversation.
+        const _runOne = async (call) => {
+            const handler = AGENT_TOOL_HANDLERS[call.name];
+            if (!handler) {
+                _agentRender('tool', { text: `Unknown tool: ${call.name}`, error: true });
+                return { type: 'function_call_output', call_id: call.call_id, output: JSON.stringify({ ok: false, error: 'unknown_tool' }) };
+            }
+            let args = {};
+            try { args = JSON.parse(call.arguments || '{}'); }
+            catch (e) {
+                _agentRender('tool', { text: `Bad arguments for ${call.name}`, error: true });
+                return { type: 'function_call_output', call_id: call.call_id, output: JSON.stringify({ ok: false, error: 'bad_arguments' }) };
+            }
+            try {
+                const r = await handler(args);
+                _agentRender('tool', { text: r.summary, error: !!r.error });
+                return { type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(r.result) };
+            } catch (e) {
+                const msg = (e && e.message) || String(e);
+                _agentRender('tool', { text: `${call.name} failed: ${msg}`, error: true });
+                return { type: 'function_call_output', call_id: call.call_id, output: JSON.stringify({ ok: false, error: msg, batch_state: _agentBatchState() }) };
+            }
+        };
+
+        // Run state-mutating tools first, sequentially. Then fire the
+        // parallel batch all at once.
+        for (const call of serialCalls) {
+            const result = await _runOne(call);
+            _agentMessages.push(result);
+        }
+        if (parallelCalls.length) {
+            const results = await Promise.all(parallelCalls.map(_runOne));
+            for (const r of results) _agentMessages.push(r);
+        }
+        // Loop continues — next iteration will call the model again
+        // with the function_call_output items now in the input.
+    }
+    _agentRender('tool', { text: `Stopped after ${AGENT_MAX_TOOL_ITERATIONS} tool rounds (loop guard)`, error: true });
+}
+
+async function sendAgentMessage(){
+    if (_agentRunning) return;
+    if (!_user) { document.getElementById('loginModal').classList.add('open'); return; }
+    const input = document.getElementById('agentInput');
+    const sendBtn = document.getElementById('agentSendBtn');
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+
+    _agentRunning = true;
+    input.disabled = true;
+    if (sendBtn) sendBtn.disabled = true;
+    input.value = '';
+
+    // Render the user bubble
+    _agentRender('user', text);
+
+    // Prepend an automatic batch-state line to the user message. Doing
+    // this server-aware-but-not-server-side keeps the worker stateless
+    // (it just proxies messages); doing it on every user message rather
+    // than once at conversation start ensures the model always sees the
+    // current state, even after the user has taken non-agent actions
+    // (manual selection, manual upload).
+    const stateBlob = JSON.stringify(_agentBatchState(), null, 2);
+    const userContent = `Current batch state:\n\`\`\`json\n${stateBlob}\n\`\`\`\n\nUser: ${text}`;
+    _agentMessages.push({
+        role: 'user',
+        content: [{ type: 'input_text', text: userContent }],
+    });
+
+    try {
+        await _agentRunTurn();
+    } finally {
+        _agentRunning = false;
+        input.disabled = false;
+        if (sendBtn) sendBtn.disabled = false;
+        input.focus();
+    }
+}
+
+function clearAgentChat(){
+    _agentMessages = [];
+    const body = document.getElementById('agentBody');
+    if (body) body.innerHTML = '<div class="agent-empty">Tell me what to do with the batch — generate, edit, filter, organize. e.g. "<em>generate 4 dragon concept sketches</em>", "<em>find images that look like swords and make them glow blue</em>".</div>';
+}
+
 // ───────────── Draggable queue & history overlays ─────────────
 // The queue and history panels float over the main output area at fixed
 // corners (top-right / bottom-right). Some users want them out of the way —
@@ -7193,7 +7780,7 @@ function initOverlayDragging(){
     // Apply any persisted positions on startup. Defer to next frame so the
     // .main-area has its real layout dimensions (clamping needs them).
     requestAnimationFrame(() => {
-        for (const [overlayId, key] of [['queueOverlay', 'queue'], ['historyOverlay', 'history']]) {
+        for (const [overlayId, key] of [['queueOverlay', 'queue'], ['historyOverlay', 'history'], ['agentOverlay', 'agent']]) {
             const el = document.getElementById(overlayId);
             if (!el) continue;
             el.dataset.overlayKey = key;
@@ -7212,7 +7799,7 @@ function initOverlayDragging(){
             if (e.button !== undefined && e.button !== 0) return;
 
             const key = handle.dataset.overlay;
-            const overlayId = key === 'queue' ? 'queueOverlay' : 'historyOverlay';
+            const overlayId = key === 'queue' ? 'queueOverlay' : (key === 'history' ? 'historyOverlay' : 'agentOverlay');
             const overlay = document.getElementById(overlayId);
             if (!overlay) return;
             const parent = overlay.offsetParent || document.querySelector('.main-area') || document.body;
@@ -7278,7 +7865,7 @@ function initOverlayDragging(){
         handle.addEventListener('dblclick', (e) => {
             if (e.target.closest('button')) return;
             const key = handle.dataset.overlay;
-            const overlayId = key === 'queue' ? 'queueOverlay' : 'historyOverlay';
+            const overlayId = key === 'queue' ? 'queueOverlay' : (key === 'history' ? 'historyOverlay' : 'agentOverlay');
             const overlay = document.getElementById(overlayId);
             if (!overlay) return;
             overlay.classList.remove('q-positioned');
