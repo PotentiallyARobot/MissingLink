@@ -64,6 +64,14 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .mode-btn:hover{color:var(--text)}
 .mode-btn.active{background:var(--gold);color:var(--black)}
 
+/* Generate-mode size selector — same visual language as the mode toggle
+   so the user reads it as a single segmented control. Square / portrait
+   / landscape are the only sizes gpt-image-2 supports for generations. */
+.size-toggle{display:flex;gap:4px;background:var(--surface-3);border-radius:6px;padding:3px}
+.size-btn{flex:1;padding:8px 4px;background:none;border:none;border-radius:4px;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;cursor:pointer;transition:all .15s;text-align:center}
+.size-btn:hover{color:var(--text)}
+.size-btn.active{background:var(--gold);color:var(--black)}
+
 .dropzone{border:1.5px dashed var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
 
 
@@ -80,20 +88,25 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        row (e.g. 9 uploads → 3 cols → perfect 3×3 instead of 4 cols with 1
        lonely tile). Fallback `auto-fill` is responsive in case JS hasn't
        set --batch-cols yet (first paint, edge cases).
-       Max-width 320px caps each tile at a normal thumbnail size — without
+       Max-width 220px caps each tile at a compact thumbnail size — without
        this cap, a single tile (N=1, cols=1, 1fr) would grow to fill the
        whole grid width, and aspect-ratio:1/1 would then match the height,
        producing a screen-filling tile. With the cap, tiles stay at most
-       320×320 even when there are very few of them; the grid just leaves
-       empty columns to the right, which reads cleanly. */
-    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(180px, 320px));
+       220×220 even when there are very few of them; the grid just leaves
+       empty columns to the right, which reads cleanly. 220 (vs the
+       earlier 320) was tuned after the "clutter" feedback — at 320 only
+       3 tiles fit per row on most viewports, which means a comic-book
+       run of 8 generations sprawls into 3 rows that scroll. At 220, 4-6
+       fit per row depending on viewport, and the user can see the
+       whole working set without scrolling. */
+    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(140px, 220px));
     /* grid-auto-rows: max-content prevents row tracks from stretching to
        fill the container. Without this, a grid container with available
        vertical space sizes each row track to fit (any stretch behavior
        on grid items then bleeds through despite align-self overrides).
        Pinning to max-content means each row is exactly as tall as its
        tallest cell needs to be — which, with aspect-ratio:1/1 and the
-       column track sized 180-320px, is also 180-320px. Square tiles. */
+       column track sized 140-220px, is also 140-220px. Square tiles. */
     grid-auto-rows:max-content;
     justify-content:start;  /* tiles cluster left when there's leftover space */
     gap:10px;
@@ -169,6 +182,73 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     transform:translateY(-1px);box-shadow:0 4px 12px rgba(239,68,68,.35)
 }
 .batch-input-tile:hover{border-color:var(--border-strong)}
+
+/* Focused-stage view — replaces the batch grid when a tile is clicked.
+   Shows the selected image at canvas size with a back-to-grid button
+   and quick actions (download, send-to-edit, send-to-camera). Lives
+   inside the same parent as .batch-inputs-grid so the existing layout
+   constraints (overflow, padding) apply naturally; we just toggle
+   display between grid and stage modes via JS. */
+.batch-focus-stage{
+    position:absolute;inset:0;
+    display:none;flex-direction:column;
+    background:transparent;
+    padding:60px 20px 20px 20px;  /* top space for the floating toolbar */
+    box-sizing:border-box;z-index:1
+}
+.batch-focus-stage.open{display:flex}
+.batch-focus-image-wrap{
+    flex:1;min-height:0;
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden
+}
+.batch-focus-image-wrap img{
+    max-width:100%;max-height:100%;object-fit:contain;
+    border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.5);cursor:zoom-in
+}
+.batch-focus-toolbar{
+    position:absolute;top:12px;left:14px;right:14px;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    z-index:11
+}
+.batch-focus-toolbar-left, .batch-focus-toolbar-right{
+    display:flex;align-items:center;gap:8px
+}
+.bfs-back{
+    background:rgba(15,15,18,.92);border:1px solid var(--border-strong);
+    color:var(--text-1);font-family:var(--font-mono);
+    font-size:11px;font-weight:700;letter-spacing:1px;
+    padding:8px 14px;border-radius:8px;cursor:pointer;
+    backdrop-filter:blur(8px);
+    box-shadow:0 4px 16px rgba(0,0,0,.4);
+    transition:all .12s
+}
+.bfs-back:hover{background:var(--gold);border-color:var(--gold);color:#0a0a0c;transform:translateY(-1px)}
+.bfs-meta{
+    background:rgba(15,15,18,.92);border:1px solid var(--border);
+    color:var(--text-2);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;
+    padding:6px 10px;border-radius:6px;backdrop-filter:blur(6px);
+    text-transform:uppercase
+}
+.bfs-action-btn{
+    width:36px;height:36px;border-radius:8px;
+    background:rgba(15,15,18,.92);border:1px solid var(--border-strong);
+    color:var(--text-1);font-size:14px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    backdrop-filter:blur(8px);box-shadow:0 4px 16px rgba(0,0,0,.4);
+    transition:all .12s;text-decoration:none
+}
+.bfs-action-btn:hover{background:var(--gold);border-color:var(--gold);color:#0a0a0c;transform:translateY(-1px)}
+.batch-focus-prompt{
+    margin-top:12px;padding:10px 14px;border-radius:6px;
+    background:rgba(15,15,18,.6);border:1px solid var(--border);
+    color:var(--text-2);font-size:12px;line-height:1.5;
+    max-height:120px;overflow-y:auto;flex-shrink:0
+}
+.batch-focus-prompt-label{
+    color:var(--gold);font-family:var(--font-mono);font-size:9px;letter-spacing:1px;
+    text-transform:uppercase;margin-bottom:4px;display:block
+}
 .batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 /* Pending tile — shown while an agent gen/edit is in flight so the user
    sees a spinning placeholder immediately instead of nothing happening
@@ -184,21 +264,50 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;
     background:linear-gradient(135deg,var(--surface-2),var(--surface-3))
 }
-.batch-input-tile.pending::before{
-    content:"";display:block;width:34px;height:34px;
-    border:3px solid var(--surface-3);border-top-color:var(--gold);
-    border-radius:50%;animation:agentSpin .9s linear infinite
+/* Pending tile body — spinner + label + live elapsed-time / ETA / progress
+   bar. The bar fills from 0 → 90% over the estimated duration; the last
+   10% is bridged when the real image lands. We update the elapsed text
+   and bar width via the per-tile data attributes the placeholder ticker
+   sets (every 1s while in flight). */
+.bit-pending-body{
+    display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px;
+    width:80%;max-width:240px;color:var(--gold);
+    font-family:var(--font-mono);text-align:center
 }
-.batch-input-tile.pending .bit-pending-label{
-    font-family:var(--font-mono);font-size:9px;letter-spacing:1px;
-    color:var(--gold);text-transform:uppercase;text-align:center;padding:0 6px
+.bit-pending-spinner{
+    width:34px;height:34px;border-radius:50%;
+    border:3px solid rgba(245,158,11,.18);
+    border-top-color:var(--gold);
+    animation:bitSpin 0.85s linear infinite
+}
+@keyframes bitSpin{to{transform:rotate(360deg)}}
+.bit-pending-label{
+    font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase
+}
+.bit-pending-time{
+    font-size:9px;color:var(--text-2);letter-spacing:1px;
+    font-variant-numeric:tabular-nums
+}
+.bit-pending-bar{
+    width:100%;height:4px;border-radius:2px;
+    background:rgba(245,158,11,.15);overflow:hidden;margin-top:2px
+}
+.bit-pending-bar-fill{
+    height:100%;background:var(--gold);width:0%;
+    transition:width .8s linear  /* tick is 1s, slightly under so it lands smoothly */
 }
 .batch-input-tile.pending.error{border-color:var(--red)}
-.batch-input-tile.pending.error::before{
+.batch-input-tile.pending.error .bit-pending-spinner{
     border-color:var(--red);border-top-color:var(--red);animation:none;
-    content:"✕";font-size:18px;font-weight:700;line-height:34px
+    /* Render an X glyph centered using a pseudo-element instead */
+    position:relative
+}
+.batch-input-tile.pending.error .bit-pending-spinner::after{
+    content:"✕";color:var(--red);font-size:18px;font-weight:700;
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center
 }
 .batch-input-tile.pending.error .bit-pending-label{color:var(--red)}
+.batch-input-tile.pending.error .bit-pending-bar-fill{background:var(--red)}
 /* object-fit:cover gives every tile the exact same visual size regardless
    of the source image's aspect ratio — center-crop view. */
 .batch-input-tile img{width:100%;height:100%;object-fit:cover;pointer-events:none}
@@ -1534,6 +1643,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <button class="mode-btn active" id="btnModeCamera" onclick="setMode('camera')">🎥 Camera</button>
             <button class="mode-btn" id="btnModeEdit" onclick="setMode('edit')">✏️ Edit</button>
             <button class="mode-btn" id="btnModeBatch" onclick="setMode('batch')">📚 Batch</button>
+            <!-- Generate mode: direct gpt-image-2 access without going through
+                 the agent. Prompt + up to 4 reference image slots, single
+                 generation per click. Output lands in the batch grid so the
+                 user can refine it (send to camera/edit, find issues, etc.). -->
+            <button class="mode-btn" id="btnModeGenerate" onclick="setMode('generate')">✨ Generate</button>
         </div>
     </div>
 
@@ -1730,8 +1844,99 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <textarea class="custom-prompt" id="batchPrompt" placeholder="Describe the edit to apply to every selected image...&#10;e.g. &quot;Remove the background&quot;&#10;or &quot;Put the subject from image 1 into image 2's scene&quot;" rows="4" oninput="_batchPerImagePrompts=null;var s=document.getElementById('aiPlanStatus');if(s)s.textContent='';updateGenButton()"></textarea>
     </div>
 
-    <!-- SHARED SETTINGS -->
-    <div class="sec">
+    <!-- ──────────────────────── GENERATE MODE ────────────────────────
+         Direct gpt-image-2 access without the agent. Prompt + up to 4
+         reference image slots. Output lands in the batch grid (shared
+         with Batch mode) so the user can refine results — send to
+         camera, send to edit, find issues, etc. The flow reuses the
+         same /api/studio/agent-image-gen endpoint as the agent's
+         generate_new_images tool, so cost + history insertion are
+         identical: 100 tokens per image, history row created, queue
+         tile + placeholder progress bar fire automatically. -->
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">✨</span> GENERATE PROMPT</div>
+        <textarea class="custom-prompt" id="generatePrompt"
+            placeholder="Describe what to generate...&#10;&#10;e.g. &quot;A vintage comic book cover with a heroine in front of an explosion, dramatic lighting, halftone shading&quot;"
+            rows="5"
+            oninput="updateGenButton()"></textarea>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🖼️</span> REFERENCE IMAGES
+            <span class="slot-counter" id="genSlotCounter">0 / 4</span>
+        </div>
+        <!-- Drop-or-click slots — gpt-image-2 /edits accepts up to 16 ref
+             images, but the model in practice can only attend to ~4 well,
+             so we cap at 4 to avoid tokenizer bloat and rate-limit pain.
+             Empty slots are sent as no reference (text-only generation
+             routes through /v1/images/generations instead). -->
+        <div class="img-slot" id="genSlot0">
+            <div class="slot-empty" onclick="$('genSlotFile0').click()">
+                <input type="file" accept="image/*" id="genSlotFile0" onchange="genSlotFileChange(0)">
+                <span class="slot-num">1</span><span class="slot-plus">+</span><span class="slot-hint">Drop or click to add</span>
+            </div>
+            <div class="slot-filled" style="display:none">
+                <img id="genSlotImg0" onclick="openModal(this.src)">
+                <span class="slot-num-badge">1</span>
+                <button class="slot-remove" onclick="genRemoveSlot(0)">×</button>
+            </div>
+        </div>
+        <div class="img-slot" id="genSlot1">
+            <div class="slot-empty" onclick="$('genSlotFile1').click()">
+                <input type="file" accept="image/*" id="genSlotFile1" onchange="genSlotFileChange(1)">
+                <span class="slot-num">2</span><span class="slot-plus">+</span><span class="slot-hint">Drop or click to add</span>
+            </div>
+            <div class="slot-filled" style="display:none">
+                <img id="genSlotImg1" onclick="openModal(this.src)">
+                <span class="slot-num-badge">2</span>
+                <button class="slot-remove" onclick="genRemoveSlot(1)">×</button>
+            </div>
+        </div>
+        <div class="img-slot" id="genSlot2">
+            <div class="slot-empty" onclick="$('genSlotFile2').click()">
+                <input type="file" accept="image/*" id="genSlotFile2" onchange="genSlotFileChange(2)">
+                <span class="slot-num">3</span><span class="slot-plus">+</span><span class="slot-hint">Drop or click to add</span>
+            </div>
+            <div class="slot-filled" style="display:none">
+                <img id="genSlotImg2" onclick="openModal(this.src)">
+                <span class="slot-num-badge">3</span>
+                <button class="slot-remove" onclick="genRemoveSlot(2)">×</button>
+            </div>
+        </div>
+        <div class="img-slot" id="genSlot3">
+            <div class="slot-empty" onclick="$('genSlotFile3').click()">
+                <input type="file" accept="image/*" id="genSlotFile3" onchange="genSlotFileChange(3)">
+                <span class="slot-num">4</span><span class="slot-plus">+</span><span class="slot-hint">Drop or click to add</span>
+            </div>
+            <div class="slot-filled" style="display:none">
+                <img id="genSlotImg3" onclick="openModal(this.src)">
+                <span class="slot-num-badge">4</span>
+                <button class="slot-remove" onclick="genRemoveSlot(3)">×</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">📐</span> OUTPUT SIZE</div>
+        <!-- gpt-image-2 supports 1024×1024, 1024×1536, 1536×1024 sizes. -->
+        <div class="size-toggle">
+            <button class="size-btn active" data-size="1024x1024" onclick="genSetSize('1024x1024')" title="1024×1024">⬛ Square</button>
+            <button class="size-btn" data-size="1024x1536" onclick="genSetSize('1024x1536')" title="1024×1536">▮ Portrait</button>
+            <button class="size-btn" data-size="1536x1024" onclick="genSetSize('1536x1024')" title="1536×1024">▭ Landscape</button>
+        </div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
+        <button class="gen-btn" id="btnGenerateMode" onclick="doGenerateMode()">✨ GENERATE</button>
+        <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
+            <span style="color:var(--text-muted)">Cost</span>
+            <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.02</span>
+        </div>
+    </div>
+
+    <!-- SHARED SETTINGS — Qwen-only params (CFG/steps/LoRA weights). Hidden
+         in Generate mode since gpt-image-2 doesn't take any of these. -->
+    <div class="sec not-generate">
         <div class="sec-label"><span class="icon">⚙️</span> SETTINGS</div>
         <div class="field">
             <label style="display:flex;align-items:center;gap:8px;justify-content:space-between">
@@ -1758,7 +1963,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
-    <div class="sec">
+    <div class="sec not-generate">
         <button class="gen-btn" id="btnGen" onclick="doGenerate()">⚡ GENERATE</button>
         <!-- Camera mode only: one click, 6 jobs queued, one per canonical
              azimuth. Uses current elevation/distance/seed so the user has
@@ -1833,6 +2038,34 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              renderBatchInputs(). Hidden when not in batch mode OR when
              a batch result grid has taken over this area. -->
         <div class="batch-inputs-grid" id="batchInputsGrid" style="display:none"></div>
+
+        <!-- Focused-stage view — replaces the batch grid when a tile is
+             clicked. Shows the selected image at full canvas size with
+             a "Back to grid" button and quick actions. The grid stays
+             in DOM but display:none while focused; coming back via the
+             back button just flips the visibility. State lives in
+             _batchFocusedId — null = grid, image_id = focused on that
+             tile. Body content is rebuilt by renderBatchFocusedStage(). -->
+        <div class="batch-focus-stage" id="batchFocusStage">
+            <div class="batch-focus-toolbar">
+                <div class="batch-focus-toolbar-left">
+                    <button type="button" class="bfs-back" onclick="batchExitFocus()">← Back to grid</button>
+                    <span class="bfs-meta" id="bfsMeta"></span>
+                </div>
+                <div class="batch-focus-toolbar-right">
+                    <a id="bfsDownload" class="bfs-action-btn" download title="Download image" href="#">⬇</a>
+                    <button type="button" class="bfs-action-btn" id="bfsToCamera" title="Load in Camera mode">📷</button>
+                    <button type="button" class="bfs-action-btn" id="bfsToEdit" title="Load in Edit mode">✏️</button>
+                </div>
+            </div>
+            <div class="batch-focus-image-wrap">
+                <img id="bfsImg" alt="">
+            </div>
+            <div class="batch-focus-prompt" id="bfsPrompt" style="display:none">
+                <span class="batch-focus-prompt-label">Prompt</span>
+                <span id="bfsPromptText"></span>
+            </div>
+        </div>
 
         <!-- Cold-boot overlay — renders when the GPU container is warming
              up. Shows real stage info + an elapsed-time progress bar so
@@ -2601,11 +2834,20 @@ function setMode(mode, opts){
     $('btnModeEdit').classList.toggle('active', mode === 'edit');
     const btnBatch = $('btnModeBatch');
     if (btnBatch) btnBatch.classList.toggle('active', mode === 'batch');
+    const btnGen = $('btnModeGenerate');
+    if (btnGen) btnGen.classList.toggle('active', mode === 'generate');
     document.querySelectorAll('.camera-only').forEach(el => el.style.display = mode === 'camera' ? '' : 'none');
     document.querySelectorAll('.edit-only').forEach(el => el.style.display = mode === 'edit' ? '' : 'none');
     document.querySelectorAll('.batch-only').forEach(el => el.style.display = mode === 'batch' ? '' : 'none');
+    // Generate mode shows its own dedicated panels (.generate-only) and
+    // hides all the Qwen-only shared controls (.not-generate) — width/
+    // height/seed/CFG/steps/LoRAs don't apply to gpt-image-2 so showing
+    // them is misleading.
+    document.querySelectorAll('.generate-only').forEach(el => el.style.display = mode === 'generate' ? '' : 'none');
+    document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
     const phText = mode === 'camera' ? 'Upload an image and generate'
                  : mode === 'edit'   ? 'Add image(s) and describe your edit'
+                 : mode === 'generate' ? 'Write a prompt and (optionally) add reference images'
                  :                     'Upload multiple images and describe one edit to apply to each';
     $('outPh').textContent = phText;
 
@@ -3267,6 +3509,226 @@ function setInputImage(id,url,w,h){
             id, url, w: w || null, h: h || null,
         }));
     } catch (e) {}
+}
+
+// ─── Generate mode (gpt-image-2) ──────────────────────────────────
+// Direct gpt-image-2 access without the agent. Generate mode shares the
+// batch-inputs grid as its output surface — generations land as tiles
+// the user can refine via the same edit/camera/find-issues actions
+// that batch + agent generations get.
+//
+// State: 4 ref slots (mirrors Edit mode's pattern but caps at 4 since
+// gpt-image-2 attends well to ~4 references) + a chosen output size.
+// Both persist to localStorage so a refresh doesn't wipe the user's
+// half-built generation setup.
+let _generateRefs = [null, null, null, null];
+let _generateSize = '1024x1024';
+
+function genSlotFileChange(i){
+    const inp = $('genSlotFile' + i);
+    if (inp.files.length) genUploadToSlot(i, inp.files[0]);
+    inp.value = '';  // allow re-selecting the same file later
+}
+
+async function genUploadToSlot(i, file){
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    const dims = await readImageDimensions(file);
+    const fd = new FormData(); fd.append('image', file);
+    try {
+        const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
+        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        const d = await r.json();
+        if (d.error) { showNotif(d.error, 'error'); return; }
+        const w = d.w || dims.w, h = d.h || dims.h;
+        _generateRefs[i] = { id: d.id, url: d.url, filename: d.filename, w, h };
+        renderGenSlot(i);
+        genUpdateCounter();
+        updateGenButton();
+        persistGenerateState();
+    } catch (e) {
+        showNotif('Upload failed. Check your connection and try again.', 'error');
+    }
+}
+
+function genRemoveSlot(i){
+    _generateRefs[i] = null;
+    renderGenSlot(i);
+    genUpdateCounter();
+    updateGenButton();
+    persistGenerateState();
+}
+
+function renderGenSlot(i){
+    const slot = $('genSlot' + i);
+    if (!slot) return;
+    const empty = slot.querySelector('.slot-empty');
+    const filled = slot.querySelector('.slot-filled');
+    const ref = _generateRefs[i];
+    if (ref) {
+        empty.style.display = 'none';
+        filled.style.display = '';
+        $('genSlotImg' + i).src = ref.url;
+    } else {
+        empty.style.display = '';
+        filled.style.display = 'none';
+    }
+}
+
+function genUpdateCounter(){
+    const filled = _generateRefs.filter(r => r !== null).length;
+    const el = $('genSlotCounter');
+    if (el) el.textContent = `${filled} / 4`;
+}
+
+function genSetSize(size){
+    _generateSize = size;
+    document.querySelectorAll('#secGenerate .size-btn, .size-toggle .size-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.size === size);
+    });
+    persistGenerateState();
+}
+
+// Restore state on page load + on first entry to Generate mode.
+function persistGenerateState(){
+    try {
+        // Persist only the R2 refs — image bytes stay in R2, no localStorage bloat.
+        localStorage.setItem('studio_generate_state', JSON.stringify({
+            refs: _generateRefs,
+            size: _generateSize,
+        }));
+    } catch (e) {}
+}
+function restoreGenerateState(){
+    try {
+        const raw = localStorage.getItem('studio_generate_state');
+        if (!raw) return;
+        const d = JSON.parse(raw);
+        if (Array.isArray(d.refs) && d.refs.length === 4) {
+            _generateRefs = d.refs.map(r => r || null);
+            for (let i = 0; i < 4; i++) renderGenSlot(i);
+            genUpdateCounter();
+        }
+        if (typeof d.size === 'string') {
+            _generateSize = d.size;
+            // Defer the active-class update — the buttons may not exist
+            // in DOM yet at first restore (this runs early on page init).
+            requestAnimationFrame(() => genSetSize(d.size));
+        }
+    } catch (e) {}
+}
+
+// Generate handler — pushes a placeholder, calls the same endpoint the
+// agent uses (/api/studio/agent-image-gen), replaces the placeholder
+// with the result on success. Same UX as agent generate_new_images:
+// elapsed-time + ETA on the placeholder, history insertion, etc.
+async function doGenerateMode(){
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    const promptEl = $('generatePrompt');
+    const prompt = (promptEl && promptEl.value || '').trim();
+    if (!prompt) {
+        showNotif('Write a prompt describing what you want to generate.', 'error');
+        return;
+    }
+    if (_user.tokens < 100) { showBuyModal(); return; }
+    // Same queue cap as the rest of the studio — keeps a single user
+    // from hammering the backend with parallel generations.
+    const MAX_QUEUED = 12;
+    const activeCount = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
+    if (activeCount >= MAX_QUEUED) {
+        showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
+        return;
+    }
+    const refIds = _generateRefs.filter(r => r !== null).map(r => r.id);
+    // Push placeholder + synth job — this is the exact same flow the
+    // agent's generate_new_images uses, so the live progress + queue
+    // tile + history insertion all just work.
+    const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
+    const placeholderEstSec = refIds.length ? 90 : 60;
+    _batchInputs.push({
+        id: placeholderId,
+        url: '',
+        fname: 'generating…',
+        selected: false,
+        _placeholder: true,
+        _placeholderLabel: refIds.length ? `Generating (+${refIds.length} ref${refIds.length === 1 ? '' : 's'})` : 'Generating',
+        _placeholderEstSec: placeholderEstSec,
+        _placeholderStartedAt: Date.now(),
+    });
+    renderBatchInputs();
+    const synthJobId = 'agen_' + Math.random().toString(36).slice(2, 10);
+    let thumb = null;
+    if (refIds.length && _generateRefs[0]) thumb = _generateRefs[0].url;
+    myJobs.unshift({
+        id: synthJobId,
+        status: 'running',
+        mode: 'agent_gen',
+        stage: 'agent_generating',
+        thumb,
+        result: null,
+        submittedAt: Date.now(),
+        startedAt: Date.now(),
+        agentEstimateSec: placeholderEstSec,
+        refCount: refIds.length,
+        agentPrompt: prompt,
+    });
+    renderQueue();
+    const tickHandle = setInterval(() => { try { renderQueue(); } catch {} }, 1000);
+    try {
+        const r = await fetchT(`${API}/api/studio/agent-image-gen`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt,
+                n: 1,
+                size: _generateSize,
+                reference_image_ids: refIds,
+            }),
+        }, refIds.length ? 270_000 : 130_000);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
+        const img = (d.images || [])[0];
+        if (!img) throw new Error('no_image_returned');
+        // Replace the placeholder with the real image. Capture the prompt
+        // on the tile so it's visible on hover and in the focus stage —
+        // same metadata format as agent-generated tiles.
+        const newEntry = {
+            id: img.id, url: img.url,
+            w: img.w, h: img.h,
+            fname: img.filename || `${img.id}.png`,
+            selected: false,
+            _genPrompt: prompt,
+            _genModel: 'gpt-image-2',
+            _genReferences: refIds,
+        };
+        const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+        if (idx !== -1) _batchInputs[idx] = newEntry;
+        else _batchInputs.push(newEntry);
+        renderBatchInputs();
+        if (d.tokens_remaining !== undefined && _user) {
+            _user.tokens = d.tokens_remaining;
+            const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+        }
+        const sj = myJobs.find(jj => jj.id === synthJobId);
+        if (sj) { sj.status = 'done'; sj.finishedAt = Date.now(); }
+        renderQueue();
+        if (typeof syncHistory === 'function') syncHistory().catch(() => {});
+    } catch (e) {
+        const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+        if (idx !== -1) {
+            _batchInputs[idx]._placeholderError = true;
+            _batchInputs[idx]._placeholderLabel = 'Failed';
+            renderBatchInputs();
+            setTimeout(() => {
+                const j = _batchInputs.findIndex(b => b.id === placeholderId);
+                if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
+            }, 3000);
+        }
+        const sj2 = myJobs.find(jj => jj.id === synthJobId);
+        if (sj2) { sj2.status = 'error'; sj2.error = (e && e.message) || 'failed'; sj2.finishedAt = Date.now(); }
+        renderQueue();
+        showNotif('Generation failed: ' + ((e && e.message) || 'unknown error'), 'error');
+    } finally {
+        clearInterval(tickHandle);
+    }
 }
 
 function clearInput(){
@@ -4230,6 +4692,35 @@ let _activeBatch = null;
 // one shared edit prompt applied to each selected image. Shape of each
 // entry: {id, url, w, h, fname, selected}.
 let _batchInputs = [];
+// When non-null, the batch grid is replaced by a focused single-image
+// stage view of the matching tile — clicking any tile sets this, and
+// the "Back to grid" button clears it. Persists only in memory; a mode
+// switch or page reload returns to the grid view. Stored as the image
+// id so the focused view stays valid even if _batchInputs is reordered
+// (e.g. when an agent generation completes mid-focus).
+let _batchFocusedId = null;
+// Rolling log of recent agent-image-gen durations (ms), split by ref
+// flag because the two paths have very different latency profiles
+// (text-only via /v1/images/generations vs ref-image via
+// /v1/images/edits). The p50 from each pool feeds into the per-tile
+// progress estimate so the "~Ns left" countdown converges on real
+// observed wall-time as the user does more generations. Kept to the
+// last 8 entries — enough to be representative without skewing
+// permanently if the API speeds up or slows down. Lives in memory
+// only; a refresh resets to the conservative defaults.
+const _agentGenDurationsMs = { plain: [], ref: [] };
+function _agentGenDurationsP50(hasRef){
+    const arr = hasRef ? _agentGenDurationsMs.ref : _agentGenDurationsMs.plain;
+    if (arr.length === 0) return null;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    return Math.max(15, Math.round(median / 1000));  // floor at 15s — gpt-image-2 never returns faster
+}
+function _agentGenDurationsRecord(hasRef, ms){
+    const arr = hasRef ? _agentGenDurationsMs.ref : _agentGenDurationsMs.plain;
+    arr.push(ms);
+    if (arr.length > 8) arr.shift();
+}
 
 // Shared-context slots. These are uploaded once and reused as image 2 /
 // image 3 across every batch job — lets the user write compositional
@@ -4337,21 +4828,47 @@ function renderBatchInputs(){
     const grid = $('batchInputsGrid');
     const controls = $('batchSelectControls');
     const countEl = $('batchInputsCount');
+    const focusStage = $('batchFocusStage');
     if (!grid) return;
-    grid.innerHTML = '';
 
+    // Visibility rules: the grid should ONLY show when in batch or
+    // generate mode AND there are uploads AND no active batch-result
+    // grid is taking over. Generate mode shares the grid as its output
+    // surface — generations land as tiles the user can refine.
+    const inBatchMode = (typeof currentMode !== 'undefined' && (currentMode === 'batch' || currentMode === 'generate'));
+    const hasActiveResults = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
+    const focusedInp = _batchFocusedId
+        ? _batchInputs.find(b => b.id === _batchFocusedId && !b._placeholder)
+        : null;
+    // If the focused tile vanished (placeholder→real swap with diff id,
+    // user removed it, etc.), drop focus and fall back to grid.
+    if (_batchFocusedId && !focusedInp) {
+        _batchFocusedId = null;
+    }
+
+    // Decide which surface to show.
+    const showFocus = inBatchMode && !hasActiveResults && !!focusedInp;
+    const showGrid = inBatchMode && _batchInputs.length > 0 && !hasActiveResults && !showFocus;
+
+    if (focusStage) {
+        focusStage.classList.toggle('open', showFocus);
+        if (showFocus) {
+            renderBatchFocusedStage(focusedInp);
+        }
+    }
+
+    grid.innerHTML = '';
     grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_batchInputs.length)));
 
     // Floating clear-toolbar — visible whenever the grid has tiles.
     // Count excludes placeholders so the user sees "Clear 4" not "Clear 6"
     // when 2 generations are in flight. Toolbar is hidden while leaving
-    // batch mode or while the result grid takes over.
+    // batch mode, while the result grid takes over, OR while the focus
+    // stage is showing (the focus stage has its own back button).
     const toolbar = $('batchGridToolbar');
     const realCount = _batchInputs.filter(b => !b._placeholder).length;
     if (toolbar) {
-        const inBatchMode2 = (typeof currentMode !== 'undefined' && currentMode === 'batch');
-        const hasActiveResults2 = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
-        if (inBatchMode2 && _batchInputs.length > 0 && !hasActiveResults2) {
+        if (showGrid) {
             toolbar.style.display = '';
             const cnt = $('bgtCount');
             if (cnt) cnt.textContent = `${realCount} image${realCount === 1 ? '' : 's'}`;
@@ -4360,14 +4877,7 @@ function renderBatchInputs(){
         }
     }
 
-    // Visibility rules: the grid should ONLY show when in batch mode AND
-    // there are uploads AND no active batch-result grid is taking over.
-    // If we're not in batch mode, the grid is hidden regardless so Camera
-    // and Edit modes aren't polluted by stale batch state.
-    const inBatchMode = (typeof currentMode !== 'undefined' && currentMode === 'batch');
-    const hasActiveResults = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
-    const shouldShow = inBatchMode && _batchInputs.length > 0 && !hasActiveResults;
-    grid.style.display = shouldShow ? '' : 'none';
+    grid.style.display = showGrid ? '' : 'none';
 
     // While in batch mode, hide the single-image result viewer — the output
     // area is owned by the batch grid (inputs or results). When leaving
@@ -4375,11 +4885,10 @@ function renderBatchInputs(){
     const outImg = $('outImg');
     if (inBatchMode && outImg) outImg.style.display = 'none';
 
-    // Placeholder text should hide whenever the grid is filling the area
+    // Placeholder text should hide whenever the grid OR focus is filling the area
     const outPh = $('outPh');
-    if (outPh && shouldShow) outPh.style.display = 'none';
+    if (outPh && (showGrid || showFocus)) outPh.style.display = 'none';
     else if (outPh && inBatchMode && _batchInputs.length === 0 && !hasActiveResults) {
-        // Empty batch state — show the placeholder prompt
         outPh.style.display = '';
     }
 
@@ -4406,7 +4915,23 @@ function renderBatchInputs(){
         // are non-interactive until the real image arrives.
         if (isPending) {
             tile.title = inp._placeholderLabel || 'Generating…';
-            tile.innerHTML = `<div class="bit-pending-label">${inp._placeholderLabel || 'Generating'}</div>`;
+            // Tile body: spinner, label, live elapsed-time + ETA, progress
+            // bar. The data-* attrs are read by tickPlaceholders() each
+            // second to refresh the time and bar without rebuilding the
+            // tile (preserving spinner animation + bar transition).
+            const startedAt = inp._placeholderStartedAt || (inp._placeholderStartedAt = Date.now());
+            const estSec = inp._placeholderEstSec || 60;
+            tile.dataset.placeholderId = inp.id;
+            tile.dataset.startedAt = String(startedAt);
+            tile.dataset.estSec = String(estSec);
+            tile.innerHTML = `
+                <div class="bit-pending-body">
+                    <div class="bit-pending-spinner"></div>
+                    <div class="bit-pending-label">${inp._placeholderLabel || 'Generating'}</div>
+                    <div class="bit-pending-time" data-role="time">0s · ~${estSec}s</div>
+                    <div class="bit-pending-bar"><div class="bit-pending-bar-fill" data-role="bar"></div></div>
+                </div>
+            `;
             grid.appendChild(tile);
             return;
         }
@@ -4460,17 +4985,14 @@ function renderBatchInputs(){
                 <span class="bit-label-name">${displayName}</span>
             </div>
         `;
-        // Tile click → open expanded modal (with download). Selection
-        // moves to the bit-check checkbox at top-left, matching standard
-        // image-grid UX where click = preview, checkbox = select. The
-        // existing buttons all stopPropagation so they don't trigger
-        // this handler. Placeholder tiles short-circuit (no image yet
-        // and the placeholder branch already returned earlier).
+        // Tile click → enter focused-stage view for that image. The grid
+        // hides and the single image takes over the canvas with a back
+        // button + quick actions. Clicking the focused image still opens
+        // the full-screen modal (the modal stays as a true zoom view).
+        // Selection moves to the bit-check checkbox at top-left.
         tile.onclick = (e) => {
-            // Defensive: img.pointer-events:none means clicks on the
-            // image bubble through to the tile. Anything explicitly
-            // clickable inside (.bit-* buttons) already stopPropagation.
-            openModal(inp.url, inp.fname || `${inp.id}.png`);
+            _batchFocusedId = inp.id;
+            renderBatchInputs();
         };
         tile.querySelector('.bit-check').onclick = (e) => {
             e.stopPropagation();
@@ -4502,6 +5024,26 @@ function renderBatchInputs(){
         grid.appendChild(tile);
     });
     updateGenButton();
+    // If any placeholders are now in the DOM, start (or keep running) the
+    // 1Hz ticker that updates their elapsed-time + progress-bar fill.
+    // The ticker self-stops when the last placeholder finishes, so this
+    // is idempotent — calling it on every render is fine.
+    if (_batchInputs.some(b => b._placeholder)) {
+        ensurePlaceholderTicker();
+        // Auto-scroll the grid so the newest placeholder is visible. With
+        // serial dispatch the user sees one placeholder at a time as the
+        // agent works through a multi-image request — without scrolling,
+        // each new placeholder gets pushed below the visible area as
+        // earlier results pile up. We anchor on the last placeholder
+        // tile's offsetTop and scroll the grid to bring it into view.
+        // requestAnimationFrame so layout has settled with the new tile.
+        requestAnimationFrame(() => {
+            const lastPending = grid.querySelector('.batch-input-tile.pending:last-of-type');
+            if (lastPending) {
+                lastPending.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+            }
+        });
+    }
 }
 
 function batchSelectAll(state){
@@ -4511,7 +5053,110 @@ function batchSelectAll(state){
 
 function batchClearInputs(){
     _batchInputs = [];
+    _batchFocusedId = null;  // grid empty → focus is meaningless
     renderBatchInputs();
+}
+
+// ─── Focused-stage view ─────────────────────────────────────────
+// Painted into the .batch-focus-stage element when _batchFocusedId is
+// set. Big image, prompt, quick actions. Clicking the image still opens
+// the full-screen modal — that's the "zoom even further" affordance.
+// Hover any toolbar button for a per-action tooltip; download is a
+// native anchor with download attr so the browser saves with a useful
+// filename.
+function renderBatchFocusedStage(inp){
+    if (!inp) return;
+    const img = $('bfsImg');
+    const meta = $('bfsMeta');
+    const promptBox = $('bfsPrompt');
+    const promptText = $('bfsPromptText');
+    const dl = $('bfsDownload');
+    const toCam = $('bfsToCamera');
+    const toEdit = $('bfsToEdit');
+    if (img) {
+        img.src = inp.url;
+        img.alt = inp.fname || inp.id;
+        img.onclick = () => openModal(inp.url, inp.fname || `${inp.id}.png`);
+    }
+    if (meta) {
+        const dims = (inp.w && inp.h) ? `${inp.w}×${inp.h}` : '';
+        meta.textContent = `${inp.id}${dims ? ' · ' + dims : ''}`;
+    }
+    // Prompt panel only shows if this was an agent generation (has
+    // _genPrompt). Regular uploads have nothing useful to display
+    // there — the panel hides cleanly.
+    if (promptBox && promptText) {
+        if (inp._genPrompt) {
+            promptText.textContent = inp._genPrompt;
+            promptBox.style.display = '';
+        } else {
+            promptBox.style.display = 'none';
+        }
+    }
+    if (dl) {
+        dl.href = inp.url;
+        dl.setAttribute('download', inp.fname || `${inp.id}.png`);
+    }
+    // Re-bind action handlers each render — cheaper than tracking which
+    // tile is currently bound, and bind cost is negligible at 3 buttons.
+    if (toCam) toCam.onclick = () => sendBatchInputToCamera(inp);
+    if (toEdit) toEdit.onclick = () => sendBatchInputToEdit(inp);
+}
+
+function batchExitFocus(){
+    _batchFocusedId = null;
+    renderBatchInputs();
+}
+
+// ─── Placeholder live progress ────────────────────────────────────
+// While any tile in the grid has _placeholder:true, we run a 1Hz tick
+// that updates the elapsed-time + ETA text and the progress-bar fill
+// IN PLACE — no DOM rebuild, so the spinner animation and bar
+// transition both keep playing smoothly. The tick auto-stops as soon
+// as the last placeholder finishes (success or error). The bar fills
+// from 0 → 90% over the per-tile estimated duration; the final 10% is
+// bridged by the placeholder→real-image swap.
+let _placeholderTickHandle = null;
+function _tickPlaceholders(){
+    const grid = document.getElementById('batchInputsGrid');
+    if (!grid) return;
+    const tiles = grid.querySelectorAll('.batch-input-tile.pending');
+    if (!tiles.length) {
+        // All placeholders gone — stop the ticker. ensurePlaceholderTicker
+        // will restart it next time one appears.
+        if (_placeholderTickHandle) { clearInterval(_placeholderTickHandle); _placeholderTickHandle = null; }
+        return;
+    }
+    const now = Date.now();
+    for (const tile of tiles) {
+        if (tile.classList.contains('error')) continue;  // don't tick errored tiles
+        const startedAt = parseInt(tile.dataset.startedAt || '0', 10) || now;
+        const estSec = parseInt(tile.dataset.estSec || '60', 10) || 60;
+        const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+        const eta = Math.max(0, estSec - elapsed);
+        const timeEl = tile.querySelector('[data-role="time"]');
+        const barEl = tile.querySelector('[data-role="bar"]');
+        if (timeEl) {
+            // "23s · ~37s left" while we still have time on the estimate;
+            // "62s · finishing…" once we blow past the estimate (so the
+            // user knows we haven't given up — gpt-image-2 sometimes
+            // takes longer than the typical case, especially for refs).
+            timeEl.textContent = eta > 0
+                ? `${elapsed}s · ~${eta}s left`
+                : `${elapsed}s · finishing…`;
+        }
+        if (barEl) {
+            const pct = Math.min(90, (elapsed / estSec) * 100);
+            barEl.style.width = pct.toFixed(2) + '%';
+        }
+    }
+}
+function ensurePlaceholderTicker(){
+    if (_placeholderTickHandle) return;
+    // Run once immediately so the bar/time show non-zero values on the
+    // first paint instead of waiting a full second.
+    _tickPlaceholders();
+    _placeholderTickHandle = setInterval(_tickPlaceholders, 1000);
 }
 
 // Confirm-and-clear from the floating toolbar. Lets the user wipe the
@@ -4520,7 +5165,7 @@ function batchClearInputs(){
 // agent-image-edit history-row insert), so the History panel still has
 // them for later edits. The confirm message says exactly that so users
 // don't worry they're throwing work away.
-function batchClearWithConfirm(){
+async function batchClearWithConfirm(){
     const realCount = _batchInputs.filter(b => !b._placeholder).length;
     const pendingCount = _batchInputs.filter(b => b._placeholder).length;
     if (realCount === 0 && pendingCount === 0) return;
@@ -4533,7 +5178,12 @@ function batchClearWithConfirm(){
         msg = `Clear ${realCount} image${realCount === 1 ? '' : 's'} from the stage? `
             + `They stay in your History so you can edit them later.`;
     }
-    if (!confirm(msg)) return;
+    // Use the styled showConfirm modal instead of native confirm() — the
+    // browser's confirm dialog ignores the studio's dark theme and looks
+    // jarring (white box, default font, browser-chrome buttons). The
+    // modal helper is async, so this whole function is async + awaits.
+    const ok = await showConfirm(msg, { confirmLabel: 'Clear stage', cancelLabel: 'Keep', danger: true });
+    if (!ok) return;
     batchClearInputs();
     // Refresh history sidebar from the server so any new agent-generated
     // entries show up immediately (the agent endpoints insert into
@@ -6164,11 +6814,13 @@ function renderBatchGrid(){
             const closeBtn = footer.querySelector('#btnCloseBatch');
             if (restoreBtn) restoreBtn.onclick = () => setBatchFooterMinimized(false);
             if (minBtn) minBtn.onclick = () => setBatchFooterMinimized(true);
-            if (closeBtn) closeBtn.onclick = () => {
+            if (closeBtn) closeBtn.onclick = async () => {
                 // Confirm before throwing away the user's results — this
                 // is a one-way operation and was previously labelled "Close"
-                // which made it look like a minimize.
-                if (confirm('Discard this batch and clear all results?')) {
+                // which made it look like a minimize. Use the styled modal
+                // (matches the studio dark theme) instead of native confirm().
+                const ok = await showConfirm('Discard this batch and clear all results?', { confirmLabel: 'Discard', cancelLabel: 'Keep', danger: true });
+                if (ok) {
                     clearBatchGrid();
                 }
             };
@@ -7359,16 +8011,30 @@ function renderQueue(){
                     // OpenAI's images endpoint doesn't ping per-step progress
                     // unless we use streaming (stream:true + partial_images),
                     // and the worker doesn't currently forward an SSE stream.
-                    // So progress here is a time-based estimate: anchored to
-                    // typical completion times (60s plain, 90s with refs)
-                    // and capped at 90% so the bar doesn't sit at 100 while
-                    // we wait for the actual response. The remaining 10% is
-                    // covered by the placeholder→tile swap in batch_inputs.
+                    // So progress here is a time-based estimate calibrated
+                    // against the rolling p50 of recent completions, capped
+                    // at 90% so the bar doesn't sit at 100 while we wait
+                    // for the actual response. The remaining 10% is covered
+                    // by the placeholder→tile swap in batch_inputs.
                     statusIcon = '🎨'; statusText = 'Generating';
                     const est = j.agentEstimateSec || 60;
-                    const eta = Math.max(0, est - elapsed);
+                    const fmt = (s) => {
+                        s = Math.max(0, Math.round(s));
+                        const m = Math.floor(s / 60);
+                        const r = s - m * 60;
+                        return m > 0 ? `${m}:${String(r).padStart(2, '0')}` : `${r}s`;
+                    };
                     const refTag = (j.refCount && j.refCount > 0) ? ` · +${j.refCount} ref` : '';
-                    subtext = `GPT-IMAGE-2${refTag} · ${elapsed}s${eta > 0 ? ` · ~${eta}s` : ''}`;
+                    // Show elapsed / expected so the user sees both how
+                    // long it's been running and how long it's expected
+                    // to take. Once elapsed exceeds the estimate, drop
+                    // the "/ ~est" suffix — claiming "60s left" when
+                    // we've already been waiting 90s would be insulting.
+                    if (elapsed > est) {
+                        subtext = `GPT-IMAGE-2${refTag} · ${fmt(elapsed)} (over estimate)`;
+                    } else {
+                        subtext = `GPT-IMAGE-2${refTag} · ${fmt(elapsed)} / ~${fmt(est)}`;
+                    }
                     pct = Math.min(90, (elapsed / est) * 100);
                 } else if (stage === 'generating') {
                     statusIcon = '⚡'; statusText = 'Generating';
@@ -7741,6 +8407,13 @@ const AGENT_TOOL_HANDLERS = {
         // this fetch is in flight (parallel generations are common).
         const refIds = Array.isArray(args.reference_image_ids) ? args.reference_image_ids : [];
         const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
+        // Estimated time-to-completion. Plain text-to-image is ~30-60s on
+        // gpt-image-2; ref-image edits are slower (60-120s with 1 ref).
+        // The placeholder tile uses this to drive its progress bar +
+        // ETA display. Capped at 90% so the bar doesn't sit at 100 while
+        // the actual response is still pending — the tile→real swap
+        // covers that final beat.
+        const placeholderEstSec = refIds.length ? 90 : 60;
         _batchInputs.push({
             id: placeholderId,
             url: '',
@@ -7748,6 +8421,8 @@ const AGENT_TOOL_HANDLERS = {
             selected: false,
             _placeholder: true,
             _placeholderLabel: refIds.length ? `Generating (+${refIds.length} ref${refIds.length === 1 ? '' : 's'})` : 'Generating',
+            _placeholderEstSec: placeholderEstSec,
+            _placeholderStartedAt: Date.now(),
         });
         renderBatchInputs();
         // Also push a synthetic "job" into myJobs so this generation shows
@@ -7778,12 +8453,36 @@ const AGENT_TOOL_HANDLERS = {
             startedAt: Date.now(),
             // Estimated time-to-completion. Plain text-to-image is ~30-60s on
             // gpt-image-2; ref-image edits are slower (60-120s with 1 ref).
-            // The render uses these to drive a smoothly-animated progress
-            // bar that caps at 90% — the tile→done swap covers the rest.
-            agentEstimateSec: refIds.length ? 90 : 60,
+            // We refine this on completion using a recent-completions p50
+            // (see _agentGenDurationsMs below) so the progress bar's
+            // "~Xs left" estimate gets more accurate the longer you use
+            // the studio.
+            agentEstimateSec: refIds.length
+                ? (_agentGenDurationsP50(true) || 90)
+                : (_agentGenDurationsP50(false) || 60),
             refCount: refIds.length,
             agentPrompt: args.prompt,
         });
+        // Defensive: if a previous session dragged the queue overlay to a
+        // position that now puts it offscreen or behind the agent panel
+        // (same z-index, later in DOM = stacks on top), the queue will
+        // technically render but be invisible. When a fresh agent job
+        // pushes, force the queue back to its default top-right anchor
+        // so the user sees the new tile. Persisted positions for the
+        // history overlay are left alone — only the queue gets reset on
+        // agent-driven pushes.
+        const qOverlay = $('queueOverlay');
+        if (qOverlay && qOverlay.classList.contains('q-positioned')) {
+            qOverlay.classList.remove('q-positioned');
+            qOverlay.style.left = '';
+            qOverlay.style.top  = '';
+            try {
+                const positions = JSON.parse(localStorage.getItem('studio_overlay_positions') || '{}');
+                delete positions.queue;
+                localStorage.setItem('studio_overlay_positions', JSON.stringify(positions));
+            } catch {}
+        }
+        console.log('[agent] queue tile pushed', synthJobId, '— myJobs.length:', myJobs.length);
         renderQueue();
         // Tick the queue every second while the call is in flight so the
         // elapsed-time / progress display refreshes smoothly. Cleared in
@@ -7857,12 +8556,19 @@ const AGENT_TOOL_HANDLERS = {
             // Mark the synthetic queue entry as done — the next renderQueue
             // filter (status in {queued,waiting,running}) will drop it from
             // the active list automatically. Set finishedAt for any history
-            // logic that reads it.
+            // logic that reads it. Also feed the real wall-time into the
+            // p50 pool so the next generation's progress estimate is
+            // calibrated against actual observed latency rather than the
+            // conservative 60/90s default.
             const synthJob = myJobs.find(jj => jj.id === synthJobId);
             if (synthJob) {
                 synthJob.status = 'done';
                 synthJob.finishedAt = Date.now();
                 synthJob.result = { url: img.url, w: img.w, h: img.h };
+                const elapsedMs = synthJob.finishedAt - (synthJob.startedAt || synthJob.finishedAt);
+                if (elapsedMs > 1000) {  // skip absurdly-fast (cached/error) values
+                    _agentGenDurationsRecord(refIds.length > 0, elapsedMs);
+                }
             }
             renderQueue();
             // Pull the new history row the worker just inserted so the
@@ -7917,6 +8623,12 @@ const AGENT_TOOL_HANDLERS = {
             selected: false,
             _placeholder: true,
             _placeholderLabel: 'Editing',
+            // Same body-with-progress treatment as generate_new_images so
+            // edit-mode tiles aren't black boxes for 60s. gpt-image-2 edits
+            // are typically faster than generations from scratch (~30-50s)
+            // but we use 60 as a conservative anchor for the bar.
+            _placeholderEstSec: 60,
+            _placeholderStartedAt: Date.now(),
         });
         renderBatchInputs();
         try {
@@ -7984,6 +8696,11 @@ const AGENT_TOOL_HANDLERS = {
             selected: false,
             _placeholder: true,
             _placeholderLabel: 'Qwen Editing',
+            // Qwen typically lands in 15-30s warm, 60-90s cold-boot. 45s
+            // is a middle anchor — bar fills smoothly in the warm case
+            // and rolls into "finishing…" if cold-boot extends it.
+            _placeholderEstSec: 45,
+            _placeholderStartedAt: Date.now(),
         });
         renderBatchInputs();
         try {
@@ -9084,6 +9801,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     initDrop();
     initSlots();
     restorePersistedInputs();
+    restoreGenerateState();
     // Two-way binding for all slider / number-input pairs
     // Seed: no slider (useless across a 0–2^31 range), keep rngSeed hidden
     //       input in sync with vSeed so legacy code reading rngSeed still works.
