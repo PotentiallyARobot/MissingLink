@@ -126,6 +126,49 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .batch-inputs-grid::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
 .batch-inputs-grid::-webkit-scrollbar-thumb:hover{background:var(--border-strong)}
 .batch-inputs-grid:empty{display:none}
+
+/* Create mode (body.mode-create) takes over the same .batch-inputs-grid
+   but with very different sizing — generations should fill the stage
+   instead of being thumbnail-sized. The tile cap goes from 220px to
+   100% of the available width, with a sensible upper bound, and the
+   forced 1:1 aspect ratio is dropped so portrait/landscape outputs
+   render at their actual proportions. The grid centers content
+   horizontally so a single image sits in the middle of the stage
+   rather than pinned to the left edge.
+
+   When multiple images stack up (e.g. user clicks Create several times
+   without leaving the mode), the grid keeps its single column and
+   each image sits below the prior — vertically scrolling list of
+   full-stage images, biggest-first. */
+body.mode-create .batch-inputs-grid{
+    grid-template-columns:1fr;          /* single column, full width */
+    justify-content:center;             /* horizontal centering */
+    grid-auto-rows:max-content;
+    padding:24px;
+}
+body.mode-create .batch-input-tile{
+    aspect-ratio:auto;                  /* drop forced 1:1 */
+    max-width:min(900px, 100%);         /* cap at 900px so massive viewports don't get absurd */
+    max-height:calc(100vh - 200px);     /* leave headroom for header/queue */
+    width:auto;height:auto;
+    margin:0 auto;                      /* center within the column */
+    align-self:center;                  /* override the .start used in batch */
+}
+/* When the tile contains a real image (not a placeholder), let the image
+   drive the tile's dimensions. With aspect-ratio dropped, the img element
+   sets the box size directly via its intrinsic aspect ratio + width/height.
+   object-fit:contain so portraits don't get center-cropped. */
+body.mode-create .batch-input-tile:not(.pending) img{
+    width:100%;height:auto;
+    max-height:calc(100vh - 220px);
+    object-fit:contain;display:block
+}
+/* Placeholders need a minimum size so the spinner+progress UI isn't
+   crammed into nothing while the first image is generating. */
+body.mode-create .batch-input-tile.pending{
+    aspect-ratio:1/1;
+    width:min(600px, 80vw);
+}
 .batch-input-tile{
     position:relative;aspect-ratio:1/1;border-radius:6px;overflow:hidden;
     background:var(--surface-3);border:2px solid var(--border);cursor:pointer;
@@ -152,35 +195,43 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        sizing or descendant flex layout. */
     align-self:start;
 }
-/* Floating clear-toolbar over the batch grid — appears when the grid
-   has tiles, lets the user wipe everything without scrolling back to the
-   left panel. Positioned top-left of the batch grid so it doesn't
-   compete with the queue + history overlays anchored to the right edge.
-   Sized for visibility — bigger than the inline panel buttons because
-   this is the primary "start over" affordance when the stage is full. */
+/* Floating clear-toolbar — sits at the top-right of the batch grid.
+   Lets the user wipe the working set without scrolling back to the
+   BATCH INPUTS panel on the left. Subtle styling — small, transparent
+   border, muted text — because this is a quiet utility action, not a
+   primary call-to-action. The button only lights up red on hover so
+   the destructive nature stays discoverable but doesn't shout at the
+   user during normal browsing. Anchored top-right means it shares the
+   right edge with the queue overlay; the queue shifts down via the
+   body.has-clear-toolbar hook so they don't stack on top of each other. */
 .batch-grid-toolbar{
-    position:absolute;top:12px;left:14px;z-index:11;
-    display:flex;align-items:center;gap:10px;
-    padding:8px 14px;border-radius:8px;
-    background:rgba(15,15,18,.92);border:1px solid var(--border-strong);
-    backdrop-filter:blur(8px);
-    box-shadow:0 4px 16px rgba(0,0,0,.4);
-    font-family:var(--font-mono);font-size:11px;letter-spacing:1px
+    position:absolute;top:12px;right:14px;z-index:11;
+    display:flex;align-items:center;gap:8px;
+    padding:5px 8px;border-radius:6px;
+    background:rgba(15,15,18,.78);border:1px solid var(--border);
+    backdrop-filter:blur(6px);
+    font-family:var(--font-mono);font-size:10px;letter-spacing:.8px
 }
 .batch-grid-toolbar .bgt-count{
-    color:var(--text-2);text-transform:uppercase;font-weight:600
+    color:var(--text-muted);text-transform:uppercase;font-weight:500
 }
 .batch-grid-toolbar .bgt-btn{
-    background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.55);
-    color:var(--red);font-family:var(--font-mono);
-    font-size:11px;font-weight:700;letter-spacing:1px;
-    padding:6px 14px;border-radius:6px;cursor:pointer;
-    transition:all .12s
+    background:transparent;border:none;
+    color:var(--text-muted);font-family:var(--font-mono);
+    font-size:10px;font-weight:500;letter-spacing:.8px;
+    padding:3px 8px;border-radius:4px;cursor:pointer;
+    transition:color .12s,background .12s
 }
 .batch-grid-toolbar .bgt-btn:hover{
-    background:var(--red);border-color:var(--red);color:#fff;
-    transform:translateY(-1px);box-shadow:0 4px 12px rgba(239,68,68,.35)
+    background:rgba(239,68,68,.12);color:var(--red)
 }
+/* When the clear toolbar is visible, push the queue overlay down so the
+   two don't overlap on the right edge. 56px clears the toolbar's
+   ~30px height + 12px top + a small gap. Reverts the moment the toolbar
+   hides. The :not(.q-positioned) guard avoids stomping on a manually
+   dragged queue position — if the user dragged the queue elsewhere,
+   their saved coords win. */
+body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .batch-input-tile:hover{border-color:var(--border-strong)}
 
 /* Focused-stage view — replaces the batch grid when a tile is clicked.
@@ -1643,11 +1694,13 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <button class="mode-btn active" id="btnModeCamera" onclick="setMode('camera')">🎥 Camera</button>
             <button class="mode-btn" id="btnModeEdit" onclick="setMode('edit')">✏️ Edit</button>
             <button class="mode-btn" id="btnModeBatch" onclick="setMode('batch')">📚 Batch</button>
-            <!-- Generate mode: direct gpt-image-2 access without going through
+            <!-- Create mode: direct image generation without going through
                  the agent. Prompt + up to 4 reference image slots, single
                  generation per click. Output lands in the batch grid so the
-                 user can refine it (send to camera/edit, find issues, etc.). -->
-            <button class="mode-btn" id="btnModeGenerate" onclick="setMode('generate')">✨ Generate</button>
+                 user can refine it (send to camera/edit, find issues, etc.).
+                 Internal mode value stays 'generate' to avoid widespread
+                 renames; only the user-facing button text says "Create". -->
+            <button class="mode-btn" id="btnModeGenerate" onclick="setMode('generate')">✨ Create</button>
         </div>
     </div>
 
@@ -1844,19 +1897,21 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <textarea class="custom-prompt" id="batchPrompt" placeholder="Describe the edit to apply to every selected image...&#10;e.g. &quot;Remove the background&quot;&#10;or &quot;Put the subject from image 1 into image 2's scene&quot;" rows="4" oninput="_batchPerImagePrompts=null;var s=document.getElementById('aiPlanStatus');if(s)s.textContent='';updateGenButton()"></textarea>
     </div>
 
-    <!-- ──────────────────────── GENERATE MODE ────────────────────────
-         Direct gpt-image-2 access without the agent. Prompt + up to 4
+    <!-- ──────────────────────── CREATE MODE ────────────────────────
+         Direct image generation without the agent. Prompt + up to 4
          reference image slots. Output lands in the batch grid (shared
          with Batch mode) so the user can refine results — send to
          camera, send to edit, find issues, etc. The flow reuses the
          same /api/studio/agent-image-gen endpoint as the agent's
          generate_new_images tool, so cost + history insertion are
          identical: 100 tokens per image, history row created, queue
-         tile + placeholder progress bar fire automatically. -->
+         tile + placeholder progress bar fire automatically. Internal
+         mode value is still 'generate' to avoid widespread renames in
+         JS; only the user-facing text says "Create". -->
     <div class="sec generate-only" style="display:none">
-        <div class="sec-label"><span class="icon">✨</span> GENERATE PROMPT</div>
+        <div class="sec-label"><span class="icon">✨</span> CREATE PROMPT</div>
         <textarea class="custom-prompt" id="generatePrompt"
-            placeholder="Describe what to generate...&#10;&#10;e.g. &quot;A vintage comic book cover with a heroine in front of an explosion, dramatic lighting, halftone shading&quot;"
+            placeholder="Describe what to create...&#10;&#10;e.g. &quot;A vintage comic book cover with a heroine in front of an explosion, dramatic lighting, halftone shading&quot;"
             rows="5"
             oninput="updateGenButton()"></textarea>
     </div>
@@ -1927,7 +1982,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec generate-only" style="display:none">
-        <button class="gen-btn" id="btnGenerateMode" onclick="doGenerateMode()">✨ GENERATE</button>
+        <button class="gen-btn" id="btnGenerateMode" onclick="doGenerateMode()">✨ CREATE</button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
             <span style="color:var(--text-muted)">Cost</span>
             <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.02</span>
@@ -2845,6 +2900,11 @@ function setMode(mode, opts){
     // them is misleading.
     document.querySelectorAll('.generate-only').forEach(el => el.style.display = mode === 'generate' ? '' : 'none');
     document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
+    // Body class hook — used by .batch-inputs-grid CSS to bump the tile
+    // max-width way up in Create mode so a single output dominates the
+    // stage instead of sitting as a 220px thumbnail. Toggle on body so
+    // CSS doesn't need to scope through the deep DOM hierarchy.
+    document.body.classList.toggle('mode-create', mode === 'generate');
     const phText = mode === 'camera' ? 'Upload an image and generate'
                  : mode === 'edit'   ? 'Add image(s) and describe your edit'
                  : mode === 'generate' ? 'Write a prompt and (optionally) add reference images'
@@ -4858,7 +4918,12 @@ function renderBatchInputs(){
     }
 
     grid.innerHTML = '';
-    grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_batchInputs.length)));
+    // In Create mode the CSS forces grid-template-columns:1fr (single
+    // column, full width — see body.mode-create rules). The variable
+    // is irrelevant there but we still set it to 1 for consistency
+    // and so any external readers see the right column count.
+    const isCreateMode = (typeof currentMode !== 'undefined' && currentMode === 'generate');
+    grid.style.setProperty('--batch-cols', String(isCreateMode ? 1 : bestBatchColumnCount(_batchInputs.length)));
 
     // Floating clear-toolbar — visible whenever the grid has tiles.
     // Count excludes placeholders so the user sees "Clear 4" not "Clear 6"
@@ -4876,6 +4941,10 @@ function renderBatchInputs(){
             toolbar.style.display = 'none';
         }
     }
+    // Body class hook so the queue overlay's CSS can shift down to top:56
+    // when the toolbar is occupying the top-right corner. Without this the
+    // two overlap (toolbar at top:12, queue defaults to top:10).
+    document.body.classList.toggle('has-clear-toolbar', showGrid);
 
     grid.style.display = showGrid ? '' : 'none';
 
@@ -8016,7 +8085,7 @@ function renderQueue(){
                     // at 90% so the bar doesn't sit at 100 while we wait
                     // for the actual response. The remaining 10% is covered
                     // by the placeholder→tile swap in batch_inputs.
-                    statusIcon = '🎨'; statusText = 'Generating';
+                    statusIcon = '🎨'; statusText = 'Creating';
                     const est = j.agentEstimateSec || 60;
                     const fmt = (s) => {
                         s = Math.max(0, Math.round(s));
@@ -8025,15 +8094,14 @@ function renderQueue(){
                         return m > 0 ? `${m}:${String(r).padStart(2, '0')}` : `${r}s`;
                     };
                     const refTag = (j.refCount && j.refCount > 0) ? ` · +${j.refCount} ref` : '';
-                    // Show elapsed / expected so the user sees both how
-                    // long it's been running and how long it's expected
-                    // to take. Once elapsed exceeds the estimate, drop
-                    // the "/ ~est" suffix — claiming "60s left" when
-                    // we've already been waiting 90s would be insulting.
+                    // No model name in the user-facing subtext — keep it
+                    // neutral ("Creating · …") so the underlying provider
+                    // (gpt-image-2) doesn't leak into the UI. Internal
+                    // logging on history rows keeps the model identifier.
                     if (elapsed > est) {
-                        subtext = `GPT-IMAGE-2${refTag} · ${fmt(elapsed)} (over estimate)`;
+                        subtext = `Creating${refTag} · ${fmt(elapsed)} (over estimate)`;
                     } else {
-                        subtext = `GPT-IMAGE-2${refTag} · ${fmt(elapsed)} / ~${fmt(est)}`;
+                        subtext = `Creating${refTag} · ${fmt(elapsed)} / ~${fmt(est)}`;
                     }
                     pct = Math.min(90, (elapsed / est) * 100);
                 } else if (stage === 'generating') {
@@ -8579,8 +8647,8 @@ const AGENT_TOOL_HANDLERS = {
             }
             return {
                 summary: refIds.length
-                    ? `Generated 1 new image with ${refIds.length} reference${refIds.length === 1 ? '' : 's'} (gpt-image-2)`
-                    : `Generated 1 new image (gpt-image-2)`,
+                    ? `Created 1 new image with ${refIds.length} reference${refIds.length === 1 ? '' : 's'}`
+                    : `Created 1 new image`,
                 result: { ok: true, generated: { id: img.id, w: img.w, h: img.h, references_used: refIds }, batch_state: _agentBatchState() },
             };
         } catch (e) {
@@ -8659,7 +8727,7 @@ const AGENT_TOOL_HANDLERS = {
                 syncHistory().catch(() => {});
             }
             return {
-                summary: `Edited image ${args.image_id} → new image ${img.id} (gpt-image-2)`,
+                summary: `Edited image ${args.image_id} → new image ${img.id}`,
                 result: { ok: true, edited: { id: img.id, w: img.w, h: img.h, source_id: args.image_id }, batch_state: _agentBatchState() },
             };
         } catch (e) {
