@@ -171,6 +171,28 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .stage-chip.active{background:var(--gold-dim);border:1px solid var(--gold)}
 .stage-chip.active .chip-fill{position:absolute;inset:0;background:var(--gold);transform-origin:left;animation:none}
 
+/* ── TEXTURE MAPS OVERLAY ──────────────────────────────── */
+.textures-overlay{position:fixed;inset:0;background:rgba(9,9,11,.85);backdrop-filter:blur(6px);z-index:200;display:none;align-items:center;justify-content:center;padding:32px}
+.textures-overlay.show{display:flex}
+.textures-modal{background:var(--surface);border:1px solid var(--border);border-radius:8px;width:min(1100px,95vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
+.textures-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.textures-header h2{font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:1.5px;color:var(--gold);margin:0;text-transform:uppercase}
+.textures-close{cursor:pointer;width:30px;height:30px;border-radius:50%;background:transparent;border:1px solid var(--border);color:var(--text-dim);font-size:18px;display:flex;align-items:center;justify-content:center;line-height:1}
+.textures-close:hover{border-color:var(--red);color:var(--red)}
+.textures-grid{flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.textures-grid::-webkit-scrollbar{width:6px}
+.textures-grid::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.textures-empty{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center;padding:48px;grid-column:1/-1}
+
+.texture-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px;align-items:center;transition:.15s}
+.texture-card:hover{border-color:var(--gold)}
+.texture-card canvas{display:block;max-width:100%;border-radius:4px;background:transparent;border:1px solid var(--border)}
+.texture-label{width:100%;text-align:center;font-family:var(--font-mono)}
+.texture-label .texture-roles{color:var(--gold);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.texture-label .texture-meta{color:var(--text-muted);font-size:9px}
+.texture-dl{cursor:pointer;font-family:var(--font-mono);font-size:9px;padding:5px 10px;border:1px solid var(--border);border-radius:3px;background:var(--surface);color:var(--text-dim);transition:.1s;letter-spacing:.5px}
+.texture-dl:hover{border-color:var(--gold);color:var(--gold)}
+
 /* ── HISTORY DRAWER ────────────────────────────────────── */
 .history-backdrop{position:fixed;inset:0;background:rgba(9,9,11,.6);backdrop-filter:blur(2px);z-index:150;opacity:0;pointer-events:none;transition:opacity .2s}
 .history-backdrop.open{opacity:1;pointer-events:auto}
@@ -437,6 +459,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <button id="historyLoadMore" class="btn" onclick="loadMoreHistory()" style="display:none">Load older</button>
   </div>
 </aside>
+
+<!-- Texture maps overlay — opened from the GLB viewer's MAPS button.
+     Shows all PBR maps (base color, normal, roughness, metallic, AO,
+     emissive, alpha) extracted from the loaded GLB with download buttons. -->
+<div class="textures-overlay" id="texturesOverlay" onclick="if(event.target===this)_glbViewer&&_glbViewer.hideTextures()">
+  <div class="textures-modal">
+    <div class="textures-header">
+      <h2>Texture Maps</h2>
+      <button class="textures-close" onclick="_glbViewer&&_glbViewer.hideTextures()">×</button>
+    </div>
+    <div class="textures-grid" id="texturesGrid"></div>
+  </div>
+</div>
 
 <div class="startup-overlay" id="startupOverlay">
   <div class="startup-card">
@@ -972,6 +1007,7 @@ function showGlbViewer(glbUrl){
         <button class="tb-btn" title="Zoom out" onclick="_glbViewer && _glbViewer.zoomOut()">−</button>
         <button class="tb-btn" title="Reset view" onclick="_glbViewer && _glbViewer.resetCamera()">⟲</button>
         <button class="tb-btn" id="glbProxyBtn" title="Toggle drag proxy mode" onclick="_glbViewer && _glbViewer.cycleProxy()">FLAT</button>
+        <button class="tb-btn" title="View texture maps" onclick="_glbViewer && _glbViewer.showTextures()">MAPS</button>
       </div>
     </div>
   `;
@@ -1106,13 +1142,13 @@ async function initThreeViewer(glbUrl){
 
     // Fit-to-content camera placement. Given the bounding sphere radius R
     // and vertical FOV α, the camera distance D needed to fit the sphere
-    // with a margin m (e.g. 0.85 = use 85% of frame) is:
+    // with a margin m (0.9 = use 90% of frame) is:
     //   D = R / (m * tan(α/2)) for vertical fit
     // We also account for horizontal aspect ratio so wide viewports don't
     // crop the model on the sides.
     const fovRad = (camera.fov * Math.PI) / 180;
     const aspect = container.clientWidth / Math.max(1, container.clientHeight);
-    const margin = 0.7;  // model fills ~70% of frame, leaves headroom for orbit
+    const margin = 0.9;  // model fills ~90% of frame
     const distV = sphere.radius / Math.tan(fovRad / 2) / margin;
     const distH = sphere.radius / Math.tan(fovRad / 2) / margin / Math.min(1, aspect);
     const distance = Math.max(distV, distH);
@@ -1269,6 +1305,113 @@ async function initThreeViewer(glbUrl){
   function zoomIn()  { zoomBy(0.8);   }
   function zoomOut() { zoomBy(1.25);  }
 
+  // Texture-map inspector. Walks the loaded GLB scene, finds every PBR map
+  // referenced by any MeshStandardMaterial / MeshPhysicalMaterial, and
+  // renders them into thumbnails in an overlay. The maps TRELLIS exports
+  // are: map (base color), normalMap, roughnessMap, metalnessMap,
+  // aoMap, emissiveMap, alphaMap. We dedupe by texture UUID since the
+  // same map is often shared across multiple meshes.
+  function showTextures() {
+    if (!modelGroup) return;
+    const overlay = document.getElementById('texturesOverlay');
+    const grid = document.getElementById('texturesGrid');
+    if (!overlay || !grid) return;
+
+    // Collect all unique textures with their map roles
+    const seen = new Map();   // uuid → {tex, roles: Set<string>}
+    const MAP_LABELS = {
+      map:           'Base Color',
+      normalMap:     'Normal',
+      roughnessMap:  'Roughness',
+      metalnessMap:  'Metallic',
+      aoMap:         'Ambient Occlusion',
+      emissiveMap:   'Emissive',
+      alphaMap:      'Alpha',
+      bumpMap:       'Bump',
+      displacementMap: 'Displacement',
+    };
+    modelGroup.traverse((obj) => {
+      if (!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const mat of mats) {
+        for (const key of Object.keys(MAP_LABELS)) {
+          const tex = mat[key];
+          if (!tex || !tex.image) continue;
+          const uuid = tex.uuid;
+          if (!seen.has(uuid)) seen.set(uuid, { tex, roles: new Set() });
+          seen.get(uuid).roles.add(MAP_LABELS[key]);
+        }
+      }
+    });
+
+    if (seen.size === 0) {
+      grid.innerHTML = `<div class="textures-empty">No textures found on this model.</div>`;
+      overlay.classList.add('show');
+      return;
+    }
+
+    // Render each texture to a canvas thumbnail and append. We canvas-blit
+    // because three.js Texture.image can be HTMLImageElement, ImageBitmap,
+    // or an offscreen-decoded blob — drawImage handles all of them.
+    grid.innerHTML = '';
+    for (const [uuid, { tex, roles }] of seen) {
+      const card = document.createElement('div');
+      card.className = 'texture-card';
+      const canvas = document.createElement('canvas');
+      const img = tex.image;
+      // Source dimensions
+      const srcW = img.width || img.naturalWidth || 256;
+      const srcH = img.height || img.naturalHeight || 256;
+      // Thumb at max 256px keeping aspect
+      const maxDim = 256;
+      const tscale = Math.min(maxDim / srcW, maxDim / srcH, 1);
+      canvas.width = Math.max(1, Math.round(srcW * tscale));
+      canvas.height = Math.max(1, Math.round(srcH * tscale));
+      const ctx = canvas.getContext('2d');
+      try {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      } catch (e) {
+        // Fallback for textures that can't be drawImage'd directly (rare on GLB)
+        console.warn('Failed to draw texture', uuid, e);
+      }
+      const labelEl = document.createElement('div');
+      labelEl.className = 'texture-label';
+      labelEl.innerHTML = `
+        <div class="texture-roles">${[...roles].join(' · ')}</div>
+        <div class="texture-meta">${srcW}×${srcH}</div>
+      `;
+      // Download button — exports the original (full-res) image as PNG
+      const dl = document.createElement('button');
+      dl.className = 'texture-dl';
+      dl.textContent = '⬇ PNG';
+      dl.title = 'Download full-resolution map as PNG';
+      dl.onclick = () => {
+        const fullCanvas = document.createElement('canvas');
+        fullCanvas.width = srcW; fullCanvas.height = srcH;
+        try {
+          fullCanvas.getContext('2d').drawImage(img, 0, 0);
+          fullCanvas.toBlob((blob) => {
+            if (!blob) return;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${[...roles][0].replace(/\s+/g, '_').toLowerCase()}_${uuid.slice(0, 8)}.png`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }, 'image/png');
+        } catch (e) { console.error('Texture export failed', e); }
+      };
+      card.appendChild(canvas);
+      card.appendChild(labelEl);
+      card.appendChild(dl);
+      grid.appendChild(card);
+    }
+    overlay.classList.add('show');
+  }
+  function hideTextures() {
+    document.getElementById('texturesOverlay')?.classList.remove('show');
+  }
+
   // ── Drag detection → swap to proxy ───────────────────────
   let idleTimer = null;
   controls.addEventListener('start', () => {
@@ -1302,6 +1445,8 @@ async function initThreeViewer(glbUrl){
     resetCamera,
     zoomIn,
     zoomOut,
+    showTextures,
+    hideTextures,
     dispose() {
       alive = false;
       ro.disconnect();
