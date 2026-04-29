@@ -87,6 +87,14 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        320×320 even when there are very few of them; the grid just leaves
        empty columns to the right, which reads cleanly. */
     grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(180px, 320px));
+    /* grid-auto-rows: max-content prevents row tracks from stretching to
+       fill the container. Without this, a grid container with available
+       vertical space sizes each row track to fit (any stretch behavior
+       on grid items then bleeds through despite align-self overrides).
+       Pinning to max-content means each row is exactly as tall as its
+       tallest cell needs to be — which, with aspect-ratio:1/1 and the
+       column track sized 180-320px, is also 180-320px. Square tiles. */
+    grid-auto-rows:max-content;
     justify-content:start;  /* tiles cluster left when there's leftover space */
     gap:10px;
     padding:16px;
@@ -120,28 +128,46 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        respects aspect-ratio:1/1 and the column track width.
        ────────────────────────────────────────────────────────────────── */
     min-width:0;min-height:0;
+    /* Without align-self:start, grid items default to align-self:stretch
+       which makes each tile fill its row track's full height. Combined
+       with `display:flex` on .pending tiles, that override beats the
+       aspect-ratio:1/1 declaration and tiles render as tall rectangles
+       (the bug visible when 12 placeholders are simultaneously in
+       flight — every row is stretched to fill available vertical space,
+       and the per-tile aspect-ratio is silently ignored). Pinning to
+       start preserves the square aspect ratio regardless of grid track
+       sizing or descendant flex layout. */
+    align-self:start;
 }
 /* Floating clear-toolbar over the batch grid — appears when the grid
    has tiles, lets the user wipe everything without scrolling back to the
-   left panel. Positioned top-left of the batch grid container so it
-   doesn't compete with the queue + history overlays anchored to the
-   right edge. Tile count next to the button so "Clear N" is concrete. */
+   left panel. Positioned top-left of the batch grid so it doesn't
+   compete with the queue + history overlays anchored to the right edge.
+   Sized for visibility — bigger than the inline panel buttons because
+   this is the primary "start over" affordance when the stage is full. */
 .batch-grid-toolbar{
-    position:absolute;top:14px;left:14px;z-index:11;
+    position:absolute;top:12px;left:14px;z-index:11;
     display:flex;align-items:center;gap:10px;
-    padding:6px 10px;border-radius:6px;
-    background:rgba(15,15,18,.78);border:1px solid var(--border);
-    backdrop-filter:blur(6px);
-    font-family:var(--font-mono);font-size:10px;letter-spacing:1px
+    padding:8px 14px;border-radius:8px;
+    background:rgba(15,15,18,.92);border:1px solid var(--border-strong);
+    backdrop-filter:blur(8px);
+    box-shadow:0 4px 16px rgba(0,0,0,.4);
+    font-family:var(--font-mono);font-size:11px;letter-spacing:1px
 }
-.batch-grid-toolbar .bgt-count{color:var(--text-2);text-transform:uppercase}
+.batch-grid-toolbar .bgt-count{
+    color:var(--text-2);text-transform:uppercase;font-weight:600
+}
 .batch-grid-toolbar .bgt-btn{
-    background:transparent;border:1px solid var(--border-strong);color:var(--text-1);
-    font-family:var(--font-mono);font-size:10px;letter-spacing:1px;
-    padding:4px 10px;border-radius:4px;cursor:pointer;
+    background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.55);
+    color:var(--red);font-family:var(--font-mono);
+    font-size:11px;font-weight:700;letter-spacing:1px;
+    padding:6px 14px;border-radius:6px;cursor:pointer;
     transition:all .12s
 }
-.batch-grid-toolbar .bgt-btn:hover{background:var(--red);border-color:var(--red);color:#fff}
+.batch-grid-toolbar .bgt-btn:hover{
+    background:var(--red);border-color:var(--red);color:#fff;
+    transform:translateY(-1px);box-shadow:0 4px 12px rgba(239,68,68,.35)
+}
 .batch-input-tile:hover{border-color:var(--border-strong)}
 .batch-input-tile.selected{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 /* Pending tile — shown while an agent gen/edit is in flight so the user
@@ -1789,14 +1815,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openModal(this.src)">
 
-        <!-- Floating clear-toolbar — sits at the top-right of the batch
+        <!-- Floating clear-toolbar — sits at the top-left of the batch
              grid area. Only visible when the grid has tiles. Lets the user
              wipe the working set without scrolling back to the BATCH INPUTS
              panel on the left. The actual button shows the tile count so
-             "Clear 6 images" is unambiguous about what's about to vanish. -->
+             "Clear stage (6)" is unambiguous about what's about to vanish.
+             Red-tinted because this is destructive (visually — the images
+             stay in History). -->
         <div class="batch-grid-toolbar" id="batchGridToolbar" style="display:none">
             <span class="bgt-count" id="bgtCount"></span>
-            <button type="button" class="bgt-btn" onclick="batchClearWithConfirm()" title="Clear the current grid. Images stay in your History so you can edit them later.">✕ Clear</button>
+            <button type="button" class="bgt-btn" onclick="batchClearWithConfirm()" title="Wipe the current grid. Images stay in your History so you can edit them later.">✕ Clear Stage</button>
         </div>
 
         <!-- Batch-mode input grid — user's uploaded images shown as
@@ -7326,6 +7354,22 @@ function renderQueue(){
                     statusIcon = '🖼️'; statusText = 'Encoding image';
                     subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
                     pct = 22;
+                } else if (stage === 'agent_generating') {
+                    // Synthetic stage for agent-driven gpt-image-2 calls.
+                    // OpenAI's images endpoint doesn't ping per-step progress
+                    // unless we use streaming (stream:true + partial_images),
+                    // and the worker doesn't currently forward an SSE stream.
+                    // So progress here is a time-based estimate: anchored to
+                    // typical completion times (60s plain, 90s with refs)
+                    // and capped at 90% so the bar doesn't sit at 100 while
+                    // we wait for the actual response. The remaining 10% is
+                    // covered by the placeholder→tile swap in batch_inputs.
+                    statusIcon = '🎨'; statusText = 'Generating';
+                    const est = j.agentEstimateSec || 60;
+                    const eta = Math.max(0, est - elapsed);
+                    const refTag = (j.refCount && j.refCount > 0) ? ` · +${j.refCount} ref` : '';
+                    subtext = `GPT-IMAGE-2${refTag} · ${elapsed}s${eta > 0 ? ` · ~${eta}s` : ''}`;
+                    pct = Math.min(90, (elapsed / est) * 100);
                 } else if (stage === 'generating') {
                     statusIcon = '⚡'; statusText = 'Generating';
                     if (total > 0) {
@@ -7706,6 +7750,47 @@ const AGENT_TOOL_HANDLERS = {
             _placeholderLabel: refIds.length ? `Generating (+${refIds.length} ref${refIds.length === 1 ? '' : 's'})` : 'Generating',
         });
         renderBatchInputs();
+        // Also push a synthetic "job" into myJobs so this generation shows
+        // up in the queue panel alongside regular Qwen jobs. The user sees
+        // each parallel agent call as its own queue tile with a live
+        // elapsed-time + progress-bar estimate. On completion we flip
+        // status to 'done' which the next renderQueue filter drops from
+        // the active list. The id is prefixed `agen_` so existing job
+        // poll handlers (which only know GPU job ids from /api/studio/job/:id)
+        // ignore it cleanly.
+        const synthJobId = 'agen_' + Math.random().toString(36).slice(2, 10);
+        // Best-effort thumb: use the first reference image's URL if any,
+        // otherwise leave blank — the agent is generating from text alone.
+        let thumb = null;
+        if (refIds.length) {
+            const refImg = _batchInputs.find(b => b.id === refIds[0])
+                || (typeof _batchContext !== 'undefined' && _batchContext && (_batchContext[1]?.id === refIds[0] ? _batchContext[1] : (_batchContext[2]?.id === refIds[0] ? _batchContext[2] : null)));
+            if (refImg && refImg.url) thumb = refImg.url;
+        }
+        myJobs.unshift({
+            id: synthJobId,
+            status: 'running',
+            mode: 'agent_gen',
+            stage: 'agent_generating',
+            thumb,
+            result: null,
+            submittedAt: Date.now(),
+            startedAt: Date.now(),
+            // Estimated time-to-completion. Plain text-to-image is ~30-60s on
+            // gpt-image-2; ref-image edits are slower (60-120s with 1 ref).
+            // The render uses these to drive a smoothly-animated progress
+            // bar that caps at 90% — the tile→done swap covers the rest.
+            agentEstimateSec: refIds.length ? 90 : 60,
+            refCount: refIds.length,
+            agentPrompt: args.prompt,
+        });
+        renderQueue();
+        // Tick the queue every second while the call is in flight so the
+        // elapsed-time / progress display refreshes smoothly. Cleared in
+        // the finally block.
+        const tickHandle = setInterval(() => {
+            try { renderQueue(); } catch {}
+        }, 1000);
         try {
             const r = await fetchT(`${API}/api/studio/agent-image-gen`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7769,6 +7854,17 @@ const AGENT_TOOL_HANDLERS = {
                 _user.tokens = d.tokens_remaining;
                 const tc = document.getElementById('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
             }
+            // Mark the synthetic queue entry as done — the next renderQueue
+            // filter (status in {queued,waiting,running}) will drop it from
+            // the active list automatically. Set finishedAt for any history
+            // logic that reads it.
+            const synthJob = myJobs.find(jj => jj.id === synthJobId);
+            if (synthJob) {
+                synthJob.status = 'done';
+                synthJob.finishedAt = Date.now();
+                synthJob.result = { url: img.url, w: img.w, h: img.h };
+            }
+            renderQueue();
             // Pull the new history row the worker just inserted so the
             // image is editable later via the History panel. Fire-and-forget
             // — failure here doesn't affect the agent flow.
@@ -7795,7 +7891,21 @@ const AGENT_TOOL_HANDLERS = {
                     if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
                 }, 3000);
             }
+            // Mark the synthetic queue entry as errored. The auto-timeout
+            // sweep would eventually flip it anyway, but doing it here gets
+            // the queue panel to update immediately.
+            const synthJob2 = myJobs.find(jj => jj.id === synthJobId);
+            if (synthJob2) {
+                synthJob2.status = 'error';
+                synthJob2.error = (e && e.message) || 'failed';
+                synthJob2.finishedAt = Date.now();
+            }
+            renderQueue();
             throw e;
+        } finally {
+            // Always clear the per-second tick. Without this, every parallel
+            // generation leaks a setInterval that fires forever.
+            clearInterval(tickHandle);
         }
     },
     async edit_with_gpt_image(args){
@@ -8100,25 +8210,37 @@ async function _agentRunTurn(){
         const toolCalls = output.filter(i => i.type === 'function_call');
         if (!toolCalls.length) return;  // no tools → conversation done
 
-        // Tool dispatch. Image gen/edit calls are commutative and benefit
-        // hugely from running in parallel — 8 generate_new_images calls
-        // fired with Promise.all means 8 placeholders appear instantly
-        // and 8 OpenAI requests are in flight at once, so total wall
-        // time is ~one image's latency rather than 8x. State-mutating
-        // tools (set_selection, set_prompt, remove_images, recaption,
-        // submit_qwen_edit) are serialized BEFORE the parallel batch so
-        // they take effect first — the model rarely interleaves these
-        // anyway since they're single-state operations, but ordering
-        // matters when it does (set_selection then submit_qwen_edit).
-        // edit_with_qwen + find_visual_issues are also commutative
-        // (each affects its own image only), so they parallelize too.
-        const PARALLEL_TOOLS = new Set([
-            'generate_new_images',
-            'edit_with_gpt_image',
-            'edit_with_qwen',
-            'find_visual_issues',
-        ]);
-        const serialCalls = toolCalls.filter(c => !PARALLEL_TOOLS.has(c.name));
+        // Tool dispatch. Two execution lanes:
+        //   - SERIAL_TOOLS: image-creating calls run one at a time. The
+        //     model may issue many in a single turn (one per image it
+        //     wants), but each waits for the previous to land. Reasons:
+        //     (a) lower OpenAI rate-limit pressure → far fewer "operation
+        //     was aborted" timeouts under load, (b) lets each successive
+        //     call see the prior generation's id in batch_state for
+        //     continuity-style sequences (the model can pass the previous
+        //     image as a reference for the next), (c) live progress is
+        //     more legible — one tile fills in at a time instead of 12
+        //     spinners going at once.
+        //   - PARALLEL_TOOLS: read-only / cheap calls (find_visual_issues)
+        //     stay parallel — no contention, no model dependencies, and
+        //     fan-out latency wins matter.
+        // State-mutating tools (set_selection, set_prompt, recaption,
+        // remove_images, submit_qwen_edit) run before the lanes above
+        // so any selection/prompt edits land first.
+        //
+        // SERIAL_LIMIT caps how many image creations actually fire per
+        // model turn. If the model issues 20, only the first 12 run; the
+        // rest get an immediate "rate_limited" tool result so the model
+        // sees what happened and can re-issue them on a subsequent turn
+        // (or stop if 12 was already plenty). 12 matches STUDIO_MAX_QUEUED
+        // — same mental model as the regular queue cap.
+        const SERIAL_TOOLS = new Set(['generate_new_images', 'edit_with_gpt_image', 'edit_with_qwen']);
+        const PARALLEL_TOOLS = new Set(['find_visual_issues']);
+        const SERIAL_LIMIT = 12;
+        const stateMutators = toolCalls.filter(c => !SERIAL_TOOLS.has(c.name) && !PARALLEL_TOOLS.has(c.name));
+        const serialCallsAll = toolCalls.filter(c => SERIAL_TOOLS.has(c.name));
+        const serialCalls = serialCallsAll.slice(0, SERIAL_LIMIT);
+        const serialDropped = serialCallsAll.slice(SERIAL_LIMIT);
         const parallelCalls = toolCalls.filter(c => PARALLEL_TOOLS.has(c.name));
 
         // Single helper that runs one call, posts the visible status
@@ -8147,12 +8269,40 @@ async function _agentRunTurn(){
             }
         };
 
-        // Run state-mutating tools first, sequentially. Then fire the
-        // parallel batch all at once.
+        // 1) State mutators first.
+        for (const call of stateMutators) {
+            const result = await _runOne(call);
+            _agentMessages.push(result);
+        }
+        // 2) Serial image-creation calls — one at a time, in the order
+        //    the model issued them. Each call's placeholder appears in
+        //    the queue + grid before it starts so the user sees the
+        //    pipeline working through the request live.
+        if (serialCalls.length > 1) {
+            _agentRender('tool', { text: `Processing ${serialCalls.length} generations one at a time…` });
+        }
         for (const call of serialCalls) {
             const result = await _runOne(call);
             _agentMessages.push(result);
         }
+        // 3) Calls that exceeded the cap — reject with a rate_limited
+        //    result so the model sees them and can decide whether to
+        //    re-issue or stop. We do NOT execute them; the user already
+        //    has 12 in flight.
+        for (const call of serialDropped) {
+            _agentRender('tool', { text: `Skipped ${call.name} — per-turn cap (${SERIAL_LIMIT}) reached`, error: true });
+            _agentMessages.push({
+                type: 'function_call_output',
+                call_id: call.call_id,
+                output: JSON.stringify({
+                    ok: false,
+                    error: 'rate_limited',
+                    detail: `Only ${SERIAL_LIMIT} image creations are allowed per turn. ${serialDropped.length} call(s) skipped — re-issue them in a follow-up turn if still needed.`,
+                    batch_state: _agentBatchState(),
+                }),
+            });
+        }
+        // 4) Parallel read-only calls — Promise.all is safe here.
         if (parallelCalls.length) {
             const results = await Promise.all(parallelCalls.map(_runOne));
             for (const r of results) _agentMessages.push(r);
