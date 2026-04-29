@@ -118,13 +118,20 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .empty-state svg{width:64px;height:64px;opacity:.2;margin-bottom:12px}
 
 /* Sprite-sheet preview viewer */
-.preview-viewport{width:min(640px,calc(100vh - 220px),85%);aspect-ratio:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;position:relative;overflow:hidden;cursor:grab;user-select:none}
+.preview-viewport{width:100%;height:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;position:relative;overflow:hidden;cursor:grab;user-select:none}
 .preview-viewport.dragging{cursor:grabbing}
-.preview-viewport canvas{display:block;width:100%;height:100%;object-fit:contain;image-rendering:auto}
+.preview-viewport canvas{display:block;width:100%;height:100%;object-fit:contain;image-rendering:auto;transition:filter .4s}
+.preview-viewport.blurred canvas{filter:blur(12px) brightness(0.65)}
+
+.finalize-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;pointer-events:none}
+.finalize-overlay .finalize-spinner{width:36px;height:36px;border:3px solid var(--surface-3);border-top-color:var(--gold);border-radius:50%;animation:spin 1s linear infinite}
+.finalize-overlay .finalize-status{font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:2px;color:var(--gold)}
+.finalize-overlay .finalize-hint{font-family:var(--font-mono);font-size:11px;color:var(--text);max-width:340px;line-height:1.5;opacity:.85}
+@keyframes spin{to{transform:rotate(360deg)}}
 .preview-hint{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:1px;pointer-events:none;opacity:.7;background:rgba(9,9,11,.6);padding:3px 8px;border-radius:3px}
 
 /* Three.js GLB viewer */
-.glb-viewer{width:min(640px,calc(100vh - 220px),85%);aspect-ratio:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;position:relative;overflow:hidden;cursor:grab}
+.glb-viewer{width:100%;height:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;position:relative;overflow:hidden;cursor:grab}
 .glb-viewer.dragging{cursor:grabbing}
 .glb-viewer canvas{display:block;width:100%;height:100%}
 .glb-viewer .hud{position:absolute;top:10px;left:10px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);background:rgba(9,9,11,.5);padding:4px 8px;border-radius:3px;pointer-events:none;letter-spacing:1px}
@@ -196,9 +203,26 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-item .h-btn:hover{border-color:var(--gold);color:var(--gold)}
 .history-item .h-btn.primary{background:var(--gold);color:var(--black);border-color:var(--gold)}
 .history-item .h-btn.primary:hover{background:var(--gold-light)}
-.queue-overlay{position:fixed;top:60px;right:14px;width:280px;max-height:calc(100vh - 80px);overflow-y:auto;display:flex;flex-direction:column;gap:8px;z-index:90;pointer-events:none}
-.queue-item{pointer-events:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:6px}
+/* Queue panel: draggable container with a header, contains job items.
+   Stays put after user drags it; remembers position via a STATE flag. */
+.queue-panel{position:fixed;top:60px;right:14px;width:300px;max-height:calc(100vh - 80px);background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:90;display:flex;flex-direction:column;box-shadow:0 6px 20px rgba(0,0,0,.4);overflow:hidden;transition:width .2s, height .2s}
+.queue-panel.minimized{width:auto;max-height:none;height:auto}
+.queue-panel.minimized .queue-body{display:none}
+.queue-panel.empty{display:none}
+.queue-panel-header{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--surface-2);border-bottom:1px solid var(--border);cursor:grab;user-select:none;font-family:var(--font-display);font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase}
+.queue-panel-header.dragging{cursor:grabbing}
+.queue-panel-header .qp-title{display:flex;align-items:center;gap:6px}
+.queue-panel-header .qp-count{background:var(--gold);color:var(--black);border-radius:9px;padding:1px 6px;font-size:9px;font-weight:700}
+.queue-panel-header .qp-actions{display:flex;gap:4px}
+.queue-panel-header .qp-btn{cursor:pointer;width:18px;height:18px;display:flex;align-items:center;justify-content:center;background:none;border:1px solid var(--border);border-radius:3px;color:var(--text-dim);font-size:11px;line-height:1;padding:0}
+.queue-panel-header .qp-btn:hover{border-color:var(--gold);color:var(--gold)}
+.queue-body{overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.queue-body::-webkit-scrollbar{width:6px}
+.queue-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+.queue-item{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:6px}
 .queue-item.new{animation:slideIn .25s ease}
+.queue-item.current{border-color:var(--gold)}
 @keyframes slideIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
 .queue-item .top{display:flex;align-items:center;gap:8px}
 .queue-item .qthumb{width:36px;height:36px;border-radius:4px;object-fit:cover;background:var(--surface-3);border:1px solid var(--border);flex:none}
@@ -353,7 +377,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     </div>
 
     <button id="genBtn" class="gen-btn" onclick="submitGen()">
-      Generate <span class="cost">200 tokens</span>
+      Generate <span class="cost">300 tokens</span>
     </button>
   </aside>
 
@@ -385,7 +409,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   </main>
 </div>
 
-<div class="queue-overlay" id="queueOverlay"></div>
+<!-- Queue panel — draggable, shows all in-flight jobs. Hidden when empty. -->
+<div class="queue-panel empty" id="queuePanel">
+  <div class="queue-panel-header" id="queuePanelHeader">
+    <div class="qp-title">
+      <span>Queue</span>
+      <span class="qp-count" id="queueCount">0</span>
+    </div>
+    <div class="qp-actions">
+      <button class="qp-btn" id="queueMinBtn" title="Minimize" onclick="toggleQueueMinimized()">_</button>
+    </div>
+  </div>
+  <div class="queue-body" id="queueBody"></div>
+</div>
 
 <!-- History drawer slides in from the right when the user clicks 📂 History -->
 <div class="history-backdrop" id="historyBackdrop" onclick="toggleHistory()"></div>
@@ -438,7 +474,10 @@ const STATE = {
   historyCursor: null,    // pagination — next 'before' value, null if no older
   historyLoaded: [],      // accumulated history items across pages
 };
-const COSTS = { gen: 200, finalize: 100 };
+// Auto-finalize: a single charge at submit covers preview + finalize +
+// GLB delivery. The 'finalize' field is kept at 0 for back-compat (used
+// for the now-obsolete handleFinalize route).
+const COSTS = { gen: 300, finalize: 0 };
 
 // Stage label map (for live progress + queue items)
 const STAGE_LABELS = {
@@ -776,9 +815,6 @@ function showSpritePreview(meta, url, jobId){
   STATE.spriteMeta = meta;
   STATE.spriteFrame = 0;
   const img = new Image();
-  // No crossOrigin attr: we only drawImage from this — never read back pixels —
-  // so we don't need CORS, and not setting it lets the load succeed even if the
-  // server doesn't send Access-Control-Allow-Origin.
   img.onload = () => {
     STATE.spriteImg = img;
     drawSpriteFrame();
@@ -789,6 +825,79 @@ function showSpritePreview(meta, url, jobId){
     toast('Preview image failed to load', 'error');
   };
   img.src = url;
+}
+
+// Same sprite preview but with a CSS blur on the canvas + an overlay
+// showing the current finalize sub-stage. Used while the user is waiting
+// for the GLB so they have a visual of what's coming. Idempotent: if the
+// stage label hasn't changed, we skip the rebuild (just like the unblurred
+// version) — that way the user's drag position is preserved across polls.
+function showSpritePreviewBlurred(meta, url, jobId, stage){
+  const overlayKey = `${jobId}:blur:${stage}`;
+  if (STATE.spriteOverlayKey === overlayKey
+      && document.getElementById('previewCanvas')) {
+    // Just refresh the stage label text in case it changed
+    const el = document.getElementById('finalizeStatus');
+    if (el) el.textContent = (STAGE_LABELS[stage] || stage || 'Finalizing').toUpperCase();
+    return;
+  }
+  // First time, OR job changed, OR stage transitioned — rebuild the wrapper
+  // (preserves the canvas if jobId matches by setting STATE.spriteJobId).
+  const sameJob = STATE.spriteJobId === jobId
+    && document.getElementById('previewCanvas');
+  STATE.spriteJobId = jobId;
+  STATE.spriteOverlayKey = overlayKey;
+  const stageLabel = (STAGE_LABELS[stage] || stage || 'Finalizing').toUpperCase();
+
+  if (!sameJob) {
+    const vp = document.getElementById('mainViewport');
+    vp.innerHTML = `
+      <div class="preview-viewport blurred" id="previewViewport">
+        <canvas id="previewCanvas"></canvas>
+        <div class="finalize-overlay">
+          <div class="finalize-spinner"></div>
+          <div class="finalize-status" id="finalizeStatus">${stageLabel}</div>
+          <div class="finalize-hint">Finalizing your model — applying textures, generating UVs, baking maps.</div>
+        </div>
+      </div>
+    `;
+    STATE.spriteMeta = meta;
+    STATE.spriteFrame = 0;
+    const img = new Image();
+    img.onload = () => {
+      STATE.spriteImg = img;
+      drawSpriteFrame();
+      bindSpriteDrag();
+    };
+    img.onerror = (e) => {
+      console.error('Sprite atlas load failed', url, e);
+    };
+    img.src = url;
+  } else {
+    // Same job, just stage transitioned — toggle the .blurred class on the
+    // existing viewport and ensure the overlay is present + updated.
+    const vp = document.getElementById('previewViewport');
+    if (vp) {
+      vp.classList.add('blurred');
+      let overlay = vp.querySelector('.finalize-overlay');
+      if (!overlay) {
+        // Was unblurred preview — add overlay now
+        const hint = vp.querySelector('.preview-hint');
+        if (hint) hint.remove();
+        overlay = document.createElement('div');
+        overlay.className = 'finalize-overlay';
+        overlay.innerHTML = `
+          <div class="finalize-spinner"></div>
+          <div class="finalize-status" id="finalizeStatus">${stageLabel}</div>
+          <div class="finalize-hint">Finalizing your model — applying textures, generating UVs, baking maps.</div>
+        `;
+        vp.appendChild(overlay);
+      } else {
+        const lbl = overlay.querySelector('.finalize-status');
+        if (lbl) lbl.textContent = stageLabel;
+      }
+    }
+  }
 }
 function drawSpriteFrame(){
   if (!STATE.spriteImg || !STATE.spriteMeta) return;
@@ -925,6 +1034,29 @@ async function initThreeViewer(glbUrl){
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.target.set(0, 0, 0);
+  // Enable panning. Right-click + drag (mouse) or two-finger drag (trackpad)
+  // translates the camera target left/right/up/down. screenSpacePanning=true
+  // means panning is in screen-space (intuitive) rather than along the
+  // ground plane (Blender-style, confusing for non-3D users).
+  controls.enablePan = true;
+  controls.screenSpacePanning = true;
+  // Pan speed scales with distance to target so it feels consistent at any
+  // zoom level. Default 1.0 is fine for mouse but a bit sluggish on trackpad;
+  // 1.5 feels right.
+  controls.panSpeed = 1.5;
+  // Rebind: left mouse rotates, right pans, middle/wheel zooms — standard.
+  // The default mouse map already does this, but set it explicitly so it
+  // doesn't change if we update three.js later.
+  controls.mouseButtons = {
+    LEFT:   THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT:  THREE.MOUSE.PAN,
+  };
+  // Touch: one finger rotates, two fingers pan + pinch-zoom.
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN,
+  };
 
   // Direct lights for the PROXY mode (flat/points) only. PBR mode uses the
   // HDRI environment for lighting and these are largely dwarfed by it.
@@ -1352,22 +1484,17 @@ async function pollJob(jobId){
 function handleJobUpdate(j){
   setProgress(true, j.stage, j.step || 0, j.total_steps || 0);
 
-  if (j.status === 'preview_ready' && j.sprite_meta && j.preview_url) {
-    showSpritePreview(j.sprite_meta, j.preview_url, j.job_id);
-    const canAfford = STATE.user && STATE.user.tokens >= COSTS.finalize;
-    const approveBtn = canAfford
-      ? `<button class="btn btn-primary" onclick="approveJob('${j.job_id}')">
-           Approve & Finalize <span class="cost">+${COSTS.finalize} tokens</span>
-         </button>`
-      : `<button class="btn" disabled title="Not enough tokens for finalize">
-           Insufficient tokens <span class="cost">(need ${COSTS.finalize})</span>
-         </button>`;
-    setActionBar(`
-      ${approveBtn}
-      <button class="btn btn-danger" onclick="discardJob('${j.job_id}')">Discard</button>
-    `);
-    setProgress(false);
-  } else if (j.status === 'done' && j.glb_url) {
+  // Under auto-finalize, preview_ready is a transient state — the worker
+  // immediately advances it to finalize_queued, and on the next poll we'll
+  // see that. But the sprite preview/url IS available on the job result,
+  // so we display it (blurred + overlay) during finalize stages so the
+  // user has something to look at while waiting for the GLB.
+  const hasPreviewArt = j.sprite_meta && j.preview_url;
+  const inFinalize = ['finalize_queued','running_finalize',
+    'finalize_fill_holes','finalize_prepare_mesh','finalize_uv_unwrap',
+    'finalize_bake_export','finalize_uploading'].includes(j.stage);
+
+  if (j.status === 'done' && j.glb_url) {
     showGlbViewer(j.glb_url);
     setActionBar(`
       <a class="btn btn-primary" href="${j.glb_url}" download="model_${j.job_id}.glb">⬇ Download GLB</a>
@@ -1378,8 +1505,6 @@ function handleJobUpdate(j){
   } else if (j.status === 'failed') {
     toast('Generation failed: ' + (j.error || 'unknown error'), 'error', 6000);
     setProgress(false);
-    // Retry button uses the original input image (still in R2) and the same
-    // params. Costs another TOKENS_PER_GEN since it's a fresh gen on the GPU.
     const canRetry = STATE.user && STATE.user.tokens >= COSTS.gen;
     setActionBar(`
       ${canRetry
@@ -1393,6 +1518,21 @@ function handleJobUpdate(j){
   } else if (j.status === 'discarded') {
     setProgress(false);
     setActionBar(`<button class="btn" onclick="newGen()">+ New generation</button>`);
+  } else if (hasPreviewArt && (inFinalize || j.status === 'preview_ready')) {
+    // Show the preview (blurred + finalize-status overlay) during the
+    // finalize wait. User sees the rough shape immediately, knows the
+    // good render is coming.
+    showSpritePreviewBlurred(j.sprite_meta, j.preview_url, j.job_id, j.stage);
+    setActionBar(`
+      <button class="btn btn-danger" onclick="discardJob('${j.job_id}')">Cancel</button>
+    `);
+  } else {
+    // Still in early stages (sampling). Show a placeholder if no viewport
+    // is currently active. Don't spam the action bar with cancel since the
+    // queue overlay has a × per-job already.
+    setActionBar(`
+      <button class="btn btn-danger" onclick="discardJob('${j.job_id}')">Cancel</button>
+    `);
   }
 }
 async function refreshTokens(){
@@ -1465,13 +1605,15 @@ function newGen(){
 }
 
 // ────────────────────────────────────────────────────────────
-// Queue overlay (top-right) — polls /api/trellis/jobs
+// Queue panel — draggable, minimizable, polls /api/trellis/jobs
 // ────────────────────────────────────────────────────────────
 let _lastQueueSig = '';
 let _seenJobIds = new Set();
 async function pollQueue(){
   if (!STATE.user) {
-    document.getElementById('queueOverlay').innerHTML = '';
+    document.getElementById('queueBody').innerHTML = '';
+    document.getElementById('queueCount').textContent = '0';
+    document.getElementById('queuePanel').classList.add('empty');
     _lastQueueSig = '';
     _seenJobIds.clear();
     return;
@@ -1483,33 +1625,38 @@ async function pollQueue(){
   } catch(e) {}
 }
 function renderQueue(jobs){
-  // Build a signature of the queue state. If unchanged since last render,
-  // skip rebuilding the DOM — this prevents the animate-in flicker that
-  // happens every poll cycle.
+  const panel = document.getElementById('queuePanel');
+  // Hide entire panel if nothing to show
+  if (jobs.length === 0) {
+    panel.classList.add('empty');
+    _lastQueueSig = '';
+    return;
+  }
+  panel.classList.remove('empty');
+  document.getElementById('queueCount').textContent = String(jobs.length);
+
+  // Skip rebuild if nothing changed (prevents animate-in flicker)
   const sig = jobs.map(j => `${j.id}:${j.stage}:${j.step}:${j.total_steps}:${j.status}`).join('|');
   if (sig === _lastQueueSig) return;
   _lastQueueSig = sig;
 
-  const el = document.getElementById('queueOverlay');
-  el.innerHTML = jobs.map(j => {
-    // Overall progress across the pipeline, same logic as the main bar.
+  const body = document.getElementById('queueBody');
+  body.innerHTML = jobs.map(j => {
+    // Overall progress across the pipeline, monotonic across stages.
     const stageDef = PIPELINE_STAGES.find(s => s.key === j.stage);
     let pct = 0;
     if (stageDef) {
       const localPct = (j.total_steps > 0) ? (j.step || 0) / j.total_steps : 0;
       pct = Math.min(98, 100 * (stageDef.cum + stageDef.weight * localPct) / PIPELINE_TOTAL_WEIGHT);
-    } else if (j.status === 'preview_ready') {
-      pct = 100;  // Awaiting user action — pipeline complete for preview group
     } else if (j.status === 'done') {
       pct = 100;
     }
-    const isPreviewReady = j.status === 'preview_ready';
     const stageLabel = STAGE_LABELS[j.stage] || j.stage || j.status;
-    // Substep info if we have it ("step 3/8")
     const substep = (j.total_steps > 0)
       ? `<span style="color:var(--text-muted);font-size:9px"> · ${j.step || 0}/${j.total_steps}</span>`
       : '';
-    const showThis = STATE.currentJobId === j.id ? '' :
+    const isCurrent = STATE.currentJobId === j.id;
+    const focusBtn = isCurrent ? '' :
       `<button class="qbtn" onclick="loadExistingJob('${j.id}')">View</button>`;
     const isNew = !_seenJobIds.has(j.id);
     _seenJobIds.add(j.id);
@@ -1517,7 +1664,7 @@ function renderQueue(jobs){
       ? `<img class="qthumb" src="${j.thumb_url}" alt="" onerror="this.style.display='none'">`
       : `<div class="qthumb qthumb-empty"></div>`;
     return `
-      <div class="queue-item${isNew ? ' new' : ''}">
+      <div class="queue-item${isNew ? ' new' : ''}${isCurrent ? ' current' : ''}">
         <div class="top">
           ${thumb}
           <div class="qmeta">
@@ -1527,21 +1674,67 @@ function renderQueue(jobs){
         </div>
         <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
         <div class="actions">
-          ${showThis}
-          ${isPreviewReady ? `<button class="qbtn approve" onclick="approveJob('${j.id}')">Approve</button>` : ''}
-          <button class="qbtn" onclick="discardJob('${j.id}')">×</button>
+          ${focusBtn}
+          <button class="qbtn" onclick="discardJob('${j.id}')" title="Cancel job">×</button>
         </div>
       </div>
     `;
   }).join('');
 
-  // Prune _seenJobIds of jobs that are no longer present so the next time
-  // they appear (resubmit, etc.) they animate in fresh.
+  // Prune _seenJobIds of jobs that are no longer present
   const present = new Set(jobs.map(j => j.id));
   for (const id of [..._seenJobIds]) {
     if (!present.has(id)) _seenJobIds.delete(id);
   }
 }
+function toggleQueueMinimized(){
+  const panel = document.getElementById('queuePanel');
+  panel.classList.toggle('minimized');
+  document.getElementById('queueMinBtn').textContent =
+    panel.classList.contains('minimized') ? '□' : '_';
+}
+
+// Make the queue panel draggable from its header. Position is stored on
+// STATE.queuePos so it persists across re-renders. Uses pointer events for
+// trackpad + mouse + touch.
+function initQueueDrag(){
+  const panel = document.getElementById('queuePanel');
+  const header = document.getElementById('queuePanelHeader');
+  if (!panel || !header) return;
+  let dragging = false, startX = 0, startY = 0, panelStartX = 0, panelStartY = 0;
+  header.addEventListener('pointerdown', (e) => {
+    // Don't start a drag if the user clicked on a button inside the header
+    if (e.target.closest('button')) return;
+    dragging = true;
+    header.classList.add('dragging');
+    header.setPointerCapture(e.pointerId);
+    const rect = panel.getBoundingClientRect();
+    startX = e.clientX;
+    startY = e.clientY;
+    panelStartX = rect.left;
+    panelStartY = rect.top;
+    // Switch from right:14px to left coordinates so we can move both axes
+    panel.style.right = 'auto';
+  });
+  header.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const newX = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, panelStartX + dx));
+    const newY = Math.max(8, Math.min(window.innerHeight - 60, panelStartY + dy));
+    panel.style.left = newX + 'px';
+    panel.style.top = newY + 'px';
+  });
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    header.classList.remove('dragging');
+    try { header.releasePointerCapture(e.pointerId); } catch {}
+  };
+  header.addEventListener('pointerup', endDrag);
+  header.addEventListener('pointercancel', endDrag);
+}
+initQueueDrag();
 async function loadExistingJob(jobId){
   STATE.currentJobId = jobId;
   document.getElementById('emptyState')?.remove();
@@ -1874,6 +2067,7 @@ Object.assign(window, {
   approveJob, discardJob, loadExistingJob, newGen,
   randomSeed, clearSeed, applyPreset,
   retryJob, toggleHistory, loadMoreHistory, loadFromHistory,
+  toggleQueueMinimized,
 });
 Object.defineProperty(window, '_glbViewer', {
   get(){ return _glbViewer; },
