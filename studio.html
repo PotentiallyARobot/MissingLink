@@ -3099,10 +3099,89 @@ function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.
 // while the user is uploading and picking a pose, not after they click
 // Generate. Worker debounces per-user to one ping per 5 min, so calling this
 // liberally (checkAuth, onfocus, etc.) is safe.
+//
+// The worker now actually wakes Modal (hits the GPU's /health endpoint).
+// If the container was scaled down (30 min idle), the user gets a
+// one-time thank-you bonus of 300 tokens. We surface that with a modal
+// so the user understands why their balance jumped — silent token
+// changes feel buggy.
 async function warmupGpu(){
     try{
-        await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
+        const r = await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
+        const d = await r.json().catch(() => ({}));
+        if (!d.ok) return;
+        // Reflect the new token balance in the UI immediately. Bonus
+        // grants happen server-side; without this the header still
+        // shows the old number until the next /status poll lands.
+        if (d.tokens !== undefined && _user) {
+            _user.tokens = d.tokens;
+            const tc = $('tokenCount');
+            if (tc) tc.textContent = d.tokens;
+        }
+        // Force a fresh status poll so the badge flips from 'sleeping'
+        // / 'cold' to 'warming' immediately. Without this the user
+        // sees stale state until the next 5s poll cycle, which feels
+        // unresponsive after they explicitly clicked Generate.
+        if (d.wake_dispatched && typeof pollStatus === 'function') {
+            pollStatus();
+        }
+        // First-time cold-start bonus — 300 tokens for the wait. Show a
+        // thank-you modal so the user understands the token jump and
+        // knows the GPU is currently waking up. Don't dismiss the
+        // modal automatically — let the user close it when they've
+        // read the message.
+        if (d.bonus_granted && d.bonus_granted > 0) {
+            showBonusModal(d.bonus_granted);
+        } else if (d.was_cold) {
+            // Repeat cold-starts (after the bonus was used) just get a
+            // small toast — they already know how this works.
+            showNotif('GPU is waking up — first generation takes ~90 seconds.', 'info');
+        }
     }catch(e){ /* fire-and-forget — silent failure is fine */ }
+}
+
+// One-time cold-start bonus modal. Tells the user we noticed they're
+// triggering a wake-up, gives them 300 tokens for the inconvenience,
+// and previews what they're about to wait for.
+function showBonusModal(amount){
+    // Build the modal lazily so it doesn't add HTML weight to pages
+    // where it's never shown. Same dark-themed visual language as
+    // the existing buy-tokens modal.
+    let m = document.getElementById('bonusModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'bonusModal';
+        m.className = 'modal';
+        m.innerHTML = `
+            <div class="modal-card" style="max-width:440px">
+                <div style="font-size:42px;text-align:center;margin-bottom:8px">🎁</div>
+                <h2 style="text-align:center;margin:0 0 12px;color:var(--gold);letter-spacing:-.3px">
+                    Thanks for your patience!
+                </h2>
+                <p style="margin:0 0 14px;line-height:1.55;color:var(--text-2)">
+                    The GPU is waking up — this takes about 90 seconds. As a
+                    thank-you for triggering the cold start, we've added
+                    <span style="color:var(--gold);font-weight:700" id="bonusAmount">300</span>
+                    tokens to your account.
+                </p>
+                <p style="margin:0 0 18px;line-height:1.55;color:var(--text-muted);font-size:13px">
+                    You can already start composing your prompt and uploading
+                    images — your generation will run as soon as the GPU is
+                    ready.
+                </p>
+                <button class="modal-btn primary" onclick="closeBonusModal()" style="width:100%">
+                    Got it — let's go
+                </button>
+            </div>`;
+        document.body.appendChild(m);
+    }
+    const amt = document.getElementById('bonusAmount');
+    if (amt) amt.textContent = String(amount);
+    m.classList.add('open');
+}
+function closeBonusModal(){
+    const m = document.getElementById('bonusModal');
+    if (m) m.classList.remove('open');
 }
 
 // ── Email/password auth form ──
@@ -3488,11 +3567,19 @@ function updateHeaderStatusBadge(connected){
             text = 'GPU warming';
         }
         label.textContent = text;
+    } else if (state === 'sleeping') {
+        // GPU was alive recently (within 24h) but has scaled down after
+        // 30 min idle. Communicate that this is a temporary state, not
+        // a hard failure — clicking Generate will wake it.
+        dot.className = 'dot cold';
+        label.textContent = 'GPU sleeping';
     } else {
         // Cold OR unknown — both render as "Connecting…". Unknown happens
         // briefly on page load before the first /status poll resolves.
+        // Truly cold (never seen) shows "GPU offline" so the user knows
+        // they need to click Generate to wake it.
         dot.className = 'dot cold';
-        label.textContent = 'Connecting…';
+        label.textContent = state === 'cold' ? 'GPU offline' : 'Connecting…';
     }
     renderStartupOverlay();
 }
@@ -3512,16 +3599,20 @@ let _startupFirstSeen = null;
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
-    // Only show the cold-boot overlay during ACTIVE container setup —
-    // signaled by a real startup_stage that hasn't reached 'ready' yet.
-    // Relying on _gpuState.state (which flips to 'cold' after ~30s of
-    // inactivity between jobs) produced false cold-boot flashes in the
-    // gap between consecutive jobs, when the container is actually alive
-    // and about to pick up the next task.
+    // Show the cold-boot overlay whenever Modal is actively booting:
+    //   1) there's a real startup_stage that hasn't reached 'ready' yet, OR
+    //   2) the worker says state='warming' (warmup_at recent, no
+    //      startup heartbeat yet — typical of the 5-15s gap between
+    //      our /warmup call landing and Modal's first @modal.enter()
+    //      heartbeat).
+    // This prevents the user from staring at an empty stage during
+    // the brief pre-stage window — they always see the overlay if the
+    // GPU is on its way up.
     const stage = _gpuState.startup_stage;
     const stageAge = _gpuState.startup_age_s || 0;
     const inStartup = !!stage && stage !== 'ready' && stageAge < 600;
-    const shouldShow = inStartup;
+    const inWarming = _gpuState.state === 'warming';
+    const shouldShow = inStartup || inWarming;
 
     if (!shouldShow) {
         overlay.style.display = 'none';
@@ -4965,6 +5056,19 @@ async function doGenerate(){
     if (activeCount >= MAX_QUEUED) {
         showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
         return;
+    }
+
+    // GPU wake — if the container is sleeping (idle scaledown) or we
+    // think it's cold, fire the warmup endpoint to bring it back up.
+    // The job submission below proceeds normally; Modal's autoscaler
+    // will boot the container and then dispatch the queued job. The
+    // user sees "GPU starting" via the status badge + cold-boot
+    // overlay during the ~90s spin-up.
+    //
+    // We only call warmup for Qwen-driven jobs (camera/edit). Create
+    // mode uses gpt-image-2 directly which doesn't need our GPU warm.
+    if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') {
+        warmupGpu();
     }
 
     let payload, thumbUrl;
@@ -6654,6 +6758,12 @@ async function generateBatchEdits(){
     if (activeCount + selected.length > MAX_QUEUED) {
         showNotif(`Not enough queue slots. You need ${selected.length} free, have ${MAX_QUEUED - activeCount}.`, 'error');
         return;
+    }
+
+    // GPU wake — same logic as doGenerate. Batch jobs all hit Qwen,
+    // so we want the container alive before they start dequeuing.
+    if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') {
+        warmupGpu();
     }
 
     // Seed / settings shared across the whole batch
