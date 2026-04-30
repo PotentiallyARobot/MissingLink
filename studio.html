@@ -3226,63 +3226,20 @@ async function warmupGpu(){
         if (d.wake_dispatched && typeof pollStatus === 'function') {
             pollStatus();
         }
-        // First-time cold-start bonus — 300 tokens for the wait. Show a
-        // thank-you modal so the user understands the token jump and
-        // knows the GPU is currently waking up. Don't dismiss the
-        // modal automatically — let the user close it when they've
-        // read the message.
+        // First-time cold-start bonus — 300 tokens for triggering the
+        // wake-up. Surface this as a non-blocking toast so the user
+        // sees the credit happen but isn't interrupted from their
+        // workflow. The startup overlay already shows the wake-up
+        // progress (loading model weights, compiling kernels, etc.)
+        // — no need for a second piece of UI saying the same thing.
         if (d.bonus_granted && d.bonus_granted > 0) {
-            showBonusModal(d.bonus_granted);
+            showNotif(`+${d.bonus_granted} tokens credited — thanks for the wait while the GPU starts up.`, 'success');
         } else if (d.was_cold) {
             // Repeat cold-starts (after the bonus was used) just get a
             // small toast — they already know how this works.
             showNotif('GPU is waking up — first generation takes ~90 seconds.', 'info');
         }
     }catch(e){ /* fire-and-forget — silent failure is fine */ }
-}
-
-// One-time cold-start bonus modal. Tells the user we noticed they're
-// triggering a wake-up, gives them 300 tokens for the inconvenience,
-// and previews what they're about to wait for.
-function showBonusModal(amount){
-    // Build the modal lazily so it doesn't add HTML weight to pages
-    // where it's never shown. Same dark-themed visual language as
-    // the existing buy-tokens modal.
-    let m = document.getElementById('bonusModal');
-    if (!m) {
-        m = document.createElement('div');
-        m.id = 'bonusModal';
-        m.className = 'modal';
-        m.innerHTML = `
-            <div class="modal-card" style="max-width:440px">
-                <div style="font-size:42px;text-align:center;margin-bottom:8px">🎁</div>
-                <h2 style="text-align:center;margin:0 0 12px;color:var(--gold);letter-spacing:-.3px">
-                    Thanks for your patience!
-                </h2>
-                <p style="margin:0 0 14px;line-height:1.55;color:var(--text-2)">
-                    The GPU is waking up — this takes about 90 seconds. As a
-                    thank-you for triggering the cold start, we've added
-                    <span style="color:var(--gold);font-weight:700" id="bonusAmount">300</span>
-                    tokens to your account.
-                </p>
-                <p style="margin:0 0 18px;line-height:1.55;color:var(--text-muted);font-size:13px">
-                    You can already start composing your prompt and uploading
-                    images — your generation will run as soon as the GPU is
-                    ready.
-                </p>
-                <button class="modal-btn primary" onclick="closeBonusModal()" style="width:100%">
-                    Got it — let's go
-                </button>
-            </div>`;
-        document.body.appendChild(m);
-    }
-    const amt = document.getElementById('bonusAmount');
-    if (amt) amt.textContent = String(amount);
-    m.classList.add('open');
-}
-function closeBonusModal(){
-    const m = document.getElementById('bonusModal');
-    if (m) m.classList.remove('open');
 }
 
 // ── Email/password auth form ──
