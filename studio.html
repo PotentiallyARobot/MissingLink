@@ -71,6 +71,15 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .size-btn{flex:1 1 0;min-width:60px;padding:8px 4px;background:none;border:none;border-radius:4px;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;cursor:pointer;transition:all .15s;text-align:center}
 .size-btn:hover{color:var(--text)}
 .size-btn.active{background:var(--gold);color:var(--black)}
+/* Disabled state — used for options the API technically accepts but
+   doesn't actually support on the chosen model (e.g. transparent
+   background on gpt-image-2). The button stays visible so the user
+   can see the option exists but is greyed-out, and the tooltip
+   explains why. */
+.size-btn.disabled{
+    opacity:.4;cursor:not-allowed;pointer-events:auto
+}
+.size-btn.disabled:hover{color:var(--text-muted)}
 
 /* Custom W×H input row — small numeric fields styled like the rest of
    the studio's input chrome. Sized to read alongside the size-btn row
@@ -87,6 +96,31 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     transition:border-color .12s
 }
 .size-input:focus{outline:none;border-color:var(--gold)}
+
+/* Model dropdown — full-width <select> styled to match the dark
+   chrome elsewhere in the studio. We use a native <select> rather
+   than a custom popover because (a) accessibility comes free, (b)
+   keyboard navigation works without us writing it, and (c) the
+   labels we want to show ("🎨 Quality — gpt-image-2 (best, default)")
+   are too long for chip buttons. The arrow is the OS default; we
+   skip a custom one to keep the platform consistency. */
+.model-select{
+    width:100%;padding:9px 10px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:6px;color:var(--text);
+    font-family:var(--font-body);font-size:13px;font-weight:500;
+    cursor:pointer;transition:border-color .12s;
+    /* Reset some of the OS chrome but keep the native arrow so the
+       affordance reads as a dropdown without us drawing one. */
+    -webkit-appearance:none;-moz-appearance:none;appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%236c6c78' d='M6 8L0 0h12z'/></svg>");
+    background-repeat:no-repeat;
+    background-position:right 12px center;
+    padding-right:32px;
+}
+.model-select:hover{border-color:var(--border-strong)}
+.model-select:focus{outline:none;border-color:var(--gold)}
+.model-select option{background:var(--surface-2);color:var(--text);padding:6px}
+
 .size-hint{
     font-family:var(--font-mono);font-size:9px;color:var(--text-muted);
     letter-spacing:.5px;margin-top:6px;line-height:1.4
@@ -2236,6 +2270,27 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🤖</span> MODEL</div>
+        <!-- Model selector — three GPT Image variants with meaningfully
+             different cost/feature profiles. The dropdown is the right
+             affordance here (vs. a chip row): the labels are long
+             ("Quality (gpt-image-2)" doesn't fit in a 60px chip), and
+             a dropdown reads as a "less common" choice — most users
+             will leave the default and never expand it. The native
+             <select> styling matches the rest of the studio's dark
+             chrome. Model choice gates which size/background options
+             are valid, which the JS handles when the value changes. -->
+        <select id="genModelSelect" class="model-select" onchange="genSetModel(this.value)">
+            <option value="gpt-image-2">🎨 Quality — gpt-image-2 (best, default)</option>
+            <option value="gpt-image-1-mini">⚡ Fast — gpt-image-1-mini (~4× cheaper)</option>
+            <option value="gpt-image-1.5">🪟 Transparent — gpt-image-1.5 (alpha PNG support)</option>
+        </select>
+        <div class="size-hint" id="genModelHint">
+            Latest model. Best photorealism + text rendering.
+        </div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">📐</span> OUTPUT SIZE</div>
         <!-- gpt-image-2 supports any custom size where: both edges
              are multiples of 16, max edge 3840px, aspect ratio ≤ 3:1,
@@ -2280,13 +2335,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="sec-label"><span class="icon">⭐</span> QUALITY</div>
         <!-- Quality controls cost vs detail tradeoff. low = fast, cheap,
              rough; high = slow, expensive, refined; auto = let the model
-             pick based on prompt complexity. We default to high since
-             these are 100-token (~$0.02) calls — users hitting the API
-             generally want the better outputs. -->
+             pick based on prompt complexity.
+             Default: medium. The "high" tier roughly DOUBLES wall-clock
+             time vs medium for marginal quality gains on typical prompts.
+             Users who want the slow refined output explicitly opt in by
+             clicking the High chip — that decision should be conscious,
+             not the default everyone pays the latency cost on. -->
         <div class="size-toggle">
             <button class="size-btn" data-quality="low" onclick="genSetQuality('low')">Low</button>
-            <button class="size-btn" data-quality="medium" onclick="genSetQuality('medium')">Medium</button>
-            <button class="size-btn active" data-quality="high" onclick="genSetQuality('high')">High</button>
+            <button class="size-btn active" data-quality="medium" onclick="genSetQuality('medium')">Medium</button>
+            <button class="size-btn" data-quality="high" onclick="genSetQuality('high')">High</button>
             <button class="size-btn" data-quality="auto" onclick="genSetQuality('auto')">Auto</button>
         </div>
     </div>
@@ -2314,10 +2372,53 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🌫️</span> BACKGROUND</div>
+        <!-- Background transparency. gpt-image-2 itself does NOT support
+             transparent backgrounds (per OpenAI's official docs as of
+             April 2026 — gpt-image-1.5 still does). We expose the
+             control for completeness and to match the API contract,
+             but the Transparent button is disabled with a tooltip
+             explaining this. Auto + Opaque both work and produce
+             different aesthetic results: Auto lets the model pick
+             based on prompt context; Opaque forces a solid background
+             which is useful for product shots. -->
+        <div class="size-toggle">
+            <button class="size-btn active" data-bg="auto" onclick="genSetBackground('auto')" title="Model picks based on prompt">Auto</button>
+            <button class="size-btn" data-bg="opaque" onclick="genSetBackground('opaque')" title="Force a solid background — good for product shots">Opaque</button>
+            <button class="size-btn disabled" data-bg="transparent" onclick="genSetBackground('transparent')" title="Transparent only available on the Transparent model (switch above)">Transparent</button>
+        </div>
+    </div>
+
+    <!-- Moderation: hardcoded to 'low' (most permissive setting OpenAI
+         allows on gpt-image-2). 'low' still blocks clearly-disallowed
+         content per OpenAI policy — there's no "off" knob — but lets
+         through tasteful figure work, horror imagery, mild violence,
+         and other borderline material that 'auto' over-filters. We
+         removed the user-facing toggle since the choice is now made
+         once at the app level: this is a creative tool, the user is
+         opted into permissive mode by default. The _generateModeration
+         state variable still exists so the request body is unchanged. -->
+
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🔢</span> NUMBER OF IMAGES
+            <span class="sec-label-count" id="genCountLabel">1</span>
+        </div>
+        <!-- Number of images per generation. gpt-image-2 supports up to 10,
+             but we cap at 4 — beyond that the request body gets unwieldy,
+             token costs climb fast (each image is 100 tokens), and the
+             worker timeout (currently 6 min for high-quality) becomes
+             tight. The cost line below the CREATE button updates live as
+             the user moves this slider. -->
+        <input type="range" id="genCountSlider" min="1" max="4" value="1" step="1"
+               oninput="genUpdateCount()" style="width:100%">
+        <div class="size-hint">More images = same prompt, different variations · 1-4</div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
         <button class="gen-btn" id="btnGenerateMode" onclick="doGenerateMode()">✨ CREATE</button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
             <span style="color:var(--text-muted)">Cost</span>
-            <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.02</span>
+            <span style="color:var(--gold);font-weight:700" id="genCostLabel">🪙 100 tokens · ~$0.02</span>
         </div>
     </div>
 
@@ -4021,6 +4122,13 @@ function setInputImage(id,url,w,h){
 // Both persist to localStorage so a refresh doesn't wipe the user's
 // half-built generation setup.
 let _generateRefs = [null, null, null, null];
+// Model selection — three GPT Image variants exposed via the dropdown.
+// Default: gpt-image-2 (best quality, current behavior). Switching to
+// gpt-image-1-mini gives ~4× cheaper output for high-volume / draft
+// workflows; switching to gpt-image-1.5 enables transparent-background
+// PNG output (which gpt-image-2 doesn't support). The Background
+// section's Transparent button enables/disables based on this.
+let _generateModel = 'gpt-image-2';
 // Size handling has two modes: a preset string (1024x1024 etc.) or
 // 'custom' which delegates to _generateCustomW × _generateCustomH.
 // At submit time, genGetEffectiveSize() resolves the active state to
@@ -4028,9 +4136,26 @@ let _generateRefs = [null, null, null, null];
 let _generateSize = '1024x1024';
 let _generateCustomW = 1024;
 let _generateCustomH = 1024;
-let _generateQuality = 'high';
+let _generateQuality = 'medium';
 let _generateFormat = 'png';
 let _generateCompression = 85;
+// Background — gpt-image-2 supports auto / opaque (NOT transparent).
+// Only gpt-image-1.5 supports transparent backgrounds. The Transparent
+// button enables when the user picks gpt-image-1.5 from the model
+// dropdown above.
+let _generateBackground = 'auto';
+// Moderation — hardcoded to 'low' (most permissive setting OpenAI
+// accepts on the GPT Image family). 'low' still blocks clearly
+// disallowed content per OpenAI policy (no "off" mode exists), but
+// allows tasteful figure studies, horror, mild violence, and other
+// borderline content that 'auto' over-filters. Persisted to
+// localStorage like the others; if the schema is ever extended to
+// expose a UI toggle again, this state is ready.
+let _generateModeration = 'low';
+// n: number of images per request. 1-4. The worker caps at 4 too;
+// gpt-image-2 supports up to 10 but we don't need more than 4 for
+// our UX (more would crowd the stage in Create's single-image flow).
+let _generateCount = 1;
 
 function genSlotFileChange(i){
     const inp = $('genSlotFile' + i);
@@ -4173,6 +4298,7 @@ function genSetSize(size){
     const cs = $('genCustomSize');
     if (cs) cs.style.display = size === 'custom' ? '' : 'none';
     persistGenerateState();
+    if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
 }
 
 // Validate the current custom W/H inputs and update warning UI. Called
@@ -4210,6 +4336,9 @@ function genUpdateCustomSize(){
         _generateCustomW = w;
         _generateCustomH = h;
         persistGenerateState();
+        // Custom dim changes can move cost a lot (e.g. 1024² → 4K is
+        // ~4× the pixels), so refresh the cost line live.
+        if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
     }
 }
 
@@ -4219,6 +4348,9 @@ function genSetQuality(q){
         b.classList.toggle('active', b.dataset.quality === q);
     });
     persistGenerateState();
+    // Quality is the biggest cost lever (low → high is ~35×), so the
+    // user definitely wants the cost line to reflect their pick.
+    if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
 }
 
 function genSetFormat(f){
@@ -4241,6 +4373,159 @@ function genUpdateCompression(){
     persistGenerateState();
 }
 
+// Model capability matrix — what each GPT Image variant supports.
+// Used by genSetModel to enable/disable downstream controls (e.g.
+// the Transparent background button only on gpt-image-1.5) and by
+// the cost helper to swap in the right pricing anchors.
+const _GEN_MODEL_CAPS = {
+    'gpt-image-2': {
+        supportsTransparent: false,
+        hint: 'Latest model. Best photorealism + text rendering.',
+    },
+    'gpt-image-1-mini': {
+        supportsTransparent: false,
+        hint: 'About 4× cheaper than Quality. Great for drafts and high-volume work.',
+    },
+    'gpt-image-1.5': {
+        supportsTransparent: true,
+        hint: 'Slightly cheaper than Quality at high tier. Only model that supports transparent PNGs.',
+    },
+};
+
+// Switch the active GPT Image model. Updates the dropdown's value if
+// it's out of sync (called from restore), updates the hint text below
+// the dropdown, refreshes the Transparent-background button's enabled
+// state (it's only valid on gpt-image-1.5), and re-prices.
+function genSetModel(m){
+    if (!_GEN_MODEL_CAPS[m]) m = 'gpt-image-2';  // unknown → default
+    _generateModel = m;
+    const sel = $('genModelSelect');
+    if (sel && sel.value !== m) sel.value = m;
+    const hint = $('genModelHint');
+    if (hint) hint.textContent = _GEN_MODEL_CAPS[m].hint;
+    // Enable / disable the Transparent background chip. Disabled chips
+    // get the .disabled class which dims them and blocks clicks via
+    // onclick="return false".
+    const transparentBtn = document.querySelector('.size-toggle .size-btn[data-bg="transparent"]');
+    if (transparentBtn) {
+        const allowed = _GEN_MODEL_CAPS[m].supportsTransparent;
+        transparentBtn.classList.toggle('disabled', !allowed);
+        // Update tooltip so the user knows when it becomes available.
+        transparentBtn.title = allowed
+            ? 'Transparent background — saved as PNG with alpha'
+            : 'Transparent only available on the Transparent model (switch above)';
+        // If the user was on transparent and they swapped to a non-
+        // supporting model, snap their background back to auto so a
+        // generation doesn't fail upstream.
+        if (!allowed && _generateBackground === 'transparent') {
+            genSetBackground('auto');
+        }
+    }
+    persistGenerateState();
+    if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
+}
+
+// Background opaque/auto/transparent. Transparent is only honored when
+// the active model supports it (gpt-image-1.5). For the other models
+// the chip stays disabled in the UI; this function defends in depth
+// by no-op'ing if anyone calls it programmatically with a value the
+// current model can't handle.
+function genSetBackground(b){
+    if (b === 'transparent') {
+        const caps = _GEN_MODEL_CAPS[_generateModel];
+        if (!caps || !caps.supportsTransparent) return;  // model can't honor it
+    }
+    _generateBackground = b;
+    document.querySelectorAll('.size-toggle .size-btn[data-bg]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.bg === b);
+    });
+    persistGenerateState();
+}
+
+// Moderation strictness. The UI no longer exposes this — we hardcoded
+// to 'low' (most permissive) for all generations. Keeping the function
+// around so any future re-introduction of the toggle works without
+// code changes elsewhere; persistence + restore still wire it up.
+function genSetModeration(m){
+    _generateModeration = m;
+    document.querySelectorAll('.size-toggle .size-btn[data-mod]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mod === m);
+    });
+    persistGenerateState();
+}
+
+// Count slider — updates the visible count label, the cost line, and
+// the persisted state. Cost scales linearly with count since each
+// image is its own STUDIO_AI_TOKENS_GPT_IMAGE charge.
+function genUpdateCount(){
+    const slider = $('genCountSlider');
+    if (!slider) return;
+    _generateCount = Math.max(1, Math.min(4, parseInt(slider.value, 10) || 1));
+    const lbl = $('genCountLabel');
+    if (lbl) lbl.textContent = String(_generateCount);
+    genUpdateCostLabel();
+    persistGenerateState();
+}
+
+// Frontend cost calculator — mirrors the worker's gptImageTokenCost()
+// so the cost line under CREATE reflects the actual charge before the
+// user clicks. If the constants drift between the two, the worker is
+// the source of truth (it's what actually deducts) and the user might
+// see a small discrepancy until both are redeployed.
+//
+// Token economy: 1 token = $0.0005 ($5 = 10,000 tokens).
+//
+// Per-model anchors at 1024×1024 (low/medium/high USD per image):
+//   gpt-image-2:      0.006 / 0.053 / 0.211   (latest, default)
+//   gpt-image-1.5:    0.009 / 0.040 / 0.165   (transparent-capable)
+//   gpt-image-1-mini: 0.005 / 0.011 / 0.052   (cheapest, ~4× cheaper at high)
+//
+// Pixel scaling: power-law fit to OpenAI's 1024² → 4K anchors gives an
+// exponent of ~0.32. Same exponent for all three models — the pricing
+// architecture (token-based with sub-linear pixel scaling) is the same;
+// only the per-quality base changes. Clamp ratio to ≥1 so rectangular
+// outputs don't drop below the 1024² baseline. Safety markup 1.15×
+// covers input tokens + minor pricing volatility. Round up to nearest 5.
+const _GEN_MODEL_PRICING = {
+    'gpt-image-2':      { low: 0.006, medium: 0.053, high: 0.211, auto: 0.053 },
+    'gpt-image-1.5':    { low: 0.009, medium: 0.040, high: 0.165, auto: 0.040 },
+    'gpt-image-1-mini': { low: 0.005, medium: 0.011, high: 0.052, auto: 0.011 },
+};
+const _GEN_TOKEN_DOLLAR = 0.0005;
+const _GEN_PX_EXP = 0.32;
+const _GEN_SAFETY = 1.15;
+const _GEN_ROUND = 5;
+function genTokenCostFor(size, quality, model){
+    const m = _GEN_MODEL_PRICING[model] ? model : 'gpt-image-2';
+    let px = 1024 * 1024;
+    if (size && size !== 'auto') {
+        const match = String(size).match(/^(\d+)x(\d+)$/);
+        if (match) {
+            const w = parseInt(match[1], 10), h = parseInt(match[2], 10);
+            if (isFinite(w) && isFinite(h) && w > 0 && h > 0) px = w * h;
+        }
+    }
+    const baseUsd = _GEN_MODEL_PRICING[m][quality] || _GEN_MODEL_PRICING[m].medium;
+    const pxRatio = Math.max(1, px / (1024 * 1024));
+    const usd = baseUsd * Math.pow(pxRatio, _GEN_PX_EXP) * _GEN_SAFETY;
+    const raw = usd / _GEN_TOKEN_DOLLAR;
+    return Math.max(_GEN_ROUND, Math.ceil(raw / _GEN_ROUND) * _GEN_ROUND);
+}
+
+// Refresh the visible cost line under the CREATE button. Cost reflects
+// the resolved size + quality + model (so picking "high" doubles it,
+// picking 4K Custom multiplies it further, picking the Fast model
+// drops it ~4×), and scales by n.
+function genUpdateCostLabel(){
+    const lbl = $('genCostLabel');
+    if (!lbl) return;
+    const size = genGetEffectiveSize();
+    const perImage = genTokenCostFor(size, _generateQuality, _generateModel);
+    const tokens = perImage * _generateCount;
+    const dollars = (tokens * _GEN_TOKEN_DOLLAR).toFixed(2);
+    lbl.textContent = `🪙 ${tokens} tokens · ~$${dollars}${_generateCount > 1 ? ` · ${_generateCount} images` : ''}`;
+}
+
 // Resolve the active size selection to a wire-format string. Custom
 // mode → "WxH" from the custom inputs (already validated by
 // genUpdateCustomSize); preset mode → the preset string directly.
@@ -4257,12 +4542,16 @@ function persistGenerateState(){
         // Persist only the R2 refs — image bytes stay in R2, no localStorage bloat.
         localStorage.setItem('studio_generate_state', JSON.stringify({
             refs: _generateRefs,
+            model: _generateModel,
             size: _generateSize,
             customW: _generateCustomW,
             customH: _generateCustomH,
             quality: _generateQuality,
             format: _generateFormat,
             compression: _generateCompression,
+            background: _generateBackground,
+            moderation: _generateModeration,
+            count: _generateCount,
         }));
     } catch (e) {}
 }
@@ -4276,17 +4565,35 @@ function restoreGenerateState(){
             for (let i = 0; i < 4; i++) renderGenSlot(i);
             genUpdateCounter();
         }
+        if (typeof d.model === 'string' && _GEN_MODEL_CAPS[d.model]) {
+            _generateModel = d.model;
+        }
         if (typeof d.customW === 'number') _generateCustomW = d.customW;
         if (typeof d.customH === 'number') _generateCustomH = d.customH;
         if (typeof d.quality === 'string') _generateQuality = d.quality;
         if (typeof d.format === 'string') _generateFormat = d.format;
         if (typeof d.compression === 'number') _generateCompression = d.compression;
+        if (typeof d.background === 'string') {
+            // Restore transparent only if the restored model can honor it.
+            // Otherwise snap to auto so we don't fail upstream.
+            if (d.background === 'transparent') {
+                const caps = _GEN_MODEL_CAPS[_generateModel];
+                _generateBackground = (caps && caps.supportsTransparent) ? 'transparent' : 'auto';
+            } else {
+                _generateBackground = d.background;
+            }
+        }
+        if (typeof d.moderation === 'string') _generateModeration = d.moderation;
+        if (typeof d.count === 'number') _generateCount = Math.max(1, Math.min(4, d.count));
         if (typeof d.size === 'string') {
             _generateSize = d.size;
         }
         // Defer DOM updates — buttons may not exist in DOM yet at
         // first restore (this runs early on page init).
         requestAnimationFrame(() => {
+            // Apply model first — it gates the Transparent background
+            // chip's enabled state.
+            genSetModel(_generateModel);
             // Apply size selection and custom dim inputs.
             const wInput = $('genCustomW');
             const hInput = $('genCustomH');
@@ -4301,6 +4608,13 @@ function restoreGenerateState(){
             const cVal = $('genCompressionVal');
             if (cSlider) cSlider.value = String(_generateCompression);
             if (cVal) cVal.textContent = String(_generateCompression);
+            // Background + count.
+            genSetBackground(_generateBackground);
+            const countSlider = $('genCountSlider');
+            if (countSlider) countSlider.value = String(_generateCount);
+            const countLbl = $('genCountLabel');
+            if (countLbl) countLbl.textContent = String(_generateCount);
+            genUpdateCostLabel();
         });
     } catch (e) {}
 }
@@ -4333,7 +4647,28 @@ async function doGenerateMode(){
     // via History (every agent-image-gen call inserts a studio_jobs row).
     // This is different from Batch mode, which accumulates tiles.
     const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
-    const placeholderEstSec = refIds.length ? 90 : 60;
+    // Estimated wall-time for the gpt-image-2 call. Three factors compound:
+    //   1. Reference images: /edits is slower than /generations because
+    //      the model also encodes the input tokens at high fidelity.
+    //   2. Quality setting: 'high' is dramatically slower than 'low'/'medium'
+    //      due to the model's "thinking mode" being more aggressive at
+    //      high quality. Per OpenAI's pricing/perf table: low ≈ 15-30s,
+    //      medium ≈ 30-60s, high ≈ 60-180s, auto ≈ depends-on-prompt.
+    //   3. Custom (non-canonical) dimensions add a small reasoning overhead
+    //      since the model has to plan layout for an unfamiliar aspect.
+    // Pick the most pessimistic estimate that's still in the typical range
+    // — the bar caps at 90% so under-estimating is what triggers the
+    // "X over estimate" UX. The 'low' quality numbers are deliberately
+    // rounded up so the bar doesn't visibly stall when the call is faster.
+    const _qualityBaseSec = ({
+        low: 25,
+        medium: 50,
+        high: 90,
+        auto: 60,
+    })[_generateQuality] || 60;
+    const placeholderEstSec = refIds.length
+        ? Math.round(_qualityBaseSec * 1.7)   // ref-edit overhead
+        : _qualityBaseSec;
     const newPlaceholder = {
         id: placeholderId,
         url: '',
@@ -4373,7 +4708,13 @@ async function doGenerateMode(){
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 prompt,
-                n: 1,
+                // Which GPT Image model to use. The worker validates
+                // against an allow-list and falls back to gpt-image-2
+                // if unrecognized — so client bugs can't surface upstream.
+                model: _generateModel,
+                // Number of images per request — 1-4. Worker caps at 4
+                // for symmetry. Cost = per-image variable × n.
+                n: _generateCount,
                 // Resolve preset vs custom W×H. The worker validates again
                 // (and falls back to 1024² if anything's off) so client
                 // bugs here never escape OpenAI as 400s — they just get
@@ -4382,17 +4723,38 @@ async function doGenerateMode(){
                 quality: _generateQuality,
                 output_format: _generateFormat,
                 output_compression: _generateFormat === 'png' ? null : _generateCompression,
+                background: _generateBackground,
+                moderation: _generateModeration,
                 reference_image_ids: refIds,
             }),
-        }, refIds.length ? 270_000 : 130_000);
+            // Frontend timeout slightly above the worker's so the
+            // worker's AbortController fires first with a useful error
+            // (openai_error / detail) rather than us giving up first
+            // and turning a real upstream failure into "operation was
+            // aborted" with no signal about WHAT failed. Worker is:
+            //   ref + high  → 360s
+            //   ref + other → 240s
+            //   plain + high → 240s
+            //   plain + other → 120s
+            // Frontend adds 30s buffer to each.
+        }, refIds.length
+            ? (_generateQuality === 'high' ? 390_000 : 270_000)
+            : (_generateQuality === 'high' ? 270_000 : 150_000));
         const d = await r.json();
         if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
-        const img = (d.images || [])[0];
-        if (!img) throw new Error('no_image_returned');
-        // Replace the placeholder with the real image. Capture the prompt
-        // on the tile so it's visible on hover and in the focus stage —
-        // same metadata format as agent-generated tiles.
-        const newEntry = {
+        const allImages = Array.isArray(d.images) ? d.images : [];
+        if (!allImages.length) throw new Error('no_image_returned');
+        // Capture wall-clock duration so the focus-stage meta strip can
+        // show "23s" alongside the dimensions. We use the placeholder's
+        // _placeholderStartedAt rather than `Date.now() - startTimeBefore`
+        // because the placeholder push is the user-visible start point.
+        const elapsedSec = Math.round((Date.now() - newPlaceholder._placeholderStartedAt) / 1000);
+        // Build entries for every image in the response. When n=1, this
+        // is the simple single-image-replaces-placeholder case. When n>1,
+        // the first image replaces the placeholder and the rest get
+        // appended — producing a vertical stack in Create mode (single
+        // column, max-content rows, biggest first).
+        const newEntries = allImages.map(img => ({
             id: img.id, url: img.url,
             w: img.w, h: img.h,
             fname: img.filename || `${img.id}.png`,
@@ -4400,10 +4762,20 @@ async function doGenerateMode(){
             _genPrompt: prompt,
             _genModel: 'gpt-image-2',
             _genReferences: refIds,
-        };
+            _genElapsedSec: elapsedSec,
+            _genQuality: _generateQuality,
+        }));
         const idx = _batchInputs.findIndex(b => b.id === placeholderId);
-        if (idx !== -1) _batchInputs[idx] = newEntry;
-        else _batchInputs.push(newEntry);
+        if (idx !== -1) {
+            // Replace placeholder with first, append rest at same insertion point.
+            _batchInputs.splice(idx, 1, ...newEntries);
+        } else {
+            _batchInputs.push(...newEntries);
+        }
+        // Aliases used below — keep `img` pointing at the FIRST image so
+        // the rest of the success path (history sync, focus, etc.) reads
+        // the same way it did pre-n>1.
+        const img = allImages[0];
         renderBatchInputs();
         if (d.tokens_remaining !== undefined && _user) {
             _user.tokens = d.tokens_remaining;
@@ -4998,11 +5370,41 @@ document.addEventListener('keydown',e=>{
 async function useAsInput(){
     if(!lastOutputFilename) return;
     try{
+        // Create mode shortcut: the image is already in R2 (it's either
+        // a fresh generation or a restored history tile, both of which
+        // have a real upload_id). Re-uploading via genUploadToSlot would
+        // download the bytes, push them back to /upload, and create a
+        // duplicate row. Reuse the existing entry instead by reading
+        // the front-of-stage tile directly — same path the tile's ✨
+        // button takes (sendBatchInputToCreate). This is the lighter,
+        // faster, and DB-clean way to do it.
+        if (currentMode === 'generate') {
+            const tile = (_batchInputs || []).find(b => !b._placeholder);
+            if (tile) {
+                sendBatchInputToCreate(tile);
+                return;
+            }
+            // Fallback: if there's no tile but lastOutputFilename is
+            // set (unusual — would mean outImg has a URL but the
+            // _batchInputs got cleared), fall through to the upload
+            // path below.
+        }
         const r=await fetchT($('outImg').src,null,10000);
         const blob=await r.blob();
         const file=new File([blob],lastOutputFilename,{type:'image/png'});
-        if(currentMode==='camera') await uploadFile(file);
-        else {
+        if(currentMode==='camera') {
+            await uploadFile(file);
+        } else if(currentMode==='generate') {
+            // Create mode fallback path (no tile available — re-upload).
+            let t = _generateRefs.findIndex(s => s === null);
+            if (t === -1) {
+                t = 0;
+                showNotif('All 4 reference slots full — replacing slot 1.', 'info');
+            }
+            await genUploadToSlot(t, file);
+        } else {
+            // Edit mode: drop into the first empty edit slot (3-slot layout).
+            // Falls back to slot 0 if all are filled.
             let t=slots.findIndex(s=>s===null);
             if(t===-1) t=0;
             await uploadToSlot(t,file);
@@ -5552,6 +5954,15 @@ function renderBatchInputs(){
     // surface — generations land as tiles the user can refine.
     const inBatchMode = (typeof currentMode !== 'undefined' && (currentMode === 'batch' || currentMode === 'generate'));
     const hasActiveResults = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
+    // Create mode renders ONE image already — the focus stage would
+    // just add a "Back to grid" button pointing at a non-existent
+    // grid. Force-clear any focused id when we're in Create mode so
+    // the regular grid path takes over (which paints the single image
+    // full-stage via body.mode-create CSS).
+    const isCreateModeForFocus = (typeof currentMode !== 'undefined' && currentMode === 'generate');
+    if (isCreateModeForFocus && _batchFocusedId) {
+        _batchFocusedId = null;
+    }
     const focusedInp = _batchFocusedId
         ? _batchInputs.find(b => b.id === _batchFocusedId && !b._placeholder)
         : null;
@@ -5562,7 +5973,7 @@ function renderBatchInputs(){
     }
 
     // Decide which surface to show.
-    const showFocus = inBatchMode && !hasActiveResults && !!focusedInp;
+    const showFocus = inBatchMode && !hasActiveResults && !!focusedInp && !isCreateModeForFocus;
     const showGrid = inBatchMode && _batchInputs.length > 0 && !hasActiveResults && !showFocus;
 
     if (focusStage) {
@@ -5726,12 +6137,21 @@ function renderBatchInputs(){
                 <span class="bit-label-name">${displayName}</span>
             </div>
         `;
-        // Tile click → enter focused-stage view for that image. The grid
-        // hides and the single image takes over the canvas with a back
-        // button + quick actions. Clicking the focused image still opens
-        // the full-screen modal (the modal stays as a true zoom view).
-        // Selection moves to the bit-check checkbox at top-left.
+        // Tile click behavior depends on mode:
+        //   - Batch mode: enter the focus stage (single-image takeover
+        //     with "← Back to grid" button + quick actions). The grid
+        //     is real and worth going back to.
+        //   - Create mode: open the full-screen image modal directly.
+        //     Create's stage is already a single-image presentation —
+        //     the focus stage would just add a "Back to grid" button
+        //     pointing at a non-existent grid, which is confusing.
+        // Clicking the image still opens the full-screen modal in
+        // both cases; the difference is just the intermediate state.
         tile.onclick = (e) => {
+            if (typeof currentMode !== 'undefined' && currentMode === 'generate') {
+                openModal(inp.url, inp.fname || `${inp.id}.png`);
+                return;
+            }
             _batchFocusedId = inp.id;
             renderBatchInputs();
         };
@@ -5825,7 +6245,18 @@ function renderBatchFocusedStage(inp){
     }
     if (meta) {
         const dims = (inp.w && inp.h) ? `${inp.w}×${inp.h}` : '';
-        meta.textContent = `${inp.id}${dims ? ' · ' + dims : ''}`;
+        // Optional richer metadata for agent-generated / Create-mode
+        // outputs: elapsed time + quality tier. Plain uploads don't have
+        // these, so guard each piece individually. Format: "id · 1024×1024 · 23s · medium"
+        const parts = [inp.id];
+        if (dims) parts.push(dims);
+        if (typeof inp._genElapsedSec === 'number' && inp._genElapsedSec > 0) {
+            parts.push(`${inp._genElapsedSec}s`);
+        }
+        if (inp._genQuality && inp._genQuality !== 'auto') {
+            parts.push(inp._genQuality);
+        }
+        meta.textContent = parts.join(' · ');
     }
     // Prompt panel only shows if this was an agent generation (has
     // _genPrompt). Regular uploads have nothing useful to display
@@ -6076,6 +6507,20 @@ function sendBatchInputToEdit(inp){
         filename: inp.fname || `${inp.id}.png`,
         w: inp.w, h: inp.h,
     };
+    // Sync the SETTINGS panel's Width/Height to the image's dimensions.
+    // Without this, a stale Width/Height left over from a previous job
+    // (e.g. a 1280×768 batch run) propagates to this single-image edit
+    // and Modal generates at the stale target size — which forces the
+    // input image to be resized to fit inside that target, leaving
+    // unconditioned border zones that get filled with garbage
+    // hallucination ("neon vomit on the periphery, original image
+    // intact in the center"). Match the input dims exactly and the
+    // pipe will both encode and decode at the same resolution.
+    if (inp.w && inp.h) {
+        const wEl = $('inpWidth'), hEl = $('inpHeight');
+        if (wEl) wEl.value = inp.w;
+        if (hEl) hEl.value = inp.h;
+    }
     renderSlot(0);
     persistSlots();
     updateGenButton();
@@ -9287,8 +9732,11 @@ const AGENT_TOOL_HANDLERS = {
         // The placeholder tile uses this to drive its progress bar +
         // ETA display. Capped at 90% so the bar doesn't sit at 100 while
         // the actual response is still pending — the tile→real swap
-        // covers that final beat.
-        const placeholderEstSec = refIds.length ? 90 : 60;
+        // covers that final beat. The agent endpoint defaults to
+        // quality='high' (slowest), so the agent path uses the same
+        // numbers as Create-mode high — see the comment in doGenerateMode
+        // for the full reasoning.
+        const placeholderEstSec = refIds.length ? 150 : 90;
         _batchInputs.push({
             id: placeholderId,
             url: '',
@@ -9331,10 +9779,11 @@ const AGENT_TOOL_HANDLERS = {
             // We refine this on completion using a recent-completions p50
             // (see _agentGenDurationsMs below) so the progress bar's
             // "~Xs left" estimate gets more accurate the longer you use
-            // the studio.
+            // the studio. Fallbacks tuned for quality='high' (the
+            // agent's hardcoded default): ~90s text-only, ~150s with refs.
             agentEstimateSec: refIds.length
-                ? (_agentGenDurationsP50(true) || 90)
-                : (_agentGenDurationsP50(false) || 60),
+                ? (_agentGenDurationsP50(true) || 150)
+                : (_agentGenDurationsP50(false) || 90),
             refCount: refIds.length,
             agentPrompt: args.prompt,
         });
@@ -10364,10 +10813,51 @@ async function deleteHistoryItem(jobId){
 // Different from restoreJobState which uses the client-side job.snapshot.
 function restoreFromHistory(j){
     if (!j) return;
-    // Show the output image in the main viewport (this also tears down
-    // any lingering batch grid via showResult's _activeBatch check).
+    // Create mode keeps its own stage (a single tile in _batchInputs).
+    // showResult drives Camera/Edit's outImg element which Create
+    // doesn't render. Route to the Create stage explicitly so clicking
+    // a history tile while in Create works the way the user expects:
+    // the image takes over the canvas, and "Use as Input" / the ✨ tile
+    // action drop it into the first empty reference slot.
+    if (typeof currentMode !== 'undefined' && currentMode === 'generate') {
+        // Build a tile entry shaped like a regular Create generation —
+        // matches what doGenerateMode produces — so the focus-stage
+        // logic, the meta strip, and the action buttons all read it
+        // the same way as a fresh result.
+        const tile = {
+            id: j.upload_id || j.id,
+            url: j.url,
+            w: j.w, h: j.h,
+            fname: (j.url || '').split('/').pop() || `${j.id}.png`,
+            selected: false,
+            _genPrompt: j.prompt || '',
+            _genModel: j.backend || 'gpt-image-2',
+            _genReferences: [],
+            _genElapsedSec: j.elapsed || 0,
+            _genQuality: j.quality || null,
+            _fromHistory: true,  // small flag in case downstream wants to know
+        };
+        _batchInputs = [tile];
+        _batchFocusedId = null;  // Create mode never enters focus stage
+        renderBatchInputs();
+        // Restore the prompt textarea so the user can iterate.
+        const pe = $('generatePrompt');
+        if (pe && j.prompt) pe.value = j.prompt;
+        // Set up "Use as Input" against this image too — the bottom
+        // bar is shared with Camera/Edit, so we point lastOutputFilename
+        // and outImg.src at the history image so a click on the
+        // existing button picks the right URL. The button's display
+        // is normally only flipped on by showResult; flip it manually.
+        const outImg = $('outImg');
+        if (outImg) outImg.src = j.url;
+        lastOutputFilename = tile.fname;
+        const btn = $('btnUseAsInput');
+        if (btn) btn.style.display = '';
+        log(`Restored output from generation ${j.id}`);
+        return;
+    }
+    // Camera / Edit / Batch — original behavior.
     showResult({ url: j.url, w: j.w, h: j.h, prompt: j.prompt, seed: j.seed, elapsed: j.elapsed, mode: j.mode });
-    // Update prompt + seed at minimum — full settings aren't stored in history items
     if ($('promptInput') && j.prompt) $('promptInput').value = j.prompt;
     if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
