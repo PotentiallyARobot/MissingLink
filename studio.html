@@ -67,10 +67,35 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 /* Generate-mode size selector — same visual language as the mode toggle
    so the user reads it as a single segmented control. Square / portrait
    / landscape are the only sizes gpt-image-2 supports for generations. */
-.size-toggle{display:flex;gap:4px;background:var(--surface-3);border-radius:6px;padding:3px}
-.size-btn{flex:1;padding:8px 4px;background:none;border:none;border-radius:4px;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;cursor:pointer;transition:all .15s;text-align:center}
+.size-toggle{display:flex;gap:4px;background:var(--surface-3);border-radius:6px;padding:3px;flex-wrap:wrap}
+.size-btn{flex:1 1 0;min-width:60px;padding:8px 4px;background:none;border:none;border-radius:4px;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;cursor:pointer;transition:all .15s;text-align:center}
 .size-btn:hover{color:var(--text)}
 .size-btn.active{background:var(--gold);color:var(--black)}
+
+/* Custom W×H input row — small numeric fields styled like the rest of
+   the studio's input chrome. Sized to read alongside the size-btn row
+   above without dominating it. */
+.size-label{
+    display:block;font-family:var(--font-mono);font-size:9px;
+    color:var(--text-muted);letter-spacing:1px;
+    text-transform:uppercase;margin-bottom:4px
+}
+.size-input{
+    width:100%;padding:7px 9px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:4px;color:var(--text);
+    font-family:var(--font-mono);font-size:12px;
+    transition:border-color .12s
+}
+.size-input:focus{outline:none;border-color:var(--gold)}
+.size-hint{
+    font-family:var(--font-mono);font-size:9px;color:var(--text-muted);
+    letter-spacing:.5px;margin-top:6px;line-height:1.4
+}
+.size-warn{
+    font-family:var(--font-mono);font-size:10px;color:var(--red);
+    margin-top:6px;padding:6px 8px;background:rgba(239,68,68,.08);
+    border:1px solid rgba(239,68,68,.3);border-radius:4px;line-height:1.4
+}
 
 .dropzone{border:1.5px dashed var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;transition:all .15s;position:relative}
 
@@ -2104,29 +2129,23 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <!-- AI INSTRUCTION — high-level intent + a toolbar of multimodal-LLM
-         actions. Each button hits a different /api/studio/ai-* endpoint
-         that takes the selected batch images (and optional shared-context
-         references) plus the textarea content as a prompt. The textarea
-         doubles as: (a) edit-intent for ✨ Generate, (b) selection
-         criterion for 🎯 Find. Audit and Caption need no text input. -->
+    <!-- BATCH TOOLS — quick AI utilities for the selected images.
+         Audit gives a structured consistency report (renders to a
+         panel below); Caption builds a downloadable zip of per-image
+         caption .txt files for LoRA training. Both are one-click
+         actions with no text input needed. For anything more complex
+         (rewriting prompts, semantic selection, conditional edits,
+         multi-step workflows) — open the agent panel and ask. -->
     <div class="sec batch-only" style="display:none">
-        <div class="sec-label"><span class="icon">🤖</span> AI INSTRUCTION
-            <span class="sec-label-count">multimodal LLM sees your images</span>
+        <div class="sec-label"><span class="icon">🛠️</span> BATCH TOOLS
+            <span class="sec-label-count">runs on selected images</span>
         </div>
-        <textarea class="custom-prompt" id="batchAiPrompt" placeholder="High-level intent — the AI sees your selected images and writes the actual edit prompt.&#10;e.g. &quot;make all the dropships look consistent, fix any geometry errors, use image 2's missile pods as the reference&quot;" rows="3"></textarea>
         <div class="ai-btn-row">
-            <button class="ai-btn primary" id="btnAiGen" onclick="generateAiInstruction()" title="Use the text above as edit intent — AI writes the actual edit prompt for each selected image">
-                ✨ Generate Edit
+            <button class="ai-btn primary" id="btnAiAudit" onclick="auditBatchConsistency()" title="Compare all selected images and flag visual inconsistencies — useful when you've generated a series and want to spot mismatches">
+                🔍 Audit Consistency
             </button>
-            <button class="ai-btn" id="btnAiAudit" onclick="auditBatchConsistency()" title="LLM compares all selected images and flags inconsistencies — no text input needed">
-                🔍 Audit
-            </button>
-            <button class="ai-btn" id="btnAiSelect" onclick="aiSemanticSelect()" title="Use the text above as a selection criterion (e.g. 'images where the cockpit is visible') — AI auto-selects matching tiles">
-                🎯 Find
-            </button>
-            <button class="ai-btn" id="btnAiCaption" onclick="aiCaptionSelected()" title="LLM writes a caption per selected image; download as a zip suitable for LoRA training">
-                📝 Caption
+            <button class="ai-btn" id="btnAiCaption" onclick="aiCaptionSelected()" title="Write a caption for each selected image and download as a zip of .txt files (LoRA-training format)">
+                📝 Caption for LoRA
             </button>
         </div>
         <div style="display:flex;align-items:center;margin-top:6px">
@@ -2218,11 +2237,79 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">📐</span> OUTPUT SIZE</div>
-        <!-- gpt-image-2 supports 1024×1024, 1024×1536, 1536×1024 sizes. -->
+        <!-- gpt-image-2 supports any custom size where: both edges
+             are multiples of 16, max edge 3840px, aspect ratio ≤ 3:1,
+             total pixels in [655360, 8294400]. The preset buttons cover
+             the canonical 1024-based ratios; the custom W×H inputs let
+             advanced users dial in exact dimensions (e.g. matching a
+             reference image's aspect ratio). The "Match reference"
+             button below auto-fills from slot 1 if a ref exists. -->
         <div class="size-toggle">
             <button class="size-btn active" data-size="1024x1024" onclick="genSetSize('1024x1024')" title="1024×1024">⬛ Square</button>
             <button class="size-btn" data-size="1024x1536" onclick="genSetSize('1024x1536')" title="1024×1536">▮ Portrait</button>
             <button class="size-btn" data-size="1536x1024" onclick="genSetSize('1536x1024')" title="1536×1024">▭ Landscape</button>
+            <button class="size-btn" data-size="custom" onclick="genSetSize('custom')" title="Custom W×H">✏️ Custom</button>
+        </div>
+        <!-- Custom dim inputs — only shown when size is set to 'custom'.
+             The two number fields are constrained to gpt-image-2's
+             validation rules client-side (16-multiple, 256-3840 range)
+             so the worker rarely has to reject. Step=16 makes the
+             native browser arrow controls snap to valid values. -->
+        <div id="genCustomSize" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+                <div style="flex:1">
+                    <label class="size-label">WIDTH</label>
+                    <input type="number" id="genCustomW" min="256" max="3840" step="16" value="1024"
+                           class="size-input" oninput="genUpdateCustomSize()">
+                </div>
+                <span style="color:var(--text-muted);padding-top:14px">×</span>
+                <div style="flex:1">
+                    <label class="size-label">HEIGHT</label>
+                    <input type="number" id="genCustomH" min="256" max="3840" step="16" value="1024"
+                           class="size-input" oninput="genUpdateCustomSize()">
+                </div>
+            </div>
+            <div id="genSizeWarn" class="size-warn" style="display:none"></div>
+            <div class="size-hint">
+                Multiples of 16. Max 3840 per side. Aspect ≤ 3:1.
+            </div>
+        </div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">⭐</span> QUALITY</div>
+        <!-- Quality controls cost vs detail tradeoff. low = fast, cheap,
+             rough; high = slow, expensive, refined; auto = let the model
+             pick based on prompt complexity. We default to high since
+             these are 100-token (~$0.02) calls — users hitting the API
+             generally want the better outputs. -->
+        <div class="size-toggle">
+            <button class="size-btn" data-quality="low" onclick="genSetQuality('low')">Low</button>
+            <button class="size-btn" data-quality="medium" onclick="genSetQuality('medium')">Medium</button>
+            <button class="size-btn active" data-quality="high" onclick="genSetQuality('high')">High</button>
+            <button class="size-btn" data-quality="auto" onclick="genSetQuality('auto')">Auto</button>
+        </div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">📦</span> FORMAT</div>
+        <!-- Output format — PNG = lossless, larger files; JPEG = small,
+             lossy, fastest; WebP = small, modern. PNG default since the
+             rest of the studio assumes PNG (uploads, edits) and the
+             behavior is most predictable. JPEG/WebP add a compression
+             slider that's hidden for PNG (compression isn't applicable). -->
+        <div class="size-toggle">
+            <button class="size-btn active" data-format="png" onclick="genSetFormat('png')">PNG</button>
+            <button class="size-btn" data-format="jpeg" onclick="genSetFormat('jpeg')">JPEG</button>
+            <button class="size-btn" data-format="webp" onclick="genSetFormat('webp')">WebP</button>
+        </div>
+        <div id="genCompression" style="display:none;margin-top:10px">
+            <label class="size-label" style="display:flex;justify-content:space-between">
+                <span>COMPRESSION</span>
+                <span id="genCompressionVal" style="color:var(--gold)">85</span>
+            </label>
+            <input type="range" id="genCompressionSlider" min="0" max="100" value="85"
+                   oninput="genUpdateCompression()" style="width:100%">
         </div>
     </div>
 
@@ -3843,7 +3930,16 @@ function setInputImage(id,url,w,h){
 // Both persist to localStorage so a refresh doesn't wipe the user's
 // half-built generation setup.
 let _generateRefs = [null, null, null, null];
+// Size handling has two modes: a preset string (1024x1024 etc.) or
+// 'custom' which delegates to _generateCustomW × _generateCustomH.
+// At submit time, genGetEffectiveSize() resolves the active state to
+// a single string the worker accepts.
 let _generateSize = '1024x1024';
+let _generateCustomW = 1024;
+let _generateCustomH = 1024;
+let _generateQuality = 'high';
+let _generateFormat = 'png';
+let _generateCompression = 85;
 
 function genSlotFileChange(i){
     const inp = $('genSlotFile' + i);
@@ -3866,6 +3962,17 @@ async function genUploadToSlot(i, file){
         genUpdateCounter();
         updateGenButton();
         persistGenerateState();
+        // Auto-match output size to the FIRST reference's dimensions.
+        // If the user adds a 1920×1080 ref, they probably want a 1920×1080
+        // output — keeping the default 1024×1024 would force the model to
+        // letter-box or stretch. Only snap on slot 1 (lowest index) so
+        // adding more refs later doesn't keep clobbering the user's
+        // explicit size choice. The dimensions are snapped to gpt-image-2's
+        // valid range (16-multiple, ≤3840 edge, ≤3:1 aspect, total pixel
+        // bounds) before being applied.
+        if (i === 0 && w && h) {
+            genSnapSizeToImage(w, h);
+        }
     } catch (e) {
         showNotif('Upload failed. Check your connection and try again.', 'error');
     }
@@ -3901,12 +4008,156 @@ function genUpdateCounter(){
     if (el) el.textContent = `${filled} / 4`;
 }
 
+// Snap an arbitrary (w, h) pair to gpt-image-2's valid size range
+// without distorting aspect ratio. Steps:
+//   1. Aspect ratio. If > 3:1, scale the longer edge down so ratio = 3.
+//   2. Total pixel count. If > 8.3M (4K-ish), scale both edges down
+//      proportionally so total ≤ 8M (slight safety margin).
+//      If < 655K, scale up to ~720K.
+//   3. Max edge 3840. If exceeded, scale down.
+//   4. Round each edge to nearest multiple of 16.
+// The result is a (w, h) pair the model will accept on the wire.
+function genClampValidSize(w, h){
+    w = Math.max(1, Math.round(w));
+    h = Math.max(1, Math.round(h));
+    // Aspect cap (3:1).
+    const ratio = Math.max(w, h) / Math.min(w, h);
+    if (ratio > 3) {
+        if (w > h) w = h * 3;
+        else h = w * 3;
+    }
+    // Max edge 3840.
+    const maxEdge = Math.max(w, h);
+    if (maxEdge > 3840) {
+        const scale = 3840 / maxEdge;
+        w = w * scale;
+        h = h * scale;
+    }
+    // Total pixel count caps. Stay slightly under the limits to leave
+    // headroom for the multiple-of-16 rounding below.
+    const total = w * h;
+    if (total > 8_000_000) {
+        const scale = Math.sqrt(8_000_000 / total);
+        w = w * scale;
+        h = h * scale;
+    } else if (total < 700_000) {
+        const scale = Math.sqrt(700_000 / total);
+        w = w * scale;
+        h = h * scale;
+    }
+    // Round to multiples of 16.
+    w = Math.max(256, Math.min(3840, Math.round(w / 16) * 16));
+    h = Math.max(256, Math.min(3840, Math.round(h / 16) * 16));
+    return { w, h };
+}
+
+// Public helper: snap an image's natural dimensions to a valid output
+// size and apply it to the Custom W×H inputs. Switches the size mode
+// to 'custom' so the snapped dims are the active selection.
+function genSnapSizeToImage(srcW, srcH){
+    const { w, h } = genClampValidSize(srcW, srcH);
+    _generateCustomW = w;
+    _generateCustomH = h;
+    _generateSize = 'custom';
+    const wInput = $('genCustomW');
+    const hInput = $('genCustomH');
+    if (wInput) wInput.value = String(w);
+    if (hInput) hInput.value = String(h);
+    // Update active class on size-toggle row.
+    document.querySelectorAll('.size-toggle .size-btn[data-size]').forEach(b => {
+        b.classList.toggle('active', b.dataset.size === 'custom');
+    });
+    // Show the custom inputs and clear any prior warning.
+    const cs = $('genCustomSize'); if (cs) cs.style.display = '';
+    const warn = $('genSizeWarn'); if (warn) warn.style.display = 'none';
+    persistGenerateState();
+}
+
 function genSetSize(size){
     _generateSize = size;
-    document.querySelectorAll('#secGenerate .size-btn, .size-toggle .size-btn').forEach(b => {
+    document.querySelectorAll('.size-toggle .size-btn[data-size]').forEach(b => {
         b.classList.toggle('active', b.dataset.size === size);
     });
+    // Show/hide the custom W×H input row based on selection.
+    const cs = $('genCustomSize');
+    if (cs) cs.style.display = size === 'custom' ? '' : 'none';
     persistGenerateState();
+}
+
+// Validate the current custom W/H inputs and update warning UI. Called
+// on every keystroke in the W/H inputs. Shows a friendly red note when
+// the values violate gpt-image-2's constraints, but doesn't block —
+// the worker also validates and snaps to a fallback if needed.
+function genUpdateCustomSize(){
+    const wEl = $('genCustomW');
+    const hEl = $('genCustomH');
+    const warn = $('genSizeWarn');
+    if (!wEl || !hEl) return;
+    const w = parseInt(wEl.value, 10);
+    const h = parseInt(hEl.value, 10);
+    let msg = '';
+    if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
+        msg = 'Enter positive integers';
+    } else if (w % 16 !== 0 || h % 16 !== 0) {
+        msg = 'Both edges must be multiples of 16';
+    } else if (w > 3840 || h > 3840) {
+        msg = 'Max edge is 3840px';
+    } else {
+        const ratio = Math.max(w, h) / Math.min(w, h);
+        if (ratio > 3) msg = 'Aspect ratio must be ≤ 3:1';
+        else {
+            const total = w * h;
+            if (total < 655_360) msg = `Total pixels too low (${total.toLocaleString()} < 655,360)`;
+            else if (total > 8_294_400) msg = `Total pixels too high (${total.toLocaleString()} > 8,294,400)`;
+        }
+    }
+    if (warn) {
+        warn.style.display = msg ? '' : 'none';
+        warn.textContent = msg;
+    }
+    if (!msg) {
+        _generateCustomW = w;
+        _generateCustomH = h;
+        persistGenerateState();
+    }
+}
+
+function genSetQuality(q){
+    _generateQuality = q;
+    document.querySelectorAll('.size-toggle .size-btn[data-quality]').forEach(b => {
+        b.classList.toggle('active', b.dataset.quality === q);
+    });
+    persistGenerateState();
+}
+
+function genSetFormat(f){
+    _generateFormat = f;
+    document.querySelectorAll('.size-toggle .size-btn[data-format]').forEach(b => {
+        b.classList.toggle('active', b.dataset.format === f);
+    });
+    // Compression slider is meaningless for PNG (lossless), hide it.
+    const c = $('genCompression');
+    if (c) c.style.display = f === 'png' ? 'none' : '';
+    persistGenerateState();
+}
+
+function genUpdateCompression(){
+    const slider = $('genCompressionSlider');
+    if (!slider) return;
+    _generateCompression = parseInt(slider.value, 10) || 85;
+    const v = $('genCompressionVal');
+    if (v) v.textContent = String(_generateCompression);
+    persistGenerateState();
+}
+
+// Resolve the active size selection to a wire-format string. Custom
+// mode → "WxH" from the custom inputs (already validated by
+// genUpdateCustomSize); preset mode → the preset string directly.
+function genGetEffectiveSize(){
+    if (_generateSize === 'custom') {
+        return `${_generateCustomW}x${_generateCustomH}`;
+    }
+    return _generateSize;
 }
 
 // Restore state on page load + on first entry to Generate mode.
@@ -3916,6 +4167,11 @@ function persistGenerateState(){
         localStorage.setItem('studio_generate_state', JSON.stringify({
             refs: _generateRefs,
             size: _generateSize,
+            customW: _generateCustomW,
+            customH: _generateCustomH,
+            quality: _generateQuality,
+            format: _generateFormat,
+            compression: _generateCompression,
         }));
     } catch (e) {}
 }
@@ -3929,12 +4185,32 @@ function restoreGenerateState(){
             for (let i = 0; i < 4; i++) renderGenSlot(i);
             genUpdateCounter();
         }
+        if (typeof d.customW === 'number') _generateCustomW = d.customW;
+        if (typeof d.customH === 'number') _generateCustomH = d.customH;
+        if (typeof d.quality === 'string') _generateQuality = d.quality;
+        if (typeof d.format === 'string') _generateFormat = d.format;
+        if (typeof d.compression === 'number') _generateCompression = d.compression;
         if (typeof d.size === 'string') {
             _generateSize = d.size;
-            // Defer the active-class update — the buttons may not exist
-            // in DOM yet at first restore (this runs early on page init).
-            requestAnimationFrame(() => genSetSize(d.size));
         }
+        // Defer DOM updates — buttons may not exist in DOM yet at
+        // first restore (this runs early on page init).
+        requestAnimationFrame(() => {
+            // Apply size selection and custom dim inputs.
+            const wInput = $('genCustomW');
+            const hInput = $('genCustomH');
+            if (wInput) wInput.value = String(_generateCustomW);
+            if (hInput) hInput.value = String(_generateCustomH);
+            genSetSize(_generateSize);
+            // Quality + format buttons.
+            genSetQuality(_generateQuality);
+            genSetFormat(_generateFormat);
+            // Compression slider.
+            const cSlider = $('genCompressionSlider');
+            const cVal = $('genCompressionVal');
+            if (cSlider) cSlider.value = String(_generateCompression);
+            if (cVal) cVal.textContent = String(_generateCompression);
+        });
     } catch (e) {}
 }
 
@@ -4007,7 +4283,14 @@ async function doGenerateMode(){
             body: JSON.stringify({
                 prompt,
                 n: 1,
-                size: _generateSize,
+                // Resolve preset vs custom W×H. The worker validates again
+                // (and falls back to 1024² if anything's off) so client
+                // bugs here never escape OpenAI as 400s — they just get
+                // silently corrected.
+                size: genGetEffectiveSize(),
+                quality: _generateQuality,
+                output_format: _generateFormat,
+                output_compression: _generateFormat === 'png' ? null : _generateCompression,
                 reference_image_ids: refIds,
             }),
         }, refIds.length ? 270_000 : 130_000);
@@ -5889,56 +6172,16 @@ let _lastAuditResult = null;
 //   { instruction: "...", per_image: { [image_id]: "specific prompt" } }
 // The shared instruction is dropped into the EDIT INSTRUCTION
 // textarea so the user can review/tweak before clicking GENERATE.
-async function generateAiInstruction(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
-    const selected = _batchInputs.filter(b => b.selected);
-    if (selected.length === 0) {
-        showNotif('Select at least one image first.', 'error');
-        return;
-    }
-    const intent = $('batchAiPrompt').value.trim();
-    if (!intent) {
-        showNotif('Describe what you want the AI to plan first.', 'error');
-        return;
-    }
-    const btn = $('btnAiGen');
-    const status = $('aiPlanStatus');
-    btn.disabled = true;
-    const orig = btn.textContent;
-    btn.textContent = '⏳ THINKING…';
-    if (status) status.textContent = `analyzing ${selected.length} image${selected.length===1?'':'s'}…`;
-    try {
-        const r = await fetchT(`${API}/api/studio/ai-plan`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                intent,
-                image_ids: selected.map(s => s.id),
-                context_ids: _aiContextIds(),
-            }),
-        }, 60000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
-        const d = await r.json();
-        if (d.error) { showNotif(d.error, 'error'); if (status) status.textContent = ''; return; }
-        if (d.instruction) {
-            $('batchPrompt').value = d.instruction;
-            updateGenButton();
-        }
-        _batchPerImagePrompts = (d.per_image && Object.keys(d.per_image).length) ? d.per_image : null;
-        if (status) {
-            status.textContent = _batchPerImagePrompts
-                ? `wrote per-image prompts for ${Object.keys(_batchPerImagePrompts).length} tiles`
-                : 'wrote a shared edit instruction';
-        }
-        showNotif('AI wrote your edit instruction — review & tweak below.');
-    } catch (e) {
-        showNotif('AI planning failed: ' + (e.message || e), 'error');
-        if (status) status.textContent = '';
-    } finally {
-        btn.disabled = false;
-        btn.textContent = orig;
-    }
-}
+// AI PLAN (✕ removed) — the original "Generate Edit" button took a
+// high-level intent + selected images and wrote per-image edit prompts,
+// then dropped them into the EDIT INSTRUCTION textarea for the user to
+// review before clicking GENERATE. The agent panel does the same job
+// conversationally and lets the user iterate ("no, make it more
+// dramatic"), which the dropdown couldn't. The /api/studio/ai-plan
+// endpoint is still live on the worker for any external integrations
+// — only the UI button was removed.
+
+
 
 // ===== Multimodal-LLM helpers =======================================
 // All of these hit /api/studio/ai-* endpoints. The server is expected
@@ -6087,57 +6330,11 @@ async function suggestBatchNegatives(){
     }
 }
 
-// SEMANTIC SELECT — uses the AI INSTRUCTION textarea as a selection
-// criterion ("images where the cockpit faces left", "side views only",
-// "anything with weathering"). Server returns a list of matching ids
-// and we toggle selection accordingly.
-async function aiSemanticSelect(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
-    if (_batchInputs.length === 0) {
-        showNotif('Upload some batch images first.', 'error');
-        return;
-    }
-    const criterion = $('batchAiPrompt').value.trim();
-    if (!criterion) {
-        showNotif('Type a selection criterion in the AI INSTRUCTION box first.', 'error');
-        return;
-    }
-    const btn = $('btnAiSelect');
-    const status = $('aiPlanStatus');
-    btn.disabled = true;
-    const orig = btn.textContent;
-    btn.textContent = '⏳ FINDING…';
-    if (status) status.textContent = `scanning ${_batchInputs.length} images…`;
-    try {
-        const r = await fetchT(`${API}/api/studio/ai-select`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                criterion,
-                image_ids: _batchInputs.map(s => s.id),
-            }),
-        }, 60000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
-        const d = await r.json();
-        if (d.error) { showNotif(d.error, 'error'); if (status) status.textContent = ''; return; }
-        const matches = new Set(d.matches || []);
-        let n = 0;
-        _batchInputs.forEach(b => {
-            const sel = matches.has(b.id);
-            if (sel) n++;
-            b.selected = sel;
-        });
-        renderBatchInputs();
-        if (status) status.textContent = `selected ${n} match${n===1?'':'es'}`;
-        showNotif(`Selected ${n} matching image${n===1?'':'s'}.`);
-    } catch (e) {
-        showNotif('Semantic select failed: ' + (e.message || e), 'error');
-        if (status) status.textContent = '';
-    } finally {
-        btn.disabled = false;
-        btn.textContent = orig;
-    }
-}
+// SEMANTIC SELECT (✕ removed) — the agent's set_selection tool covers
+// this use case ("select all the images where the cockpit faces left")
+// in a way that's both more flexible and lets the user iterate. The
+// dedicated /ai-select endpoint and its 🎯 Find button were removed
+// after the agent shipped — duplicate UX wasn't earning its keep.
 
 // CAPTION SELECTED — bulk-caption every selected image and download
 // a zip of "<original-stem>.txt" files, the format kohya_ss / sd-scripts
