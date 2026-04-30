@@ -11058,8 +11058,28 @@ function restoreJobState(jobId){
         setViewportImage(s.input_image_url);
     } else if(s.mode==='edit' && s.edit_slots){
         slots=[null,null,null];
-        s.edit_slots.forEach((sl,i)=>{ if(i<3) slots[i]={id:sl.id,url:sl.url,filename:sl.filename}; });
+        s.edit_slots.forEach((sl,i)=>{ if(i<3) slots[i]={id:sl.id,url:sl.url,filename:sl.filename,w:sl.w,h:sl.h}; });
         for(let i=0;i<3;i++) renderSlot(i);
+        // Sync inpWidth/inpHeight to slot 0's dimensions. Without this,
+        // restoring an edit job leaves whatever stale Width/Height was
+        // in the inputs box, which then propagates to the next generate
+        // and produces the "speckle noise everywhere" failure mode at
+        // low Lightning steps when the requested output shape doesn't
+        // match the input image. If slot 0 doesn't carry w/h (older
+        // snapshots predate the field), probe the URL to read them
+        // from the image itself.
+        const slot0 = slots[0];
+        if (slot0 && slot0.w && slot0.h) {
+            $('inpWidth').value = slot0.w;
+            $('inpHeight').value = slot0.h;
+        } else if (slot0 && slot0.url) {
+            const probe = new Image();
+            probe.onload = () => {
+                if (probe.naturalWidth) $('inpWidth').value = probe.naturalWidth;
+                if (probe.naturalHeight) $('inpHeight').value = probe.naturalHeight;
+            };
+            probe.src = slot0.url;
+        }
     }
     if($('promptInput')) $('promptInput').value=s.prompt||'';
     if($('customPrompt')) $('customPrompt').value=s.prompt||'';
