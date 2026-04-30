@@ -3214,6 +3214,10 @@ async function warmupGpu(){
         // Reflect the new token balance in the UI immediately. Bonus
         // grants happen server-side; without this the header still
         // shows the old number until the next /status poll lands.
+        // The startup overlay is the ONLY user-facing signal during
+        // wake-up — no toasts, no modals, no log entries. The token
+        // counter updating silently is sufficient acknowledgement of
+        // any bonus grant.
         if (d.tokens !== undefined && _user) {
             _user.tokens = d.tokens;
             const tc = $('tokenCount');
@@ -3225,19 +3229,6 @@ async function warmupGpu(){
         // unresponsive after they explicitly clicked Generate.
         if (d.wake_dispatched && typeof pollStatus === 'function') {
             pollStatus();
-        }
-        // First-time cold-start bonus — 300 tokens for triggering the
-        // wake-up. Surface this as a non-blocking toast so the user
-        // sees the credit happen but isn't interrupted from their
-        // workflow. The startup overlay already shows the wake-up
-        // progress (loading model weights, compiling kernels, etc.)
-        // — no need for a second piece of UI saying the same thing.
-        if (d.bonus_granted && d.bonus_granted > 0) {
-            showNotif(`+${d.bonus_granted} tokens credited — thanks for the wait while the GPU starts up.`, 'success');
-        } else if (d.was_cold) {
-            // Repeat cold-starts (after the bonus was used) just get a
-            // small toast — they already know how this works.
-            showNotif('GPU is waking up — first generation takes ~90 seconds.', 'info');
         }
     }catch(e){ /* fire-and-forget — silent failure is fine */ }
 }
