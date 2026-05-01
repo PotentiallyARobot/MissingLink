@@ -11823,38 +11823,6 @@ function restorePersistedInputs(){
     window.restorePersistedInputs = function trialNoRestore() { /* no-op */ };
 
     // ── UI: trial badge + signup CTA ────────────────────────────────
-    // ── Live "users generating" social proof ────────────────────────
-    // Renders an ambient activity badge in the header. The number drifts
-    // slowly around a base value (15) using a deterministic-ish jitter
-    // so it changes between renders without spiking — a static "15"
-    // forever reads as obvious fake social proof. Range stays ~12-18.
-    // This is presentational; we don't have a real live-user counter,
-    // and adding one would be a bigger lift than the marketing value.
-    // If/when you do wire up a real count from the worker, just replace
-    // the body of this function to read from that source.
-    function liveUsersValue() {
-        // Smooth random walk around 15 so consecutive renders don't
-        // jump wildly. We seed from minute-of-hour so a refresh shows
-        // a similar number to what the previous user saw — feels less
-        // suspicious than full randomness on every page load.
-        const base = 15;
-        const minute = new Date().getMinutes();
-        // -3 .. +3 drift, seeded by minute, with a tiny per-call jitter.
-        const drift = ((minute * 7) % 7) - 3;
-        const jitter = Math.floor(Math.random() * 3) - 1;   // -1..+1
-        const v = base + drift + jitter;
-        return Math.max(11, Math.min(19, v));
-    }
-    function renderLiveUsers() {
-        const el = document.getElementById('liveUsersBadge');
-        if (!el) return;
-        const n = liveUsersValue();
-        el.innerHTML =
-            '<span class="lu-dot"></span>' +
-            '<span class="lu-count">' + n + '</span>' +
-            '<span class="lu-label"> generating now</span>';
-    }
-
     function renderTrialBadge() {
         const el = document.getElementById('trialBadge');
         if (!el) return;
@@ -11985,23 +11953,6 @@ function restorePersistedInputs(){
             border-radius:4px;display:flex;align-items:center;gap:6px;
             white-space:nowrap;
         }
-        /* Live-users social-proof badge. Sits next to the trial badge.
-           Green pulsing dot + drifting count to read as live activity. */
-        #liveUsersBadge{
-            font-family:var(--font-mono);font-size:10px;
-            padding:4px 10px;background:rgba(34,197,94,.08);
-            border:1px solid rgba(34,197,94,.4);color:var(--text);
-            border-radius:4px;display:flex;align-items:center;gap:6px;
-            white-space:nowrap;
-        }
-        #liveUsersBadge .lu-dot{
-            width:6px;height:6px;border-radius:50%;
-            background:var(--green);
-            box-shadow:0 0 6px rgba(34,197,94,.7);
-            animation:pulse 2s infinite;
-        }
-        #liveUsersBadge .lu-count{ font-weight:700;color:var(--green); }
-        #liveUsersBadge .lu-label{ color:var(--text-muted); }
         /* "Sign Up Free" CTA in header — gold, primary. */
         #trialSignupHdr{
             background:var(--gold);color:var(--black);
@@ -12139,11 +12090,6 @@ function restorePersistedInputs(){
             .signup-wall .sw-perks{ grid-template-columns:1fr; }
             #trialBadge{ font-size:9px; padding:3px 7px; }
             #trialSignupHdr{ font-size:9px; padding:5px 10px; }
-            /* On narrow screens just show the dot + count; the
-               "generating now" label gets dropped to keep the header
-               from wrapping. */
-            #liveUsersBadge{ font-size:9px; padding:3px 7px; gap:4px; }
-            #liveUsersBadge .lu-label{ display:none; }
         }
         `;
         document.head.appendChild(css);
@@ -12155,18 +12101,12 @@ function restorePersistedInputs(){
             trialBox.id = 'trialHdrBox';
             trialBox.style.cssText = 'display:flex;align-items:center;gap:8px';
             trialBox.innerHTML =
-                '<div id="liveUsersBadge" title="Approximate live activity"></div>' +
                 '<div id="trialBadge"></div>' +
                 '<button id="trialSignupHdr" onclick="goSignup()">Sign Up Free</button>';
             // Insert at the start of hdr-right so it sits before the
             // console / connection-state badges.
             hdrRight.insertBefore(trialBox, hdrRight.firstChild);
             renderTrialBadge();
-            renderLiveUsers();
-            // Refresh the live-users count every ~25s so it doesn't read
-            // as a literal static "15" forever — that's a tell for fake
-            // social proof. Slow drift around 15 keeps it ambient.
-            setInterval(renderLiveUsers, 25000);
         }
 
         // 3. Lock Batch and Create mode buttons.
