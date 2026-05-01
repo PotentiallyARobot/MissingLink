@@ -11444,6 +11444,14 @@ function restorePersistedInputs(){
                 showSignupWall(mode === 'batch' ? 'batch' : 'create');
                 return;
             }
+            // Video / 3d aren't real studio modes yet — if anything
+            // ever calls setMode('video') or setMode('3d') programmatically
+            // (e.g. from a future restored job state), route to the same
+            // signup wall the button click uses.
+            if (mode === 'video' || mode === '3d') {
+                showSignupWall(mode);
+                return;
+            }
             return origSetMode.call(this, mode, opts);
         };
     })(window.setMode);
@@ -11774,6 +11782,12 @@ function restorePersistedInputs(){
             ai:     ['AI tools are for signed-up users',
                      'Find issues, get prompt suggestions, run consistency audits, ' +
                      'and chat with the batch agent. Sign up free to enable.'],
+            video:  ['Video generation is for signed-up users',
+                     'Animate any image with a text prompt. Sign up free to unlock ' +
+                     'when it ships \u2014 you\u2019ll get early access and 1000 starter tokens.'],
+            '3d':   ['3D Model generation is for signed-up users',
+                     'Turn a single image into a textured 3D mesh. Sign up free to ' +
+                     'unlock when it ships \u2014 you\u2019ll get early access and 1000 starter tokens.'],
         }[reason] || ['Sign up free to keep using the studio',
                       'New accounts get 1000 tokens \u2014 10 more images on us.'];
         if (titleEl) titleEl.textContent = copy[0];
@@ -12092,6 +12106,69 @@ function restorePersistedInputs(){
         //    or similar via the existing studio logic — _user is the
         //    trial user so the "SIGN IN TO GENERATE" branch is skipped).
         if (typeof updateGenButton === 'function') updateGenButton();
+
+        // 9. Cap width/height inputs at 4096. The original studio uses
+        //    max=2048 (Qwen) and max=3840 (gpt-image-2). We raise both
+        //    to 4096 here AND attach clamping listeners — setting the
+        //    `max` attribute alone isn't strict enforcement, browsers
+        //    happily accept typed-in values higher than max and just
+        //    flag the field invalid. The clamp listeners overwrite the
+        //    field value on every input/change so even paste, JS, or
+        //    browser auto-fill can't push past 4096.
+        const HARD_MAX = 4096;
+        const dimInputs = ['inpWidth', 'inpHeight', 'genCustomW', 'genCustomH'];
+        for (const id of dimInputs) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            el.setAttribute('max', String(HARD_MAX));
+            const clamp = () => {
+                // Allow empty (placeholder shows "auto") so we don't
+                // fight the user mid-typing. Only clamp when there's
+                // an actual numeric value.
+                if (el.value === '' || el.value == null) return;
+                const n = parseInt(el.value, 10);
+                if (isNaN(n)) return;
+                if (n > HARD_MAX) {
+                    el.value = String(HARD_MAX);
+                    if (typeof showNotif === 'function')
+                        showNotif('Maximum dimension is ' + HARD_MAX + 'px.', 'info');
+                }
+            };
+            el.addEventListener('input', clamp);
+            el.addEventListener('change', clamp);
+            // Run once at install in case state was restored from
+            // localStorage with a value above the new cap.
+            clamp();
+        }
+
+        // 10. Add Video and 3D Model buttons to the mode toggle. Same
+        //     signup-gated treatment as Batch and Create — faded with a
+        //     lock icon, click opens the signup wall.
+        const modeToggle = document.querySelector('.mode-toggle');
+        if (modeToggle && !document.getElementById('btnModeVideo')) {
+            // 6 buttons in a 320px sidebar is cramped on one row; let
+            // them wrap to two rows. The mobile CSS already does this
+            // via media query — we just opt desktop in too.
+            modeToggle.style.flexWrap = 'wrap';
+            const mkLockedBtn = (id, label, reason) => {
+                const b = document.createElement('button');
+                b.className = 'mode-btn trial-locked';
+                b.id = id;
+                b.textContent = label;
+                b.title = 'Sign up free to unlock';
+                b.style.flex = '1 1 calc(50% - 3px)';
+                b.onclick = function () { showSignupWall(reason); };
+                return b;
+            };
+            modeToggle.appendChild(mkLockedBtn('btnModeVideo', '\ud83c\udfac Video', 'video'));
+            modeToggle.appendChild(mkLockedBtn('btnMode3D', '\ud83e\uddca 3D Model', '3d'));
+            // Also set the existing 4 buttons to flex with the wrap
+            // layout so spacing stays even.
+            for (const id of ['btnModeCamera','btnModeEdit','btnModeBatch','btnModeGenerate']) {
+                const el = document.getElementById(id);
+                if (el) el.style.flex = '1 1 calc(33.333% - 3px)';
+            }
+        }
     }
 
     // Run installTrialUI as soon as the DOM is interactive. We listen
