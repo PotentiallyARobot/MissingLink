@@ -11303,16 +11303,27 @@ function restorePersistedInputs(){
     let trialRemaining = TRIAL_LIMIT;
 
     // ── Fake "trial user" ────────────────────────────────────────────
-    // Half the studio's gates are `if (!_user) { showLoginModal(); return; }`.
-    // Setting a fake user lets those gates fall through; the trial-specific
-    // overrides below decide what actually happens. tokens is set absurdly
-    // high so the shared "if (tokens < N)" buy-modal triggers never fire.
-    window._user = {
+    // The studio declares `let _user = null;` at script scope (around
+    // line 3018). `let` is lexically scoped — it is NOT a property of
+    // window — so `window._user = {...}` would silently create a separate
+    // property that the studio's 21+ `if (!_user) { showLoginModal(); }`
+    // gates never read, leaving the GENERATE button stuck on
+    // "🔑 SIGN IN TO GENERATE" and other gates popping the login modal.
+    //
+    // Because this IIFE is in the same <script> block as `let _user`,
+    // we can assign to `_user` directly — JS resolves it up the scope
+    // chain to the studio's binding and reassigns it. We also mirror to
+    // window._user as a belt-and-suspenders for any code paths that
+    // read `window._user` explicitly (and so future debugging from
+    // devtools shows the live value).
+    const trialUser = {
         email: 'trial@anonymous',
         tokens: 9999999,
         picture: null,
         _trial: true,
     };
+    _user = trialUser;
+    window._user = trialUser;
 
     // ── checkAuth: never pings /auth/me, never opens login modal ────
     // Original studio behavior: page-load checkAuth() calls /auth/me,
@@ -11340,11 +11351,44 @@ function restorePersistedInputs(){
         if (typeof updateGenButton === 'function') updateGenButton();
     };
 
-    // ── warmupGpu: trial users don't get GPU warmup pings ───────────
-    // The warmup endpoint awards a "thank-you bonus" of tokens which
-    // assumes an authed user. For trial visitors this would 401 and
-    // log a noisy error. No-op it.
-    window.warmupGpu = async function trialNoWarmup() { /* no-op */ };
+    // ── warmupGpu: route to a no-auth trial-warmup endpoint ─────────
+    // The original warmupGpu hits /api/studio/warmup which 401s anon
+    // visitors. But Camera and Edit modes route to Modal/Qwen which
+    // can take 60-90s to cold-boot — without warmup, a trial visitor's
+    // first GENERATE click sits on "queued" while Modal scales up and
+    // they likely give up. We point warmup at a no-auth twin of the
+    // existing endpoint so the cold-boot fires the moment the user
+    // clicks (and on page load, so it warms while they upload).
+    //
+    // Worker contract for /api/studio/trial-warmup (build this):
+    //   • POST, no auth.
+    //   • IP-hash rate limit, e.g. 1 wake per IP per 5 min, same shape
+    //     as _warmupCache in the existing endpoint (memory-only Map
+    //     keyed by ipHash; cleared on worker restart, that's fine).
+    //   • Set gpuStateSet(env, "warmup_at", nowSec) — the studio's
+    //     pollStatus reads this to flip the header badge to "warming".
+    //   • ctx.waitUntil(fetch(MODAL_HEALTH_URL, …)) — fire-and-forget.
+    //   • Return { ok: true }.
+    //   • No bonus-grant logic (that's a logged-in-user reward).
+    //   • If the IP just exceeded the trial generation limit, you can
+    //     skip the wake (no point cold-booting Modal for someone who
+    //     can't actually submit work).
+    window.warmupGpu = async function trialWarmupGpu() {
+        try {
+            const r = await fetchT(`${API}/api/studio/trial-warmup`,
+                                   { method: 'POST' }, 8000);
+            const d = await r.json().catch(() => ({}));
+            // pollStatus picks up the new warmup_at on its next 5s
+            // tick; force one immediately so the badge flips without
+            // a perceptible delay after the click.
+            if (d && d.ok && typeof pollStatus === 'function') {
+                try { pollStatus(); } catch {}
+            }
+        } catch (e) {
+            // Silent — warmup is best-effort. The job will still
+            // submit; the user just waits longer for cold-boot.
+        }
+    };
 
     // ── History: completely disabled in trial mode ──────────────────
     // syncHistory hits /api/studio/history (auth-required, would 401).
@@ -11468,6 +11512,20 @@ function restorePersistedInputs(){
             return;
         }
         if (trialRemaining <= 0) { showSignupWall('limit'); return; }
+
+        // Trigger Modal cold-boot if the GPU is sleeping/cold. Matches
+        // the original studio's doGenerate behavior (line ~5420). Fire-
+        // and-forget — Modal's autoscaler picks up the wake while we
+        // build and submit the actual job below. Without this, the
+        // first trial visitor of the day waits the full ~90s container
+        // boot AFTER their job is queued instead of in parallel with it.
+        try {
+            const gs = (typeof _gpuState === 'object') ? _gpuState : null;
+            if (!gs || gs.state === 'sleeping' || gs.state === 'cold' ||
+                gs.state === 'unknown') {
+                warmupGpu();   // no await — fires-and-forgets
+            }
+        } catch {}
 
         // Build the inline-bytes payload from the in-memory cache.
         let images = [];
@@ -12106,6 +12164,14 @@ function restorePersistedInputs(){
         //    or similar via the existing studio logic — _user is the
         //    trial user so the "SIGN IN TO GENERATE" branch is skipped).
         if (typeof updateGenButton === 'function') updateGenButton();
+
+        // 8b. Fire a single warmup ping right after page load so the
+        //     Modal GPU starts coming up while the visitor is choosing
+        //     a file / typing a prompt. By the time they click GENERATE
+        //     the container should be hot, hiding the cold-boot latency.
+        //     The trial-warmup endpoint debounces per-IP so this is
+        //     safe to fire on every page load (rapid refreshes coalesce).
+        try { warmupGpu(); } catch {}
 
         // 9. Cap width/height inputs at 4096. The original studio uses
         //    max=2048 (Qwen) and max=3840 (gpt-image-2). We raise both
