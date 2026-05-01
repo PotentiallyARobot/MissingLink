@@ -11617,18 +11617,65 @@ function restorePersistedInputs(){
                 body: JSON.stringify(payload),
             }, 240000);
 
-            const d = await r.json().catch(() => ({}));
+            // Read the response body once as text, then try to parse.
+            // Doing it in this order means if the worker sent HTML
+            // (404 page, CF error page, etc.) we still capture the
+            // body for the error message instead of swallowing it
+            // under "JSON parse failed".
+            const bodyText = await r.text().catch(() => '');
+            let d = {};
+            try { d = bodyText ? JSON.parse(bodyText) : {}; } catch {}
+
             if (!r.ok || !d.ok) {
+                // Trial-limit is the one expected non-success path.
                 if (r.status === 429 || d.error === 'trial_exhausted') {
                     if (d.trial) {
                         trialUsed = d.trial.used; trialRemaining = d.trial.remaining;
                         renderTrialBadge();
                     }
                     showSignupWall('limit');
-                } else {
-                    const msg = d.detail || d.error || 'Generation failed. Try again.';
-                    showNotif(msg, 'error');
+                    return;
                 }
+
+                // Everything else is unexpected — give the user (and
+                // any dev watching the console) enough info to act on.
+                console.error('[trial] /api/studio/trial-generate failed', {
+                    status: r.status,
+                    statusText: r.statusText,
+                    url: r.url,
+                    body: bodyText.slice(0, 2000),
+                    parsed: d,
+                });
+
+                let msg;
+                if (r.status === 404) {
+                    msg = 'Trial endpoint not deployed yet ' +
+                          '(/api/studio/trial-generate returned 404). ' +
+                          'See the worker contract comment in trial.html.';
+                } else if (r.status === 401 || r.status === 403) {
+                    msg = 'Trial endpoint is auth-gated (HTTP ' + r.status +
+                          '). The trial endpoint must NOT call getStudioUser ' +
+                          '/ require a session.';
+                } else if (r.status === 502 || r.status === 504) {
+                    msg = 'Upstream model timed out or errored (HTTP ' +
+                          r.status + '). ' + (d.detail || d.error ||
+                          'Try a simpler prompt or try again in a moment.');
+                } else if (r.status >= 500) {
+                    msg = 'Server error (HTTP ' + r.status + '). ' +
+                          (d.detail || d.error || 'Try again in a moment.');
+                } else if (d.detail || d.error) {
+                    msg = (d.error ? d.error + ': ' : '') +
+                          (d.detail || '') + ' (HTTP ' + r.status + ')';
+                } else {
+                    // No JSON body — likely an HTML error page from a
+                    // proxy or framework. Surface the first line so the
+                    // user has a starting point to debug.
+                    const firstLine = (bodyText || '').trim()
+                        .split('\n')[0].slice(0, 200);
+                    msg = 'Generation failed (HTTP ' + r.status +
+                          (firstLine ? '): ' + firstLine : ').');
+                }
+                showNotif(msg, 'error');
                 return;
             }
 
@@ -11659,7 +11706,7 @@ function restorePersistedInputs(){
                     mode: currentMode,
                 });
             }
-            if (typeof log === 'function') log(`Generated (${elapsed}s) \u2014 ${trialRemaining} of ${TRIAL_LIMIT} trial generations left`);
+            if (typeof log === 'function') log(`Generated (${elapsed}s)`);
 
             // No mid-flow nudge. The header counter turns red at 2 or
             // fewer remaining (renderTrialBadge handles the color), and
@@ -11668,9 +11715,17 @@ function restorePersistedInputs(){
             // the user is in the middle of admiring their just-finished
             // image, not in a state to evaluate signup.
         } catch (e) {
-            const msg = (e && e.name === 'AbortError')
-                ? 'Generation timed out. Try a simpler prompt or fewer images.'
-                : 'Network error. Check your connection and try again.';
+            console.error('[trial] /api/studio/trial-generate threw', e);
+            let msg;
+            if (e && e.name === 'AbortError') {
+                msg = 'Generation timed out after 240s. Modal may still be ' +
+                      'cold-booting \u2014 try again in 30 seconds.';
+            } else if (e && /Failed to fetch|NetworkError/i.test(String(e.message || e))) {
+                msg = 'Network error reaching ' + API + '/api/studio/trial-generate. ' +
+                      'Check that the worker is deployed and CORS allows this origin.';
+            } else {
+                msg = 'Unexpected error: ' + (e && e.message || String(e));
+            }
             showNotif(msg, 'error');
         } finally {
             clearInterval(tickHandle);
@@ -11768,19 +11823,54 @@ function restorePersistedInputs(){
     window.restorePersistedInputs = function trialNoRestore() { /* no-op */ };
 
     // ── UI: trial badge + signup CTA ────────────────────────────────
+    // ── Live "users generating" social proof ────────────────────────
+    // Renders an ambient activity badge in the header. The number drifts
+    // slowly around a base value (15) using a deterministic-ish jitter
+    // so it changes between renders without spiking — a static "15"
+    // forever reads as obvious fake social proof. Range stays ~12-18.
+    // This is presentational; we don't have a real live-user counter,
+    // and adding one would be a bigger lift than the marketing value.
+    // If/when you do wire up a real count from the worker, just replace
+    // the body of this function to read from that source.
+    function liveUsersValue() {
+        // Smooth random walk around 15 so consecutive renders don't
+        // jump wildly. We seed from minute-of-hour so a refresh shows
+        // a similar number to what the previous user saw — feels less
+        // suspicious than full randomness on every page load.
+        const base = 15;
+        const minute = new Date().getMinutes();
+        // -3 .. +3 drift, seeded by minute, with a tiny per-call jitter.
+        const drift = ((minute * 7) % 7) - 3;
+        const jitter = Math.floor(Math.random() * 3) - 1;   // -1..+1
+        const v = base + drift + jitter;
+        return Math.max(11, Math.min(19, v));
+    }
+    function renderLiveUsers() {
+        const el = document.getElementById('liveUsersBadge');
+        if (!el) return;
+        const n = liveUsersValue();
+        el.innerHTML =
+            '<span class="lu-dot"></span>' +
+            '<span class="lu-count">' + n + '</span>' +
+            '<span class="lu-label"> generating now</span>';
+    }
+
     function renderTrialBadge() {
         const el = document.getElementById('trialBadge');
         if (!el) return;
-        const left = Math.max(0, trialRemaining);
-        // Color shifts as the user burns through their quota: gold
-        // initially, then red when they're down to last 2.
-        const isLow = left <= 2;
+        // Static label only — we deliberately do NOT surface remaining
+        // count anywhere user-facing. A visible counter ticking down
+        // pressures visitors into rushing or bailing, and the moment
+        // they see "1 left" they stop committing to a real prompt and
+        // start fishing. Hiding it lets them use the trial naturally;
+        // they only learn the limit exists when they hit the wall, at
+        // which point sign-up is the natural next step.
+        // The internal trialRemaining tracker still gates when the
+        // limit wall actually fires — visitors just don't see the math.
         el.innerHTML =
-            '<span style="font-weight:700;letter-spacing:1px">FREE TRIAL</span>' +
-            '<span style="color:var(--text-muted)"> \u00b7 </span>' +
-            '<span style="color:' + (isLow ? 'var(--red)' : 'var(--gold)') +
-                ';font-weight:700">' + left + ' / ' + TRIAL_LIMIT + ' LEFT</span>';
-        el.style.borderColor = isLow ? 'var(--red)' : 'var(--gold)';
+            '<span style="font-weight:700;letter-spacing:1px;color:var(--gold)">' +
+            'FREE TRIAL</span>';
+        el.style.borderColor = 'var(--gold)';
     }
 
     // Lock badge applied to disabled mode buttons / angle buttons.
@@ -11812,13 +11902,12 @@ function restorePersistedInputs(){
         if (closeBtn) closeBtn.style.display = '';
 
         const copy = {
-            limit:  ['Trial complete \u2014 ready for more?',
-                     'You\u2019ve used all ' + TRIAL_LIMIT + ' free generations. ' +
-                     'Sign up free to keep going. New accounts get 1000 tokens (10 more images) on us.'],
-            low:    ['Almost out \u2014 want unlimited?',
-                     'Only ' + Math.max(0, trialRemaining) + ' free ' +
-                     (trialRemaining === 1 ? 'generation' : 'generations') +
-                     ' left. Sign up free for 1000 starter tokens, full history, ' +
+            limit:  ['Free trial complete \u2014 ready for more?',
+                     'You\u2019ve used your free trial generations. Sign up free ' +
+                     'to keep going \u2014 new accounts get 1000 tokens (more ' +
+                     'images on us) and full access to history, batch, and Create.'],
+            low:    ['Want unlimited generations?',
+                     'Sign up free for 1000 starter tokens, full history, ' +
                      'batch edits, and direct image generation.'],
             batch:  ['Batch mode is for signed-up users',
                      'Apply one edit to many images at once. Free to enable \u2014 ' +
@@ -11896,6 +11985,23 @@ function restorePersistedInputs(){
             border-radius:4px;display:flex;align-items:center;gap:6px;
             white-space:nowrap;
         }
+        /* Live-users social-proof badge. Sits next to the trial badge.
+           Green pulsing dot + drifting count to read as live activity. */
+        #liveUsersBadge{
+            font-family:var(--font-mono);font-size:10px;
+            padding:4px 10px;background:rgba(34,197,94,.08);
+            border:1px solid rgba(34,197,94,.4);color:var(--text);
+            border-radius:4px;display:flex;align-items:center;gap:6px;
+            white-space:nowrap;
+        }
+        #liveUsersBadge .lu-dot{
+            width:6px;height:6px;border-radius:50%;
+            background:var(--green);
+            box-shadow:0 0 6px rgba(34,197,94,.7);
+            animation:pulse 2s infinite;
+        }
+        #liveUsersBadge .lu-count{ font-weight:700;color:var(--green); }
+        #liveUsersBadge .lu-label{ color:var(--text-muted); }
         /* "Sign Up Free" CTA in header — gold, primary. */
         #trialSignupHdr{
             background:var(--gold);color:var(--black);
@@ -12033,6 +12139,11 @@ function restorePersistedInputs(){
             .signup-wall .sw-perks{ grid-template-columns:1fr; }
             #trialBadge{ font-size:9px; padding:3px 7px; }
             #trialSignupHdr{ font-size:9px; padding:5px 10px; }
+            /* On narrow screens just show the dot + count; the
+               "generating now" label gets dropped to keep the header
+               from wrapping. */
+            #liveUsersBadge{ font-size:9px; padding:3px 7px; gap:4px; }
+            #liveUsersBadge .lu-label{ display:none; }
         }
         `;
         document.head.appendChild(css);
@@ -12044,12 +12155,18 @@ function restorePersistedInputs(){
             trialBox.id = 'trialHdrBox';
             trialBox.style.cssText = 'display:flex;align-items:center;gap:8px';
             trialBox.innerHTML =
+                '<div id="liveUsersBadge" title="Approximate live activity"></div>' +
                 '<div id="trialBadge"></div>' +
                 '<button id="trialSignupHdr" onclick="goSignup()">Sign Up Free</button>';
             // Insert at the start of hdr-right so it sits before the
             // console / connection-state badges.
             hdrRight.insertBefore(trialBox, hdrRight.firstChild);
             renderTrialBadge();
+            renderLiveUsers();
+            // Refresh the live-users count every ~25s so it doesn't read
+            // as a literal static "15" forever — that's a tell for fake
+            // social proof. Slow drift around 15 keeps it ambient.
+            setInterval(renderLiveUsers, 25000);
         }
 
         // 3. Lock Batch and Create mode buttons.
@@ -12107,9 +12224,9 @@ function restorePersistedInputs(){
             promo.innerHTML =
                 '<div class="tp-title">\u2728 You\u2019re on the free trial</div>' +
                 '<div class="tp-body">' +
-                    'Camera + Edit modes, ' + TRIAL_LIMIT + ' generations, no save. ' +
-                    'Sign up free for unlimited use, history, batch edits, and ' +
-                    'direct text-to-image generation.' +
+                    'Camera + Edit modes, no history kept. Sign up free for ' +
+                    'unlimited use, saved history, batch edits, and direct ' +
+                    'text-to-image generation.' +
                 '</div>' +
                 '<button class="tp-btn" onclick="goSignup()">Sign Up Free \u2192</button>' +
                 '<div class="tp-perks">' +
