@@ -3653,6 +3653,11 @@ let _startupFirstSeen = null;
 // (e.g. a poll arriving during the cold→warming transition) could
 // make the bar visibly shrink, which reads as "going backwards".
 let _startupMaxPct = 0;
+// One-time server-age offset captured the first time the overlay
+// opens this cycle. Lets a user arriving mid-warmup see the bar
+// start at e.g. 25% instead of 0%, while still preventing the bar
+// from slamming to 90% if the GPU was already deep into a slow boot.
+let _startupOffsetPct = 0;
 
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
@@ -3668,6 +3673,7 @@ function renderStartupOverlay(){
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;
+        _startupOffsetPct = 0;
         return;
     }
     // Show the cold-boot overlay whenever Modal is actively booting:
@@ -3689,30 +3695,43 @@ function renderStartupOverlay(){
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;            // reset ratchet for next cycle
+        _startupOffsetPct = 0;
         return;
     }
 
     // Show overlay. Capture first-seen time so elapsed is client-consistent.
+    // On first sight of a warming GPU we record both the wall-clock moment
+    // AND a one-time server-age offset. Without the offset, a user arriving
+    // mid-warmup would watch the bar climb from 0% even though the GPU is
+    // already 80s into booting. Without the cap, that same offset would slam
+    // the bar straight to 90% on first render (we observed this when Modal
+    // had been booting for 100s+ before the user opened the overlay).
+    // The cap (INITIAL_OFFSET_CAP_PCT) bounds how far ahead the bar can
+    // start regardless of the server-reported age.
+    const INITIAL_OFFSET_CAP_PCT = 30;
+    const EXPECTED_TOTAL_S = 120;
     if (_startupFirstSeen === null) {
         _startupFirstSeen = Date.now();
-        _startupMaxPct = 0;            // fresh cycle → start at 0% on the left
+        // Capture a one-shot offset from server age, capped so the bar
+        // always has visible runway to grow into. Stored on the closure
+        // variable so the per-tick recompute below stays simple.
+        const serverAgeAtOpen = _gpuState.startup_age_s || 0;
+        const offsetPctRaw = (serverAgeAtOpen / EXPECTED_TOTAL_S) * 100;
+        _startupOffsetPct = Math.min(INITIAL_OFFSET_CAP_PCT, Math.max(0, offsetPctRaw));
+        _startupMaxPct = _startupOffsetPct;
     }
     overlay.style.display = '';
 
     const clientElapsed = Math.floor((Date.now() - _startupFirstSeen) / 1000);
-    // Prefer server-reported startup_age_s if it's larger (user may have
-    // arrived mid-warmup), otherwise use client-side clock.
-    const serverAge = _gpuState.startup_age_s || 0;
-    const elapsed = Math.max(clientElapsed, serverAge);
-
-    // Expected total: 120s is a safe estimate that covers warm-cache cold-
-    // boots (60-90s) and fresh compile (150s+) without the bar ever visibly
-    // completing before Modal says ready. Once we hit 95% we hold there so
-    // the bar doesn't sit at 100% for 30s looking broken.
-    const EXPECTED_TOTAL_S = 120;
-    const rawPct = (elapsed / EXPECTED_TOTAL_S) * 100;
+    const clientPct = (clientElapsed / EXPECTED_TOTAL_S) * 100;
+    // Total = (capped one-time offset) + (client-side growth since open).
+    // This keeps the bar growing smoothly between polls while honoring
+    // the fact that the GPU was already partway through booting when the
+    // user arrived.
+    const rawPct = _startupOffsetPct + clientPct;
     // Floor of 0 (not 2) so the bar starts visibly empty on the far left
-    // for a fresh cycle, then grows. Cap at 95.
+    // for a truly fresh cycle. Cap at 95 so we don't sit at 100% looking
+    // broken if compile overruns the 120s estimate.
     const naivePct = Math.min(95, Math.max(0, rawPct));
     // Apply ratchet: the displayed pct can never decrease this cycle.
     _startupMaxPct = Math.max(_startupMaxPct, naivePct);
