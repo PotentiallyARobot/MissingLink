@@ -1548,7 +1548,7 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     height:100%;background:linear-gradient(90deg,var(--gold),#f5b301);
     border-radius:3px;
     width:0%;
-    transition:width .6s ease-out;
+    transition:width .9s cubic-bezier(.22,.61,.36,1);
     position:relative;
 }
 /* Shimmer overlay so the bar visibly moves even if the elapsed% hasn't
@@ -3653,11 +3653,12 @@ let _startupFirstSeen = null;
 // (e.g. a poll arriving during the cold→warming transition) could
 // make the bar visibly shrink, which reads as "going backwards".
 let _startupMaxPct = 0;
-// One-time server-age offset captured the first time the overlay
-// opens this cycle. Lets a user arriving mid-warmup see the bar
-// start at e.g. 25% instead of 0%, while still preventing the bar
-// from slamming to 90% if the GPU was already deep into a slow boot.
-let _startupOffsetPct = 0;
+// Stage tracking — when the server reports a new startup_stage we
+// snap the bar to that stage's anchor. Track the current stage and
+// when we entered it so intra-stage drift starts from each transition,
+// not from the overlay opening.
+let _startupCurrentStage = null;
+let _startupCurrentStageEnteredAt = 0;
 
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
@@ -3673,7 +3674,8 @@ function renderStartupOverlay(){
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;
-        _startupOffsetPct = 0;
+        _startupCurrentStage = null;
+        _startupCurrentStageEnteredAt = 0;
         return;
     }
     // Show the cold-boot overlay whenever Modal is actively booting:
@@ -3695,47 +3697,86 @@ function renderStartupOverlay(){
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;            // reset ratchet for next cycle
-        _startupOffsetPct = 0;
+        _startupCurrentStage = null;
+        _startupCurrentStageEnteredAt = 0;
         return;
     }
 
     // Show overlay. Capture first-seen time so elapsed is client-consistent.
-    // On first sight of a warming GPU we record both the wall-clock moment
-    // AND a one-time server-age offset. Without the offset, a user arriving
-    // mid-warmup would watch the bar climb from 0% even though the GPU is
-    // already 80s into booting. Without the cap, that same offset would slam
-    // the bar straight to 90% on first render (we observed this when Modal
-    // had been booting for 100s+ before the user opened the overlay).
-    // The cap (INITIAL_OFFSET_CAP_PCT) bounds how far ahead the bar can
-    // start regardless of the server-reported age.
-    const INITIAL_OFFSET_CAP_PCT = 30;
-    const EXPECTED_TOTAL_S = 120;
     if (_startupFirstSeen === null) {
         _startupFirstSeen = Date.now();
-        // Capture a one-shot offset from server age, capped so the bar
-        // always has visible runway to grow into. Stored on the closure
-        // variable so the per-tick recompute below stays simple.
-        const serverAgeAtOpen = _gpuState.startup_age_s || 0;
-        const offsetPctRaw = (serverAgeAtOpen / EXPECTED_TOTAL_S) * 100;
-        _startupOffsetPct = Math.min(INITIAL_OFFSET_CAP_PCT, Math.max(0, offsetPctRaw));
-        _startupMaxPct = _startupOffsetPct;
+        _startupMaxPct = 0;
     }
     overlay.style.display = '';
 
     const clientElapsed = Math.floor((Date.now() - _startupFirstSeen) / 1000);
-    const clientPct = (clientElapsed / EXPECTED_TOTAL_S) * 100;
-    // Total = (capped one-time offset) + (client-side growth since open).
-    // This keeps the bar growing smoothly between polls while honoring
-    // the fact that the GPU was already partway through booting when the
-    // user arrived.
-    const rawPct = _startupOffsetPct + clientPct;
-    // Floor of 0 (not 2) so the bar starts visibly empty on the far left
-    // for a truly fresh cycle. Cap at 95 so we don't sit at 100% looking
-    // broken if compile overruns the 120s estimate.
-    const naivePct = Math.min(95, Math.max(0, rawPct));
+    const serverAge = _gpuState.startup_age_s || 0;
+    const elapsed = Math.max(clientElapsed, serverAge);
+
+    // Stage-anchored progress. Each stage we receive from Modal maps to a
+    // target percent on the bar. As soon as the server reports a new stage,
+    // the bar jumps forward to that stage's anchor — so the user sees a
+    // clear "we just made progress" moment for every stage transition.
+    // Between transitions the bar still advances smoothly with elapsed time
+    // toward the next anchor (capped 5% short of it so a slow stage doesn't
+    // visibly "complete" before the server says it has).
+    //
+    // Anchor values reflect roughly how much wall-time each stage takes on
+    // a typical L4 cold boot (90-120s total), but the exact numbers don't
+    // matter much — what matters is that they're monotonic and the user
+    // sees the bar lurch forward whenever a new stage arrives.
+    const STAGE_ANCHORS = {
+        booting:              5,
+        loading_transformer:  20,
+        loading_text_encoder: 40,
+        building_pipeline:    55,
+        registering:          65,
+        compiling:            80,
+        warming_up:           92,
+        ready:                100,
+    };
+    // Approximate seconds the bar spends advancing from one anchor to the
+    // next while waiting for the next stage message. Smaller = faster
+    // intra-stage drift toward the next anchor. 12s feels natural for the
+    // longer stages (compiling, building_pipeline) and harmlessly short
+    // for the fast ones — the next stage transition usually arrives first.
+    const INTRA_STAGE_DRIFT_S = 12;
+
+    // Order matters here for the "next anchor" lookup below.
+    const STAGE_ORDER = ['booting', 'loading_transformer', 'loading_text_encoder',
+                         'building_pipeline', 'registering', 'compiling',
+                         'warming_up', 'ready'];
+    // Track when we last entered the current stage so intra-stage drift is
+    // measured from the stage transition, not from overlay open.
+    if (_startupCurrentStage !== stage) {
+        _startupCurrentStage = stage;
+        _startupCurrentStageEnteredAt = Date.now();
+    }
+    const stageElapsed = (Date.now() - _startupCurrentStageEnteredAt) / 1000;
+
+    let basePct;
+    if (stage && STAGE_ANCHORS[stage] !== undefined) {
+        basePct = STAGE_ANCHORS[stage];
+    } else {
+        // No stage message yet — sit at the booting anchor so the bar isn't
+        // glued at 0% during the 1-3s gap before Modal's first heartbeat.
+        basePct = STAGE_ANCHORS.booting;
+    }
+    // Find the next anchor so we can drift toward it within this stage.
+    const stageIdx = STAGE_ORDER.indexOf(stage);
+    const nextAnchor = (stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1)
+        ? STAGE_ANCHORS[STAGE_ORDER[stageIdx + 1]]
+        : 95;
+    // Drift partway toward the next anchor based on time spent in this
+    // stage. Cap at (next - 5) so we never visually arrive at the next
+    // stage before the server confirms the transition.
+    const driftTarget = Math.max(basePct, nextAnchor - 5);
+    const driftFraction = Math.min(1, stageElapsed / INTRA_STAGE_DRIFT_S);
+    const naivePct = basePct + (driftTarget - basePct) * driftFraction;
+
     // Apply ratchet: the displayed pct can never decrease this cycle.
     _startupMaxPct = Math.max(_startupMaxPct, naivePct);
-    const pct = _startupMaxPct;
+    const pct = Math.min(95, _startupMaxPct);
 
     const stageLabels = {
         booting:              'Starting container',
