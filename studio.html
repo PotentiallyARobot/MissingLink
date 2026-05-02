@@ -3657,6 +3657,19 @@ let _startupMaxPct = 0;
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
+    // Hard early-exit: when the GPU's running state is 'ready', the overlay
+    // is never appropriate, regardless of any stale startup_stage value the
+    // server might still be reporting. Without this, the overlay can get
+    // stuck open after a state transition because the setInterval tick
+    // below only calls this function while inStartup is true — a single
+    // missed pollStatus during the warming→ready transition leaves the
+    // overlay visible forever (we observed this in the wild).
+    if (_gpuState.state === 'ready') {
+        overlay.style.display = 'none';
+        _startupFirstSeen = null;
+        _startupMaxPct = 0;
+        return;
+    }
     // Show the cold-boot overlay whenever Modal is actively booting:
     //   1) there's a real startup_stage that hasn't reached 'ready' yet, OR
     //   2) the worker says state='warming' (warmup_at recent, no
@@ -10993,14 +11006,12 @@ function escapeHtml(s){
 setInterval(() => {
     const hasActive = myJobs.some(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running');
     const warming = _gpuState.state === 'warming' || _gpuState.state === 'cold';
-    // Distinguish "container is actively booting" (show full overlay) from
-    // "badge says stale cold" (just refresh the queue). The overlay is tied
-    // to an actual startup_stage heartbeat, not the derived state.
-    const stage = _gpuState.startup_stage;
-    const stageAge = _gpuState.startup_age_s || 0;
-    const inStartup = !!stage && stage !== 'ready' && stageAge < 600;
     if (hasActive || warming) renderQueue();
-    if (inStartup) renderStartupOverlay();
+    // Always tick the startup overlay — the function is cheap when there's
+    // nothing to show and it's the only place that can hide itself reliably
+    // when the GPU finishes warming up. Gating this on inStartup (as we
+    // used to) made the overlay get stuck open across state transitions.
+    renderStartupOverlay();
 }, 1000);
 
 function restoreJobState(jobId){
