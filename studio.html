@@ -3923,18 +3923,10 @@ function renderStartupOverlay(){
     if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
     if (titleEl) titleEl.textContent = _gpuState.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     if (subEl) {
-        if (elapsed > 180) {
-            // Cold boot is 90-120s normally. Past 3 min something is off —
-            // network blip, stuck heartbeat, slow Modal scheduler. Don't
-            // tell the user we're "almost there" when we clearly aren't.
-            subEl.textContent = "This is taking longer than usual. The GPU may be slow to respond — feel free to try clicking Generate again in a moment.";
-        } else if (elapsed > 60) {
-            subEl.textContent = "Almost there — finishing up. You can prepare your prompt and settings while this completes.";
-        } else if (elapsed > 30) {
-            subEl.textContent = "The GPU is booting. This takes about 90 seconds. Feel free to prepare your inputs below.";
-        } else {
-            subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
-        }
+        // Single, fixed message whenever the overlay is up — keeps the
+        // copy stable instead of mutating into "Almost there" at 60s
+        // (which was a lie when the actual elapsed climbed past that).
+        subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
     }
 }
 
@@ -10409,37 +10401,44 @@ async function _agentRunTurn(){
         const toolCalls = output.filter(i => i.type === 'function_call');
         if (!toolCalls.length) return;  // no tools → conversation done
 
-        // Tool dispatch. Two execution lanes:
-        //   - SERIAL_TOOLS: image-creating calls run one at a time. The
-        //     model may issue many in a single turn (one per image it
-        //     wants), but each waits for the previous to land. Reasons:
-        //     (a) lower OpenAI rate-limit pressure → far fewer "operation
-        //     was aborted" timeouts under load, (b) lets each successive
-        //     call see the prior generation's id in batch_state for
-        //     continuity-style sequences (the model can pass the previous
-        //     image as a reference for the next), (c) live progress is
-        //     more legible — one tile fills in at a time instead of 12
-        //     spinners going at once.
+        // Tool dispatch. Three execution lanes for image-creation calls:
+        //   - PARALLEL_GPT_TOOLS: gpt-image-2 calls (generate_new_images,
+        //     edit_with_gpt_image) run through a worker pool capped at
+        //     PARALLEL_GPT_LIMIT in flight at once. Each gpt-image-2
+        //     request takes ~5–20s and OpenAI tolerates parallel calls
+        //     well at this fan-out, so 4 simultaneous gives roughly a 4×
+        //     wall-clock speedup vs the old serial behaviour with no
+        //     measurable rate-limit pressure. Order is preserved in
+        //     the returned results.
+        //   - SERIAL_QWEN_TOOLS: edit_with_qwen stays one-at-a-time at
+        //     this layer because every call submits a job to the GPU
+        //     queue, which already does its own concurrency management.
+        //     Stacking them here would just queue them serially anyway.
         //   - PARALLEL_TOOLS: read-only / cheap calls (find_visual_issues)
-        //     stay parallel — no contention, no model dependencies, and
-        //     fan-out latency wins matter.
+        //     fan out fully — no contention, no model dependencies.
         // State-mutating tools (set_selection, set_prompt, recaption,
         // remove_images, submit_qwen_edit) run before the lanes above
         // so any selection/prompt edits land first.
         //
         // SERIAL_LIMIT caps how many image creations actually fire per
-        // model turn. If the model issues 20, only the first 12 run; the
-        // rest get an immediate "rate_limited" tool result so the model
-        // sees what happened and can re-issue them on a subsequent turn
-        // (or stop if 12 was already plenty). 12 matches STUDIO_MAX_QUEUED
-        // — same mental model as the regular queue cap.
-        const SERIAL_TOOLS = new Set(['generate_new_images', 'edit_with_gpt_image', 'edit_with_qwen']);
-        const PARALLEL_TOOLS = new Set(['find_visual_issues']);
-        const SERIAL_LIMIT = 12;
-        const stateMutators = toolCalls.filter(c => !SERIAL_TOOLS.has(c.name) && !PARALLEL_TOOLS.has(c.name));
-        const serialCallsAll = toolCalls.filter(c => SERIAL_TOOLS.has(c.name));
-        const serialCalls = serialCallsAll.slice(0, SERIAL_LIMIT);
-        const serialDropped = serialCallsAll.slice(SERIAL_LIMIT);
+        // model turn across both gpt and qwen lanes. If the model issues
+        // 20, only the first 12 run; the rest get an immediate
+        // "rate_limited" tool result so the model sees what happened and
+        // can re-issue them on a subsequent turn (or stop if 12 was
+        // already plenty). 12 matches STUDIO_MAX_QUEUED.
+        const PARALLEL_GPT_TOOLS = new Set(['generate_new_images', 'edit_with_gpt_image']);
+        const SERIAL_QWEN_TOOLS  = new Set(['edit_with_qwen']);
+        const PARALLEL_TOOLS     = new Set(['find_visual_issues']);
+        const PARALLEL_GPT_LIMIT = 4;   // simultaneous OpenAI calls
+        const SERIAL_LIMIT       = 12;  // per-turn creation-call cap
+
+        const isCreation = (c) => PARALLEL_GPT_TOOLS.has(c.name) || SERIAL_QWEN_TOOLS.has(c.name);
+        const stateMutators = toolCalls.filter(c => !isCreation(c) && !PARALLEL_TOOLS.has(c.name));
+        const creationsAll  = toolCalls.filter(isCreation);
+        const creations     = creationsAll.slice(0, SERIAL_LIMIT);
+        const droppedCalls  = creationsAll.slice(SERIAL_LIMIT);
+        const gptCreations  = creations.filter(c => PARALLEL_GPT_TOOLS.has(c.name));
+        const qwenCreations = creations.filter(c => SERIAL_QWEN_TOOLS.has(c.name));
         const parallelCalls = toolCalls.filter(c => PARALLEL_TOOLS.has(c.name));
 
         // Single helper that runs one call, posts the visible status
@@ -10468,27 +10467,56 @@ async function _agentRunTurn(){
             }
         };
 
-        // 1) State mutators first.
+        // Worker-pool runner: pulls items off a shared cursor, with at
+        // most `concurrency` workers active. Preserves input order in
+        // the returned results so call_ids line up with their original
+        // call when we push back to _agentMessages.
+        const _runPool = async (items, concurrency) => {
+            const out = new Array(items.length);
+            let cursor = 0;
+            const n = Math.min(concurrency, items.length);
+            if (n === 0) return out;
+            const worker = async () => {
+                while (true) {
+                    const i = cursor++;
+                    if (i >= items.length) return;
+                    out[i] = await _runOne(items[i]);
+                }
+            };
+            await Promise.all(Array.from({ length: n }, worker));
+            return out;
+        };
+
+        // 1) State mutators first — strictly serial so selection/prompt
+        //    edits land before the creation calls observe batch state.
         for (const call of stateMutators) {
             const result = await _runOne(call);
             _agentMessages.push(result);
         }
-        // 2) Serial image-creation calls — one at a time, in the order
-        //    the model issued them. Each call's placeholder appears in
-        //    the queue + grid before it starts so the user sees the
-        //    pipeline working through the request live.
-        if (serialCalls.length > 1) {
-            _agentRender('tool', { text: `Processing ${serialCalls.length} generations one at a time…` });
+        // 2) gpt-image-2 creations — fan out with PARALLEL_GPT_LIMIT
+        //    workers. The frontend renders a placeholder for each call
+        //    immediately (inside the handler), so the user sees N tiles
+        //    spinning in parallel and filling in as each request lands.
+        if (gptCreations.length > 1) {
+            const inFlight = Math.min(gptCreations.length, PARALLEL_GPT_LIMIT);
+            _agentRender('tool', { text: `Generating ${gptCreations.length} image${gptCreations.length === 1 ? '' : 's'} (up to ${inFlight} in parallel)…` });
         }
-        for (const call of serialCalls) {
+        const gptResults = await _runPool(gptCreations, PARALLEL_GPT_LIMIT);
+        for (const r of gptResults) _agentMessages.push(r);
+        // 3) Qwen edits — one at a time. The GPU queue handles concurrency
+        //    on its own; stacking here would just funnel into the same
+        //    queue without speeding anything up.
+        if (qwenCreations.length > 1) {
+            _agentRender('tool', { text: `Processing ${qwenCreations.length} Qwen edits one at a time…` });
+        }
+        for (const call of qwenCreations) {
             const result = await _runOne(call);
             _agentMessages.push(result);
         }
-        // 3) Calls that exceeded the cap — reject with a rate_limited
-        //    result so the model sees them and can decide whether to
-        //    re-issue or stop. We do NOT execute them; the user already
-        //    has 12 in flight.
-        for (const call of serialDropped) {
+        // 4) Calls that exceeded the per-turn cap — reject with a
+        //    rate_limited result so the model sees them and can decide
+        //    whether to re-issue or stop.
+        for (const call of droppedCalls) {
             _agentRender('tool', { text: `Skipped ${call.name} — per-turn cap (${SERIAL_LIMIT}) reached`, error: true });
             _agentMessages.push({
                 type: 'function_call_output',
@@ -10496,12 +10524,12 @@ async function _agentRunTurn(){
                 output: JSON.stringify({
                     ok: false,
                     error: 'rate_limited',
-                    detail: `Only ${SERIAL_LIMIT} image creations are allowed per turn. ${serialDropped.length} call(s) skipped — re-issue them in a follow-up turn if still needed.`,
+                    detail: `Only ${SERIAL_LIMIT} image creations are allowed per turn. ${droppedCalls.length} call(s) skipped — re-issue them in a follow-up turn if still needed.`,
                     batch_state: _agentBatchState(),
                 }),
             });
         }
-        // 4) Parallel read-only calls — Promise.all is safe here.
+        // 5) Parallel read-only calls — Promise.all is safe here.
         if (parallelCalls.length) {
             const results = await Promise.all(parallelCalls.map(_runOne));
             for (const r of results) _agentMessages.push(r);
