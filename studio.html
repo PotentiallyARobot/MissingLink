@@ -3028,6 +3028,16 @@ let pollTimers={}; // jobId → interval
 // "Connecting…" label until the first status poll resolves, rather than
 // briefly claiming the GPU is cold before we actually know.
 let _gpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
+// Has the very first /status response landed yet? Until it has, we never
+// claim "GPU ready" — the badge stays on "Connecting…" so a page load can't
+// flash a stale ready state inherited from a previous session.
+let _gpuFirstPollDone = false;
+// Maximum ready_age_s we trust as a real "ready" signal. The Modal consumer
+// thread heartbeats every ~5s, and the server's READY_WINDOW_S is 30s. Any
+// ready_age_s much beyond the heartbeat interval means the heartbeat is
+// lapsing — the GPU is on its way down even though the server still reports
+// ready. We treat that as "verifying" rather than ready.
+const _GPU_READY_FRESH_S = 12;
 // Server-synced history (done jobs). Shape: [{id, mode, prompt, url, w, h, elapsed, seed, created_at, finished_at}].
 // Separate from myJobs (which tracks in-flight + ephemeral state) so history
 // survives page reloads and is authoritative per user.
@@ -3568,6 +3578,10 @@ async function pollStatus(){
                 renderQueue();
             }
         }
+        // The first /status response has landed — from this point on we
+        // can paint a confirmed state. Until this flips true the header
+        // badge stays on "Connecting…" regardless of what's in _gpuState.
+        _gpuFirstPollDone = true;
         updateHeaderStatusBadge(true);
     }catch(e){
         updateHeaderStatusBadge(false);
@@ -3586,10 +3600,32 @@ function updateHeaderStatusBadge(connected){
         renderStartupOverlay();
         return;
     }
+    // Until the very first /status response has landed, we cannot honestly
+    // claim any state — show "Connecting…" so a page load can't flash a
+    // stale "GPU ready" label inherited from a previous session before we
+    // actually verify with the server.
+    if (!_gpuFirstPollDone) {
+        dot.className = 'dot cold';
+        label.textContent = 'Connecting…';
+        renderStartupOverlay();
+        return;
+    }
     const state = _gpuState.state || 'unknown';
-    if (state === 'ready') {
+    // Stale-ready guard: the server's 30s READY_WINDOW is intentionally
+    // generous, but a ready_age_s well beyond the ~5s heartbeat interval
+    // means the heartbeat is lapsing — the GPU is winding down even though
+    // the server hasn't crossed its threshold yet. Treat this as "verifying"
+    // so we don't paint a green "GPU ready" right before the state flips
+    // to sleeping/warming on the next poll.
+    const readyAge = _gpuState.ready_age_s;
+    const readyIsFresh = state === 'ready' && (readyAge === null || readyAge === undefined || readyAge <= _GPU_READY_FRESH_S);
+    if (state === 'ready' && readyIsFresh) {
         dot.className = 'dot on';
         label.textContent = 'GPU ready';
+    } else if (state === 'ready' && !readyIsFresh) {
+        // Server says ready but the heartbeat is lapsing — don't lie.
+        dot.className = 'dot warm';
+        label.textContent = 'Verifying GPU…';
     } else if (state === 'warming') {
         dot.className = 'dot warm';
         // Map Modal's setup stages to user-friendly labels. The "registering"
@@ -3670,7 +3706,15 @@ function renderStartupOverlay(){
     // below only calls this function while inStartup is true — a single
     // missed pollStatus during the warming→ready transition leaves the
     // overlay visible forever (we observed this in the wild).
-    if (_gpuState.state === 'ready') {
+    //
+    // Stale-ready guard: same logic as updateHeaderStatusBadge — we only
+    // trust 'ready' when the heartbeat is fresh. If ready_age_s is well
+    // past the heartbeat interval the GPU is on its way down and the
+    // overlay should stay up so the user sees the warmup that's coming.
+    const readyAge = _gpuState.ready_age_s;
+    const readyIsFresh = _gpuState.state === 'ready' &&
+        (readyAge === null || readyAge === undefined || readyAge <= _GPU_READY_FRESH_S);
+    if (_gpuFirstPollDone && _gpuState.state === 'ready' && readyIsFresh) {
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;
@@ -3754,28 +3798,64 @@ function renderStartupOverlay(){
     }
     const stageElapsed = (Date.now() - _startupCurrentStageEnteredAt) / 1000;
 
-    let basePct;
+    // Compute the stage cap — the max percent we're allowed to display given
+    // the current stage. This is the stage's anchor plus some intra-stage
+    // drift toward the next anchor (so a slow stage doesn't glue the bar
+    // exactly at its anchor for the full duration).
+    let stageCap;
     if (stage && STAGE_ANCHORS[stage] !== undefined) {
-        basePct = STAGE_ANCHORS[stage];
+        const basePct = STAGE_ANCHORS[stage];
+        const stageIdx = STAGE_ORDER.indexOf(stage);
+        const nextAnchor = (stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1)
+            ? STAGE_ANCHORS[STAGE_ORDER[stageIdx + 1]]
+            : 95;
+        const driftTarget = Math.max(basePct, nextAnchor - 5);
+        const driftFraction = Math.min(1, stageElapsed / INTRA_STAGE_DRIFT_S);
+        stageCap = basePct + (driftTarget - basePct) * driftFraction;
     } else {
-        // No stage message yet — sit at the booting anchor so the bar isn't
-        // glued at 0% during the 1-3s gap before Modal's first heartbeat.
-        basePct = STAGE_ANCHORS.booting;
+        // No stage info yet — cap at the booting anchor so the bar can
+        // still reach the early single-digit territory but doesn't run
+        // away on a hunch.
+        stageCap = STAGE_ANCHORS.booting;
     }
-    // Find the next anchor so we can drift toward it within this stage.
-    const stageIdx = STAGE_ORDER.indexOf(stage);
-    const nextAnchor = (stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1)
-        ? STAGE_ANCHORS[STAGE_ORDER[stageIdx + 1]]
-        : 95;
-    // Drift partway toward the next anchor based on time spent in this
-    // stage. Cap at (next - 5) so we never visually arrive at the next
-    // stage before the server confirms the transition.
-    const driftTarget = Math.max(basePct, nextAnchor - 5);
-    const driftFraction = Math.min(1, stageElapsed / INTRA_STAGE_DRIFT_S);
-    const naivePct = basePct + (driftTarget - basePct) * driftFraction;
+
+    // Two-phase progress to give the user a calm, steady signal:
+    //   Phase 1 (0–20s): the bar climbs smoothly from 0% to 10% regardless
+    //   of what the stage info says. This gives a guaranteed "the bar is
+    //   moving" cue at the start of every warming cycle, and prevents the
+    //   old behaviour where a late-stage hint (e.g. warming_up=92%) would
+    //   snap the bar to 90% on the very first paint.
+    //   Phase 2 (20s+): the bar advances at a fixed rate (1%/s) toward the
+    //   stage cap, so progress is always steady — never jumping by 70+ %
+    //   when a new stage message arrives. The cap means we still reflect
+    //   the actual GPU state: we never paint past where the stage data
+    //   says we are.
+    const INITIAL_RAMP_MS = 20000;          // 20 seconds
+    const INITIAL_RAMP_TARGET_PCT = 10;     // ramp end position
+    const POST_RAMP_RATE_PCT_PER_S = 1.0;   // % per second after ramp
+    const cycleElapsedMs = Date.now() - _startupFirstSeen;
+
+    let candidatePct;
+    if (cycleElapsedMs < INITIAL_RAMP_MS) {
+        // Phase 1: linear 0 → 10% over 20s. Stage info is intentionally
+        // ignored here so the bar always starts at the far left, even if
+        // the server is already reporting a late stage from a previous
+        // warming cycle that hadn't been cleared yet.
+        candidatePct = (cycleElapsedMs / INITIAL_RAMP_MS) * INITIAL_RAMP_TARGET_PCT;
+    } else {
+        // Phase 2: continue advancing at a fixed rate from the ramp's
+        // ending point, capped by where the stage data says we actually
+        // are. As newer (later) stages arrive the cap rises and the bar
+        // keeps climbing smoothly — no jumps.
+        const postRampS = (cycleElapsedMs - INITIAL_RAMP_MS) / 1000;
+        const linearAdvance = INITIAL_RAMP_TARGET_PCT + postRampS * POST_RAMP_RATE_PCT_PER_S;
+        candidatePct = Math.min(linearAdvance, stageCap);
+        // Floor: once Phase 1 has happened we never drop below 10%.
+        if (candidatePct < INITIAL_RAMP_TARGET_PCT) candidatePct = INITIAL_RAMP_TARGET_PCT;
+    }
 
     // Apply ratchet: the displayed pct can never decrease this cycle.
-    _startupMaxPct = Math.max(_startupMaxPct, naivePct);
+    _startupMaxPct = Math.max(_startupMaxPct, candidatePct);
     const pct = Math.min(95, _startupMaxPct);
 
     const stageLabels = {
