@@ -3038,6 +3038,21 @@ let _gpuFirstPollDone = false;
 // lapsing — the GPU is on its way down even though the server still reports
 // ready. We treat that as "verifying" rather than ready.
 const _GPU_READY_FRESH_S = 12;
+// Wall-clock ms of the last time we saw the GPU as actually ready
+// (heartbeat fresh on a /status response). Used as hysteresis: the
+// server briefly returns state='warming' whenever warmup_at gets bumped
+// between inference step pings, even on a perfectly healthy GPU. Without
+// this guard the overlay flashes open for 5–15s every time the user
+// clicks Generate, which is jarring on a GPU that's plainly working.
+// Reset to 0 when we see a genuine cold/sleeping signal so a real
+// cold-boot still triggers the overlay.
+let _gpuLastReadyAt = 0;
+// How long after the last "ready" signal we suppress the cold-boot
+// overlay even if state flips to 'warming'. Long enough to ride out
+// the warmup_at-vs-ready_at race (typically <15s) plus a safety
+// margin, short enough that an actually-stalled GPU surfaces in
+// well under a minute.
+const _GPU_READY_HYSTERESIS_MS = 60_000;
 // Server-synced history (done jobs). Shape: [{id, mode, prompt, url, w, h, elapsed, seed, created_at, finished_at}].
 // Separate from myJobs (which tracks in-flight + ephemeral state) so history
 // survives page reloads and is authoritative per user.
@@ -3577,6 +3592,20 @@ async function pollStatus(){
             if(prevState !== d.gpu.state || d.gpu.state === 'warming'){
                 renderQueue();
             }
+            // Track wall-clock for hysteresis. We bump _gpuLastReadyAt
+            // any time the heartbeat is fresh — proving the GPU is alive
+            // RIGHT NOW. We deliberately don't bump on state==='ready'
+            // alone, because the server's 30s READY_WINDOW can keep
+            // saying 'ready' on a GPU whose heartbeat is dying. We DO
+            // clear it on a genuine cold/sleeping signal so a real
+            // cold-boot still surfaces the overlay.
+            const ra = d.gpu.ready_age_s;
+            const heartbeatIsFreshNow = ra !== null && ra !== undefined && ra <= _GPU_READY_FRESH_S;
+            if (heartbeatIsFreshNow) {
+                _gpuLastReadyAt = Date.now();
+            } else if (d.gpu.state === 'cold' || d.gpu.state === 'sleeping') {
+                _gpuLastReadyAt = 0;
+            }
         }
         // The first /status response has landed — from this point on we
         // can paint a confirmed state. Until this flips true the header
@@ -3611,14 +3640,18 @@ function updateHeaderStatusBadge(connected){
         return;
     }
     const state = _gpuState.state || 'unknown';
-    // Heartbeat-fresh trump card: a fresh ready_age_s proves the Modal
-    // consumer thread is heartbeating right now, which means the GPU
-    // container is alive and serving inference. This wins over any
-    // 'warming' or stale-stage signals — we don't want to paint
-    // "GPU warming" on a GPU that is demonstrably already running.
+    // Heartbeat-fresh trump card + recently-ready hysteresis. Either
+    // condition keeps the badge on "GPU ready":
+    //   - heartbeatIsFresh: the GPU is provably alive RIGHT NOW.
+    //   - recentlyReady: we've seen it ready within the hysteresis
+    //     window. Required to ride out the warmup_at-vs-ready_at race
+    //     that briefly flips state='warming' on a healthy GPU every
+    //     time a Generate click bumps warmup_at. Without this the
+    //     badge intermittently flashes "GPU warming" on a fine GPU.
     const readyAge = _gpuState.ready_age_s;
     const heartbeatIsFresh = readyAge !== null && readyAge !== undefined && readyAge <= _GPU_READY_FRESH_S;
-    if (heartbeatIsFresh) {
+    const recentlyReady = _gpuLastReadyAt > 0 && (Date.now() - _gpuLastReadyAt) < _GPU_READY_HYSTERESIS_MS;
+    if (heartbeatIsFresh || recentlyReady) {
         dot.className = 'dot on';
         label.textContent = 'GPU ready';
         renderStartupOverlay();
@@ -3652,13 +3685,23 @@ function updateHeaderStatusBadge(connected){
             ready:                'GPU ready',
         };
         const stage = _gpuState.startup_stage;
+        // Same contradiction guard as in renderStartupOverlay: when state
+        // is 'warming' but startup_stage is 'ready', that combination is
+        // impossible for the current cycle. The stage value is leftover
+        // from a previous boot that completed before scaledown, while
+        // a fresh warmup just kicked off without a new heartbeat landing
+        // yet. Without this guard the badge prints "GPU ready" (text
+        // from stageMap['ready']) on top of an orange 'warm' dot, which
+        // looks like a half-broken header. Treat it as no fresh stage.
+        const stageContradictsState = (stage === 'ready');
+        const stageIsTrustworthy = stage && !stageContradictsState;
         let text;
-        if (stage === 'registering' && _gpuState.startup_total > 0) {
+        if (stageIsTrustworthy && stage === 'registering' && _gpuState.startup_total > 0) {
             text = `Registering ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
-        } else if (stage === 'compiling') {
+        } else if (stageIsTrustworthy && stage === 'compiling') {
             const age = _gpuState.startup_age_s || 0;
             text = age > 0 ? `Compiling kernels · ${age}s` : 'Compiling kernels';
-        } else if (stage && stageMap[stage]) {
+        } else if (stageIsTrustworthy && stageMap[stage]) {
             text = stageMap[stage];
         } else {
             text = 'GPU warming';
@@ -3715,15 +3758,18 @@ function renderStartupOverlay(){
     // was just refreshed by a Generate click. None of that overrides a
     // live heartbeat.
     //
-    // Without this, the overlay flapped open every time the server
-    // briefly returned state='warming' (e.g. user clicks Generate → we
-    // bump warmup_at → server's next status poll lands before our
-    // heartbeat does → state='warming' for one tick) on top of an
-    // already-warm GPU. The user reported the overlay "constantly
-    // cycling back" — this is the cause.
+    // Plus a hysteresis fallback (_gpuLastReadyAt): once we've SEEN the
+    // heartbeat fresh in this session, keep the overlay closed for the
+    // hysteresis window even if the next poll briefly reports 'warming'.
+    // This is the actual fix for the "modal flashes intermittently when
+    // things are fine" bug — the server returns state='warming' for a
+    // few seconds whenever warmup_at is bumped between inference step
+    // pings (i.e. every Generate click), which is meaningless to the
+    // user but used to flap the overlay open.
     const readyAge = _gpuState.ready_age_s;
     const heartbeatIsFresh = readyAge !== null && readyAge !== undefined && readyAge <= _GPU_READY_FRESH_S;
-    if (_gpuFirstPollDone && heartbeatIsFresh) {
+    const recentlyReady = _gpuLastReadyAt > 0 && (Date.now() - _gpuLastReadyAt) < _GPU_READY_HYSTERESIS_MS;
+    if (_gpuFirstPollDone && (heartbeatIsFresh || recentlyReady)) {
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;
