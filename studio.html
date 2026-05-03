@@ -3218,12 +3218,50 @@ function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.
 // Generate. Worker debounces per-user to one ping per 5 min, so calling this
 // liberally (checkAuth, onfocus, etc.) is safe.
 //
+// IMPORTANT: We FIRST check if the GPU is already on. If a fresh heartbeat
+// is in _gpuState, the container is alive and serving inference — calling
+// /api/studio/warmup in that case is wasted work (the worker still hits
+// Modal even though no wake is needed) and can briefly bump warmup_at,
+// which makes the server return state='warming' on the very next /status
+// poll until the next consumer-thread heartbeat lands. That transient
+// flip is what made the cold-boot overlay flash on a healthy GPU.
+//
+// Decision logic:
+//   - If we have a fresh heartbeat (ready_age_s < READY_STALE_S): skip.
+//   - If we don't have status yet (_gpuFirstPollDone === false): poll
+//     once inline, then re-evaluate. This handles page load — the very
+//     first call to warmupGpu() races pollStatus().
+//   - Otherwise: fire warmup.
+//
 // The worker now actually wakes Modal (hits the GPU's /health endpoint).
 // If the container was scaled down (30 min idle), the user gets a
 // one-time thank-you bonus of 300 tokens. We surface that with a modal
 // so the user understands why their balance jumped — silent token
 // changes feel buggy.
 async function warmupGpu(){
+    // Use the same READY_STALE_S threshold the overlay does — within
+    // that window the consumer thread is heartbeating, which can only
+    // happen if the container is alive.
+    const READY_STALE_S = 30;
+    const _isReadyNow = () => {
+        if (_gpuState.state !== 'ready') return false;
+        const ra = _gpuState.ready_age_s;
+        return ra !== null && ra !== undefined && ra < READY_STALE_S;
+    };
+
+    // First ever call (page load) — poll status inline so we don't fire
+    // a wake against a GPU that's already up. After this completes
+    // _gpuFirstPollDone is true and _gpuState reflects ground truth.
+    if (!_gpuFirstPollDone) {
+        try { await pollStatus(); } catch (e) { /* fall through, fire warmup */ }
+    }
+
+    if (_isReadyNow()) {
+        // GPU is already on; nothing to do. We deliberately don't even
+        // log here — silent no-op is the right outcome.
+        return;
+    }
+
     try{
         const r = await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
         const d = await r.json().catch(() => ({}));
