@@ -121,12 +121,31 @@
 
     <div id="header" class="shrink-0"></div>
 
-    <div class="flex-1 overflow-y-auto no-scrollbar" id="scroll-container">
-      <div id="map-section" class="w-full relative" style="height: 50vh; min-height: 380px;">
+    <div class="flex-1 relative" id="scroll-container" style="overflow:hidden;">
+      <!-- Map (absolute fill, only shown on map tab) -->
+      <div id="map-section" class="absolute inset-0">
         <div id="map" class="w-full h-full"></div>
         <div id="map-loading" class="absolute inset-0 flex items-center justify-center pointer-events-none text-violet-300 text-xs">Loading map…</div>
+
+        <!-- Bottom sheet (collapsed/expanded) -->
+        <div id="bottom-sheet" class="absolute left-0 right-0 bottom-0 z-[1000] flex flex-col"
+             style="background:rgba(11,9,22,0.96);backdrop-filter:blur(20px);
+                    border-top-left-radius:24px;border-top-right-radius:24px;
+                    border-top:1px solid rgba(167,139,250,0.25);
+                    box-shadow:0 -10px 40px rgba(0,0,0,0.6);
+                    height:180px;
+                    transition:height 0.32s cubic-bezier(0.32,0.72,0,1);
+                    will-change:height;">
+          <button data-action="toggle-sheet" class="w-full flex justify-center pt-2.5 pb-1.5 shrink-0"
+                  style="background:transparent;border:0;cursor:pointer;">
+            <div id="sheet-grabber" class="w-10 h-1.5 rounded-full" style="background:rgba(255,255,255,0.3);"></div>
+          </button>
+          <div id="sheet-content" class="overflow-y-auto no-scrollbar flex-1"></div>
+        </div>
       </div>
-      <div id="content"></div>
+
+      <!-- Content for non-map tabs -->
+      <div id="content" class="absolute inset-0 overflow-y-auto no-scrollbar" style="display:none;"></div>
     </div>
 
     <div id="bottom-nav" class="shrink-0"></div>
@@ -162,6 +181,20 @@ const state = {
 let liveValues = {};
 let lastIsLive = null;
 let lastListRefresh = 0;
+let sheetState = 'collapsed'; // 'collapsed' | 'expanded'
+
+function applySheetState() {
+  const sheet = document.getElementById('bottom-sheet');
+  if (!sheet) return;
+  sheet.style.height = sheetState === 'collapsed' ? '180px' : 'calc(100% - 16px)';
+  const grabber = document.getElementById('sheet-grabber');
+  if (grabber) grabber.style.background = sheetState === 'expanded' ? 'rgba(167,139,250,0.6)' : 'rgba(255,255,255,0.3)';
+}
+
+function toggleSheet() {
+  sheetState = sheetState === 'collapsed' ? 'expanded' : 'collapsed';
+  applySheetState();
+}
 
 /* ==========================================================
    TIME-OF-DAY MODEL
@@ -626,56 +659,41 @@ function headerHtml() {
   const totalsAsStats = { tinder: { total: totalGen.guys + totalGen.girls, guys: totalGen.guys, girls: totalGen.girls }, bumble:{total:0,guys:0,girls:0}, hinge:{total:0,guys:0,girls:0} };
 
   return `
-    <div class="px-4 pt-3 pb-3" style="background:rgba(11,9,22,0.85);backdrop-filter:blur(12px);">
-      <div class="flex items-center justify-between">
-        <button data-action="set-tab" data-tab="map" class="flex items-center gap-2 cursor-pointer" style="background:transparent;border:0;padding:0;">
-          ${icons.wingBadge(28)}
-          <span class="text-white font-semibold text-lg tracking-tight" style="letter-spacing:-0.5px">wing</span>
+    <div class="px-4 pt-2 pb-2.5" style="background:rgba(11,9,22,0.85);backdrop-filter:blur(12px);">
+      <!-- Top row: logo + filter chips (replaces wing/wordmark + city/time pills) -->
+      <div class="flex items-center gap-2">
+        <button data-action="set-tab" data-tab="map" class="flex items-center gap-1.5 cursor-pointer shrink-0" style="background:transparent;border:0;padding:0;">
+          ${icons.wingBadge(24)}
+          <span class="text-white font-semibold text-base tracking-tight" style="letter-spacing:-0.5px">wing</span>
         </button>
-        <div class="flex items-center gap-1.5">
-          <button class="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-medium text-white"
-                  style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);">
-            <span style="color:#c4b5fd">${icons.pin(11)}</span><span>Washington, DC</span>
-          </button>
-          <div class="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-medium text-white"
-               style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);">
-            ${dayIcon}<span id="header-clock" class="tabular">${fmtTimeShort(state.now)}</span>
-          </div>
+        <div class="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar justify-end">
+          ${filterChip('all')}${filterChip('tinder')}${filterChip('bumble')}${filterChip('hinge')}
         </div>
       </div>
 
-      <!-- Ticker -->
-      <div class="mt-3 rounded-xl px-3 py-2.5"
+      <!-- Ticker — single compact row -->
+      <div class="mt-2 rounded-xl px-3 py-2"
            style="background:linear-gradient(90deg, ${hexToRgba(a.color,0.16)}, ${hexToRgba(a.color,0.04)});
                   border:1px ${ctx.isLive ? 'solid' : 'dashed'} ${hexToRgba(a.color, 0.32)};">
         <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2.5 flex-1 min-w-0">
-            <div class="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style="background:${hexToRgba(a.color, 0.22)}">${icons[state.app](18)}</div>
+          <div class="flex items-center gap-2 flex-1 min-w-0">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style="background:${hexToRgba(a.color, 0.22)}">${icons[state.app](16)}</div>
             <div class="flex-1 min-w-0">
-              <div class="text-[10px] uppercase tracking-wider font-semibold leading-none" style="color:${a.color}">${tickerLabel}</div>
-              <div class="flex items-center gap-2.5 mt-1.5">
-                <div class="flex items-baseline gap-1">
-                  <div class="text-white text-2xl font-bold tabular leading-none" id="ticker-total">${numberPrefix}${total}</div>
-                  <span class="text-slate-400 text-[10px]">in&nbsp;DC</span>
-                </div>
-                <span style="color:rgba(255,255,255,0.18);font-size:18px;line-height:1">|</span>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-slate-500 text-[9px] uppercase tracking-wider">guys</span>
-                  <span class="text-blue-400 font-bold text-base tabular leading-none">${numberPrefix}${totalGen.guys}</span>
-                  ${genderDonut(totalsAsStats, 'tinder', 26)}
-                  <span class="text-pink-400 font-bold text-base tabular leading-none">${numberPrefix}${totalGen.girls}</span>
-                  <span class="text-slate-500 text-[9px] uppercase tracking-wider">girls</span>
-                </div>
+              <div class="text-[9px] uppercase tracking-wider font-semibold leading-none" style="color:${a.color}">${tickerLabel}</div>
+              <div class="flex items-baseline gap-1 mt-1">
+                <div class="text-white text-xl font-bold tabular leading-none" id="ticker-total">${numberPrefix}${total}</div>
+                <span class="text-slate-400 text-[10px]">in DC</span>
               </div>
             </div>
           </div>
-          ${statusBadge()}
+          <div class="flex items-center gap-1.5 shrink-0">
+            <span class="text-slate-500 text-[8px] uppercase tracking-wider">guys</span>
+            <span class="text-blue-400 font-bold text-sm tabular leading-none">${numberPrefix}${totalGen.guys}</span>
+            ${genderDonut(totalsAsStats, 'tinder', 24)}
+            <span class="text-pink-400 font-bold text-sm tabular leading-none">${numberPrefix}${totalGen.girls}</span>
+            <span class="text-slate-500 text-[8px] uppercase tracking-wider">girls</span>
+          </div>
         </div>
-      </div>
-
-      <!-- Filter chips -->
-      <div class="mt-3 flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
-        ${filterChip('all')}${filterChip('tinder')}${filterChip('bumble')}${filterChip('hinge')}
       </div>
     </div>`;
 }
@@ -714,8 +732,8 @@ function mapTabHtml() {
 
   return `
     ${predictionBannerHtml()}
-    <div class="px-4 pt-4 pb-28">
-      <div class="pred-card rounded-2xl p-3 mb-4" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);">
+    <div class="px-4 pt-2 pb-6">
+      <div class="pred-card rounded-2xl p-3 mb-3" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);">
         <div class="flex items-center justify-between mb-1">
           <div>
             <div class="text-white text-sm font-semibold">${ctx.headline}</div>
@@ -730,11 +748,11 @@ function mapTabHtml() {
         ${tilPeak ? `<div class="text-center text-orange-300 text-[11px] mt-1 font-medium">Peak in ${tilPeak}</div>` : ''}
       </div>
 
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-white text-lg font-semibold tracking-tight">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-white text-base font-semibold tracking-tight">
           ${ctx.isLive ? `Top venues by ${a.short}` : `Tonight's projected leaders`}
         </h2>
-        <button class="text-violet-400 text-sm font-medium">See all</button>
+        <button class="text-violet-400 text-xs font-medium">See all</button>
       </div>
       <div class="space-y-2">${rows}</div>
     </div>`;
@@ -1159,12 +1177,18 @@ function renderShell() {
 
 function renderTabContent() {
   const showMap = state.tab === 'map';
-  document.getElementById('map-section').style.display = showMap ? 'block' : 'none';
+  const mapSection = document.getElementById('map-section');
   const content = document.getElementById('content');
-  if (showMap) content.innerHTML = mapTabHtml();
-  else if (state.tab === 'hotspots') content.innerHTML = hotspotsTabHtml();
-  else if (state.tab === 'venues')   content.innerHTML = venueDetailHtml();
-  else if (state.tab === 'profile')  content.innerHTML = profileTabHtml();
+  mapSection.style.display = showMap ? 'block' : 'none';
+  content.style.display = showMap ? 'none' : 'block';
+  if (showMap) {
+    document.getElementById('sheet-content').innerHTML = mapTabHtml();
+    applySheetState();
+  } else {
+    if (state.tab === 'hotspots') content.innerHTML = hotspotsTabHtml();
+    else if (state.tab === 'venues')   content.innerHTML = venueDetailHtml();
+    else if (state.tab === 'profile')  content.innerHTML = profileTabHtml();
+  }
   if (showMap && map) setTimeout(() => map.invalidateSize(), 0);
 }
 
@@ -1198,6 +1222,8 @@ document.addEventListener('click', (e) => {
     rebuildMarkers();
   } else if (action === 'select-venue') {
     selectVenue(btn.dataset.id);
+  } else if (action === 'toggle-sheet') {
+    toggleSheet();
   }
 });
 
