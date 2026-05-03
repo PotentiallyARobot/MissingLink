@@ -3754,8 +3754,18 @@ function renderStartupOverlay(){
     overlay.style.display = '';
 
     const clientElapsed = Math.floor((Date.now() - _startupFirstSeen) / 1000);
+    // Elapsed shown to the user is "time since this overlay opened on this
+    // client", NOT "time since the server last wrote startup_updated_at" —
+    // those two values can diverge wildly. If the GPU finished a previous
+    // warming cycle hours ago without the table being cleared, serverAge
+    // can be huge (we observed 5000+ seconds in the wild) and would
+    // immediately paint the counter at 5777s on a fresh page load.
+    // We only fold serverAge in when it's sane (under ~5 min) AND smaller
+    // than what the client would otherwise show — never let it inflate.
     const serverAge = _gpuState.startup_age_s || 0;
-    const elapsed = Math.max(clientElapsed, serverAge);
+    const elapsed = (serverAge > 0 && serverAge < 300 && serverAge > clientElapsed)
+        ? serverAge
+        : clientElapsed;
 
     // Stage-anchored progress. Each stage we receive from Modal maps to a
     // target percent on the bar. As soon as the server reports a new stage,
@@ -3802,8 +3812,15 @@ function renderStartupOverlay(){
     // the current stage. This is the stage's anchor plus some intra-stage
     // drift toward the next anchor (so a slow stage doesn't glue the bar
     // exactly at its anchor for the full duration).
+    //
+    // Stage info is only trusted when its age is reasonable. A stale
+    // startup_stage (from a previous warming cycle that wasn't cleared)
+    // would otherwise be read as the current stage and cap the bar at e.g.
+    // warming_up=92% during what is actually the fresh start of a new
+    // cycle. 60s is comfortably longer than any single legitimate stage.
+    const stageIsFresh = stage && serverAge > 0 && serverAge < 60;
     let stageCap;
-    if (stage && STAGE_ANCHORS[stage] !== undefined) {
+    if (stageIsFresh && STAGE_ANCHORS[stage] !== undefined) {
         const basePct = STAGE_ANCHORS[stage];
         const stageIdx = STAGE_ORDER.indexOf(stage);
         const nextAnchor = (stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1)
@@ -3813,7 +3830,7 @@ function renderStartupOverlay(){
         const driftFraction = Math.min(1, stageElapsed / INTRA_STAGE_DRIFT_S);
         stageCap = basePct + (driftTarget - basePct) * driftFraction;
     } else {
-        // No stage info yet — cap at the booting anchor so the bar can
+        // No fresh stage info — cap at the booting anchor so the bar can
         // still reach the early single-digit territory but doesn't run
         // away on a hunch.
         stageCap = STAGE_ANCHORS.booting;
@@ -3871,9 +3888,9 @@ function renderStartupOverlay(){
     let stageText;
     if (_gpuState.state === 'cold') {
         stageText = 'Connecting…';
-    } else if (stage === 'registering' && _gpuState.startup_total > 0) {
+    } else if (stageIsFresh && stage === 'registering' && _gpuState.startup_total > 0) {
         stageText = `Registering · ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
-    } else if (stage && stageLabels[stage]) {
+    } else if (stageIsFresh && stage && stageLabels[stage]) {
         stageText = stageLabels[stage];
     } else {
         stageText = 'Warming up…';
