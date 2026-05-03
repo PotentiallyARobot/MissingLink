@@ -3611,19 +3611,27 @@ function updateHeaderStatusBadge(connected){
         return;
     }
     const state = _gpuState.state || 'unknown';
+    // Heartbeat-fresh trump card: a fresh ready_age_s proves the Modal
+    // consumer thread is heartbeating right now, which means the GPU
+    // container is alive and serving inference. This wins over any
+    // 'warming' or stale-stage signals — we don't want to paint
+    // "GPU warming" on a GPU that is demonstrably already running.
+    const readyAge = _gpuState.ready_age_s;
+    const heartbeatIsFresh = readyAge !== null && readyAge !== undefined && readyAge <= _GPU_READY_FRESH_S;
+    if (heartbeatIsFresh) {
+        dot.className = 'dot on';
+        label.textContent = 'GPU ready';
+        renderStartupOverlay();
+        return;
+    }
     // Stale-ready guard: the server's 30s READY_WINDOW is intentionally
     // generous, but a ready_age_s well beyond the ~5s heartbeat interval
     // means the heartbeat is lapsing — the GPU is winding down even though
     // the server hasn't crossed its threshold yet. Treat this as "verifying"
     // so we don't paint a green "GPU ready" right before the state flips
     // to sleeping/warming on the next poll.
-    const readyAge = _gpuState.ready_age_s;
-    const readyIsFresh = state === 'ready' && (readyAge === null || readyAge === undefined || readyAge <= _GPU_READY_FRESH_S);
-    if (state === 'ready' && readyIsFresh) {
-        dot.className = 'dot on';
-        label.textContent = 'GPU ready';
-    } else if (state === 'ready' && !readyIsFresh) {
-        // Server says ready but the heartbeat is lapsing — don't lie.
+    if (state === 'ready') {
+        // Server says ready but the heartbeat is not fresh — don't lie.
         dot.className = 'dot warm';
         label.textContent = 'Verifying GPU…';
     } else if (state === 'warming') {
@@ -3699,22 +3707,23 @@ let _startupCurrentStageEnteredAt = 0;
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
-    // Hard early-exit: when the GPU's running state is 'ready', the overlay
-    // is never appropriate, regardless of any stale startup_stage value the
-    // server might still be reporting. Without this, the overlay can get
-    // stuck open after a state transition because the setInterval tick
-    // below only calls this function while inStartup is true — a single
-    // missed pollStatus during the warming→ready transition leaves the
-    // overlay visible forever (we observed this in the wild).
+    // Heartbeat-fresh trump card: the Modal consumer thread heartbeats
+    // ready_at every ~5s while the container is alive. If ready_age_s is
+    // small, the GPU is actively serving inference RIGHT NOW — full stop.
+    // It doesn't matter what the server's derived `state` is, what stale
+    // startup_stage value is sitting in the table, or whether warmup_at
+    // was just refreshed by a Generate click. None of that overrides a
+    // live heartbeat.
     //
-    // Stale-ready guard: same logic as updateHeaderStatusBadge — we only
-    // trust 'ready' when the heartbeat is fresh. If ready_age_s is well
-    // past the heartbeat interval the GPU is on its way down and the
-    // overlay should stay up so the user sees the warmup that's coming.
+    // Without this, the overlay flapped open every time the server
+    // briefly returned state='warming' (e.g. user clicks Generate → we
+    // bump warmup_at → server's next status poll lands before our
+    // heartbeat does → state='warming' for one tick) on top of an
+    // already-warm GPU. The user reported the overlay "constantly
+    // cycling back" — this is the cause.
     const readyAge = _gpuState.ready_age_s;
-    const readyIsFresh = _gpuState.state === 'ready' &&
-        (readyAge === null || readyAge === undefined || readyAge <= _GPU_READY_FRESH_S);
-    if (_gpuFirstPollDone && _gpuState.state === 'ready' && readyIsFresh) {
+    const heartbeatIsFresh = readyAge !== null && readyAge !== undefined && readyAge <= _GPU_READY_FRESH_S;
+    if (_gpuFirstPollDone && heartbeatIsFresh) {
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;
@@ -3731,6 +3740,9 @@ function renderStartupOverlay(){
     // This prevents the user from staring at an empty stage during
     // the brief pre-stage window — they always see the overlay if the
     // GPU is on its way up.
+    //
+    // Both conditions are gated on heartbeat NOT being fresh, since a
+    // fresh heartbeat already proved the GPU is alive above.
     const stage = _gpuState.startup_stage;
     const stageAge = _gpuState.startup_age_s || 0;
     const inStartup = !!stage && stage !== 'ready' && stageAge < 600;
@@ -3813,12 +3825,17 @@ function renderStartupOverlay(){
     // drift toward the next anchor (so a slow stage doesn't glue the bar
     // exactly at its anchor for the full duration).
     //
-    // Stage info is only trusted when its age is reasonable. A stale
-    // startup_stage (from a previous warming cycle that wasn't cleared)
-    // would otherwise be read as the current stage and cap the bar at e.g.
-    // warming_up=92% during what is actually the fresh start of a new
-    // cycle. 60s is comfortably longer than any single legitimate stage.
-    const stageIsFresh = stage && serverAge > 0 && serverAge < 60;
+    // Stage info is only trusted when (a) its age is reasonable AND (b) it's
+    // not logically contradictory with the running state. The contradiction
+    // case worth calling out: state='warming' with startup_stage='ready' is
+    // impossible for the current cycle — the GPU can't be warming and ready
+    // at the same time. That combination means the stage value is left over
+    // from a previous cycle that completed, while a fresh warmup_at has
+    // restarted the warming state without any new heartbeat landing yet.
+    // Trusting the leftover 'ready' would label the overlay "GPU ready"
+    // mid-warmup, which is the bug we're fixing.
+    const stageContradictsState = (stage === 'ready' && _gpuState.state !== 'ready');
+    const stageIsFresh = stage && serverAge > 0 && serverAge < 60 && !stageContradictsState;
     let stageCap;
     if (stageIsFresh && STAGE_ANCHORS[stage] !== undefined) {
         const basePct = STAGE_ANCHORS[stage];
@@ -3906,7 +3923,12 @@ function renderStartupOverlay(){
     if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
     if (titleEl) titleEl.textContent = _gpuState.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     if (subEl) {
-        if (elapsed > 60) {
+        if (elapsed > 180) {
+            // Cold boot is 90-120s normally. Past 3 min something is off —
+            // network blip, stuck heartbeat, slow Modal scheduler. Don't
+            // tell the user we're "almost there" when we clearly aren't.
+            subEl.textContent = "This is taking longer than usual. The GPU may be slow to respond — feel free to try clicking Generate again in a moment.";
+        } else if (elapsed > 60) {
             subEl.textContent = "Almost there — finishing up. You can prepare your prompt and settings while this completes.";
         } else if (elapsed > 30) {
             subEl.textContent = "The GPU is booting. This takes about 90 seconds. Feel free to prepare your inputs below.";
