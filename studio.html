@@ -817,9 +817,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .slot-filled{position:relative;display:flex;align-items:center;gap:10px;padding:6px}
 .slot-filled img{width:100%;max-height:120px;object-fit:contain;display:block;border-radius:4px;background:var(--surface-3);cursor:zoom-in}
 .slot-num-badge{position:absolute;top:10px;left:10px;font-family:var(--font-mono);font-size:9px;font-weight:700;background:var(--gold);color:var(--black);width:20px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;line-height:1}
-.slot-remove{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.8);color:var(--white);font-size:12px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;opacity:0}
-.img-slot:hover .slot-remove{opacity:1}
-.slot-remove:hover{background:var(--red)}
+/* Remove/clear button — always visible when the slot has an image so the
+   user can see how to clear it without having to hover (was opacity:0 +
+   hover-to-reveal, which was effectively invisible on touch and easy to
+   miss on desktop). Hover bumps to red to confirm the destructive action. */
+.slot-remove{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.8);color:var(--white);font-size:12px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;opacity:1;z-index:2}
+.slot-remove:hover{background:var(--red);transform:scale(1.08)}
 /* Pencil button to open markup for this specific slot. Always visible
    when the slot has an image. Positioned opposite the remove button. */
 .slot-markup{position:absolute;top:10px;left:10px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.8);color:var(--white);font-size:11px;line-height:1;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0;z-index:2}
@@ -3717,23 +3720,33 @@ function renderStartupOverlay(){
         _startupCurrentStageEnteredAt = 0;
         return;
     }
-    // Show the cold-boot overlay whenever Modal is actively booting:
-    //   1) there's a real startup_stage that hasn't reached 'ready' yet, OR
-    //   2) the worker says state='warming' (warmup_at recent, no
-    //      startup heartbeat yet — typical of the 5-15s gap between
-    //      our /warmup call landing and Modal's first @modal.enter()
-    //      heartbeat).
-    // This prevents the user from staring at an empty stage during
-    // the brief pre-stage window — they always see the overlay if the
-    // GPU is on its way up.
+    // Overlay show rule: only fire when the GPU is CONFIRMED OFF.
+    // "Confirmed off" means we have positive evidence no container is
+    // running:
+    //   - state='cold'     → never seen, fresh deploy / new account
+    //   - state='sleeping' → known but scaledown_window expired
+    //   - state='warming' AND ready_at is genuinely stale → a real
+    //     cold-boot is actively happening (server saw warmup_at bump
+    //     and hasn't seen any consumer-thread heartbeat for >30s)
     //
-    // Both conditions are gated on heartbeat NOT being fresh, since a
-    // fresh heartbeat already proved the GPU is alive above.
-    const stage = _gpuState.startup_stage;
-    const stageAge = _gpuState.startup_age_s || 0;
-    const inStartup = !!stage && stage !== 'ready' && stageAge < 600;
-    const inWarming = _gpuState.state === 'warming';
-    const shouldShow = inStartup || inWarming;
+    // We deliberately do NOT show the overlay just because state is
+    // 'warming' — that flag flips on briefly every time warmup_at
+    // gets bumped (e.g. on a Generate click) even on a fully-running
+    // GPU, before the next heartbeat poll catches up. Showing the
+    // overlay on those transitions creates the "modal flashes when
+    // the GPU is clearly loaded" bug.
+    //
+    // The READY_STALE_S threshold is the same as the server's
+    // READY_WINDOW_S (30s) — if the consumer thread has heartbeated
+    // any time in that window the GPU is alive, regardless of what
+    // state value the server returned.
+    const READY_STALE_S = 30;
+    const readyAge = _gpuState.ready_age_s;
+    const heartbeatRecent = readyAge !== null && readyAge !== undefined && readyAge < READY_STALE_S;
+    const isCold     = _gpuState.state === 'cold';
+    const isSleeping = _gpuState.state === 'sleeping';
+    const isWarmingForReal = _gpuState.state === 'warming' && !heartbeatRecent;
+    const shouldShow = _gpuFirstPollDone && (isCold || isSleeping || isWarmingForReal);
 
     if (!shouldShow) {
         overlay.style.display = 'none';
@@ -3750,6 +3763,11 @@ function renderStartupOverlay(){
         _startupMaxPct = 0;
     }
     overlay.style.display = '';
+
+    // Read stage from server state — used below to drive the progress bar
+    // anchors and the stage label. May be empty/stale; the freshness
+    // checks below handle that.
+    const stage = _gpuState.startup_stage;
 
     const clientElapsed = Math.floor((Date.now() - _startupFirstSeen) / 1000);
     // Elapsed shown to the user is "time since this overlay opened on this
