@@ -2567,7 +2567,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="startup-card">
                 <div class="startup-spinner"></div>
                 <div class="startup-title" id="startupTitle">Starting GPU…</div>
-                <div class="startup-sub" id="startupSub">Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.</div>
+                <div class="startup-sub" id="startupSub">Cold-boot takes about 60 seconds — loading model weights and compile cache. You can prepare your prompt and settings while this runs.</div>
                 <div class="startup-bar-outer">
                     <div class="startup-bar-inner" id="startupBarInner"></div>
                 </div>
@@ -3243,8 +3243,13 @@ async function warmupGpu(){
     // that window the consumer thread is heartbeating, which can only
     // happen if the container is alive.
     const READY_STALE_S = 30;
+    // Heartbeat freshness is ground truth: if ready_at was bumped in
+    // the last READY_STALE_S, the container is up regardless of what
+    // `state` reports. The server can briefly return state='warming'
+    // right after a click (warmup_at jumps ahead of ready_at) even on
+    // a fully-alive GPU — checking ready_age_s alone catches that
+    // and avoids firing a redundant wake against a hot container.
     const _isReadyNow = () => {
-        if (_gpuState.state !== 'ready') return false;
         const ra = _gpuState.ready_age_s;
         return ra !== null && ra !== undefined && ra < READY_STALE_S;
     };
@@ -3260,6 +3265,39 @@ async function warmupGpu(){
         // GPU is already on; nothing to do. We deliberately don't even
         // log here — silent no-op is the right outcome.
         return;
+    }
+
+    // Optimistic UI: paint "warming" state immediately so the cold-boot
+    // overlay appears the moment the user clicks Sign In or Generate,
+    // not 0-5s later when pollStatus catches up. Without this there's
+    // a noticeable dead-air gap between click and any visible feedback,
+    // even though our backend actually fired the wake immediately.
+    //
+    // We seed startup_stage='booting' as a best-guess opening anchor;
+    // as soon as Modal's first /gpu-heartbeat lands the server-side
+    // stage takes over and this guess gets overwritten. The progress
+    // bar's two-phase ramp (0->10% over the first 20s regardless of
+    // stage info) absorbs any optimistic-vs-actual mismatch cleanly.
+    //
+    // _receivedAt is bumped so the freshness checks in renderStartupOverlay
+    // treat this as current data, not stale.
+    _gpuState = Object.assign({}, _gpuState, {
+        state: 'warming',
+        startup_stage: 'booting',
+        startup_progress: 0,
+        startup_total: 0,
+        startup_age_s: 0,
+        warming_for_s: 0,
+        ready_age_s: null,
+        _receivedAt: Date.now(),
+    });
+    if (_gpuFirstPollDone) {
+        // Force overlay + badge re-render with the optimistic state.
+        // Skipped if the very first poll hasn't landed yet, since
+        // updateHeaderStatusBadge would short-circuit to "Connecting…"
+        // anyway; the inline pollStatus above ensures _gpuFirstPollDone
+        // is true by this point in normal flows.
+        updateHeaderStatusBadge(true);
     }
 
     try{
@@ -3652,13 +3690,36 @@ function updateHeaderStatusBadge(connected){
         return;
     }
     const state = _gpuState.state || 'unknown';
+    // Heartbeat freshness is GROUND TRUTH for liveness: if the consumer
+    // thread or per-step pings have updated ready_at within the last
+    // READY_STALE_S seconds, the container is alive and inference-capable
+    // RIGHT NOW, regardless of what `state` says.
+    //
+    // Why we need this even though the server has a precedence rule:
+    // the server's first check is `ready_at < 30s → state='ready'`, but
+    // its third fallback is `warmup_at > ready_at && warmup_at < 600s →
+    // state='warming'`. When the user clicks Generate, the worker bumps
+    // warmup_at to "now". The container's liveness heartbeat thread
+    // bumps ready_at every 10s — so for the 0–10s window between the
+    // click and the next heartbeat, warmup_at briefly exceeds ready_at,
+    // and the server returns state='warming' even though the container
+    // is fully alive and the job is already running.
+    //
+    // Without this client-side override, the badge said "GPU warming"
+    // for 5–10 seconds at the start of every job on a hot GPU, and
+    // stuck even longer if the user clicked again. heartbeatRecent
+    // catches that case and pins the badge at "GPU ready".
+    const _BADGE_READY_FRESH_S = 30;
+    const _readyAge = _gpuState.ready_age_s;
+    const _heartbeatRecent = _readyAge !== null && _readyAge !== undefined
+                          && _readyAge < _BADGE_READY_FRESH_S;
     // Trust the server. With the precedence fix in /api/studio/status
     // (ready_at checked before stale startup_stage), state='ready'
     // means the consumer thread heartbeated within READY_WINDOW_S —
     // which can only happen if the GPU is alive and the inference
-    // loop is running. No client-side smoothing needed; honest
-    // reflection of server state.
-    if (state === 'ready') {
+    // loop is running. We additionally treat state='warming' with a
+    // recent heartbeat as ready (see comment block above).
+    if (state === 'ready' || _heartbeatRecent) {
         dot.className = 'dot on';
         label.textContent = 'GPU ready';
     } else if (state === 'warming') {
@@ -3673,8 +3734,11 @@ function updateHeaderStatusBadge(connected){
             loading_transformer:  'Loading model',
             loading_text_encoder: 'Loading encoder',
             building_pipeline:    'Building pipeline',
+            loading_loras:        'Loading LoRAs',
+            moving_to_gpu:        'Moving to GPU',
             registering:          'Registering kernels',
             compiling:            'Compiling kernels',
+            finalizing:           'Finalizing',
             warming_up:           'Final warmup',
             ready:                'GPU ready',
         };
@@ -3835,12 +3899,15 @@ function renderStartupOverlay(){
     // sees the bar lurch forward whenever a new stage arrives.
     const STAGE_ANCHORS = {
         booting:              5,
-        loading_transformer:  20,
-        loading_text_encoder: 40,
-        building_pipeline:    55,
-        registering:          65,
-        compiling:            80,
-        warming_up:           92,
+        loading_transformer:  18,
+        loading_text_encoder: 35,
+        building_pipeline:    50,
+        loading_loras:        60,
+        moving_to_gpu:        70,
+        registering:          80,
+        compiling:            88,
+        finalizing:           95,
+        warming_up:           92,   // legacy — kept for backward compat
         ready:                100,
     };
     // Approximate seconds the bar spends advancing from one anchor to the
@@ -3852,8 +3919,8 @@ function renderStartupOverlay(){
 
     // Order matters here for the "next anchor" lookup below.
     const STAGE_ORDER = ['booting', 'loading_transformer', 'loading_text_encoder',
-                         'building_pipeline', 'registering', 'compiling',
-                         'warming_up', 'ready'];
+                         'building_pipeline', 'loading_loras', 'moving_to_gpu',
+                         'registering', 'compiling', 'finalizing', 'ready'];
     // Track when we last entered the current stage so intra-stage drift is
     // measured from the stage transition, not from overlay open.
     if (_startupCurrentStage !== stage) {
@@ -3939,8 +4006,11 @@ function renderStartupOverlay(){
         loading_transformer:  'Loading model weights',
         loading_text_encoder: 'Loading text encoder',
         building_pipeline:    'Building pipeline',
+        loading_loras:        'Loading LoRAs',
+        moving_to_gpu:        'Moving model to GPU',
         registering:          'Registering kernels',
         compiling:            'Compiling kernels',
+        finalizing:           'Finalizing',
         warming_up:           'Final warmup',
         ready:                'GPU ready',
     };
@@ -3968,7 +4038,7 @@ function renderStartupOverlay(){
         // Single, fixed message whenever the overlay is up — keeps the
         // copy stable instead of mutating into "Almost there" at 60s
         // (which was a lie when the actual elapsed climbed past that).
-        subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+        subEl.textContent = "Cold-boot takes about 60 seconds — loading model weights and compile cache. You can prepare your prompt and settings while this runs.";
     }
 }
 
@@ -5657,7 +5727,7 @@ async function doGenerate(){
     // The job submission below proceeds normally; Modal's autoscaler
     // will boot the container and then dispatch the queued job. The
     // user sees "GPU starting" via the status badge + cold-boot
-    // overlay during the ~90s spin-up.
+    // overlay during the ~50-60s spin-up.
     //
     // We only call warmup for Qwen-driven jobs (camera/edit). Create
     // mode uses gpt-image-2 directly which doesn't need our GPU warm.
