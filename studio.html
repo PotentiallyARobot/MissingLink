@@ -3430,13 +3430,72 @@ function setMode(mode, opts){
         _editingBatchSlot = null;
         renderEditingSlotBanner();
     }
-    // On any mode change, tear down a stale batch grid from a previous
-    // session. The user tabbing to a different mode is an explicit "moving
-    // on" action — a 6-angle grid (or batch-edit grid) should NOT persist
-    // over the new context. clearBatchGrid() also resets _activeBatch so
-    // renderBatchInputs / showResult aren't confused by it.
+    // Mode switch + active batch: PRESERVE the batch across mode changes
+    // so the user can pop into Camera/Edit/Create mid-generation and find
+    // their jobs still running when they return. Previously clearBatchGrid()
+    // ran on every mode change, which nuked _activeBatch + _pendingAngleShots
+    // + the entire grid DOM — coming back showed an empty input strip with
+    // no trace of the in-flight work.
+    //
+    // The grid DOM stays in #outputArea where it was created; we just
+    // toggle display so it doesn't bleed into modes the batch doesn't
+    // belong to. While hidden, the existing job-completion handlers
+    // (handleJobTerminal, pollQueue) keep calling renderBatchGrid() and
+    // that paints into the (display:none) DOM as shots resolve. When
+    // the user returns to the home mode for this batch we unhide and
+    // the grid already reflects the latest state.
+    //
+    // Each batch kind has a "home mode":
+    //   batch-edit                → Batch mode (initiated from there)
+    //   angles / angles-many      → Camera mode (All N Angles is a
+    //                                Camera feature; the grid is shown
+    //                                inside Camera's output area)
+    // The grid is visible only in its home mode; in any other mode it's
+    // hidden. So Camera→Edit→Camera with an angle batch in flight
+    // restores the grid on the return to Camera, and Batch→Camera→Batch
+    // does the same for batch-edit.
+    //
+    // OTHER clearBatchGrid callers are unchanged and keep their semantics:
+    //   - showResult (single-image lands) → clear, because a fresh
+    //     Camera/Edit result is the user explicitly moving on
+    //   - New batch starting → clear the previous one
+    //   - Explicit "Discard this batch" button → clear
+    const _BATCH_DOM_IDS = ['batchGrid', 'batchFooter', 'batchProgress'];
+    const _batchHomeMode = (b) => {
+        if (!b) return null;
+        const k = b.kind;
+        if (k === 'angles' || k === 'angles-many') return 'camera';
+        return 'batch';   // batch-edit and any future kinds default here
+    };
     if (prevMode !== mode && typeof _activeBatch !== 'undefined' && _activeBatch) {
-        clearBatchGrid();
+        const home = _batchHomeMode(_activeBatch);
+        const showNow = (mode === home);
+        const wasShowing = (prevMode === home);
+        if (showNow && !wasShowing) {
+            // Returning to the batch's home mode — make the grid visible
+            // again. (style='' clears the inline display:none we set on
+            // the way out; CSS rules take over.)
+            for (const id of _BATCH_DOM_IDS) {
+                const el = $(id);
+                if (el) el.style.display = '';
+            }
+            // Refresh from current state in case shots updated while away.
+            // The handlers already painted into the hidden DOM, but a
+            // belt-and-suspenders re-render guarantees the user sees the
+            // freshest state on the same animation frame as the mode swap.
+            if (typeof renderBatchGrid === 'function') renderBatchGrid();
+        } else if (!showNow && wasShowing) {
+            // Leaving the batch's home mode — hide the grid surface so it
+            // doesn't visually overlap the new mode's output area, but
+            // keep _activeBatch alive in JS state.
+            for (const id of _BATCH_DOM_IDS) {
+                const el = $(id);
+                if (el) el.style.display = 'none';
+            }
+        }
+        // If neither was-showing nor show-now (e.g. switching between two
+        // non-home modes), leave the grid in whatever hidden state it
+        // already had — no toggling needed.
     }
     // Create mode is single-image-only. Whenever the user enters or
     // leaves it, clear the shared _batchInputs array — Batch mode's
@@ -3496,12 +3555,32 @@ function setMode(mode, opts){
     const outPh  = $('outPh');
     const resultBar = $('resultBar');
     const hasResultImg = !!(outImg && outImg.src && !outImg.src.endsWith('#'));
-    if (mode === 'batch') {
-        // batch grid will be rendered by renderBatchInputs() below, but
-        // until/unless there's a grid, we want a clean placeholder, not
-        // a leftover camera result hanging around behind the grid.
+    // If an active batch is the stage owner for THIS mode, renderBatchGrid
+    // has already hidden outPh + outImg. Touching them again here (via the
+    // hasResultImg branch) would re-show a stale single-image result on
+    // top of the freshly-unhidden batch grid. Skip the chain in that case;
+    // just zero out resultBar (which renderBatchGrid doesn't manage).
+    const _bForStage = _activeBatch || null;
+    const _activeBatchHomeMode = _bForStage
+        ? ((_bForStage.kind === 'angles' || _bForStage.kind === 'angles-many') ? 'camera' : 'batch')
+        : null;
+    const _activeBatchTakesStage = !!_bForStage && mode === _activeBatchHomeMode;
+    if (_activeBatchTakesStage) {
+        // renderBatchGrid (invoked above for the "returning to home"
+        // path, or by the batch-launch entry points originally)
+        // governs outPh and outImg. Don't touch them here.
+        if (resultBar) resultBar.style.display = 'none';
+    } else if (mode === 'batch') {
+        // Batch mode: the input grid OR a batch-edit result grid takes
+        // the stage, so we always hide the single-image result bar and
+        // outImg. outPh (the empty-state placeholder text) is hidden only
+        // when an active batch BELONGS TO THIS MODE — i.e. its kind is
+        // batch-edit. An angle batch (active in Camera) is none of this
+        // mode's business and shouldn't suppress the Batch placeholder.
         if (outImg) outImg.style.display = 'none';
-        if (outPh)  outPh.style.display  = '';
+        const _b = _activeBatch;
+        const _activeIsBatchEdit = !!(_b && _b.kind !== 'angles' && _b.kind !== 'angles-many');
+        if (outPh)  outPh.style.display  = _activeIsBatchEdit ? 'none' : '';
         if (resultBar) resultBar.style.display = 'none';
     } else if (hasResultImg) {
         if (outImg) outImg.style.display = '';
@@ -4639,17 +4718,30 @@ function genUpdateCompression(){
 // Used by genSetModel to enable/disable downstream controls (e.g.
 // the Transparent background button only on gpt-image-1.5) and by
 // the cost helper to swap in the right pricing anchors.
+//
+// supportsMultiRef: whether this model accepts multiple reference
+// images on /v1/images/edits. All GPT Image variants OpenAI exposes
+// today support up to 16 reference images per call (verified against
+// developers.openai.com — gpt-image-2's model page lists v1/images/edits
+// as a supported endpoint, the image-generation guide shows the TS
+// code example with a multi-image array on gpt-image-2, and the edit
+// reference page documents up to 16 images for the GPT Image family).
+// Encoded per-model so a future variant that drops multi-ref support
+// is caught automatically by the gate in doGenerateMode.
 const _GEN_MODEL_CAPS = {
     'gpt-image-2': {
         supportsTransparent: false,
+        supportsMultiRef: true,
         hint: 'Latest model. Best photorealism + text rendering.',
     },
     'gpt-image-1-mini': {
         supportsTransparent: false,
+        supportsMultiRef: true,
         hint: 'About 4× cheaper than Quality. Great for drafts and high-volume work.',
     },
     'gpt-image-1.5': {
         supportsTransparent: true,
+        supportsMultiRef: true,
         hint: 'Slightly cheaper than Quality at high tier. Only model that supports transparent PNGs.',
     },
 };
@@ -4903,6 +4995,27 @@ async function doGenerateMode(){
         return;
     }
     const refIds = _generateRefs.filter(r => r !== null).map(r => r.id);
+    // Defensive multi-reference gate. All models in our dropdown
+    // currently support multiple reference images on /v1/images/edits
+    // (verified against OpenAI docs — gpt-image-2, gpt-image-1.5, and
+    // gpt-image-1-mini all accept up to 16 image[] parts), so this
+    // gate is silent in practice today. But the capability is encoded
+    // per-model in _GEN_MODEL_CAPS, so a future variant added to the
+    // dropdown that drops multi-ref support gets caught here without
+    // anyone needing to remember to update this branch.
+    if (refIds.length > 1) {
+        const caps = _GEN_MODEL_CAPS[_generateModel];
+        if (caps && caps.supportsMultiRef === false) {
+            showNotif(
+                `${_generateModel} accepts only one reference image. ` +
+                `Either remove the extra refs or switch to a model that ` +
+                `supports multiple references (Quality / Fast / Transparent ` +
+                `all do).`,
+                'error'
+            );
+            return;
+        }
+    }
     // Build the placeholder for this generation. In Create mode the
     // stage shows ONLY the most recent generation — the prior result
     // (if any) is replaced. Earlier generations are still accessible
@@ -6215,7 +6328,18 @@ function renderBatchInputs(){
     // grid is taking over. Generate mode shares the grid as its output
     // surface — generations land as tiles the user can refine.
     const inBatchMode = (typeof currentMode !== 'undefined' && (currentMode === 'batch' || currentMode === 'generate'));
-    const hasActiveResults = !!(typeof _activeBatch !== 'undefined' && _activeBatch);
+    const hasActiveResults = (() => {
+        // Only consider the active batch "relevant to this surface" when
+        // its kind belongs to the current mode. An angle batch (kind:
+        // 'angles' / 'angles-many') lives in Camera mode; a batch-edit
+        // lives in Batch mode. With _activeBatch persisting across mode
+        // switches, we must not let an off-mode batch suppress THIS
+        // mode's input grid.
+        const b = (typeof _activeBatch !== 'undefined' && _activeBatch) ? _activeBatch : null;
+        if (!b) return false;
+        const home = (b.kind === 'angles' || b.kind === 'angles-many') ? 'camera' : 'batch';
+        return (typeof currentMode !== 'undefined' && currentMode === home);
+    })();
     // Create mode renders ONE image already — the focus stage would
     // just add a "Back to grid" button pointing at a non-existent
     // grid. Force-clear any focused id when we're in Create mode so
@@ -8133,12 +8257,28 @@ async function retryAllFailedShots(){
 function renderBatchGrid(){
     const area = $('outputArea');
     const inputGrid = $('batchInputsGrid');
+    // Compute home mode of the active batch upfront — used to decide
+    // whether THIS render is taking over the visible stage or just
+    // updating tiles in a hidden DOM (e.g. an angle batch completing
+    // a shot while the user is currently looking at Batch mode).
+    //
+    // Home mode per kind:
+    //   batch-edit                → Batch mode
+    //   angles / angles-many      → Camera mode
+    const _kind = _activeBatch ? _activeBatch.kind : null;
+    const _homeMode = (_kind === 'angles' || _kind === 'angles-many') ? 'camera' : 'batch';
+    const _atHome = (typeof currentMode !== 'undefined' && currentMode === _homeMode);
     if (inputGrid) {
-        if (_activeBatch) {
+        if (_activeBatch && _atHome) {
+            // Active batch lives in this mode and is taking the stage —
+            // hide its input strip so the result grid is unobstructed.
             inputGrid.style.display = 'none';
-        } else if (typeof renderBatchInputs === 'function') {
+        } else if (!_activeBatch && typeof renderBatchInputs === 'function') {
             renderBatchInputs();
         }
+        // _activeBatch && !_atHome: leave inputGrid alone — it belongs
+        // to whatever mode the user IS in, and that mode's renderBatchInputs
+        // governs visibility.
     }
     if (!_activeBatch) {
         // Clean up if a batch was cancelled/cleared — restore single-image view
@@ -8152,8 +8292,16 @@ function renderBatchGrid(){
         $('outImg').style.display = $('outImg').src ? '' : 'none';
         return;
     }
-    $('outPh').style.display = 'none';
-    $('outImg').style.display = 'none';   // hide single-image output while batch is active
+    // Stage takeover (hide outPh + outImg) ONLY when the user is currently
+    // at the batch's HOME mode. _activeBatch can outlive a mode switch, so
+    // job-completion handlers fire renderBatchGrid() into the hidden batch
+    // DOM as shots resolve. In off-home renders we still want the tile
+    // updates, but we MUST NOT touch outPh/outImg — those belong to
+    // whatever mode the user is in.
+    if (_atHome) {
+        $('outPh').style.display = 'none';
+        $('outImg').style.display = 'none';
+    }
 
     let grid = $('batchGrid');
     if (!grid) {
