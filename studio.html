@@ -1713,6 +1713,31 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 .popup-detail{font-size:10px;color:var(--text-muted);margin:4px 0}
 .popup-price{font-size:20px;font-weight:700;color:var(--text)}
 .popup-note{font-size:9px;color:var(--text-muted);margin-top:8px;font-family:var(--font-mono)}
+/* Subscription option — visually distinct from one-time purchase. Gradient
+   border + crown badge announce "premium tier" without copy doing all the
+   work. The relative+padding tweak makes room for the absolutely-positioned
+   "MOST VALUE" ribbon at the top-right. */
+.popup-option-subscribe{position:relative;border:1px solid var(--gold);background:linear-gradient(135deg,var(--gold-dim) 0%,transparent 100%);padding-top:22px}
+.popup-option-subscribe:hover{box-shadow:0 0 0 1px var(--gold) inset, 0 8px 24px rgba(0,0,0,.3)}
+.popup-option-subscribe .popup-amount{color:var(--gold)}
+.popup-option-subscribe .popup-price{color:var(--gold)}
+.popup-option-subscribe .popup-price-suffix{font-size:11px;font-weight:600;color:var(--text-muted);margin-left:2px}
+.popup-ribbon{position:absolute;top:-8px;right:12px;background:var(--gold);color:#0a0a0a;font-family:var(--font-mono);font-size:8px;font-weight:700;letter-spacing:1.5px;padding:3px 8px;border-radius:3px}
+.popup-perks{font-size:10px;color:var(--text);margin-top:8px;text-align:left;line-height:1.6}
+.popup-perks li{list-style:none;padding-left:14px;position:relative}
+.popup-perks li::before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:700}
+.popup-divider{display:flex;align-items:center;gap:10px;margin:14px 0;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);letter-spacing:1px}
+.popup-divider::before,.popup-divider::after{content:"";flex:1;height:1px;background:var(--border)}
+/* Active-subscription state — replaces the Subscribe option. Muted styling
+   (no gold gradient, no ribbon) since this is a status indicator + small
+   cancel/manage link, not a CTA. */
+.popup-status-active{padding:12px;border:1px solid var(--green);border-radius:8px;background:rgba(46,160,67,0.08);text-align:left;margin-bottom:14px}
+.popup-status-active .pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;vertical-align:middle;box-shadow:0 0 0 0 rgba(46,160,67,0.6);animation:popup-pulse 2s ease-out infinite}
+@keyframes popup-pulse{0%{box-shadow:0 0 0 0 rgba(46,160,67,0.5)}70%{box-shadow:0 0 0 8px rgba(46,160,67,0)}100%{box-shadow:0 0 0 0 rgba(46,160,67,0)}}
+.popup-status-active .popup-status-title{font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--green);letter-spacing:.5px;margin-bottom:4px}
+.popup-status-active .popup-status-detail{font-size:11px;color:var(--text);line-height:1.4}
+.popup-status-active .popup-manage{display:inline-block;margin-top:8px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-decoration:underline;cursor:pointer;background:none;border:none;padding:0}
+.popup-status-active .popup-manage:hover{color:var(--gold)}
 .google-btn{display:inline-flex;align-items:center;gap:10px;padding:12px 24px;background:#fff;color:#333;border:none;border-radius:8px;font-family:var(--font-mono);font-size:12px;font-weight:700;cursor:pointer;margin-top:8px;transition:all .15s}
 .google-btn:hover{background:#f0f0f0;transform:translateY(-1px)}
 /* Hidden by default on desktop — only shown by mobile media query below */
@@ -2776,7 +2801,32 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="popup-detail">10,000 tokens · ~$0.02 per image</div>
             <div class="popup-price">$5.00</div>
         </div>
-        <p class="popup-note">Secure payment via Stripe. Tokens never expire.</p>
+        <!-- Subscribe option. JS toggles its visibility based on
+             _user.subscription_status — when active, this hides and
+             #subActiveStatus shows in its place with a Manage button. -->
+        <div class="popup-divider">OR SUBSCRIBE</div>
+        <div class="popup-option popup-option-subscribe" id="subscribeOption" onclick="doSubscribe()">
+            <span class="popup-ribbon">MOST VALUE</span>
+            <div class="popup-amount">👑 PRO — 500+ IMAGES/MONTH</div>
+            <div class="popup-detail">50,000 tokens every month</div>
+            <ul class="popup-perks">
+                <li>50,000 tokens auto-renewed monthly</li>
+                <li>Access to all MissingLink libraries</li>
+                <li>Run on your own hardware</li>
+                <li>Cancel anytime</li>
+            </ul>
+            <div class="popup-price" style="margin-top:10px">$20<span class="popup-price-suffix">/month</span></div>
+        </div>
+        <!-- Shown to active subscribers in place of the Subscribe option.
+             showBuyModal() flips between #subscribeOption and this. -->
+        <div class="popup-status-active" id="subActiveStatus" style="display:none">
+            <div class="popup-status-title"><span class="pulse"></span>SUBSCRIPTION ACTIVE</div>
+            <div class="popup-status-detail">
+                You're on the Pro plan — <b>50,000 tokens every month</b> plus full library access. Check your email for your library access token.
+            </div>
+            <button class="popup-manage" onclick="doManageSubscription()">Manage subscription / cancel →</button>
+        </div>
+        <p class="popup-note">Secure payment via Stripe. One-time tokens never expire.</p>
     </div>
 </div>
 
@@ -3209,6 +3259,26 @@ async function checkAuth(){
         log('Payment successful — tokens added','success');
         setTimeout(checkAuth,1000);
     }
+    if(params.get('subscription')==='success'){
+        // Returned from Stripe Checkout in subscription mode. The webhook
+        // grants the first 50,000 tokens via invoice.paid (which fires
+        // moments after checkout.session.completed). Re-poll /auth/me a
+        // moment later to pick up the new balance + subscription_status,
+        // then surface a friendly notif so the user knows it took effect.
+        // The library access token is delivered separately via email
+        // (sent from the existing subscription pipeline in the worker
+        // webhook), so we mention the email rather than try to surface
+        // it here.
+        window.history.replaceState({},'','/studio.html');
+        log('Subscription active — 50,000 tokens added. Library access token sent to your email.', 'success');
+        showNotif('Welcome to Pro! 50,000 tokens just added. Check your email for your library access token.', 'success');
+        setTimeout(checkAuth, 1500);
+    }
+    if(params.get('subscription')==='cancel'){
+        // User backed out of the Stripe subscription page. Clean the URL
+        // and stay silent — no need to nag.
+        window.history.replaceState({},'','/studio.html');
+    }
 }
 
 function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.html`; }
@@ -3399,7 +3469,20 @@ async function doLogout(){
 
 // ── Buy modals ────────────────────────────────────
 function showBuyModal(){
-    if(_user) $('buyBalance').textContent=_user.tokens;
+    if(_user) $('buyBalance').textContent = _user.tokens;
+    // Toggle Subscribe vs. Manage based on the user's current subscription
+    // state (set by /auth/me). 'active' means they're paid through the
+    // current period — even if cancel_at_period_end is set, Stripe keeps
+    // status='active' until the period ends, so this stays visible
+    // throughout. 'past_due' also keeps the active panel up so they can
+    // open the portal and update their card; 'canceled' or null reverts
+    // to showing the Subscribe CTA.
+    const subscribeOpt = $('subscribeOption');
+    const activeStatus = $('subActiveStatus');
+    const status = _user && _user.subscription_status;
+    const isLiveSubscriber = status === 'active' || status === 'past_due';
+    if (subscribeOpt) subscribeOpt.style.display = isLiveSubscriber ? 'none' : '';
+    if (activeStatus) activeStatus.style.display = isLiveSubscriber ? '' : 'none';
     $('buyModal').classList.add('open');
 }
 function closeBuyModal(){ $('buyModal').classList.remove('open'); }
@@ -3412,6 +3495,43 @@ async function doBuyTokens(){
         if(d.url) window.location.href=d.url;
         else showNotif('Payment setup failed. Please try again.', 'error');
     }catch(e){ showNotif('Error: ' + e.message, 'error'); }
+}
+
+// Open Stripe Checkout for the $20/mo subscription. The worker maps the
+// resulting payment to STUDIO_MONTHLY_TOKENS via webhook on every invoice
+// (first charge AND every renewal), and links the studio user to Stripe
+// so the Manage button can route to the billing portal afterwards.
+// Same redirect pattern as doBuyTokens — Stripe-hosted page, then
+// success_url back to /studio.html?subscription=success.
+async function doSubscribe(){
+    if (!_user) { closeBuyModal(); $('loginModal').classList.add('open'); return; }
+    try {
+        const r = await fetchT(`${API}/api/studio/subscribe`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+        }, 10000);
+        const d = await r.json();
+        if (d.url) { window.location.href = d.url; return; }
+        const msg = d.message || (d.error === 'subscription_pricing_not_configured'
+            ? 'Subscription is not yet configured on this account.'
+            : 'Subscription setup failed. Please try again.');
+        showNotif(msg, 'error');
+    } catch (e) { showNotif('Error: ' + e.message, 'error'); }
+}
+
+// Open the Stripe billing portal so the user can update their card,
+// view invoices, or cancel. The worker looks up stripe_customer_id on
+// the authenticated user — no email entry needed (unlike the
+// /create-portal-session endpoint which serves email-only customers).
+async function doManageSubscription(){
+    if (!_user) { closeBuyModal(); $('loginModal').classList.add('open'); return; }
+    try {
+        const r = await fetchT(`${API}/api/studio/subscription/portal`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+        }, 10000);
+        const d = await r.json();
+        if (d.url) { window.location.href = d.url; return; }
+        showNotif(d.message || 'Could not open the billing portal.', 'error');
+    } catch (e) { showNotif('Error: ' + e.message, 'error'); }
 }
 
 // ── Mode ──────────────────────────────────────────
