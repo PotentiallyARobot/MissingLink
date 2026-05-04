@@ -2242,7 +2242,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             oninput="updateGenButton()"></textarea>
     </div>
 
-    <div class="sec generate-only" style="display:none">
+    <div class="sec generate-only gpt-only-section" style="display:none">
         <div class="sec-label"><span class="icon">🖼️</span> REFERENCE IMAGES
             <span class="slot-counter" id="genSlotCounter">0 / 4</span>
         </div>
@@ -2312,6 +2312,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <option value="gpt-image-2">🎨 Quality — gpt-image-2 (best, default)</option>
             <option value="gpt-image-1-mini">⚡ Fast — gpt-image-1-mini (~4× cheaper)</option>
             <option value="gpt-image-1.5">🪟 Transparent — gpt-image-1.5 (alpha PNG support)</option>
+            <option value="illustrious">🎭 Illustrious — Realism v5.5 (local SDXL, ~10s on warm GPU)</option>
         </select>
         <div class="size-hint" id="genModelHint">
             Latest model. Best photorealism + text rendering.
@@ -2359,7 +2360,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only" style="display:none">
+    <div class="sec generate-only gpt-only-section" style="display:none">
         <div class="sec-label"><span class="icon">⭐</span> QUALITY</div>
         <!-- Quality controls cost vs detail tradeoff. low = fast, cheap,
              rough; high = slow, expensive, refined; auto = let the model
@@ -2377,7 +2378,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only" style="display:none">
+    <div class="sec generate-only gpt-only-section" style="display:none">
         <div class="sec-label"><span class="icon">📦</span> FORMAT</div>
         <!-- Output format — PNG = lossless, larger files; JPEG = small,
              lossy, fastest; WebP = small, modern. PNG default since the
@@ -2399,7 +2400,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only" style="display:none">
+    <div class="sec generate-only gpt-only-section" style="display:none">
         <div class="sec-label"><span class="icon">🌫️</span> BACKGROUND</div>
         <!-- Background transparency. gpt-image-2 itself does NOT support
              transparent backgrounds (per OpenAI's official docs as of
@@ -3081,6 +3082,26 @@ let pollTimers={}; // jobId → interval
 // "Connecting…" label until the first status poll resolves, rather than
 // briefly claiming the GPU is cold before we actually know.
 let _gpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
+// Parallel state for the second container (SDXL Illustrious worker).
+// Populated from d.gpu_illustrious in pollStatus. The frontend uses
+// _activeGpuState() below to decide which one to show in the overlay
+// and header badge — Illustrious when the user is currently looking
+// at the Create flow with a local model selected, Qwen otherwise.
+let _illustriousGpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
+// Returns the GPU state the user is currently "facing." When they're
+// in Create mode with an isLocal model selected, the Illustrious
+// container is what they're waiting on, so the overlay/header should
+// reflect THAT container's status — not the Qwen container's. Anywhere
+// else (Camera, Edit, Batch, or Create with a GPT model), the Qwen
+// container is the relevant one. This keeps the existing UI behavior
+// for the 95% of paths that don't touch Illustrious.
+function _activeGpuState() {
+    const inLocalCreate = (typeof currentMode !== 'undefined') &&
+                          currentMode === 'generate' &&
+                          _GEN_MODEL_CAPS[_generateModel] &&
+                          _GEN_MODEL_CAPS[_generateModel].isLocal;
+    return inLocalCreate ? _illustriousGpuState : _gpuState;
+}
 // Has the very first /status response landed yet? Until it has, we never
 // claim "GPU ready" — the badge stays on "Connecting…" so a page load can't
 // flash a stale ready state inherited from a previous session.
@@ -3755,6 +3776,18 @@ function setMode(mode, opts){
             })();
         }
     }
+
+    // Pre-warm the Illustrious worker when the user enters Create mode
+    // with Illustrious already selected (persisted from a prior session).
+    // The warmup also fires from genSetModel when they pick the model
+    // mid-session; this branch covers the page-load → Create-mode case
+    // where genSetModel only ran during restore (before _user existed).
+    if (prevMode !== 'generate' && mode === 'generate' && _user) {
+        const caps = _GEN_MODEL_CAPS[_generateModel];
+        if (caps && caps.isLocal && typeof warmupIllustrious === 'function') {
+            warmupIllustrious().catch(() => {});
+        }
+    }
 }
 
 function updateGenButton(){
@@ -3863,6 +3896,16 @@ async function pollStatus(){
                 renderQueue();
             }
         }
+        // Parallel block for the Illustrious worker. Same shape, separate
+        // state object — the overlay reads via _activeGpuState() which
+        // picks based on currentMode + _generateModel.
+        if (d.gpu_illustrious) {
+            const prevIllusState = _illustriousGpuState.state;
+            _illustriousGpuState = Object.assign({}, d.gpu_illustrious, { _receivedAt: Date.now() });
+            if (prevIllusState !== d.gpu_illustrious.state || d.gpu_illustrious.state === 'warming') {
+                renderQueue();
+            }
+        }
         // The first /status response has landed — from this point on we
         // can paint a confirmed state. Until this flips true the header
         // badge stays on "Connecting…" regardless of what's in _gpuState.
@@ -3895,7 +3938,11 @@ function updateHeaderStatusBadge(connected){
         renderStartupOverlay();
         return;
     }
-    const state = _gpuState.state || 'unknown';
+    // Read the state the user is currently facing — Illustrious when in
+    // Create mode with a local model, Qwen otherwise. Local alias so the
+    // body of the function stays unchanged below.
+    const _gs = _activeGpuState();
+    const state = _gs.state || 'unknown';
     // Heartbeat freshness is GROUND TRUTH for liveness: if the consumer
     // thread or per-step pings have updated ready_at within the last
     // READY_STALE_S seconds, the container is alive and inference-capable
@@ -3916,7 +3963,7 @@ function updateHeaderStatusBadge(connected){
     // stuck even longer if the user clicked again. heartbeatRecent
     // catches that case and pins the badge at "GPU ready".
     const _BADGE_READY_FRESH_S = 30;
-    const _readyAge = _gpuState.ready_age_s;
+    const _readyAge = _gs.ready_age_s;
     const _heartbeatRecent = _readyAge !== null && _readyAge !== undefined
                           && _readyAge < _BADGE_READY_FRESH_S;
     // Trust the server. With the precedence fix in /api/studio/status
@@ -3935,7 +3982,12 @@ function updateHeaderStatusBadge(connected){
         // The "compiling" stage is the slow actual compile work happening
         // during the warmup forward pass — no granular progress available so
         // we show elapsed time to reassure the user it's still alive.
+        // Illustrious-specific stages are tagged below the Qwen ones —
+        // the maps are unioned because the active container is whichever
+        // one _gs points at (Qwen OR Illustrious, never both at once
+        // for the badge purpose).
         const stageMap = {
+            // Qwen worker stages
             booting:              'Starting container',
             loading_transformer:  'Loading model',
             loading_text_encoder: 'Loading encoder',
@@ -3947,8 +3999,11 @@ function updateHeaderStatusBadge(connected){
             finalizing:           'Finalizing',
             warming_up:           'Final warmup',
             ready:                'GPU ready',
+            // Illustrious worker stages
+            downloading_checkpoint: 'Downloading model',
+            loading_pipeline:       'Loading pipeline',
         };
-        const stage = _gpuState.startup_stage;
+        const stage = _gs.startup_stage;
         // Same contradiction guard as in renderStartupOverlay: when state
         // is 'warming' but startup_stage is 'ready', that combination is
         // impossible for the current cycle. The stage value is leftover
@@ -3960,10 +4015,13 @@ function updateHeaderStatusBadge(connected){
         const stageContradictsState = (stage === 'ready');
         const stageIsTrustworthy = stage && !stageContradictsState;
         let text;
-        if (stageIsTrustworthy && stage === 'registering' && _gpuState.startup_total > 0) {
-            text = `Registering ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
+        if (stageIsTrustworthy && stage === 'registering' && _gs.startup_total > 0) {
+            text = `Registering ${_gs.startup_progress}/${_gs.startup_total}`;
+        } else if (stageIsTrustworthy && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
+            // Real percent — Civitai download reports 0..100 directly.
+            text = `Downloading model · ${_gs.startup_progress}%`;
         } else if (stageIsTrustworthy && stage === 'compiling') {
-            const age = _gpuState.startup_age_s || 0;
+            const age = _gs.startup_age_s || 0;
             text = age > 0 ? `Compiling kernels · ${age}s` : 'Compiling kernels';
         } else if (stageIsTrustworthy && stageMap[stage]) {
             text = stageMap[stage];
@@ -4014,13 +4072,20 @@ let _startupCurrentStageEnteredAt = 0;
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
+    // Read whichever container's state the user is currently waiting on.
+    // _activeGpuState() returns the Illustrious state when in Create
+    // mode with a local model, otherwise the Qwen state. This lets the
+    // SAME overlay show progress for either container without UI
+    // duplication — the user sees download/load progress for the model
+    // they're actually about to use, no matter which one it is.
+    const _gs = _activeGpuState();
     // Trust the server. With the precedence fix in /api/studio/status
     // (ready_at checked before stale startup_stage), state='ready'
     // means the consumer thread heartbeated within the last 30s —
     // which can only happen if the GPU is alive and running inference.
     // If the server says ready, the GPU is ready. No client-side
     // smoothing.
-    if (_gpuFirstPollDone && _gpuState.state === 'ready') {
+    if (_gpuFirstPollDone && _gs.state === 'ready') {
         overlay.style.display = 'none';
         _startupFirstSeen = null;
         _startupMaxPct = 0;
@@ -4049,11 +4114,11 @@ function renderStartupOverlay(){
     // any time in that window the GPU is alive, regardless of what
     // state value the server returned.
     const READY_STALE_S = 30;
-    const readyAge = _gpuState.ready_age_s;
+    const readyAge = _gs.ready_age_s;
     const heartbeatRecent = readyAge !== null && readyAge !== undefined && readyAge < READY_STALE_S;
-    const isCold     = _gpuState.state === 'cold';
-    const isSleeping = _gpuState.state === 'sleeping';
-    const isWarmingForReal = _gpuState.state === 'warming' && !heartbeatRecent;
+    const isCold     = _gs.state === 'cold';
+    const isSleeping = _gs.state === 'sleeping';
+    const isWarmingForReal = _gs.state === 'warming' && !heartbeatRecent;
     const shouldShow = _gpuFirstPollDone && (isCold || isSleeping || isWarmingForReal);
 
     if (!shouldShow) {
@@ -4075,7 +4140,7 @@ function renderStartupOverlay(){
     // Read stage from server state — used below to drive the progress bar
     // anchors and the stage label. May be empty/stale; the freshness
     // checks below handle that.
-    const stage = _gpuState.startup_stage;
+    const stage = _gs.startup_stage;
 
     const clientElapsed = Math.floor((Date.now() - _startupFirstSeen) / 1000);
     // Elapsed shown to the user is "time since this overlay opened on this
@@ -4086,7 +4151,7 @@ function renderStartupOverlay(){
     // immediately paint the counter at 5777s on a fresh page load.
     // We only fold serverAge in when it's sane (under ~5 min) AND smaller
     // than what the client would otherwise show — never let it inflate.
-    const serverAge = _gpuState.startup_age_s || 0;
+    const serverAge = _gs.startup_age_s || 0;
     const elapsed = (serverAge > 0 && serverAge < 300 && serverAge > clientElapsed)
         ? serverAge
         : clientElapsed;
@@ -4104,6 +4169,7 @@ function renderStartupOverlay(){
     // matter much — what matters is that they're monotonic and the user
     // sees the bar lurch forward whenever a new stage arrives.
     const STAGE_ANCHORS = {
+        // ── Qwen worker stages ──
         booting:              5,
         loading_transformer:  18,
         loading_text_encoder: 35,
@@ -4115,18 +4181,32 @@ function renderStartupOverlay(){
         finalizing:           95,
         warming_up:           92,   // legacy — kept for backward compat
         ready:                100,
+        // ── Illustrious worker stages ──
+        // First cold boot dominated by the Civitai download (~6.5 GB).
+        // We give it the bulk of the bar (5 → 70) and special-case it
+        // below to use real percent (startup_progress/100). On cached
+        // boots (volume already populated) the download stage is skipped
+        // entirely — we go straight to loading_pipeline.
+        downloading_checkpoint: 70,
+        loading_pipeline:       85,
+        // moving_to_gpu reused from Qwen — same meaning, ~90% bar
+        // position for both pipelines, so no separate anchor needed.
     };
-    // Approximate seconds the bar spends advancing from one anchor to the
-    // next while waiting for the next stage message. Smaller = faster
-    // intra-stage drift toward the next anchor. 12s feels natural for the
-    // longer stages (compiling, building_pipeline) and harmlessly short
-    // for the fast ones — the next stage transition usually arrives first.
     const INTRA_STAGE_DRIFT_S = 12;
 
-    // Order matters here for the "next anchor" lookup below.
-    const STAGE_ORDER = ['booting', 'loading_transformer', 'loading_text_encoder',
-                         'building_pipeline', 'loading_loras', 'moving_to_gpu',
-                         'registering', 'compiling', 'finalizing', 'ready'];
+    // Order matters here for the "next anchor" lookup below. Both worker
+    // classes share moving_to_gpu / finalizing / ready as their tail
+    // stages — Illustrious skips the Qwen-specific compile path.
+    const STAGE_ORDER = ['booting',
+                         // Qwen-only intermediates
+                         'loading_transformer', 'loading_text_encoder',
+                         'building_pipeline', 'loading_loras',
+                         // Illustrious-only intermediates
+                         'downloading_checkpoint', 'loading_pipeline',
+                         // Shared tail
+                         'moving_to_gpu',
+                         'registering', 'compiling',
+                         'finalizing', 'ready'];
     // Track when we last entered the current stage so intra-stage drift is
     // measured from the stage transition, not from overlay open.
     if (_startupCurrentStage !== stage) {
@@ -4149,10 +4229,19 @@ function renderStartupOverlay(){
     // restarted the warming state without any new heartbeat landing yet.
     // Trusting the leftover 'ready' would label the overlay "GPU ready"
     // mid-warmup, which is the bug we're fixing.
-    const stageContradictsState = (stage === 'ready' && _gpuState.state !== 'ready');
+    const stageContradictsState = (stage === 'ready' && _gs.state !== 'ready');
     const stageIsFresh = stage && serverAge > 0 && serverAge < 60 && !stageContradictsState;
     let stageCap;
-    if (stageIsFresh && STAGE_ANCHORS[stage] !== undefined) {
+    if (stageIsFresh && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
+        // Real-percent path. Civitai download reports 0..100 directly,
+        // so we map it onto the 5..70 portion of the bar that this
+        // stage owns. No time-ramp — the bar moves at exactly the
+        // download speed, which is the most honest signal we can give.
+        const dlPct = Math.max(0, Math.min(100, _gs.startup_progress));
+        const lo = STAGE_ANCHORS.booting;            // 5
+        const hi = STAGE_ANCHORS.downloading_checkpoint;  // 70
+        stageCap = lo + (hi - lo) * (dlPct / 100);
+    } else if (stageIsFresh && STAGE_ANCHORS[stage] !== undefined) {
         const basePct = STAGE_ANCHORS[stage];
         const stageIdx = STAGE_ORDER.indexOf(stage);
         const nextAnchor = (stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1)
@@ -4208,6 +4297,7 @@ function renderStartupOverlay(){
     const pct = Math.min(95, _startupMaxPct);
 
     const stageLabels = {
+        // ── Qwen worker stages ──
         booting:              'Starting container',
         loading_transformer:  'Loading model weights',
         loading_text_encoder: 'Loading text encoder',
@@ -4219,12 +4309,20 @@ function renderStartupOverlay(){
         finalizing:           'Finalizing',
         warming_up:           'Final warmup',
         ready:                'GPU ready',
+        // ── Illustrious worker stages ──
+        downloading_checkpoint: 'Downloading model from Civitai',
+        loading_pipeline:       'Loading SDXL pipeline',
     };
     let stageText;
-    if (_gpuState.state === 'cold') {
+    if (_gs.state === 'cold') {
         stageText = 'Connecting…';
-    } else if (stageIsFresh && stage === 'registering' && _gpuState.startup_total > 0) {
-        stageText = `Registering · ${_gpuState.startup_progress}/${_gpuState.startup_total}`;
+    } else if (stageIsFresh && stage === 'registering' && _gs.startup_total > 0) {
+        stageText = `Registering · ${_gs.startup_progress}/${_gs.startup_total}`;
+    } else if (stageIsFresh && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
+        // Real percent for the Civitai download. Reads
+        // 'Downloading model · 47%' so the user sees the bar's
+        // movement is tied to actual bytes coming down.
+        stageText = `Downloading model · ${_gs.startup_progress}%`;
     } else if (stageIsFresh && stage && stageLabels[stage]) {
         stageText = stageLabels[stage];
     } else {
@@ -4239,7 +4337,7 @@ function renderStartupOverlay(){
     if (stageEl) stageEl.textContent = stageText;
     if (elapsedEl) elapsedEl.textContent = `${elapsed}s`;
     if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
-    if (titleEl) titleEl.textContent = _gpuState.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
+    if (titleEl) titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     if (subEl) {
         // Single, fixed message whenever the overlay is up — keeps the
         // copy stable instead of mutating into "Almost there" at 60s
@@ -4855,21 +4953,41 @@ function genUpdateCompression(){
 // reference page documents up to 16 images for the GPT Image family).
 // Encoded per-model so a future variant that drops multi-ref support
 // is caught automatically by the gate in doGenerateMode.
+//
+// isLocal: when true, generation routes through our own GPU
+// (/api/studio/illustrious-generate) instead of OpenAI. Local models
+// have different control surfaces (no quality/format/compression knobs
+// since those are gpt-image-only) and different progress affordances
+// (cold-start of the dedicated Modal container, ~30-120s).
 const _GEN_MODEL_CAPS = {
     'gpt-image-2': {
         supportsTransparent: false,
         supportsMultiRef: true,
+        isLocal: false,
         hint: 'Latest model. Best photorealism + text rendering.',
     },
     'gpt-image-1-mini': {
         supportsTransparent: false,
         supportsMultiRef: true,
+        isLocal: false,
         hint: 'About 4× cheaper than Quality. Great for drafts and high-volume work.',
     },
     'gpt-image-1.5': {
         supportsTransparent: true,
         supportsMultiRef: true,
+        isLocal: false,
         hint: 'Slightly cheaper than Quality at high tier. Only model that supports transparent PNGs.',
+    },
+    'illustrious': {
+        supportsTransparent: false,
+        // SDXL pipelines accept a single image-to-image input, not the
+        // multi-ref image[] array OpenAI's /v1/images/edits supports.
+        // Until/unless we wire up img2img on the Modal side, refs are
+        // ignored on this path — flagged false so the gate informs the
+        // user instead of silently dropping their refs.
+        supportsMultiRef: false,
+        isLocal: true,
+        hint: 'Realism Illustrious v5.5 on local GPU. Cold start ~30-120s, then ~10s per image.',
     },
 };
 
@@ -4902,8 +5020,52 @@ function genSetModel(m){
             genSetBackground('auto');
         }
     }
+    // ── Local-model branching ────────────────────────────────────────
+    // GPT-image and Illustrious have very different control surfaces:
+    //   - GPT: quality, format, compression, transparent, custom W×H
+    //     within OpenAI's allowed envelope, moderation strictness
+    //   - Illustrious: just prompt + size + count (steps/cfg/sampler
+    //     hardcoded to model-card recommendations on the worker side)
+    // Sections tagged .gpt-only-section get hidden when isLocal is
+    // true. Sections tagged .local-only-section get shown then.
+    // Existing OpenAI-quality/format/etc panels are tagged .gpt-only-section
+    // by the markup elsewhere; if a panel isn't tagged it stays visible
+    // for both (e.g. the prompt textarea, the count slider, the output
+    // size preset row).
+    const isLocal = !!_GEN_MODEL_CAPS[m].isLocal;
+    document.querySelectorAll('.gpt-only-section').forEach(el => {
+        el.style.display = isLocal ? 'none' : '';
+    });
+    document.querySelectorAll('.local-only-section').forEach(el => {
+        el.style.display = isLocal ? '' : 'none';
+    });
+    // Pre-warm the right GPU container. Picking the model is a strong
+    // signal of intent — the user's about to click Generate. Firing the
+    // wake here means the container is loading while they're typing
+    // their prompt, so the click→result latency is the inference time
+    // alone rather than inference + cold start. Debounced server-side
+    // (5 min) so toggling the dropdown back and forth is harmless.
+    if (isLocal && _user) {
+        warmupIllustrious().catch(() => {});
+    }
     persistGenerateState();
     if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
+}
+
+// Fire-and-forget warmup ping for the Illustrious worker. Mirror of
+// warmupGpu() but for the second container. The frontend's GPU status
+// pill will reflect the warming state via the gpu_illustrious block in
+// /api/studio/status.
+async function warmupIllustrious(){
+    try {
+        await fetchT(`${API}/api/studio/illustrious-warmup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        }, 5000);
+    } catch (e) {
+        // Best-effort — a failed warmup just means the user pays the
+        // cold-start cost on click instead. No notification needed.
+    }
 }
 
 // Background opaque/auto/transparent. Transparent is only honored when
@@ -5015,6 +5177,32 @@ function genGetEffectiveSize(){
         return `${_generateCustomW}x${_generateCustomH}`;
     }
     return _generateSize;
+}
+
+// SDXL-aspect helpers for the Illustrious path. The OpenAI Create
+// flow uses 1024-based sizes (1024², 1024x1536, 1536x1024) which are
+// off-spec for SDXL — SDXL was trained at total ≈ 1024² with
+// non-square aspects like 896x1152. We map by aspect ratio:
+//   square-ish → 1024 × 1024
+//   portrait   →  896 × 1152  (the model card's recommended default)
+//   landscape  → 1152 × 896
+// Custom W×H is honored as-is; the worker re-snaps to multiples of 8
+// and clamps to 512..1536, so we don't need to redo that here.
+function genGetIllustriousW(){
+    if (_generateSize === 'custom') return _generateCustomW;
+    const m = String(_generateSize).match(/^(\d+)x(\d+)$/);
+    if (!m) return 896;
+    const w = parseInt(m[1]); const h = parseInt(m[2]);
+    if (w === h) return 1024;
+    return w > h ? 1152 : 896;
+}
+function genGetIllustriousH(){
+    if (_generateSize === 'custom') return _generateCustomH;
+    const m = String(_generateSize).match(/^(\d+)x(\d+)$/);
+    if (!m) return 1152;
+    const w = parseInt(m[1]); const h = parseInt(m[2]);
+    if (w === h) return 1024;
+    return w > h ? 896 : 1152;
 }
 
 // Restore state on page load + on first entry to Generate mode.
@@ -5182,6 +5370,20 @@ async function doGenerateMode(){
     // per-model in _GEN_MODEL_CAPS, so a future variant added to the
     // dropdown that drops multi-ref support gets caught here without
     // anyone needing to remember to update this branch.
+    //
+    // Local models (Illustrious) currently have no img2img wired up,
+    // so they can't ingest refs at all — for them the gate triggers
+    // on ANY ref count, not just 2+, so the user isn't surprised when
+    // their refs are ignored.
+    const _capsCurrent = _GEN_MODEL_CAPS[_generateModel];
+    if (refIds.length > 0 && _capsCurrent && _capsCurrent.isLocal && _capsCurrent.supportsMultiRef === false) {
+        showNotif(
+            `${_generateModel} doesn't accept reference images — it's text-to-image only. ` +
+            `Either remove the references or switch to one of the GPT models.`,
+            'error'
+        );
+        return;
+    }
     if (refIds.length > 1) {
         const caps = _GEN_MODEL_CAPS[_generateModel];
         if (caps && caps.supportsMultiRef === false) {
@@ -5258,42 +5460,69 @@ async function doGenerateMode(){
     renderQueue();
     const tickHandle = setInterval(() => { try { renderQueue(); } catch {} }, 1000);
     try {
-        const r = await fetchT(`${API}/api/studio/agent-image-gen`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                prompt,
-                // Which GPT Image model to use. The worker validates
-                // against an allow-list and falls back to gpt-image-2
-                // if unrecognized — so client bugs can't surface upstream.
-                model: _generateModel,
-                // Number of images per request — 1-4. Worker caps at 4
-                // for symmetry. Cost = per-image variable × n.
-                n: _generateCount,
-                // Resolve preset vs custom W×H. The worker validates again
-                // (and falls back to 1024² if anything's off) so client
-                // bugs here never escape OpenAI as 400s — they just get
-                // silently corrected.
-                size: genGetEffectiveSize(),
-                quality: _generateQuality,
-                output_format: _generateFormat,
-                output_compression: _generateFormat === 'png' ? null : _generateCompression,
-                background: _generateBackground,
-                moderation: _generateModeration,
-                reference_image_ids: refIds,
-            }),
-            // Frontend timeout slightly above the worker's so the
-            // worker's AbortController fires first with a useful error
-            // (openai_error / detail) rather than us giving up first
-            // and turning a real upstream failure into "operation was
-            // aborted" with no signal about WHAT failed. Worker is:
-            //   ref + high  → 360s
-            //   ref + other → 240s
-            //   plain + high → 240s
-            //   plain + other → 120s
-            // Frontend adds 30s buffer to each.
-        }, refIds.length
-            ? (_generateQuality === 'high' ? 390_000 : 270_000)
-            : (_generateQuality === 'high' ? 270_000 : 150_000));
+        const isLocal = !!(_GEN_MODEL_CAPS[_generateModel] && _GEN_MODEL_CAPS[_generateModel].isLocal);
+        let r;
+        if (isLocal) {
+            // Illustrious / local SDXL path. Different request shape and
+            // a longer timeout to ride out cold-start (Modal container
+            // wake + first-time Civitai download + load = up to 4 min
+            // worst case; warm requests are ~10s). Worker timeout is
+            // 360s, frontend adds 30s headroom so the worker's
+            // AbortController fires first with a useful error.
+            r = await fetchT(`${API}/api/studio/illustrious-generate`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt,
+                    n: _generateCount,
+                    // Map the size preset to W/H. SDXL accepts arbitrary
+                    // multiples of 8 within reasonable bounds; the
+                    // worker re-clamps to 512..1536 with /8 snapping.
+                    width: genGetIllustriousW(),
+                    height: genGetIllustriousH(),
+                    // Knobs hardcoded to model-card recommendations on
+                    // the worker side (steps=27, cfg=5, sampler=Euler A).
+                    // If we surface UI controls for them later, send
+                    // them here.
+                }),
+            }, 390_000);
+        } else {
+            r = await fetchT(`${API}/api/studio/agent-image-gen`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt,
+                    // Which GPT Image model to use. The worker validates
+                    // against an allow-list and falls back to gpt-image-2
+                    // if unrecognized — so client bugs can't surface upstream.
+                    model: _generateModel,
+                    // Number of images per request — 1-4. Worker caps at 4
+                    // for symmetry. Cost = per-image variable × n.
+                    n: _generateCount,
+                    // Resolve preset vs custom W×H. The worker validates again
+                    // (and falls back to 1024² if anything's off) so client
+                    // bugs here never escape OpenAI as 400s — they just get
+                    // silently corrected.
+                    size: genGetEffectiveSize(),
+                    quality: _generateQuality,
+                    output_format: _generateFormat,
+                    output_compression: _generateFormat === 'png' ? null : _generateCompression,
+                    background: _generateBackground,
+                    moderation: _generateModeration,
+                    reference_image_ids: refIds,
+                }),
+                // Frontend timeout slightly above the worker's so the
+                // worker's AbortController fires first with a useful error
+                // (openai_error / detail) rather than us giving up first
+                // and turning a real upstream failure into "operation was
+                // aborted" with no signal about WHAT failed. Worker is:
+                //   ref + high  → 360s
+                //   ref + other → 240s
+                //   plain + high → 240s
+                //   plain + other → 120s
+                // Frontend adds 30s buffer to each.
+            }, refIds.length
+                ? (_generateQuality === 'high' ? 390_000 : 270_000)
+                : (_generateQuality === 'high' ? 270_000 : 150_000));
+        }
         const d = await r.json();
         if (!d.ok) {
             // Specially handle reference_not_owned: scrub the stale
