@@ -2242,7 +2242,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             oninput="updateGenButton()"></textarea>
     </div>
 
-    <div class="sec generate-only gpt-only-section" style="display:none">
+    <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🖼️</span> REFERENCE IMAGES
             <span class="slot-counter" id="genSlotCounter">0 / 4</span>
         </div>
@@ -4785,9 +4785,20 @@ function renderGenSlot(i){
 }
 
 function genUpdateCounter(){
-    const filled = _generateRefs.filter(r => r !== null).length;
     const el = $('genSlotCounter');
-    if (el) el.textContent = `${filled} / 4`;
+    if (!el) return;
+    // Per-model max — Illustrious is single-ref img2img (max 1),
+    // GPT models support up to 4 refs in this UI. We only count
+    // slots that are actually visible/usable for the active model
+    // so a leftover ref in slot 1 from a previous gpt-image session
+    // doesn't inflate the counter while the user is on Illustrious.
+    const caps = _GEN_MODEL_CAPS[_generateModel];
+    const max = (caps && caps.supportsMultiRef === false) ? 1 : 4;
+    let filled = 0;
+    for (let i = 0; i < max; i++) {
+        if (_generateRefs[i] !== null && _generateRefs[i] !== undefined) filled++;
+    }
+    el.textContent = `${filled} / ${max}`;
 }
 
 // Snap an arbitrary (w, h) pair to gpt-image-2's valid size range
@@ -4980,14 +4991,12 @@ const _GEN_MODEL_CAPS = {
     },
     'illustrious': {
         supportsTransparent: false,
-        // SDXL pipelines accept a single image-to-image input, not the
-        // multi-ref image[] array OpenAI's /v1/images/edits supports.
-        // Until/unless we wire up img2img on the Modal side, refs are
-        // ignored on this path — flagged false so the gate informs the
-        // user instead of silently dropping their refs.
+        // SDXL img2img is single-image — the pipeline takes one
+        // reference and denoises toward the prompt. Multiple refs
+        // would need IP-Adapter or ControlNet, neither wired up yet.
         supportsMultiRef: false,
         isLocal: true,
-        hint: 'Realism Illustrious v5.5 on local GPU. Cold start ~30-120s, then ~10s per image.',
+        hint: 'Realism Illustrious v5.5 on local GPU. Text-to-image, or text+image (img2img) with one reference. Cold start ~30-120s, then ~10s per image.',
     },
 };
 
@@ -5039,6 +5048,17 @@ function genSetModel(m){
     document.querySelectorAll('.local-only-section').forEach(el => {
         el.style.display = isLocal ? '' : 'none';
     });
+    // Reference slots — single vs multi depending on the model.
+    // Illustrious does single-image img2img, so we hide slots 1-3
+    // entirely (rather than disabling them) to keep the UI clean.
+    // The slot counter relabels to reflect the per-model max:
+    // "0 / 1" for Illustrious, "0 / 4" for GPT models.
+    const supportsMultiRef = !!_GEN_MODEL_CAPS[m].supportsMultiRef;
+    for (let i = 1; i < 4; i++) {
+        const slotEl = document.getElementById(`genSlot${i}`);
+        if (slotEl) slotEl.style.display = supportsMultiRef ? '' : 'none';
+    }
+    if (typeof genUpdateCounter === 'function') genUpdateCounter();
     // Pre-warm the right GPU container. Picking the model is a strong
     // signal of intent — the user's about to click Generate. Firing the
     // wake here means the container is loading while they're typing
@@ -5371,22 +5391,23 @@ async function doGenerateMode(){
     // dropdown that drops multi-ref support gets caught here without
     // anyone needing to remember to update this branch.
     //
-    // Local models (Illustrious) currently have no img2img wired up,
-    // so they can't ingest refs at all — for them the gate triggers
-    // on ANY ref count, not just 2+, so the user isn't surprised when
-    // their refs are ignored.
+    // Illustrious (isLocal + supportsMultiRef:false) is special: it
+    // does single-image img2img, so 0 or 1 refs are both fine, but
+    // 2+ refs collapse silently to just the first. We INFORM the user
+    // about that collapse rather than blocking the request — the gate
+    // for the "no refs at all" case is gone now that img2img works.
     const _capsCurrent = _GEN_MODEL_CAPS[_generateModel];
-    if (refIds.length > 0 && _capsCurrent && _capsCurrent.isLocal && _capsCurrent.supportsMultiRef === false) {
-        showNotif(
-            `${_generateModel} doesn't accept reference images — it's text-to-image only. ` +
-            `Either remove the references or switch to one of the GPT models.`,
-            'error'
-        );
-        return;
-    }
     if (refIds.length > 1) {
-        const caps = _GEN_MODEL_CAPS[_generateModel];
-        if (caps && caps.supportsMultiRef === false) {
+        if (_capsCurrent && _capsCurrent.isLocal && _capsCurrent.supportsMultiRef === false) {
+            // Illustrious: warn but proceed. Slot 0 is the img2img input.
+            showNotif(
+                `Illustrious uses a single reference image — only slot 1 will be used. ` +
+                `(Other slots will be ignored for this generation.)`,
+                'info'
+            );
+        } else if (_capsCurrent && _capsCurrent.supportsMultiRef === false) {
+            // Future single-ref non-local model — block, since we'd be
+            // dropping refs without any path to use them.
             showNotif(
                 `${_generateModel} accepts only one reference image. ` +
                 `Either remove the extra refs or switch to a model that ` +
@@ -5483,6 +5504,11 @@ async function doGenerateMode(){
                     // the worker side (steps=27, cfg=5, sampler=Euler A).
                     // If we surface UI controls for them later, send
                     // them here.
+                    // img2img reference. Single-ref slice: the worker
+                    // fetches this from R2 and base64-encodes before
+                    // forwarding to Modal. Empty array on the txt2img
+                    // path; worker handles the missing case as txt2img.
+                    reference_image_ids: refIds.slice(0, 1),
                 }),
             }, 390_000);
         } else {
