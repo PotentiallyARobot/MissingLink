@@ -2428,6 +2428,86 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
          opted into permissive mode by default. The _generateModeration
          state variable still exists so the request body is unchanged. -->
 
+    <!-- Negative prompt — Illustrious only (gpt-image-2 ignores
+         negative prompts; the worker discards them on that path). When
+         empty, the worker falls back to a sensible default that catches
+         the most common SDXL artifacts (bad hands, watermarks, etc.). -->
+    <div class="sec generate-only local-only-section" style="display:none">
+        <div class="sec-label"><span class="icon">🚫</span> NEGATIVE PROMPT
+            <span class="sec-label-count" style="font-weight:400;color:var(--text-muted)">optional</span>
+        </div>
+        <textarea class="custom-prompt" id="generateNegativePrompt"
+            placeholder="Things to avoid... (leave blank for sensible defaults)"
+            rows="3"
+            oninput="genSetNegativePrompt(this.value)"></textarea>
+        <div class="size-hint">Default suppresses common SDXL artifacts (bad anatomy, watermarks, JPEG noise, etc.)</div>
+    </div>
+
+    <!-- Sampler settings — exposes the SDXL knobs the model card
+         calls out (steps, CFG, seed) plus img2img denoise strength.
+         All visible only for local models since gpt-image-2 doesn't
+         accept any of these. The Strength row is further gated on
+         whether slot 0 is filled (img2img mode) — see
+         updateLocalControlsVisibility. -->
+    <div class="sec generate-only local-only-section" style="display:none">
+        <div class="sec-label"><span class="icon">⚙️</span> SAMPLER SETTINGS</div>
+
+        <!-- Steps. Card recommends 27+. Range chosen so the user can
+             trade speed for quality without going off the rails:
+             15 = fast draft (~6s), 27 = balanced (~10s), 50 = slow but
+             refined (~18s). 60 is a hard ceiling. -->
+        <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
+                <span>STEPS</span><span id="genStepsLabel">27</span>
+            </div>
+            <input type="range" id="genStepsSlider" min="15" max="60" value="27" step="1"
+                   oninput="genSetSteps(this.value)" style="width:100%">
+            <div class="size-hint">Higher = more detail. Card recommends 27+</div>
+        </div>
+
+        <!-- CFG. Card recommends 5. Range 1-15 covers the practical
+             span (below 1 is uninteresting, above 12 typically cooks
+             the image). 0.5 step gives fine control without overkill. -->
+        <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
+                <span>CFG SCALE</span><span id="genCfgLabel">5.0</span>
+            </div>
+            <input type="range" id="genCfgSlider" min="1" max="15" value="5" step="0.5"
+                   oninput="genSetCfg(this.value)" style="width:100%">
+            <div class="size-hint">How strictly to follow the prompt. Card recommends 5</div>
+        </div>
+
+        <!-- Seed. Empty = random (server picks). Number = fixed.
+             The 🎲 button clears to random; "lock" = type a seed in.
+             After generation, the actual seed used is shown on the
+             result tile so the user can copy it back here for
+             reproduction. -->
+        <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
+                <span>SEED</span>
+                <button type="button" onclick="genSetSeed('')" title="Random seed for next generation"
+                        style="background:none;border:none;color:var(--gold);font-family:var(--font-mono);font-size:10px;cursor:pointer;padding:0">🎲 RANDOM</button>
+            </div>
+            <input type="number" id="genSeedInput" placeholder="random"
+                   min="0" step="1" oninput="genSetSeed(this.value)"
+                   style="width:100%;padding:8px 10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:12px;outline:none">
+            <div class="size-hint">Empty = random each generation. Number = reproducible</div>
+        </div>
+
+        <!-- Denoise strength — img2img only. Toggled visible by
+             updateLocalControlsVisibility based on slot 0. Range
+             0.05-0.95 (the model snaps tighter; the worker re-clamps).
+             0.7 is the default — moderate transformation. -->
+        <div id="genStrengthRow" style="display:none">
+            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
+                <span>IMG2IMG STRENGTH</span><span id="genStrengthLabel">0.70</span>
+            </div>
+            <input type="range" id="genStrengthSlider" min="0.05" max="0.95" value="0.70" step="0.05"
+                   oninput="genSetStrength(this.value)" style="width:100%">
+            <div class="size-hint">How much to deviate from the reference. 0.3 = subtle, 0.7 = transform, 0.9 = mostly ignore</div>
+        </div>
+    </div>
+
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🔢</span> NUMBER OF IMAGES
             <span class="sec-label-count" id="genCountLabel">1</span>
@@ -4337,12 +4417,34 @@ function renderStartupOverlay(){
     if (stageEl) stageEl.textContent = stageText;
     if (elapsedEl) elapsedEl.textContent = `${elapsed}s`;
     if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
-    if (titleEl) titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
+    // Illustrious-specific copy when the active state is the SDXL
+    // worker. Reference identity check (===) is reliable here — the
+    // helper returns one of the two state objects directly, no copy.
+    const isIllustrious = (_gs === _illustriousGpuState);
+    if (titleEl) {
+        if (isIllustrious) {
+            titleEl.textContent = _gs.state === 'cold'
+                ? 'Starting Illustrious model…'
+                : 'Loading Illustrious…';
+        } else {
+            titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
+        }
+    }
     if (subEl) {
-        // Single, fixed message whenever the overlay is up — keeps the
-        // copy stable instead of mutating into "Almost there" at 60s
-        // (which was a lie when the actual elapsed climbed past that).
-        subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+        if (isIllustrious) {
+            // First-boot path is dominated by the Civitai download.
+            // Cached-boot path is just SDXL load (~30s). We mention
+            // both possibilities since the user doesn't know which
+            // they're hitting.
+            subEl.textContent = stage === 'downloading_checkpoint'
+                ? "First-time download from Civitai — 6.5 GB. This only happens once; subsequent generations skip straight to inference."
+                : "Loading the Realism Illustrious checkpoint and SDXL pipeline. About 30-60 seconds when the model is cached.";
+        } else {
+            // Single, fixed message whenever the overlay is up — keeps the
+            // copy stable instead of mutating into "Almost there" at 60s
+            // (which was a lie when the actual elapsed climbed past that).
+            subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+        }
     }
 }
 
@@ -4723,6 +4825,79 @@ let _generateModeration = 'low';
 // our UX (more would crowd the stage in Create's single-image flow).
 let _generateCount = 1;
 
+// ── Illustrious-only sampler controls ─────────────────────────────────
+// These are exposed only when an isLocal model is selected. State is
+// persisted in localStorage like the gpt-image controls so a returning
+// user finds their last settings. Defaults match the model card's
+// recommended-settings list (steps=27, cfg=5) and the worker's defaults
+// (denoise=0.7).
+let _illustriousNegativePrompt = '';
+let _illustriousSteps = 27;
+let _illustriousCfg = 5.0;
+let _illustriousSeed = '';      // '' = random per request; numeric string = fixed
+let _illustriousStrength = 0.7; // img2img only
+
+function genSetNegativePrompt(v){
+    _illustriousNegativePrompt = (v || '').toString();
+    persistGenerateState();
+}
+function genSetSteps(v){
+    let n = parseInt(v, 10);
+    if (!isFinite(n)) n = 27;
+    _illustriousSteps = Math.max(15, Math.min(60, n));
+    const lbl = $('genStepsLabel'); if (lbl) lbl.textContent = String(_illustriousSteps);
+    const sl = $('genStepsSlider');
+    if (sl && parseInt(sl.value, 10) !== _illustriousSteps) sl.value = String(_illustriousSteps);
+    persistGenerateState();
+}
+function genSetCfg(v){
+    let n = parseFloat(v);
+    if (!isFinite(n)) n = 5.0;
+    _illustriousCfg = Math.max(1, Math.min(15, n));
+    const lbl = $('genCfgLabel'); if (lbl) lbl.textContent = _illustriousCfg.toFixed(1);
+    const sl = $('genCfgSlider');
+    if (sl && parseFloat(sl.value) !== _illustriousCfg) sl.value = String(_illustriousCfg);
+    persistGenerateState();
+}
+function genSetSeed(v){
+    const s = (v === null || v === undefined) ? '' : String(v).trim();
+    // Empty string is the canonical "random" — display as empty in the
+    // input. Otherwise we coerce to a non-negative integer; non-numeric
+    // input falls back to empty (random) so the user never gets a
+    // confusing "seed=NaN" experience.
+    if (s === '') {
+        _illustriousSeed = '';
+    } else {
+        const n = parseInt(s, 10);
+        _illustriousSeed = (isFinite(n) && n >= 0) ? String(n) : '';
+    }
+    const inp = $('genSeedInput');
+    if (inp && inp.value !== _illustriousSeed) inp.value = _illustriousSeed;
+    persistGenerateState();
+}
+function genSetStrength(v){
+    let n = parseFloat(v);
+    if (!isFinite(n)) n = 0.7;
+    _illustriousStrength = Math.max(0.05, Math.min(0.95, n));
+    const lbl = $('genStrengthLabel'); if (lbl) lbl.textContent = _illustriousStrength.toFixed(2);
+    const sl = $('genStrengthSlider');
+    if (sl && parseFloat(sl.value) !== _illustriousStrength) sl.value = String(_illustriousStrength);
+    persistGenerateState();
+}
+
+// Show/hide the img2img strength slider based on whether slot 0 has a
+// reference. Called from genSetModel (when switching to/from Illustrious),
+// renderGenSlot (when a slot is filled or cleared), and sendBatchInputToCreate
+// (when "Use as Input" pushes a result back into a slot). Also shows or
+// hides the entire local-only control band based on which model is active.
+function updateLocalControlsVisibility(){
+    const caps = _GEN_MODEL_CAPS[_generateModel];
+    const isLocal = !!(caps && caps.isLocal);
+    const hasRef = isLocal && _generateRefs[0] !== null && _generateRefs[0] !== undefined;
+    const strengthRow = $('genStrengthRow');
+    if (strengthRow) strengthRow.style.display = hasRef ? '' : 'none';
+}
+
 function genSlotFileChange(i){
     const inp = $('genSlotFile' + i);
     if (inp.files.length) genUploadToSlot(i, inp.files[0]);
@@ -4781,6 +4956,12 @@ function renderGenSlot(i){
     } else {
         empty.style.display = '';
         filled.style.display = 'none';
+    }
+    // Slot 0's filled/empty state determines whether Illustrious is in
+    // img2img or txt2img mode, which gates the denoise-strength row's
+    // visibility. Other slots don't affect it (Illustrious is single-ref).
+    if (i === 0 && typeof updateLocalControlsVisibility === 'function') {
+        updateLocalControlsVisibility();
     }
 }
 
@@ -5059,6 +5240,10 @@ function genSetModel(m){
         if (slotEl) slotEl.style.display = supportsMultiRef ? '' : 'none';
     }
     if (typeof genUpdateCounter === 'function') genUpdateCounter();
+    // Toggle img2img-specific controls based on whether slot 0 is filled.
+    if (typeof updateLocalControlsVisibility === 'function') {
+        updateLocalControlsVisibility();
+    }
     // Pre-warm the right GPU container. Picking the model is a strong
     // signal of intent — the user's about to click Generate. Firing the
     // wake here means the container is loading while they're typing
@@ -5241,6 +5426,14 @@ function persistGenerateState(){
             background: _generateBackground,
             moderation: _generateModeration,
             count: _generateCount,
+            // Illustrious-only controls. Persisted alongside the gpt-image
+            // ones so a user who has both types of generation in their
+            // history keeps their full settings without overwrite.
+            illustriousNegativePrompt: _illustriousNegativePrompt,
+            illustriousSteps: _illustriousSteps,
+            illustriousCfg: _illustriousCfg,
+            illustriousSeed: _illustriousSeed,
+            illustriousStrength: _illustriousStrength,
         }));
     } catch (e) {}
 }
@@ -5322,6 +5515,24 @@ function restoreGenerateState(){
         if (typeof d.size === 'string') {
             _generateSize = d.size;
         }
+        // Illustrious controls. Pull each with type-narrowing so a
+        // corrupt/older blob can't crash the restore — a missing key
+        // just leaves the in-memory default in place.
+        if (typeof d.illustriousNegativePrompt === 'string') {
+            _illustriousNegativePrompt = d.illustriousNegativePrompt;
+        }
+        if (typeof d.illustriousSteps === 'number') {
+            _illustriousSteps = Math.max(15, Math.min(60, d.illustriousSteps));
+        }
+        if (typeof d.illustriousCfg === 'number') {
+            _illustriousCfg = Math.max(1, Math.min(15, d.illustriousCfg));
+        }
+        if (typeof d.illustriousSeed === 'string') {
+            _illustriousSeed = d.illustriousSeed;
+        }
+        if (typeof d.illustriousStrength === 'number') {
+            _illustriousStrength = Math.max(0.05, Math.min(0.95, d.illustriousStrength));
+        }
         // Defer DOM updates — buttons may not exist in DOM yet at
         // first restore (this runs early on page init).
         requestAnimationFrame(() => {
@@ -5349,6 +5560,15 @@ function restoreGenerateState(){
             const countLbl = $('genCountLabel');
             if (countLbl) countLbl.textContent = String(_generateCount);
             genUpdateCostLabel();
+            // Sync the Illustrious controls to their DOM elements. The
+            // setters update both the labels and the inputs so we just
+            // call them with the current state values.
+            const negEl = $('generateNegativePrompt');
+            if (negEl) negEl.value = _illustriousNegativePrompt;
+            genSetSteps(_illustriousSteps);
+            genSetCfg(_illustriousCfg);
+            genSetSeed(_illustriousSeed);
+            genSetStrength(_illustriousStrength);
             // Scrub any refs whose IDs no longer belong to the current
             // user (different account, deleted upload, etc). Deferred so
             // checkAuth has a chance to populate the auth cookie/state
@@ -5500,10 +5720,16 @@ async function doGenerateMode(){
                     // worker re-clamps to 512..1536 with /8 snapping.
                     width: genGetIllustriousW(),
                     height: genGetIllustriousH(),
-                    // Knobs hardcoded to model-card recommendations on
-                    // the worker side (steps=27, cfg=5, sampler=Euler A).
-                    // If we surface UI controls for them later, send
-                    // them here.
+                    // Sampler controls from the Illustrious-only panel.
+                    // The empty seed string is the canonical "random" —
+                    // worker treats seed=-1 as "pick a fresh int per
+                    // request", which is what the user wants when the
+                    // input is empty.
+                    negative_prompt: _illustriousNegativePrompt,
+                    steps: _illustriousSteps,
+                    cfg: _illustriousCfg,
+                    seed: _illustriousSeed === '' ? -1 : parseInt(_illustriousSeed, 10),
+                    denoise_strength: _illustriousStrength,
                     // img2img reference. Single-ref slice: the worker
                     // fetches this from R2 and base64-encodes before
                     // forwarding to Modal. Empty array on the txt2img
@@ -7391,14 +7617,30 @@ function sendBatchInputToEdit(inp){
 function sendBatchInputToCreate(inp){
     if (!inp || inp._placeholder) return;
     setMode('generate');
-    // First empty slot wins. _generateRefs is fixed-length 4, so a
-    // simple findIndex(=== null) finds the lowest-indexed empty.
-    let targetSlot = _generateRefs.findIndex(r => r === null);
+    // Per-model slot limit. Illustrious is single-ref img2img — only
+    // slot 0 is visible/usable. Without this branch, "Use as Input"
+    // for the second image while Illustrious is selected would silently
+    // land it in slot 1 (which is hidden), so the user thinks nothing
+    // happened. With it, we always target slot 0 in single-ref models
+    // and overwrite-with-notif if it's already filled.
+    const caps = _GEN_MODEL_CAPS[_generateModel];
+    const maxSlots = (caps && caps.supportsMultiRef === false) ? 1 : 4;
+    // First empty slot wins within the per-model cap. _generateRefs is
+    // fixed-length 4 in storage, but we only USE the first `maxSlots`
+    // for the active model. Indexes >= maxSlots remain inert in
+    // localStorage from a prior gpt-image session — they don't get
+    // touched by this function and they're hidden in the UI.
+    let targetSlot = -1;
+    for (let i = 0; i < maxSlots; i++) {
+        if (_generateRefs[i] === null) { targetSlot = i; break; }
+    }
     let didOverwrite = false;
     if (targetSlot === -1) {
-        // All slots full — overwrite slot 1 (index 0) so the newest
-        // reference replaces the oldest. The user gets a notif so they
-        // know what happened instead of seeing slot 1 silently change.
+        // No empty slot in the active band — overwrite slot 0 (the
+        // newest reference replaces the oldest visible slot). For
+        // multi-ref models this matches the old "all 4 full" UX; for
+        // single-ref models slot 0 is the ONLY slot, so this is the
+        // expected "replace what's there" behavior.
         targetSlot = 0;
         didOverwrite = true;
     }
@@ -7413,10 +7655,22 @@ function sendBatchInputToCreate(inp){
     genUpdateCounter();
     updateGenButton();
     persistGenerateState();
+    // Notify on overwrite. Wording differs for single-ref vs multi-ref
+    // since the user's mental model is different ("replaced the image"
+    // vs "all slots were full").
     if (didOverwrite) {
-        showNotif('All 4 reference slots were full — replaced slot 1 with the newest image.', 'info');
+        if (maxSlots === 1) {
+            showNotif('Reference image replaced.', 'info');
+        } else {
+            showNotif('All 4 reference slots were full — replaced slot 1 with the newest image.', 'info');
+        }
     }
     log(`Loaded "${inp.fname || inp.id}" into Create mode (slot ${targetSlot + 1})`);
+    // Refresh the denoise-strength control's visibility — it toggles
+    // based on whether slot 0 has a ref (img2img vs txt2img).
+    if (typeof updateLocalControlsVisibility === 'function') {
+        updateLocalControlsVisibility();
+    }
 }
 
 // ─── Per-tile vision check: find issues, draw red rectangles ────
