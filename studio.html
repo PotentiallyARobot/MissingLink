@@ -3229,6 +3229,13 @@ async function checkAuth(){
                 warmupGpu();
                 syncHistory();  // hydrate history sidebar from server
                 pollQueue();    // hydrate active queue from server
+                // Scrub any reference-image slots whose IDs don't belong
+                // to THIS user — refs are user-scoped, and a sign-out /
+                // sign-in-as-different-account flow leaves the previous
+                // user's IDs in localStorage. Drops them silently before
+                // the user can hit a "reference_not_owned" wall on the
+                // first CREATE click.
+                validateGenerateRefs().catch(() => {});
             }
         } else {
             _user=null;
@@ -5029,6 +5036,51 @@ function persistGenerateState(){
         }));
     } catch (e) {}
 }
+// Drop any reference-image slots whose IDs no longer point to an upload
+// the current user owns. Stale IDs typically come from one of:
+//   - User signs out and signs back in as a different account; the old
+//     account's upload IDs are still in localStorage.
+//   - Backend cleanup (e.g. R2 lifecycle, account deletion) removed the
+//     studio_uploads row but the frontend's localStorage didn't get
+//     the memo.
+// Without this, the next CREATE click would surface a cryptic
+// "reference_not_owned" error from the worker. Running it on restore +
+// after auth changes means the user never sees that error in normal
+// operation. Silent on success, logs on cleanup — no notif spam.
+async function validateGenerateRefs(){
+    const slotIds = _generateRefs
+        .map((r, i) => r ? { i, id: r.id } : null)
+        .filter(Boolean);
+    if (!slotIds.length) return;
+    try {
+        const r = await fetchT(`${API}/api/studio/uploads/check-ownership`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: slotIds.map(s => s.id) }),
+        }, 5000);
+        const d = await r.json();
+        if (!d.ok || !Array.isArray(d.missing) || d.missing.length === 0) return;
+        const missingSet = new Set(d.missing);
+        let dropped = 0;
+        for (const s of slotIds) {
+            if (missingSet.has(s.id)) {
+                _generateRefs[s.i] = null;
+                renderGenSlot(s.i);
+                dropped++;
+            }
+        }
+        if (dropped) {
+            genUpdateCounter();
+            persistGenerateState();
+            log(`Dropped ${dropped} stale reference image${dropped === 1 ? '' : 's'} from previous session`, 'info');
+        }
+    } catch (e) {
+        // Network glitch or 401 — leave the slots alone and let the
+        // generation-time check catch it. We don't want to drop slots
+        // just because the validation request happened to fail.
+    }
+}
+
 function restoreGenerateState(){
     try {
         const raw = localStorage.getItem('studio_generate_state');
@@ -5089,6 +5141,13 @@ function restoreGenerateState(){
             const countLbl = $('genCountLabel');
             if (countLbl) countLbl.textContent = String(_generateCount);
             genUpdateCostLabel();
+            // Scrub any refs whose IDs no longer belong to the current
+            // user (different account, deleted upload, etc). Deferred so
+            // checkAuth has a chance to populate the auth cookie/state
+            // — running validation when the user isn't yet logged in
+            // gets a 401 and the stale slots stay until the user signs
+            // in (at which point checkAuth re-runs validateGenerateRefs).
+            setTimeout(() => { validateGenerateRefs().catch(() => {}); }, 800);
         });
     } catch (e) {}
 }
@@ -5236,7 +5295,39 @@ async function doGenerateMode(){
             ? (_generateQuality === 'high' ? 390_000 : 270_000)
             : (_generateQuality === 'high' ? 270_000 : 150_000));
         const d = await r.json();
-        if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
+        if (!d.ok) {
+            // Specially handle reference_not_owned: scrub the stale
+            // slots so the user can retry without manually figuring
+            // out which slot is broken. The worker returns d.missing
+            // — the IDs that failed ownership — so we map those back
+            // to slot indices and clear them. Without this branch,
+            // the user sees the cryptic "reference_not_owned" string
+            // and has no idea why their refs panel suddenly looks
+            // angry; with it, the bad slots disappear and the user
+            // gets a one-line explanation.
+            if (d.error === 'reference_not_owned' && Array.isArray(d.missing) && d.missing.length) {
+                const missingSet = new Set(d.missing);
+                let dropped = 0;
+                for (let i = 0; i < _generateRefs.length; i++) {
+                    const s = _generateRefs[i];
+                    if (s && missingSet.has(s.id)) {
+                        _generateRefs[i] = null;
+                        renderGenSlot(i);
+                        dropped++;
+                    }
+                }
+                if (dropped) {
+                    genUpdateCounter();
+                    persistGenerateState();
+                }
+                throw new Error(
+                    `Removed ${dropped} stale reference image${dropped === 1 ? '' : 's'} ` +
+                    `that no longer belong${dropped === 1 ? 's' : ''} to your account ` +
+                    `(probably uploaded in a previous session). Click CREATE again.`
+                );
+            }
+            throw new Error(d.detail || d.error || 'image_gen_failed');
+        }
         const allImages = Array.isArray(d.images) ? d.images : [];
         if (!allImages.length) throw new Error('no_image_returned');
         // Capture wall-clock duration so the focus-stage meta strip can
