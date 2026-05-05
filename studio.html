@@ -1382,6 +1382,25 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .batch-tile.done:hover .batch-tile-edit{opacity:1;transform:scale(1)}
 .batch-tile-edit:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 .batch-tile-edit.busy{opacity:1!important;animation:pulse 1s infinite}
+/* "Use as input" button — sits in the bottom-right corner of done tiles
+   so it doesn't crowd the existing top-right action cluster (Critique,
+   Edit). Same glassmorphic small-button style and hover-reveal as its
+   siblings. Click sends this tile's image to Create mode's first
+   reference slot via sendBatchInputToCreate (which honors per-model
+   slot caps so single-ref models like Illustrious target slot 0). */
+.batch-tile-to-input{
+    position:absolute;bottom:6px;right:6px;z-index:4;
+    width:22px;height:22px;padding:0;border-radius:4px;
+    background:rgba(17,17,20,.85);color:var(--gold);
+    font-size:12px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--border);
+    cursor:pointer;opacity:0;transform:scale(.8);transition:all .2s;
+    backdrop-filter:blur(6px);
+    font-family:inherit;
+}
+.batch-tile.done:hover .batch-tile-to-input{opacity:1;transform:scale(1)}
+.batch-tile-to-input:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 /* Retry button — sits prominently in the center of failed/cancelled
    tiles. Unlike the edit/critique buttons which are hover-revealed, the
    retry button is ALWAYS visible because the tile state demands action.
@@ -9280,6 +9299,7 @@ function renderBatchGrid(){
                 <div class="batch-tile-label"></div>
                 <button class="batch-tile-critique" title="Critique this result — LLM scores it and suggests a refined prompt" aria-label="Critique this result" style="display:none">🔬</button>
                 <button class="batch-tile-edit" title="Edit this view" aria-label="Edit this view" style="display:none">✎</button>
+                <button class="batch-tile-to-input" title="Use as input in Create mode" aria-label="Use as input" style="display:none">✨</button>
                 <button class="batch-tile-retry" title="Retry this shot" aria-label="Retry this shot" style="display:none">Retry</button>
             `;
             // Edit button click — stop propagation so it doesn't trigger the
@@ -9297,6 +9317,32 @@ function renderBatchGrid(){
                 ev.stopPropagation();
                 aiCritiqueOutputTile(i, critBtn);
             });
+            // "Use as input" button — sends this shot's image to Create
+            // mode's reference slots. shot.url is in the form
+            // /api/studio/uploads/{uid}, so we extract uid from the path
+            // for sendBatchInputToCreate's id field. Filename derived
+            // from the shot's label gives a useful hint in logs/UIs.
+            const toInputBtn = tile.querySelector('.batch-tile-to-input');
+            toInputBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const currentShot = _activeBatch && _activeBatch.shots[i];
+                if (!currentShot || !currentShot.url) return;
+                const uploadId = (currentShot.url.split('/').pop() || '').split('?')[0];
+                if (!uploadId) {
+                    showNotif('Could not identify this image. Try refreshing.', 'error');
+                    return;
+                }
+                const inp = {
+                    id: uploadId,
+                    url: currentShot.url,
+                    w: currentShot.w,
+                    h: currentShot.h,
+                    fname: currentShot.label
+                        ? `${currentShot.label.replace(/\s+/g, '-').toLowerCase()}.png`
+                        : `view-${i + 1}.png`,
+                };
+                sendBatchInputToCreate(inp);
+            });
             // Retry button — re-submits the failed/cancelled shot using
             // the payload stashed at original-submit time.
             const retryBtn = tile.querySelector('.batch-tile-retry');
@@ -9312,6 +9358,7 @@ function renderBatchGrid(){
         const label = tile.querySelector('.batch-tile-label');
         const editBtn = tile.querySelector('.batch-tile-edit');
         const critBtn = tile.querySelector('.batch-tile-critique');
+        const toInputBtn = tile.querySelector('.batch-tile-to-input');
         const retryBtn = tile.querySelector('.batch-tile-retry');
         label.textContent = shot.label;
         // Populate the input preview immediately — so the tile shows the
@@ -9322,8 +9369,9 @@ function renderBatchGrid(){
             inputPreview.src = shot.inputUrl;
             inputPreview.style.display = 'block';
         }
-        // Show edit + critique buttons only when the tile has a completed image
+        // Show edit + critique + use-as-input buttons only when the tile has a completed image
         if (editBtn) editBtn.style.display = shot.url ? '' : 'none';
+        if (toInputBtn) toInputBtn.style.display = shot.url ? '' : 'none';
         if (critBtn) {
             critBtn.style.display = shot.url ? '' : 'none';
             // Restore flagged state from any prior critique (auto-QA stores
