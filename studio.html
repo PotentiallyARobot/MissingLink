@@ -964,6 +964,36 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    `download` attribute — no JS blob conversion needed. */
 .modal-download{position:absolute;top:16px;right:64px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:16px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10;text-decoration:none}
 .modal-download:hover{background:var(--gold);color:#0a0a0c}
+/* Action toolbar inside the image modal — surfaced when the modal was
+   opened from a batch grid cell. Anchored bottom-center so it sits
+   below the image without overlapping the close/download buttons in
+   the top-right. Slightly larger touch targets than the per-tile
+   versions since there's room here. */
+.modal-actions{
+    position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
+    z-index:11;display:flex;gap:8px;
+    background:rgba(17,17,20,.92);backdrop-filter:blur(8px);
+    border:1px solid var(--border);border-radius:10px;
+    padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);
+}
+.modal-action-btn{
+    background:transparent;color:var(--text);
+    border:1px solid transparent;border-radius:6px;
+    padding:8px 12px;display:flex;align-items:center;gap:6px;
+    font-family:var(--font-mono);font-size:11px;font-weight:600;
+    letter-spacing:.5px;text-transform:uppercase;
+    cursor:pointer;transition:all .15s;
+}
+.modal-action-btn span{display:inline-block}
+.modal-action-btn:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.modal-action-btn.busy{
+    opacity:.7;cursor:wait;animation:pulse 1s infinite;pointer-events:none;
+}
+/* On narrow screens the labels disappear to keep all four buttons in view. */
+@media (max-width: 640px) {
+    .modal-action-btn span{display:none}
+    .modal-action-btn{padding:8px;font-size:14px}
+}
 
 /* Full-history modal */
 .modal{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:40px}
@@ -1669,6 +1699,17 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .q-drag-handle{cursor:grab;user-select:none;-webkit-user-select:none}
 .q-drag-handle:hover{background:rgba(255,255,255,.025)}
 .q-drag-handle.dragging{cursor:grabbing;background:rgba(255,255,255,.04)}
+/* Visual drag-handle affordance — three rotated dots. Tiny + subtle but
+   universally recognized as "grab me." Without this, users miss that
+   the header is draggable; the cursor change is too late a signal. */
+.q-grip{
+    display:inline-block;color:var(--text-dim,#666);
+    font-size:11px;line-height:1;margin-right:4px;
+    transform:rotate(90deg);letter-spacing:-1px;
+    transition:color .15s;
+}
+.q-drag-handle:hover .q-grip{color:var(--text-muted)}
+.q-drag-handle.dragging .q-grip{color:var(--gold)}
 /* While dragging, suppress the body's text selection so quick mouse drags
    don't accidentally select text in the output area underneath. */
 body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbing}
@@ -2719,7 +2760,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <!-- Queue overlay (top-right of output area) -->
         <div class="queue-overlay" id="queueOverlay">
             <div class="q-section" id="qActiveSection" style="display:none">
-                <div class="q-header q-drag-handle" data-overlay="queue">
+                <div class="q-header q-drag-handle" data-overlay="queue" title="Drag to move · double-click to reset">
+                    <span class="q-grip" aria-hidden="true">⋮⋮</span>
                     <span>QUEUE <span id="queueCount" class="q-count">0/12</span></span>
                     <span id="queueGlobalHint" class="q-global-hint" style="display:none;margin-left:6px"></span>
                     <span style="margin-left:auto;display:flex;gap:5px">
@@ -2734,7 +2776,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <!-- History overlay (bottom-right of output area) -->
         <div class="history-overlay" id="historyOverlay">
             <div class="q-section" id="qHistorySection" style="display:none">
-                <div class="q-header q-drag-handle" data-overlay="history">
+                <div class="q-header q-drag-handle" data-overlay="history" title="Drag to move · double-click to reset">
+                    <span class="q-grip" aria-hidden="true">⋮⋮</span>
                     <span>HISTORY <span id="historySidebarCount" class="q-count"></span></span>
                     <span style="margin-left:auto;display:flex;gap:5px">
                         <button onclick="openHistoryModal()" class="q-clear" title="Open full history">⛶ Expand</button>
@@ -2750,7 +2793,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              persist machinery as queue/history (data-overlay='agent'). -->
         <div class="agent-overlay batch-only" id="agentOverlay" style="display:none">
             <div class="q-section" id="qAgentSection">
-                <div class="q-header q-drag-handle" data-overlay="agent">
+                <div class="q-header q-drag-handle" data-overlay="agent" title="Drag to move · double-click to reset">
+                    <span class="q-grip" aria-hidden="true">⋮⋮</span>
                     <span>✨ AGENT</span>
                     <span style="margin-left:auto;display:flex;gap:5px">
                         <button id="agentClearBtn" onclick="clearAgentChat()" class="q-clear" title="Clear chat history">↻ Reset</button>
@@ -2900,6 +2944,19 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <a id="modalDownload" class="modal-download" download title="Download image" onclick="event.stopPropagation()" href="#">⬇</a>
     <button class="modal-close" onclick="closeModal()">×</button>
     <img id="modalImg">
+    <!-- Action toolbar — shown only when the modal was opened from a
+         batch grid cell (openModal called with ctx.type === 'batchShot').
+         Mirrors the cell's hover-revealed buttons but bigger and always
+         visible inside the modal. Stop-propagation on the wrapper so a
+         click on a button doesn't close the modal underneath. The slot
+         index is stashed in dataset.slotIdx by openModal so handlers
+         can re-look-up the shot from _activeBatch. -->
+    <div class="modal-actions" id="modalActions" style="display:none" onclick="event.stopPropagation()">
+        <button class="modal-action-btn" id="modalActCritique" title="Critique this result">🔬<span>Critique</span></button>
+        <button class="modal-action-btn" id="modalActEdit" title="Edit this view">✎<span>Edit</span></button>
+        <button class="modal-action-btn" id="modalActToCamera" title="Use as Camera input">📷<span>To Camera</span></button>
+        <button class="modal-action-btn" id="modalActToCreate" title="Use as reference in Create mode">✨<span>To Create</span></button>
+    </div>
 </div>
 
 <!-- BUY MODAL -->
@@ -6661,7 +6718,7 @@ async function _makeMarkupThumbDataUrl(slotIdx){
 }
 
 // ── Modal ─────────────────────────────────────────
-function openModal(src, filename){
+function openModal(src, filename, ctx){
     if(!src) return;
     $('modalImg').src = src;
     // Wire the download anchor — browsers honor `download` on same-origin
@@ -6674,9 +6731,83 @@ function openModal(src, filename){
         dl.href = src;
         dl.setAttribute('download', filename || (src.split('/').pop().split('?')[0]) || 'image.png');
     }
+    // Action toolbar — only when the modal was opened from a batch grid
+    // cell. We wire the buttons here (rather than once at startup) so the
+    // slot index is bound fresh each open; the user can navigate around
+    // between modal opens without stale handlers firing on the wrong cell.
+    const actionBar = $('modalActions');
+    if (actionBar) {
+        if (ctx && ctx.type === 'batchShot' && typeof ctx.slotIdx === 'number') {
+            const slotIdx = ctx.slotIdx;
+            actionBar.dataset.slotIdx = String(slotIdx);
+            actionBar.style.display = '';
+            // Fresh listener bindings each open. Capture-replace pattern:
+            // clone+replace each button so any prior listeners are dropped.
+            // Simpler than tracking and removing them individually, and
+            // cheap at 4 buttons.
+            const wireBtn = (id, handler) => {
+                const old = $(id);
+                if (!old) return;
+                const fresh = old.cloneNode(true);
+                old.parentNode.replaceChild(fresh, old);
+                fresh.addEventListener('click', handler);
+            };
+            wireBtn('modalActCritique', () => {
+                if (!_activeBatch) return;
+                aiCritiqueOutputTile(slotIdx, $('modalActCritique'));
+            });
+            wireBtn('modalActEdit', () => {
+                closeModal();
+                editBatchSlot(slotIdx);
+            });
+            wireBtn('modalActToCamera', async () => {
+                if (!_activeBatch) return;
+                const shot = _activeBatch.shots[slotIdx];
+                if (!shot || !shot.url) return;
+                const btn = $('modalActToCamera');
+                btn.classList.add('busy');
+                try {
+                    const inp = await prepareBatchShotForReuse(shot, slotIdx);
+                    if (inp) {
+                        closeModal();
+                        sendBatchInputToCamera(inp);
+                    }
+                } finally {
+                    btn.classList.remove('busy');
+                }
+            });
+            wireBtn('modalActToCreate', async () => {
+                if (!_activeBatch) return;
+                const shot = _activeBatch.shots[slotIdx];
+                if (!shot || !shot.url) return;
+                const btn = $('modalActToCreate');
+                btn.classList.add('busy');
+                try {
+                    const inp = await prepareBatchShotForReuse(shot, slotIdx);
+                    if (inp) {
+                        closeModal();
+                        sendBatchInputToCreate(inp);
+                    }
+                } finally {
+                    btn.classList.remove('busy');
+                }
+            });
+        } else {
+            actionBar.style.display = 'none';
+            actionBar.removeAttribute('data-slot-idx');
+        }
+    }
     $('imgModal').classList.add('open');
 }
-function closeModal(){ $('imgModal').classList.remove('open'); }
+function closeModal(){
+    $('imgModal').classList.remove('open');
+    // Hide the action toolbar so the next non-batch open doesn't flash it.
+    const actionBar = $('modalActions');
+    if (actionBar) {
+        actionBar.style.display = 'none';
+        actionBar.removeAttribute('data-slot-idx');
+    }
+}
 document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){ closeModal(); closeBuyModal(); if(_markup && _markup.active) closeMarkupModal(false); }
 });
@@ -9512,7 +9643,11 @@ function renderBatchGrid(){
                 // filename derived from the job/shot id so the modal's
                 // download button saves with a useful name instead of
                 // an opaque R2 path segment.
-                tile.onclick = () => openModal(shot.url, (shot.id || shot.job_id || 'image') + '.png');
+                tile.onclick = () => openModal(
+                    shot.url,
+                    (shot.id || shot.job_id || 'image') + '.png',
+                    { type: 'batchShot', slotIdx: i },
+                );
             }
         } else if (shot.status === 'error') {
             placeholder.textContent = 'Failed';
