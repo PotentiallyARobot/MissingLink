@@ -1382,14 +1382,19 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .batch-tile.done:hover .batch-tile-edit{opacity:1;transform:scale(1)}
 .batch-tile-edit:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 .batch-tile-edit.busy{opacity:1!important;animation:pulse 1s infinite}
-/* "Use as input" button — sits in the bottom-right corner of done tiles
-   so it doesn't crowd the existing top-right action cluster (Critique,
-   Edit). Same glassmorphic small-button style and hover-reveal as its
-   siblings. Click sends this tile's image to Create mode's first
-   reference slot via sendBatchInputToCreate (which honors per-model
-   slot caps so single-ref models like Illustrious target slot 0). */
-.batch-tile-to-input{
-    position:absolute;bottom:6px;right:6px;z-index:4;
+/* Bottom-right action buttons — each completed tile gets two:
+   - .batch-tile-to-camera  (left, 📷)  → sends image to Camera as input
+   - .batch-tile-to-create  (right, ✨) → sends image to Create's first ref slot
+   Both are hover-revealed with the same animation as the top-right
+   buttons. Two distinct send actions so the user doesn't have to dig
+   through Create mode just to hand the image to the Camera pipeline,
+   which is the more common reuse pattern. The .busy state gives a
+   pulsing affordance during the re-upload round trip (we re-register
+   the output as a new studio_uploads row so the worker's ownership
+   check passes — Qwen batch outputs live under /outputs/, not
+   /uploads/, and the worker rejects /outputs/ paths as references). */
+.batch-tile-to-camera, .batch-tile-to-create{
+    position:absolute;bottom:6px;z-index:4;
     width:22px;height:22px;padding:0;border-radius:4px;
     background:rgba(17,17,20,.85);color:var(--gold);
     font-size:12px;line-height:1;
@@ -1399,8 +1404,16 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     backdrop-filter:blur(6px);
     font-family:inherit;
 }
-.batch-tile.done:hover .batch-tile-to-input{opacity:1;transform:scale(1)}
-.batch-tile-to-input:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.batch-tile-to-create  { right:6px; }
+.batch-tile-to-camera  { right:32px; }
+.batch-tile.done:hover .batch-tile-to-camera,
+.batch-tile.done:hover .batch-tile-to-create{opacity:1;transform:scale(1)}
+.batch-tile-to-camera:hover, .batch-tile-to-create:hover{
+    background:var(--gold);color:#0a0a0c;border-color:var(--gold);
+}
+.batch-tile-to-camera.busy, .batch-tile-to-create.busy{
+    opacity:1!important;animation:pulse 1s infinite;pointer-events:none;
+}
 /* Retry button — sits prominently in the center of failed/cancelled
    tiles. Unlike the edit/critique buttons which are hover-revealed, the
    retry button is ALWAYS visible because the tile state demands action.
@@ -8730,6 +8743,59 @@ function _htmlEsc(s){
     }[c]));
 }
 
+// Re-register a batch-grid shot's rendered output as a fresh upload
+// owned by the current user. Necessary because Qwen-generated batch
+// outputs live under /api/studio/outputs/<filename> rather than
+// /api/studio/uploads/<id>, and the worker's reference-ownership check
+// (correctly) rejects /outputs/ paths — they're not in studio_uploads.
+//
+// The flow is the same one editBatchSlot uses: fetch the rendered
+// image, push it through /api/studio/upload, get back a real upload_id,
+// then return the shape sendBatchInput* expects. Cached on the shot
+// itself so repeated clicks (e.g. user clicks 📷 then changes their
+// mind and clicks ✨) don't create duplicate upload rows. The cache
+// holds across re-renders because shots are mutated in place.
+async function prepareBatchShotForReuse(shot, slotIdx){
+    if (!shot || !shot.url) return null;
+    // Cached from a prior click — same shot, same uploaded reference,
+    // skip the round trip.
+    if (shot._reusableInput) return shot._reusableInput;
+    try {
+        const r = await fetchT(shot.url, null, 15000);
+        const blob = await r.blob();
+        const labelSlug = (shot.label || `view-${(slotIdx || 0) + 1}`)
+            .replace(/\s+/g, '-').toLowerCase();
+        const fname = `${labelSlug}-${Date.now()}.png`;
+        const file = new File([blob], fname, { type: blob.type || 'image/png' });
+        const fd = new FormData();
+        fd.append('image', file);
+        const upR = await fetchT(`${API}/api/studio/upload`, {
+            method: 'POST', body: fd,
+        }, 30000);
+        if (upR.status === 401) {
+            $('loginModal').classList.add('open');
+            return null;
+        }
+        const d = await upR.json();
+        if (!d || !d.id || d.error) {
+            showNotif(d?.error || 'Upload failed. Please try again.', 'error');
+            return null;
+        }
+        const inp = {
+            id: d.id,
+            url: d.url,
+            w: d.w || shot.w || 0,
+            h: d.h || shot.h || 0,
+            fname,
+        };
+        shot._reusableInput = inp;  // cache for follow-up clicks
+        return inp;
+    } catch (e) {
+        showNotif('Could not load that view. Check your connection and try again.', 'error');
+        return null;
+    }
+}
+
 // Click handler for the ✎ button on a batch tile. Loads that view's image
 // into the Edit sidebar as the first edit-slot input, switches modes, and
 // arms _editingBatchSlot so the next Generate updates this tile in place.
@@ -9299,7 +9365,8 @@ function renderBatchGrid(){
                 <div class="batch-tile-label"></div>
                 <button class="batch-tile-critique" title="Critique this result — LLM scores it and suggests a refined prompt" aria-label="Critique this result" style="display:none">🔬</button>
                 <button class="batch-tile-edit" title="Edit this view" aria-label="Edit this view" style="display:none">✎</button>
-                <button class="batch-tile-to-input" title="Use as input in Create mode" aria-label="Use as input" style="display:none">✨</button>
+                <button class="batch-tile-to-camera" title="Use as Camera input" aria-label="Use as Camera input" style="display:none">📷</button>
+                <button class="batch-tile-to-create" title="Use as reference in Create mode" aria-label="Use as Create reference" style="display:none">✨</button>
                 <button class="batch-tile-retry" title="Retry this shot" aria-label="Retry this shot" style="display:none">Retry</button>
             `;
             // Edit button click — stop propagation so it doesn't trigger the
@@ -9317,31 +9384,40 @@ function renderBatchGrid(){
                 ev.stopPropagation();
                 aiCritiqueOutputTile(i, critBtn);
             });
-            // "Use as input" button — sends this shot's image to Create
-            // mode's reference slots. shot.url is in the form
-            // /api/studio/uploads/{uid}, so we extract uid from the path
-            // for sendBatchInputToCreate's id field. Filename derived
-            // from the shot's label gives a useful hint in logs/UIs.
-            const toInputBtn = tile.querySelector('.batch-tile-to-input');
-            toInputBtn.addEventListener('click', (ev) => {
+            // Send-to-Camera and send-to-Create buttons — both go through
+            // the same prepareBatchShotForReuse helper which re-fetches
+            // the rendered output and re-uploads it via /api/studio/upload.
+            // The re-upload step is mandatory: Qwen-generated batch
+            // outputs live under /api/studio/outputs/<filename> rather
+            // than /api/studio/uploads/<id>, and the worker's ownership
+            // check (correctly) rejects non-upload IDs as references.
+            // Re-uploading produces a fresh studio_uploads row that the
+            // user owns and that downstream calls can pass as a ref.
+            const toCameraBtn = tile.querySelector('.batch-tile-to-camera');
+            toCameraBtn.addEventListener('click', async (ev) => {
                 ev.stopPropagation();
-                const currentShot = _activeBatch && _activeBatch.shots[i];
-                if (!currentShot || !currentShot.url) return;
-                const uploadId = (currentShot.url.split('/').pop() || '').split('?')[0];
-                if (!uploadId) {
-                    showNotif('Could not identify this image. Try refreshing.', 'error');
-                    return;
+                const shot = _activeBatch && _activeBatch.shots[i];
+                if (!shot || !shot.url) return;
+                toCameraBtn.classList.add('busy');
+                try {
+                    const inp = await prepareBatchShotForReuse(shot, i);
+                    if (inp) sendBatchInputToCamera(inp);
+                } finally {
+                    toCameraBtn.classList.remove('busy');
                 }
-                const inp = {
-                    id: uploadId,
-                    url: currentShot.url,
-                    w: currentShot.w,
-                    h: currentShot.h,
-                    fname: currentShot.label
-                        ? `${currentShot.label.replace(/\s+/g, '-').toLowerCase()}.png`
-                        : `view-${i + 1}.png`,
-                };
-                sendBatchInputToCreate(inp);
+            });
+            const toCreateBtn = tile.querySelector('.batch-tile-to-create');
+            toCreateBtn.addEventListener('click', async (ev) => {
+                ev.stopPropagation();
+                const shot = _activeBatch && _activeBatch.shots[i];
+                if (!shot || !shot.url) return;
+                toCreateBtn.classList.add('busy');
+                try {
+                    const inp = await prepareBatchShotForReuse(shot, i);
+                    if (inp) sendBatchInputToCreate(inp);
+                } finally {
+                    toCreateBtn.classList.remove('busy');
+                }
             });
             // Retry button — re-submits the failed/cancelled shot using
             // the payload stashed at original-submit time.
@@ -9358,7 +9434,8 @@ function renderBatchGrid(){
         const label = tile.querySelector('.batch-tile-label');
         const editBtn = tile.querySelector('.batch-tile-edit');
         const critBtn = tile.querySelector('.batch-tile-critique');
-        const toInputBtn = tile.querySelector('.batch-tile-to-input');
+        const toCameraBtn = tile.querySelector('.batch-tile-to-camera');
+        const toCreateBtn = tile.querySelector('.batch-tile-to-create');
         const retryBtn = tile.querySelector('.batch-tile-retry');
         label.textContent = shot.label;
         // Populate the input preview immediately — so the tile shows the
@@ -9369,9 +9446,10 @@ function renderBatchGrid(){
             inputPreview.src = shot.inputUrl;
             inputPreview.style.display = 'block';
         }
-        // Show edit + critique + use-as-input buttons only when the tile has a completed image
+        // Show edit/critique/use-as-input buttons only when the tile has a completed image
         if (editBtn) editBtn.style.display = shot.url ? '' : 'none';
-        if (toInputBtn) toInputBtn.style.display = shot.url ? '' : 'none';
+        if (toCameraBtn) toCameraBtn.style.display = shot.url ? '' : 'none';
+        if (toCreateBtn) toCreateBtn.style.display = shot.url ? '' : 'none';
         if (critBtn) {
             critBtn.style.display = shot.url ? '' : 'none';
             // Restore flagged state from any prior critique (auto-QA stores
