@@ -2911,6 +2911,40 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
+<!-- Illustrious boot-confirmation modal. Shown when the user picks
+     Illustrious from the model dropdown — the boot has a non-trivial
+     token cost (200 tokens) so we want explicit consent before
+     spinning up the SDXL container. Clicking YES fires warmupIllustrious;
+     clicking NO reverts the dropdown to gpt-image-2 (no charge). The
+     idle copy is mandatory per UX requirement: users need to know
+     the container will scale down after 10 min of inactivity. -->
+<div class="popup-modal" id="illustriousConfirmModal" onclick="if(event.target===this)cancelIllustrious()">
+    <div class="popup-card">
+        <button class="modal-close" onclick="cancelIllustrious()">×</button>
+        <div class="popup-icon">🎭</div>
+        <h2>Start Illustrious model?</h2>
+        <p class="popup-balance">Cost: <b id="illustriousBootCost">200</b> tokens</p>
+        <div style="text-align:left;font-size:11px;color:var(--text-muted);line-height:1.6;margin:14px 0 18px;padding:14px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono)">
+            <div style="margin-bottom:8px;color:var(--text)">
+                <b style="color:var(--gold)">⚡ One-time boot fee.</b>
+                Spinning up the Illustrious container takes ~30-120 seconds and uses dedicated GPU resources.
+            </div>
+            <div style="margin-bottom:8px">
+                The container <b style="color:var(--text)">stays warm for 10 minutes</b> after your last generation.
+                You can run as many generations as you want during that window with no extra boot fee.
+            </div>
+            <div>
+                If you go idle for 10+ minutes the container shuts down and re-starting it later costs another <b id="illustriousBootCost2">200</b> tokens.
+            </div>
+        </div>
+        <p class="popup-balance" style="margin-bottom:18px">Your balance: <b id="illustriousUserBalance">0</b> tokens</p>
+        <div style="display:flex;gap:10px">
+            <button class="gen-btn" onclick="cancelIllustrious()" style="flex:1;background:var(--surface-2);color:var(--text);border:1px solid var(--border)">No, cancel</button>
+            <button class="gen-btn" onclick="confirmIllustrious()" style="flex:1">Yes, start it</button>
+        </div>
+    </div>
+</div>
+
 <!-- LOGIN MODAL (full landing) -->
 <div class="popup-modal" id="loginModal">
     <div class="popup-card" style="max-width:440px;padding:24px 32px">
@@ -3756,6 +3790,16 @@ function setMode(mode, opts){
     // them is misleading.
     document.querySelectorAll('.generate-only').forEach(el => el.style.display = mode === 'generate' ? '' : 'none');
     document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
+    // After the mass .generate-only toggle, re-apply the model-aware
+    // sub-toggle for .gpt-only-section vs .local-only-section. The mass
+    // setter above doesn't know about per-model classification, so it
+    // would otherwise leave Illustrious-only panels (Sampler Settings,
+    // Negative Prompt) visible when GPT-image is selected, and vice
+    // versa. genSetModel does the right thing for the currently active
+    // model — calling it here re-establishes the correct visibility.
+    if (mode === 'generate' && typeof genSetModel === 'function') {
+        genSetModel(_generateModel);
+    }
     // Body class hook — used by .batch-inputs-grid CSS to bump the tile
     // max-width way up in Create mode so a single output dominates the
     // stage instead of sitting as a 220px thumbnail. Toggle on body so
@@ -3857,17 +3901,14 @@ function setMode(mode, opts){
         }
     }
 
-    // Pre-warm the Illustrious worker when the user enters Create mode
-    // with Illustrious already selected (persisted from a prior session).
-    // The warmup also fires from genSetModel when they pick the model
-    // mid-session; this branch covers the page-load → Create-mode case
-    // where genSetModel only ran during restore (before _user existed).
-    if (prevMode !== 'generate' && mode === 'generate' && _user) {
-        const caps = _GEN_MODEL_CAPS[_generateModel];
-        if (caps && caps.isLocal && typeof warmupIllustrious === 'function') {
-            warmupIllustrious().catch(() => {});
-        }
-    }
+    // NOTE: We do NOT auto-warmup on Create-mode entry anymore — the
+    // boot fee requires explicit user confirmation, and silently
+    // charging or auto-opening the confirmation modal on mode changes
+    // would be poor UX. If the user has Illustrious selected from a
+    // prior session and the container has gone cold, they re-confirm
+    // either by clicking GENERATE (warmupIllustrious fires server-side
+    // with the boot deduct) or by re-selecting Illustrious from the
+    // dropdown (which re-opens the confirmation modal).
 }
 
 function updateGenButton(){
@@ -5002,6 +5043,9 @@ function genUpdateCounter(){
         if (_generateRefs[i] !== null && _generateRefs[i] !== undefined) filled++;
     }
     el.textContent = `${filled} / ${max}`;
+    // Adding/removing refs changes the GPT-Image cost (per-ref input
+    // surcharge) — keep the cost label in sync. Cheap call.
+    if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
 }
 
 // Snap an arbitrary (w, h) pair to gpt-image-2's valid size range
@@ -5209,6 +5253,10 @@ const _GEN_MODEL_CAPS = {
 // state (it's only valid on gpt-image-1.5), and re-prices.
 function genSetModel(m){
     if (!_GEN_MODEL_CAPS[m]) m = 'gpt-image-2';  // unknown → default
+    // Track the previous model so a cancelled Illustrious confirmation
+    // can revert to whatever was selected before. Captured BEFORE the
+    // assignment so we have the actual previous, not the new value.
+    const previousModel = _generateModel;
     _generateModel = m;
     const sel = $('genModelSelect');
     if (sel && sel.value !== m) sel.value = m;
@@ -5221,29 +5269,14 @@ function genSetModel(m){
     if (transparentBtn) {
         const allowed = _GEN_MODEL_CAPS[m].supportsTransparent;
         transparentBtn.classList.toggle('disabled', !allowed);
-        // Update tooltip so the user knows when it becomes available.
         transparentBtn.title = allowed
             ? 'Transparent background — saved as PNG with alpha'
             : 'Transparent only available on the Transparent model (switch above)';
-        // If the user was on transparent and they swapped to a non-
-        // supporting model, snap their background back to auto so a
-        // generation doesn't fail upstream.
         if (!allowed && _generateBackground === 'transparent') {
             genSetBackground('auto');
         }
     }
     // ── Local-model branching ────────────────────────────────────────
-    // GPT-image and Illustrious have very different control surfaces:
-    //   - GPT: quality, format, compression, transparent, custom W×H
-    //     within OpenAI's allowed envelope, moderation strictness
-    //   - Illustrious: just prompt + size + count (steps/cfg/sampler
-    //     hardcoded to model-card recommendations on the worker side)
-    // Sections tagged .gpt-only-section get hidden when isLocal is
-    // true. Sections tagged .local-only-section get shown then.
-    // Existing OpenAI-quality/format/etc panels are tagged .gpt-only-section
-    // by the markup elsewhere; if a panel isn't tagged it stays visible
-    // for both (e.g. the prompt textarea, the count slider, the output
-    // size preset row).
     const isLocal = !!_GEN_MODEL_CAPS[m].isLocal;
     document.querySelectorAll('.gpt-only-section').forEach(el => {
         el.style.display = isLocal ? 'none' : '';
@@ -5252,43 +5285,153 @@ function genSetModel(m){
         el.style.display = isLocal ? '' : 'none';
     });
     // Reference slots — single vs multi depending on the model.
-    // Illustrious does single-image img2img, so we hide slots 1-3
-    // entirely (rather than disabling them) to keep the UI clean.
-    // The slot counter relabels to reflect the per-model max:
-    // "0 / 1" for Illustrious, "0 / 4" for GPT models.
     const supportsMultiRef = !!_GEN_MODEL_CAPS[m].supportsMultiRef;
     for (let i = 1; i < 4; i++) {
         const slotEl = document.getElementById(`genSlot${i}`);
         if (slotEl) slotEl.style.display = supportsMultiRef ? '' : 'none';
     }
     if (typeof genUpdateCounter === 'function') genUpdateCounter();
-    // Toggle img2img-specific controls based on whether slot 0 is filled.
     if (typeof updateLocalControlsVisibility === 'function') {
         updateLocalControlsVisibility();
     }
-    // Pre-warm the right GPU container. Picking the model is a strong
-    // signal of intent — the user's about to click Generate. Firing the
-    // wake here means the container is loading while they're typing
-    // their prompt, so the click→result latency is the inference time
-    // alone rather than inference + cold start. Debounced server-side
-    // (5 min) so toggling the dropdown back and forth is harmless.
-    if (isLocal && _user) {
-        warmupIllustrious().catch(() => {});
+
+    // ── Boot confirmation gate (Illustrious only) ───────────────────
+    // Picking Illustrious has a token cost — we need explicit consent
+    // before firing the wake. Three sub-cases:
+    //   1. Container already hot (recent heartbeat) — no charge would
+    //      be incurred anyway; warmupIllustrious's server-side check
+    //      returns "already_hot" and skips. No modal needed; we just
+    //      proceed silently.
+    //   2. Container cold/sleeping AND user is logged in — show the
+    //      confirmation modal. _illustriousPendingPreviousModel is
+    //      stashed so Cancel can revert.
+    //   3. Not logged in — don't fire the modal at all. The user will
+    //      hit the login flow when they click GENERATE; if they're
+    //      logged in by then, this same model selection persists and
+    //      we'll re-evaluate at click time.
+    if (isLocal && m === 'illustrious' && _user) {
+        const ig = (typeof _illustriousGpuState !== 'undefined') ? _illustriousGpuState : null;
+        const ra = ig ? ig.ready_age_s : null;
+        const heartbeatRecent = ra !== null && ra !== undefined && ra < 30;
+        if (!heartbeatRecent) {
+            // Cold or unknown — open the confirmation modal. We don't
+            // fire the warmup yet; that happens only on confirmIllustrious().
+            // Stash previous model so Cancel can put it back.
+            _illustriousPendingPreviousModel = previousModel === 'illustrious'
+                ? 'gpt-image-2'   // never revert TO illustrious — fall back to default
+                : previousModel;
+            showIllustriousConfirm();
+            // Fall through so persistence / cost label still update for
+            // the now-Illustrious selection. If the user cancels, we'll
+            // revert via genSetModel(previousModel).
+        }
+        // If heartbeatRecent: container is hot, no charge needed, proceed
+        // silently. This lets users toggle back and forth within a session
+        // without re-confirming.
     }
+
     persistGenerateState();
     if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
 }
 
-// Fire-and-forget warmup ping for the Illustrious worker. Mirror of
-// warmupGpu() but for the second container. The frontend's GPU status
-// pill will reflect the warming state via the gpu_illustrious block in
-// /api/studio/status.
+// Stashed during the Illustrious confirmation flow — used to revert the
+// dropdown if the user clicks "No, cancel". null when no confirmation
+// is in flight.
+let _illustriousPendingPreviousModel = null;
+
+function showIllustriousConfirm(){
+    // Populate the cost + balance from the canonical worker values.
+    // _user.illustrious_boot_cost comes from /auth/me; if missing
+    // (older /auth/me response cached), fall back to a sane default
+    // and let the next /auth/me refresh pick up the real number.
+    const cost = (_user && typeof _user.illustrious_boot_cost === 'number')
+        ? _user.illustrious_boot_cost : 200;
+    const bal = (_user && typeof _user.tokens === 'number') ? _user.tokens : 0;
+    const c1 = $('illustriousBootCost'); if (c1) c1.textContent = cost;
+    const c2 = $('illustriousBootCost2'); if (c2) c2.textContent = cost;
+    const b = $('illustriousUserBalance');
+    if (b) b.textContent = bal;
+    $('illustriousConfirmModal').classList.add('open');
+}
+
+function cancelIllustrious(){
+    $('illustriousConfirmModal').classList.remove('open');
+    // Revert the dropdown to whatever was selected before the user
+    // picked Illustrious. genSetModel handles all the visibility
+    // re-toggling (gpt-only-section back on, local-only-section off).
+    const prev = _illustriousPendingPreviousModel || 'gpt-image-2';
+    _illustriousPendingPreviousModel = null;
+    if (_generateModel !== prev) {
+        genSetModel(prev);
+    }
+}
+
+async function confirmIllustrious(){
+    $('illustriousConfirmModal').classList.remove('open');
+    _illustriousPendingPreviousModel = null;
+    // Fire the warmup — this is the moment we agreed to charge the
+    // boot cost. The endpoint deducts server-side and dispatches
+    // the wake fetch to Modal.
+    try {
+        const r = await fetchT(`${API}/api/studio/illustrious-warmup`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+        }, 8000);
+        const d = await r.json().catch(() => ({}));
+        if (d.ok) {
+            // Update the local token balance immediately so the header
+            // reflects the deduction without waiting for the next
+            // /auth/me poll. If the server returned 'already_hot' or
+            // 'debounced' there's no deduction (tokens unchanged); the
+            // value still echoes back so this is safe to apply.
+            if (typeof d.tokens === 'number' && _user) {
+                _user.tokens = d.tokens;
+                const tc = $('tokenCount');
+                if (tc) tc.textContent = d.tokens;
+            }
+            // Force a status poll so the cold-boot overlay flips on
+            // immediately rather than waiting up to 5s for the next
+            // poll cycle.
+            if (d.wake_dispatched && typeof pollStatus === 'function') {
+                pollStatus();
+            }
+        } else if (d.error === 'insufficient_tokens') {
+            // Not enough tokens for the boot fee. Revert dropdown and
+            // open the buy modal so they can top up.
+            showNotif(`Need ${d.needed} tokens to start Illustrious — you have ${d.have}.`, 'error');
+            genSetModel('gpt-image-2');
+            if (typeof showBuyModal === 'function') showBuyModal();
+        } else if (d.error === 'illustrious_not_configured') {
+            showNotif('Illustrious is not configured on this server. Please contact support.', 'error');
+            genSetModel('gpt-image-2');
+        } else {
+            showNotif(d.message || 'Could not start Illustrious. Please try again.', 'error');
+            genSetModel('gpt-image-2');
+        }
+    } catch (e) {
+        showNotif('Network error starting Illustrious. Please try again.', 'error');
+        genSetModel('gpt-image-2');
+    }
+}
+
+// Fire-and-forget warmup ping for the Illustrious worker. Used by paths
+// OTHER than the explicit confirmation flow — specifically the GENERATE-
+// click warmup-on-cold check. We charge the boot fee here too (the
+// endpoint always charges when dispatching a real wake), and the user
+// has effectively pre-consented by being on Illustrious + clicking
+// GENERATE. The visible header balance updates immediately so they see
+// the deduction.
 async function warmupIllustrious(){
     try {
-        await fetchT(`${API}/api/studio/illustrious-warmup`, {
+        const r = await fetchT(`${API}/api/studio/illustrious-warmup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-        }, 5000);
+        }, 8000);
+        const d = await r.json().catch(() => ({}));
+        if (d.ok && typeof d.tokens === 'number' && _user) {
+            _user.tokens = d.tokens;
+            const tc = $('tokenCount');
+            if (tc) tc.textContent = d.tokens;
+        }
     } catch (e) {
         // Best-effort — a failed warmup just means the user pays the
         // cold-start cost on click instead. No notification needed.
@@ -5365,6 +5508,10 @@ const _GEN_TOKEN_DOLLAR = 0.0005;
 const _GEN_PX_EXP = 0.32;
 const _GEN_SAFETY = 1.15;
 const _GEN_ROUND = 5;
+// Per-reference input surcharge — mirrors the worker's REF_IMAGE_USD
+// constant. Refs are sent ONCE per /v1/images/edits request regardless
+// of n outputs, so this is added once to the total, not multiplied by n.
+const _GEN_REF_USD = 0.010;
 function genTokenCostFor(size, quality, model){
     const m = _GEN_MODEL_PRICING[model] ? model : 'gpt-image-2';
     let px = 1024 * 1024;
@@ -5382,18 +5529,36 @@ function genTokenCostFor(size, quality, model){
     return Math.max(_GEN_ROUND, Math.ceil(raw / _GEN_ROUND) * _GEN_ROUND);
 }
 
+// Total request cost = perOutput × n + perRef × refCount, all rounded.
+// Mirrors gptImageRequestCost on the worker. Used by the cost label so
+// the user sees the exact figure that will be deducted.
+function genRequestTokenCost(size, quality, model, n, refCount){
+    const perOutput = genTokenCostFor(size, quality, model);
+    const refsUsd = Math.max(0, refCount) * _GEN_REF_USD;
+    const refsTokens = Math.ceil(refsUsd / _GEN_TOKEN_DOLLAR / _GEN_ROUND) * _GEN_ROUND;
+    return perOutput * Math.max(1, n) + refsTokens;
+}
+
 // Refresh the visible cost line under the CREATE button. Cost reflects
-// the resolved size + quality + model (so picking "high" doubles it,
-// picking 4K Custom multiplies it further, picking the Fast model
-// drops it ~4×), and scales by n.
+// the resolved size + quality + model + ref count + n. Picking "high"
+// doubles the per-output cost, 4K Custom multiplies it further, Fast
+// model drops it ~4×, adding a reference image adds a small fixed
+// surcharge per ref to cover OpenAI's input-token billing.
 function genUpdateCostLabel(){
     const lbl = $('genCostLabel');
     if (!lbl) return;
     const size = genGetEffectiveSize();
-    const perImage = genTokenCostFor(size, _generateQuality, _generateModel);
-    const tokens = perImage * _generateCount;
+    const refCount = _generateRefs.filter(r => r !== null).length;
+    const tokens = genRequestTokenCost(
+        size, _generateQuality, _generateModel,
+        _generateCount, refCount,
+    );
     const dollars = (tokens * _GEN_TOKEN_DOLLAR).toFixed(2);
-    lbl.textContent = `🪙 ${tokens} tokens · ~$${dollars}${_generateCount > 1 ? ` · ${_generateCount} images` : ''}`;
+    const suffixParts = [];
+    if (_generateCount > 1) suffixParts.push(`${_generateCount} images`);
+    if (refCount > 0) suffixParts.push(`${refCount} ref${refCount === 1 ? '' : 's'}`);
+    const suffix = suffixParts.length ? ' · ' + suffixParts.join(' · ') : '';
+    lbl.textContent = `🪙 ${tokens} tokens · ~$${dollars}${suffix}`;
 }
 
 // Resolve the active size selection to a wire-format string. Custom
@@ -5622,6 +5787,35 @@ async function doGenerateMode(){
     if (activeCount >= MAX_QUEUED) {
         showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
         return;
+    }
+    // Click-as-return-from-idle: if the Illustrious container has scaled
+    // down (10 min idle), the user needs to re-confirm the boot fee
+    // before we fire another generation. Without this, returning to a
+    // stale tab would silently charge them another 200 tokens — the
+    // exact UX we built the confirmation modal to prevent. So instead
+    // of firing warmupIllustrious directly here, we open the same
+    // modal genSetModel uses, and bail out of this click. The user
+    // confirms, the warmup fires, and they click GENERATE again to
+    // actually start the generation. Slight extra friction is the
+    // right tradeoff for not surprising them with a charge.
+    {
+        const _caps = _GEN_MODEL_CAPS[_generateModel];
+        if (_caps && _caps.isLocal) {
+            const ig = _illustriousGpuState;
+            const ra = ig.ready_age_s;
+            const heartbeatRecent = ra !== null && ra !== undefined && ra < 30;
+            if (!heartbeatRecent && (ig.state === 'cold' || ig.state === 'sleeping' || ig.state === 'unknown')) {
+                // Cold container — re-prompt for boot consent. Stash
+                // 'gpt-image-2' as the cancel-fallback (rather than
+                // the current model, which IS Illustrious — we don't
+                // want cancel to revert TO Illustrious). The dropdown
+                // is already on Illustrious, so showing the modal
+                // doesn't visually change anything outside of itself.
+                _illustriousPendingPreviousModel = 'gpt-image-2';
+                showIllustriousConfirm();
+                return;
+            }
+        }
     }
     const refIds = _generateRefs.filter(r => r !== null).map(r => r.id);
     // Defensive multi-reference gate. All models in our dropdown
