@@ -4159,6 +4159,28 @@ function renderStartupOverlay(){
     // duplication — the user sees download/load progress for the model
     // they're actually about to use, no matter which one it is.
     const _gs = _activeGpuState();
+    // Audience gate. The cold-boot overlay only makes sense when the
+    // user is going to actually USE the GPU — that means logged in
+    // AND has at least one token. For everyone else:
+    //   - Not logged in → they'll see the login modal first when they
+    //     click GENERATE; warming up the GPU before they auth would be
+    //     premature, and the overlay would be a confusing "what's this
+    //     loading screen?" experience on first visit.
+    //   - Logged in with 0 tokens → they'll see the buy modal next;
+    //     same logic, no point showing them a warming overlay for a
+    //     generation they can't run.
+    // The /status endpoint is unauthenticated so it returns gpu.state
+    // for everyone, which is fine — we just don't paint the overlay
+    // unless the viewer is in the population that can use the result.
+    const audienceShouldSee = _user && _user.tokens > 0;
+    if (!audienceShouldSee) {
+        overlay.style.display = 'none';
+        _startupFirstSeen = null;
+        _startupMaxPct = 0;
+        _startupCurrentStage = null;
+        _startupCurrentStageEnteredAt = 0;
+        return;
+    }
     // Trust the server. With the precedence fix in /api/studio/status
     // (ready_at checked before stale startup_stage), state='ready'
     // means the consumer thread heartbeated within the last 30s —
