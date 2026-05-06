@@ -1009,6 +1009,27 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .history-modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
 .history-modal-title{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px;flex:1}
 .history-modal-head .modal-close{position:relative;top:0;right:0;width:28px;height:28px;font-size:14px}
+/* Modal drag handle — the .history-modal-head wears this class. Same
+   grab-cursor + hover affordance as the overlay drag handles. The
+   panel itself gets .draggable-modal-panel which lets the JS distinguish
+   draggable modals from regular ones, and makes inline left/top take
+   effect (the default modal panel is centered via flexbox on the
+   backdrop, which fights any explicit positioning). */
+.modal-drag-handle{cursor:grab;user-select:none;-webkit-user-select:none;transition:background .15s}
+.modal-drag-handle:hover{background:rgba(255,255,255,.025)}
+.modal-drag-handle.dragging{cursor:grabbing;background:rgba(255,255,255,.04)}
+.modal-grip{
+    display:inline-block;color:var(--text-dim,#666);
+    font-size:11px;line-height:1;margin-right:8px;
+    transform:rotate(90deg);letter-spacing:-1px;
+    transition:color .15s;
+}
+.modal-drag-handle:hover .modal-grip{color:var(--text-muted)}
+.modal-drag-handle.dragging .modal-grip{color:var(--gold)}
+/* When the modal panel has been dragged, switch to absolute positioning
+   so the inline left/top set by JS actually moves the panel. The default
+   modal centers via the backdrop's flexbox which would clobber the drag. */
+.draggable-modal-panel.dragged{position:absolute;margin:0!important}
 /* Scrollable body inside modal — the grid lives here and auto-loads more
    items as the user scrolls to the bottom via IntersectionObserver. */
 .history-modal-body{flex:1;overflow-y:auto;padding:20px;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
@@ -2918,8 +2939,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
 <!-- FULL HISTORY MODAL -->
 <div id="historyModal" class="modal" style="display:none" onclick="if(event.target===this) closeHistoryModal()">
-    <div class="modal-panel history-modal-panel" onclick="event.stopPropagation()">
-        <div class="history-modal-head">
+    <div class="modal-panel history-modal-panel draggable-modal-panel" id="historyModalPanel" onclick="event.stopPropagation()">
+        <div class="history-modal-head modal-drag-handle" data-modal="history" title="Drag to move · double-click to reset">
+            <span class="modal-grip" aria-hidden="true">⋮⋮</span>
             <div class="history-modal-title">Your Generations <span id="historyModalCount" class="q-count">—</span></div>
             <button class="modal-close" onclick="closeHistoryModal()">×</button>
         </div>
@@ -5367,17 +5389,31 @@ function genSetModel(m){
     }
     // ── Local-model branching ────────────────────────────────────────
     const isLocal = !!_GEN_MODEL_CAPS[m].isLocal;
-    document.querySelectorAll('.gpt-only-section').forEach(el => {
-        el.style.display = isLocal ? 'none' : '';
-    });
-    document.querySelectorAll('.local-only-section').forEach(el => {
-        el.style.display = isLocal ? '' : 'none';
-    });
-    // Reference slots — single vs multi depending on the model.
-    const supportsMultiRef = !!_GEN_MODEL_CAPS[m].supportsMultiRef;
-    for (let i = 1; i < 4; i++) {
-        const slotEl = document.getElementById(`genSlot${i}`);
-        if (slotEl) slotEl.style.display = supportsMultiRef ? '' : 'none';
+    // Only toggle visibility of model-specific Create panels when we're
+    // actually in Create mode. Without this gate, calls to genSetModel
+    // from page-load paths (restoreGenerateState) or from non-Create
+    // contexts would clear the inline display:none on these panels and
+    // make them visible underneath whatever mode the user is actually
+    // in. There's no CSS rule scoping .generate-only to display:none —
+    // mode visibility is enforced exclusively by inline styles set in
+    // setMode — so we have to be careful to leave those styles alone
+    // outside Create. setMode('generate') re-fires genSetModel on entry
+    // so the proper model branching still applies the moment the user
+    // actually enters Create.
+    if (currentMode === 'generate') {
+        document.querySelectorAll('.gpt-only-section').forEach(el => {
+            el.style.display = isLocal ? 'none' : '';
+        });
+        document.querySelectorAll('.local-only-section').forEach(el => {
+            el.style.display = isLocal ? '' : 'none';
+        });
+        // Reference slots — single vs multi depending on the model.
+        // Same gate applies: only adjust visibility while in Create.
+        const supportsMultiRef = !!_GEN_MODEL_CAPS[m].supportsMultiRef;
+        for (let i = 1; i < 4; i++) {
+            const slotEl = document.getElementById(`genSlot${i}`);
+            if (slotEl) slotEl.style.display = supportsMultiRef ? '' : 'none';
+        }
     }
     if (typeof genUpdateCounter === 'function') genUpdateCounter();
     if (typeof updateLocalControlsVisibility === 'function') {
@@ -5860,7 +5896,7 @@ function restoreGenerateState(){
 // agent uses (/api/studio/agent-image-gen), replaces the placeholder
 // with the result on success. Same UX as agent generate_new_images:
 // elapsed-time + ETA on the placeholder, history insertion, etc.
-async function doGenerateMode(){
+async function doGenerateMode(_autoRetried){
     if (!_user) { $('loginModal').classList.add('open'); return; }
     const promptEl = $('generatePrompt');
     const prompt = (promptEl && promptEl.value || '').trim();
@@ -5906,6 +5942,61 @@ async function doGenerateMode(){
             }
         }
     }
+    // ── Pre-flight ref ownership validation ─────────────────────────
+    // The cleanest place to validate is before we even build refIds.
+    // Run a quick check-ownership round trip (typically <100ms) to scrub
+    // any slots that hold stale IDs from a prior session. The user
+    // never sees a blocking "stale reference" modal — just a soft toast
+    // mentioning the cleanup, and the generation proceeds with whatever
+    // refs survive (or zero refs, which is fine for text-to-image).
+    //
+    // This catches three otherwise-fatal cases:
+    //  1. Stale ID restored from localStorage (different account, R2
+    //     lifecycle wipe, manual server-side cleanup).
+    //  2. Race between validateGenerateRefs (deferred 800ms after page
+    //     load) and a fast user clicking CREATE inside that window.
+    //  3. Account swap mid-session — auth changes between page load
+     //    and click without a full reload.
+    const _preflightSlots = _generateRefs
+        .map((r, i) => r ? { i, id: r.id } : null)
+        .filter(Boolean);
+    if (_preflightSlots.length) {
+        try {
+            const r = await fetchT(`${API}/api/studio/uploads/check-ownership`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: _preflightSlots.map(s => s.id) }),
+            }, 5000);
+            const ownership = await r.json().catch(() => ({}));
+            if (ownership && ownership.ok && Array.isArray(ownership.missing) && ownership.missing.length) {
+                const missingSet = new Set(ownership.missing);
+                let scrubbed = 0;
+                for (const s of _preflightSlots) {
+                    if (missingSet.has(s.id)) {
+                        _generateRefs[s.i] = null;
+                        renderGenSlot(s.i);
+                        scrubbed++;
+                    }
+                }
+                if (scrubbed) {
+                    genUpdateCounter();
+                    persistGenerateState();
+                    // Soft toast — informational, not error styling.
+                    // Generation continues with the surviving refs (if any).
+                    showNotif(
+                        `Cleaned up ${scrubbed} old reference${scrubbed === 1 ? '' : 's'} from a previous session. Continuing…`,
+                        'info'
+                    );
+                }
+            }
+        } catch (e) {
+            // Network glitch on the validation endpoint — don't block
+            // the generation. The worker will catch a stale ref if one
+            // slipped through, and the post-error path below scrubs
+            // and auto-retries silently anyway.
+        }
+    }
+
     const refIds = _generateRefs.filter(r => r !== null).map(r => r.id);
     // Defensive multi-reference gate. All models in our dropdown
     // currently support multiple reference images on /v1/images/edits
@@ -6091,6 +6182,14 @@ async function doGenerateMode(){
             // and has no idea why their refs panel suddenly looks
             // angry; with it, the bad slots disappear and the user
             // gets a one-line explanation.
+            // ── Stale-ref recovery (silent) ─────────────────────────
+            // Worker rejected one or more refs as not-owned-by-user.
+            // This used to surface a hard error modal, but the right
+            // UX is to drop the dead slots and quietly retry — the
+            // user never asked for a stale ref, they just saw one
+            // restored from localStorage. Only do the auto-retry once
+            // (guarded by the _autoRetried arg) so a server-side bug
+            // can't trap us in a loop.
             if (d.error === 'reference_not_owned' && Array.isArray(d.missing) && d.missing.length) {
                 const missingSet = new Set(d.missing);
                 let dropped = 0;
@@ -6106,11 +6205,26 @@ async function doGenerateMode(){
                     genUpdateCounter();
                     persistGenerateState();
                 }
-                throw new Error(
-                    `Removed ${dropped} stale reference image${dropped === 1 ? '' : 's'} ` +
-                    `that no longer belong${dropped === 1 ? 's' : ''} to your account ` +
-                    `(probably uploaded in a previous session). Click CREATE again.`
-                );
+                // Remove the placeholder we just pushed so it doesn't
+                // stay onscreen during the retry. The retry will push
+                // its own fresh placeholder.
+                if (newPlaceholder && Array.isArray(_batchInputs)) {
+                    _batchInputs = _batchInputs.filter(b => b !== newPlaceholder);
+                    renderBatchInputs();
+                }
+                if (!_autoRetried) {
+                    // Soft toast and immediately retry. User sees the
+                    // toast, then a fresh placeholder for the retry —
+                    // no error modal, no second click required.
+                    showNotif(
+                        `Cleaned up ${dropped} old reference${dropped === 1 ? '' : 's'} and retrying…`,
+                        'info'
+                    );
+                    return doGenerateMode(true);
+                }
+                // We already retried once and it still failed somehow.
+                // Surface the underlying error so the user can act.
+                throw new Error('Reference image could not be loaded. Please try again.');
             }
             throw new Error(d.detail || d.error || 'image_gen_failed');
         }
@@ -12246,6 +12360,136 @@ function initOverlayDragging(){
     });
 }
 
+// ───────────── Draggable modal panels ─────────────
+//
+// Mirrors the overlay drag system but for modal panels. The .modal-drag-handle
+// element wears the data-modal attr ('history', etc.) and lives inside a
+// .draggable-modal-panel — pointerdown on the handle starts a drag, pointermove
+// updates the panel's inline left/top, pointerup clamps to viewport and
+// persists the position. Double-click resets to centered.
+//
+// Why a separate function from initOverlayDragging: modals are positioned
+// relative to the viewport (not a parent container), and they use a
+// flexbox-centering pattern that we have to opt out of with .dragged. The
+// overlay version assumes parent-relative offsets, which doesn't fit here.
+
+const _MODAL_POS_KEY = 'studio_modal_positions';
+
+function _loadModalPositions(){
+    try {
+        const raw = localStorage.getItem(_MODAL_POS_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+}
+function _saveModalPositions(positions){
+    try { localStorage.setItem(_MODAL_POS_KEY, JSON.stringify(positions)); } catch (e) {}
+}
+// Clamp viewport coords so the panel can't be dragged off-screen. Margin
+// keeps a few px buffer between the panel and the viewport edge.
+function _clampModalPosition(panel, x, y){
+    const margin = 8;
+    const pRect = panel.getBoundingClientRect();
+    const maxX = Math.max(margin, window.innerWidth  - pRect.width  - margin);
+    const maxY = Math.max(margin, window.innerHeight - pRect.height - margin);
+    return {
+        x: Math.max(margin, Math.min(maxX, x)),
+        y: Math.max(margin, Math.min(maxY, y)),
+    };
+}
+function _applyModalPosition(panel, pos){
+    const clamped = _clampModalPosition(panel, pos.x, pos.y);
+    panel.classList.add('dragged');
+    panel.style.left = clamped.x + 'px';
+    panel.style.top  = clamped.y + 'px';
+}
+
+function initModalDragging(){
+    // Skip on mobile — modals are full-width there and dragging makes no sense.
+    if (window.matchMedia('(max-width: 900px)').matches) return;
+
+    document.querySelectorAll('.modal-drag-handle').forEach(handle => {
+        handle.addEventListener('pointerdown', (e) => {
+            // Don't start dragging from buttons in the header (close/×).
+            if (e.target.closest('button')) return;
+            if (e.button !== undefined && e.button !== 0) return;
+            const key = handle.dataset.modal;
+            if (!key) return;
+            const panel = handle.closest('.draggable-modal-panel');
+            if (!panel) return;
+            const pRect = panel.getBoundingClientRect();
+            // Pointer offset within the panel — the click point that
+            // should remain under the cursor while dragging.
+            const grabOffsetX = e.clientX - pRect.left;
+            const grabOffsetY = e.clientY - pRect.top;
+            let started = false;
+            const onMove = (ev) => {
+                const dx = ev.clientX - e.clientX;
+                const dy = ev.clientY - e.clientY;
+                if (!started) {
+                    if (Math.hypot(dx, dy) < 4) return;
+                    started = true;
+                    handle.classList.add('dragging');
+                    document.body.classList.add('q-overlay-dragging');
+                    try { handle.setPointerCapture(ev.pointerId); } catch (_) {}
+                }
+                const newX = ev.clientX - grabOffsetX;
+                const newY = ev.clientY - grabOffsetY;
+                _applyModalPosition(panel, { x: newX, y: newY });
+                ev.preventDefault();
+            };
+            const onUp = () => {
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
+                handle.classList.remove('dragging');
+                document.body.classList.remove('q-overlay-dragging');
+                if (started) {
+                    const finalRect = panel.getBoundingClientRect();
+                    const clamped = _clampModalPosition(panel, finalRect.left, finalRect.top);
+                    const all = _loadModalPositions();
+                    all[key] = clamped;
+                    _saveModalPositions(all);
+                }
+            };
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+        });
+        // Double-click resets to centered.
+        handle.addEventListener('dblclick', (e) => {
+            if (e.target.closest('button')) return;
+            const key = handle.dataset.modal;
+            const panel = handle.closest('.draggable-modal-panel');
+            if (!panel || !key) return;
+            panel.classList.remove('dragged');
+            panel.style.left = '';
+            panel.style.top  = '';
+            const all = _loadModalPositions();
+            delete all[key];
+            _saveModalPositions(all);
+            log(`Reset ${key} modal position`);
+        });
+    });
+}
+
+// Apply the saved position (if any) for a modal whenever it opens. Called
+// from openHistoryModal so the panel restores its dragged-to spot across
+// open/close cycles within the same session AND across reloads.
+function _applySavedModalPosition(key){
+    if (window.matchMedia('(max-width: 900px)').matches) return;
+    const panel = document.querySelector(`.modal-drag-handle[data-modal="${key}"]`);
+    if (!panel) return;
+    const wrapper = panel.closest('.draggable-modal-panel');
+    if (!wrapper) return;
+    const all = _loadModalPositions();
+    const pos = all[key];
+    if (pos) {
+        // Defer to the next frame so the modal has its real layout
+        // dimensions (clamping needs them).
+        requestAnimationFrame(() => _applyModalPosition(wrapper, pos));
+    }
+}
+
 // ───────────── Full history modal ─────────────
 
 // IntersectionObserver that triggers loadMoreHistory when the user scrolls
@@ -12254,6 +12498,9 @@ let _historyScrollObserver = null;
 
 function openHistoryModal(){
     $('historyModal').style.display = 'flex';
+    // Restore any persisted drag position. Runs on every open so user
+    // gets the same panel placement they left it in last time.
+    _applySavedModalPosition('history');
     // Refresh from server on open so it's always current. Reset pagination
     // state so we don't append stale results on top of an old list.
     _historyItems = [];
@@ -12888,6 +13135,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
     initOverlayDragging();
+    initModalDragging();
     checkAuth();
     // Paint the header badge IMMEDIATELY so the user sees "Connecting…"
     // (and the cold-boot overlay, if applicable) without waiting for the
