@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PromptFlow — Animate any image</title>
+<link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png">
+<style>
+  /* Shared design tokens with studio.html so PromptFlow feels like a
+     sibling page, not a fork. Same gold-on-black, same monospaced
+     display, same 13px body baseline. */
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --gold:#E8A917; --gold-light:#F5C842; --gold-dark:#C48E0E; --gold-dim:rgba(232,169,23,.08);
+    --black:#09090B; --surface:#111113; --surface-2:#18181B; --surface-3:#1F1F23;
+    --border:#27272A; --border-light:#3F3F46;
+    --white:#FAFAF9; --text:#E4E4E7; --text-dim:#A1A1AA; --text-muted:#71717A;
+    --red:#EF4444; --green:#22C55E; --blue:#3B82F6;
+    --font-display:'Space Mono','JetBrains Mono',monospace;
+    --font-mono:'JetBrains Mono','Fira Code',monospace;
+    --font-body:'DM Sans','Segoe UI',sans-serif;
+    --header-h:48px;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+  html,body{height:100%}
+  body{
+    background:var(--black); color:var(--text);
+    font-family:var(--font-body); font-size:13px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column;
+    min-height:100vh;
+  }
+
+  /* Header */
+  .hdr{
+    height:var(--header-h); display:flex; align-items:center; padding:0 16px;
+    background:var(--surface); border-bottom:1px solid var(--border); gap:12px;
+    position:sticky; top:0; z-index:100;
+  }
+  .hdr .brand{
+    font-family:var(--font-display); font-size:14px; font-weight:700;
+    letter-spacing:0; color:var(--gold);
+  }
+  .hdr .brand sup{ font-size:9px; vertical-align:super; margin-left:1px; font-weight:700 }
+  .hdr .pill{
+    font-family:var(--font-mono); font-size:10px;
+    padding:3px 8px; border:1px solid var(--border); border-radius:4px;
+    color:var(--text-muted);
+  }
+  .hdr-right{ margin-left:auto; display:flex; align-items:center; gap:8px }
+  .btn{
+    background:none; border:1px solid var(--border); color:var(--text-muted);
+    font-family:var(--font-mono); font-size:10px; padding:5px 11px; border-radius:4px;
+    cursor:pointer; transition:all .15s; letter-spacing:.5px; text-transform:uppercase;
+  }
+  .btn:hover{ border-color:var(--gold); color:var(--gold) }
+  .btn.primary{ background:var(--gold); color:var(--black); border-color:var(--gold); font-weight:700 }
+  .btn.primary:hover{ background:var(--gold-light); border-color:var(--gold-light) }
+  .btn.danger:hover{ border-color:var(--red); color:var(--red) }
+  .token-pill{
+    font-family:var(--font-mono); font-size:10px; padding:4px 9px;
+    background:var(--gold-dim); border:1px solid var(--gold); color:var(--gold);
+    border-radius:4px; display:flex; align-items:center; gap:4px;
+  }
+  .token-pill.low{ border-color:var(--red); color:var(--red); background:rgba(239,68,68,.08) }
+  .avatar{ width:24px; height:24px; border-radius:50%; border:1px solid var(--border); object-fit:cover }
+
+  /* Chat shell */
+  .chat-wrap{
+    flex:1; display:flex; flex-direction:column;
+    width:100%; max-width:920px; margin:0 auto;
+    padding:0 20px 0 20px; position:relative; min-height:0;
+  }
+  .stream{
+    flex:1; overflow-y:auto; padding:32px 0 24px 0;
+    display:flex; flex-direction:column; gap:18px;
+  }
+  .stream::-webkit-scrollbar{ width:8px }
+  .stream::-webkit-scrollbar-track{ background:transparent }
+  .stream::-webkit-scrollbar-thumb{ background:var(--surface-3); border-radius:4px }
+
+  /* Empty state */
+  .empty{
+    margin:auto; max-width:540px; text-align:center; padding:32px 16px;
+    color:var(--text-dim);
+  }
+  .empty h1{
+    font-family:var(--font-display); font-size:28px; font-weight:700;
+    color:var(--text); letter-spacing:-.5px; margin-bottom:10px;
+  }
+  .empty h1 span{ color:var(--gold) }
+  .empty p{ font-size:13px; line-height:1.65; margin-bottom:8px }
+  .empty .hints{
+    margin-top:24px; display:grid; gap:8px; text-align:left;
+    font-family:var(--font-mono); font-size:11px; color:var(--text-muted);
+  }
+  .empty .hint{
+    padding:10px 14px; background:var(--surface); border:1px solid var(--border);
+    border-radius:6px; cursor:pointer; transition:all .15s;
+  }
+  .empty .hint:hover{ border-color:var(--gold); color:var(--text) }
+  .empty .hint kbd{
+    color:var(--gold); font-family:var(--font-mono); font-size:10px;
+    margin-right:8px;
+  }
+  /* Inline branded mention of PromptFlow™ inside body copy. Same gold
+     and weight as the badge above the input bar; the ™ tucks tight
+     against the "w" so it reads as a unit, not a footnote. */
+  .pf-brand{ color:var(--gold); font-weight:700 }
+  .pf-brand sup{ font-size:.65em; vertical-align:super; margin-left:1px }
+
+  /* Messages */
+  .msg{ display:flex; gap:12px; align-items:flex-start; animation:msgIn .25s ease-out }
+  @keyframes msgIn{ from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:translateY(0)} }
+  .msg .role{
+    flex-shrink:0; width:28px; height:28px; border-radius:50%;
+    background:var(--surface-2); border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-mono); font-size:10px; font-weight:700;
+    color:var(--text-muted); margin-top:2px;
+  }
+  .msg.user .role{ background:var(--gold-dim); border-color:var(--gold); color:var(--gold) }
+  .msg.assist .role{ background:var(--surface-3); color:var(--text-dim) }
+  .msg .body{
+    flex:1; min-width:0;
+    background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    padding:12px 14px;
+  }
+  .msg.user .body{ background:var(--surface-2) }
+  .msg .text{ white-space:pre-wrap; word-wrap:break-word; line-height:1.6 }
+  .msg .thumb{
+    margin-top:8px; max-width:240px; max-height:240px;
+    border:1px solid var(--border); border-radius:6px; display:block;
+  }
+  .msg video{
+    margin-top:10px; width:100%; max-width:560px; border-radius:6px;
+    background:var(--black); display:block;
+  }
+
+  /* Plan + cost cards inside assistant turns */
+  .plan-card, .cost-card{
+    margin-top:10px; padding:10px 12px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
+    font-family:var(--font-mono); font-size:11px; color:var(--text-dim);
+  }
+  .plan-card .row, .cost-card .row{
+    display:flex; justify-content:space-between; gap:16px;
+    padding:3px 0;
+  }
+  .plan-card .row .k, .cost-card .row .k{ color:var(--text-muted) }
+  .plan-card .row .v, .cost-card .row .v{ color:var(--text); text-align:right }
+  .cost-card .row.total{
+    border-top:1px solid var(--border); margin-top:6px; padding-top:8px;
+  }
+  .cost-card .row.total .k{ color:var(--gold) }
+  .cost-card .row.total .v{ color:var(--gold); font-weight:700 }
+
+  /* Confirm / Cancel buttons that appear under the cost card during the
+     two-phase plan→execute flow. Tight cluster, gold primary, neutral
+     secondary — matches the rest of the auth/header button styling. */
+  .confirm-actions{
+    margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;
+  }
+  .confirm-actions .btn{ padding:7px 14px; font-size:11px }
+  .confirm-actions .btn[disabled]{
+    opacity:.55; cursor:not-allowed; border-color:var(--border) !important;
+    color:var(--text-muted) !important; background:var(--surface-2) !important;
+  }
+
+  /* Collapsible adapted-Python workflow panel. Uses native <details>
+     for the show/hide toggle (no JS state to sync). The summary row
+     reads "{} Adapted workflow  recipe_id · python" — a tiny code
+     glyph plus the recipe id pill so the user knows which template
+     the interpreter started from. */
+  .workflow-card{
+    margin-top:10px; background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; overflow:hidden;
+  }
+  .workflow-card summary{
+    list-style:none; cursor:pointer; padding:8px 12px;
+    font-family:var(--font-mono); font-size:11px; color:var(--text-dim);
+    display:flex; align-items:center; gap:8px; user-select:none;
+    transition:background .15s;
+  }
+  .workflow-card summary::-webkit-details-marker{ display:none }
+  .workflow-card summary::before{
+    content:"▸"; color:var(--text-muted); transition:transform .15s; display:inline-block;
+  }
+  .workflow-card[open] summary::before{ transform:rotate(90deg) }
+  .workflow-card summary:hover{ background:var(--surface-3) }
+  .workflow-card .wf-icon{
+    color:var(--gold); font-weight:700;
+  }
+  .workflow-card .wf-meta{
+    margin-left:auto; color:var(--text-muted); font-size:10px;
+  }
+  .workflow-card .wf-code{
+    margin:0; padding:12px 14px; background:var(--black);
+    border-top:1px solid var(--border);
+    font-family:var(--font-mono); font-size:11px; line-height:1.55;
+    color:var(--text); white-space:pre; overflow-x:auto;
+    max-height:420px; overflow-y:auto;
+  }
+  .workflow-card .wf-code::-webkit-scrollbar{ width:8px; height:8px }
+  .workflow-card .wf-code::-webkit-scrollbar-thumb{ background:var(--surface-3); border-radius:4px }
+  .workflow-card .wf-actions{
+    padding:8px 12px; border-top:1px solid var(--border);
+    display:flex; gap:8px; justify-content:flex-end;
+  }
+  .workflow-card .wf-actions .btn{ padding:5px 11px; font-size:10px }
+
+  /* Status / spinner */
+  .status{
+    display:flex; align-items:center; gap:8px;
+    font-family:var(--font-mono); font-size:11px; color:var(--text-muted);
+  }
+  .spinner{
+    width:12px; height:12px; border:1.5px solid var(--border);
+    border-top-color:var(--gold); border-radius:50%;
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg) } }
+  .err{ color:var(--red) }
+
+  /* Input bar */
+  .input-shell{
+    position:sticky; bottom:0; padding:12px 0 18px 0; background:var(--black);
+    border-top:1px solid var(--border);
+  }
+  .input-bar{
+    display:flex; align-items:flex-end; gap:8px;
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:8px 8px 8px 12px;
+    transition:border-color .15s;
+  }
+  .input-bar:focus-within{ border-color:var(--gold) }
+  .input-bar textarea{
+    flex:1; background:none; border:none; outline:none; resize:none;
+    color:var(--text); font-family:var(--font-body); font-size:13px;
+    line-height:1.5; padding:6px 0; max-height:160px; min-height:24px;
+  }
+  .input-bar textarea::placeholder{ color:var(--text-muted) }
+  .icon-btn{
+    flex-shrink:0; width:32px; height:32px; border-radius:6px;
+    background:var(--surface-2); border:1px solid var(--border);
+    color:var(--text-muted); cursor:pointer; display:flex;
+    align-items:center; justify-content:center; transition:all .15s;
+  }
+  .icon-btn:hover{ border-color:var(--gold); color:var(--gold) }
+  .icon-btn:disabled{ opacity:.4; cursor:not-allowed }
+  .icon-btn.send{ background:var(--gold); border-color:var(--gold); color:var(--black) }
+  .icon-btn.send:hover{ background:var(--gold-light); border-color:var(--gold-light) }
+  .icon-btn.send:disabled{ background:var(--surface-2); border-color:var(--border); color:var(--text-muted) }
+
+  /* Attached image preview chip */
+  .attach-chip{
+    display:inline-flex; align-items:center; gap:8px;
+    background:var(--gold-dim); border:1px solid var(--gold);
+    border-radius:14px; padding:3px 10px 3px 4px;
+    margin:0 0 6px 0; font-family:var(--font-mono); font-size:10px; color:var(--gold);
+  }
+  .attach-chip img{ width:20px; height:20px; border-radius:50%; object-fit:cover }
+  .attach-chip button{
+    background:none; border:none; color:var(--gold); cursor:pointer;
+    font-size:14px; line-height:1; padding:0 2px;
+  }
+  .attach-chip button:hover{ color:var(--red) }
+
+  /* Powered-by badge — sits ABOVE the chat input, anchored to the
+     bottom-right of the chat column. The "TM" superscript is positioned
+     manually so it tucks against PromptFlow without inflating leading. */
+  .powered-by{
+    position:absolute; right:24px; bottom:78px;
+    font-family:var(--font-mono); font-size:9px; letter-spacing:.5px;
+    color:var(--text-muted); text-transform:uppercase;
+    pointer-events:none; user-select:none;
+  }
+  .powered-by .name{ color:var(--gold); font-weight:700 }
+  .powered-by sup{ font-size:7px; vertical-align:super; margin-left:1px }
+
+  /* Auth modal */
+  .modal-bg{
+    position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(4px);
+    display:none; align-items:center; justify-content:center; z-index:1000;
+  }
+  .modal-bg.show{ display:flex }
+  .modal{
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:28px 28px 22px 28px; width:100%; max-width:380px;
+    box-shadow:0 20px 60px rgba(0,0,0,.6);
+  }
+  .modal h2{
+    font-family:var(--font-display); font-size:18px; font-weight:700;
+    color:var(--text); letter-spacing:-.3px; margin-bottom:6px;
+  }
+  .modal p{ color:var(--text-dim); font-size:12px; margin-bottom:18px }
+  .modal label{
+    display:block; font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); margin-bottom:5px; text-transform:uppercase; letter-spacing:.8px;
+  }
+  .modal input{
+    width:100%; padding:10px 12px; background:var(--surface-2);
+    border:1px solid var(--border); border-radius:6px; color:var(--text);
+    font-family:var(--font-body); font-size:13px; margin-bottom:14px;
+  }
+  .modal input:focus{ outline:none; border-color:var(--gold) }
+  .modal .actions{ display:flex; gap:8px; margin-top:8px }
+  .modal .actions .btn{ flex:1; padding:9px 14px; font-size:11px }
+  .modal .switch{
+    margin-top:14px; text-align:center; color:var(--text-muted); font-size:11px;
+  }
+  .modal .switch a{ color:var(--gold); text-decoration:none; cursor:pointer }
+  .modal .err{ color:var(--red); font-size:11px; margin-bottom:10px; min-height:14px }
+  .modal .divider{
+    text-align:center; color:var(--text-muted); font-size:10px;
+    font-family:var(--font-mono); letter-spacing:1px; margin:14px 0;
+    display:flex; align-items:center; gap:10px;
+  }
+  .modal .divider::before, .modal .divider::after{
+    content:''; flex:1; height:1px; background:var(--border);
+  }
+  .gbtn{
+    width:100%; display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:9px 14px; background:var(--white); color:#1f1f1f; border:none;
+    border-radius:6px; font-family:var(--font-body); font-size:12px; font-weight:600;
+    cursor:pointer; transition:opacity .15s;
+  }
+  .gbtn:hover{ opacity:.9 }
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="brand">PromptFlow<sup>™</sup></div>
+  <div class="pill">any → any</div>
+  <div class="hdr-right">
+    <div id="tokenPill" class="token-pill" style="display:none">
+      <span id="tokenCount">0</span> tokens
+    </div>
+    <button id="subscribeBtn" class="btn primary" style="display:none">Subscribe $20/mo</button>
+    <button id="signinBtn" class="btn">Sign in</button>
+    <button id="signupBtn" class="btn primary">Sign up</button>
+    <img id="userAvatar" class="avatar" style="display:none" alt="">
+    <button id="signoutBtn" class="btn danger" style="display:none">Sign out</button>
+  </div>
+</header>
+
+<main class="chat-wrap">
+  <div id="stream" class="stream">
+    <div id="empty" class="empty">
+      <h1>Generate <span>anything</span></h1>
+      <p>Build, Generate, Adapt AI workflows via <span class="pf-brand">PromptFlow<sup>™</sup></span></p>
+      <p>Our system picks the right model, agent, or workflow and adapts it to meet your request, then confirms the generation price and runs it.</p>
+      <div class="hints">
+        <div class="hint" data-hint="Make him say 'Tonight, we dine in Hades!' with a confident voice"><kbd>⌃</kbd>Make him say "Tonight, we dine in Hades!" with a confident voice</div>
+        <div class="hint" data-hint="The wind picks up, his cape billows, distant horns echo"><kbd>⌃</kbd>The wind picks up, his cape billows, distant horns echo</div>
+        <div class="hint" data-hint="Quick draft: subtle breathing, plume sways"><kbd>⌃</kbd>Quick draft: subtle breathing, plume sways</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="powered-by">
+    Powered by <span class="name">PromptFlow</span><sup>™</sup>
+  </div>
+
+  <div class="input-shell">
+    <div id="attachWrap"></div>
+    <div class="input-bar">
+      <input type="file" id="fileInput" accept="image/*" hidden>
+      <button class="icon-btn" id="attachBtn" title="Attach image">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <textarea id="textInput" placeholder="Describe what should happen…" rows="1"></textarea>
+      <button class="icon-btn send" id="sendBtn" disabled title="Send (⌘⏎)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+</main>
+
+<!-- Auth modal -->
+<div id="authModal" class="modal-bg">
+  <div class="modal">
+    <h2 id="authTitle">Sign in</h2>
+    <p id="authSubtitle">Sign in to start animating images.</p>
+    <div id="authErr" class="err"></div>
+    <button class="gbtn" id="googleBtn">
+      <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.6 16 19 13 24 13c3 0 5.7 1.1 7.8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.4-4.5 2.4-7.2 2.4-5.3 0-9.7-3.3-11.3-8L6.2 33c3.4 6.5 10 11 17.8 11z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.2 5.2C42 35.4 44 30 44 24c0-1.3-.1-2.3-.4-3.5z"/></svg>
+      Continue with Google
+    </button>
+    <div class="divider">OR</div>
+    <label>Email</label>
+    <input type="email" id="emailInput" placeholder="you@example.com">
+    <label>Password</label>
+    <input type="password" id="passInput" placeholder="••••••••">
+    <div id="nameWrap" style="display:none">
+      <label>Name (optional)</label>
+      <input type="text" id="nameInput" placeholder="Jane">
+    </div>
+    <div class="actions">
+      <button class="btn" id="authClose">Cancel</button>
+      <button class="btn primary" id="authSubmit">Sign in</button>
+    </div>
+    <div class="switch">
+      <span id="authSwitch">No account? <a id="authSwitchLink">Sign up</a></span>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ── State ──────────────────────────────────────────────
+  let ME = null;                  // null when logged out, else user object
+  let attachedFile = null;        // File or null
+  let attachedDataUrl = null;     // for thumbnail
+  let busy = false;               // in-flight generation flag
+  let authMode = "signin";        // "signin" | "signup"
+
+  // ── DOM refs ───────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const stream = $("stream");
+  const empty = $("empty");
+  const fileInput = $("fileInput");
+  const textInput = $("textInput");
+  const sendBtn = $("sendBtn");
+  const attachBtn = $("attachBtn");
+  const attachWrap = $("attachWrap");
+  const tokenPill = $("tokenPill");
+  const tokenCount = $("tokenCount");
+
+  // ── Auth state UI ─────────────────────────────────────
+  function paintAuthUI() {
+    const loggedIn = !!ME;
+    $("signinBtn").style.display = loggedIn ? "none" : "";
+    $("signupBtn").style.display = loggedIn ? "none" : "";
+    $("subscribeBtn").style.display = loggedIn ? "" : "none";
+    $("signoutBtn").style.display = loggedIn ? "" : "none";
+    tokenPill.style.display = loggedIn ? "" : "none";
+    if (loggedIn) {
+      tokenCount.textContent = (ME.tokens || 0).toLocaleString();
+      tokenPill.classList.toggle("low", (ME.tokens || 0) < 1000);
+      const av = $("userAvatar");
+      if (ME.picture) { av.src = ME.picture; av.style.display = ""; } else { av.style.display = "none"; }
+    }
+  }
+
+  async function refreshMe() {
+    try {
+      const r = await fetch("/auth/me");
+      const j = await r.json();
+      ME = j.logged_in ? j : null;
+    } catch { ME = null; }
+    paintAuthUI();
+  }
+
+  // ── Modal control ─────────────────────────────────────
+  function openAuth(mode) {
+    authMode = mode;
+    $("authTitle").textContent = mode === "signup" ? "Create account" : "Sign in";
+    $("authSubtitle").textContent = mode === "signup"
+      ? "1,000 free tokens to start. No credit card needed."
+      : "Sign in to start animating images.";
+    $("authSubmit").textContent = mode === "signup" ? "Create account" : "Sign in";
+    $("authSwitch").innerHTML = mode === "signup"
+      ? `Already have an account? <a id="authSwitchLink">Sign in</a>`
+      : `No account? <a id="authSwitchLink">Sign up</a>`;
+    $("nameWrap").style.display = mode === "signup" ? "" : "none";
+    $("authErr").textContent = "";
+    $("authModal").classList.add("show");
+    $("emailInput").focus();
+    // Re-bind switch link (innerHTML wiped it).
+    $("authSwitchLink").onclick = () => openAuth(mode === "signup" ? "signin" : "signup");
+  }
+  function closeAuth() { $("authModal").classList.remove("show"); }
+
+  $("signinBtn").onclick = () => openAuth("signin");
+  $("signupBtn").onclick = () => openAuth("signup");
+  $("authClose").onclick = closeAuth;
+  $("googleBtn").onclick = () => {
+    // Existing /auth/google flow accepts ?return= for the post-login redirect.
+    location.href = "/auth/google?return=" + encodeURIComponent("/promptflow.html");
+  };
+  $("authSubmit").onclick = async () => {
+    const email = $("emailInput").value.trim();
+    const password = $("passInput").value;
+    const name = $("nameInput").value.trim();
+    const errEl = $("authErr");
+    errEl.textContent = "";
+    if (!email || !password) { errEl.textContent = "Email and password required."; return; }
+    const path = authMode === "signup" ? "/auth/signup" : "/auth/signin";
+    try {
+      const r = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
+      });
+      const j = await r.json();
+      if (!j.ok) { errEl.textContent = j.message || j.error || "Failed."; return; }
+      closeAuth();
+      await refreshMe();
+    } catch (e) { errEl.textContent = "Network error."; }
+  };
+
+  $("signoutBtn").onclick = async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    ME = null; paintAuthUI();
+  };
+  $("subscribeBtn").onclick = async () => {
+    try {
+      const r = await fetch("/api/studio/subscribe", { method: "POST" });
+      const j = await r.json();
+      if (j.ok && j.url) location.href = j.url;
+      else alert(j.message || j.error || "Could not start checkout.");
+    } catch { alert("Network error."); }
+  };
+
+  // ── Attachment ────────────────────────────────────────
+  attachBtn.onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    const f = fileInput.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { alert("Image files only."); return; }
+    if (f.size > 12 * 1024 * 1024) { alert("Max 12 MB."); return; }
+    attachedFile = f;
+    const reader = new FileReader();
+    reader.onload = () => {
+      attachedDataUrl = reader.result;
+      paintAttach();
+      updateSend();
+    };
+    reader.readAsDataURL(f);
+  };
+  function paintAttach() {
+    if (!attachedFile) { attachWrap.innerHTML = ""; return; }
+    attachWrap.innerHTML = `
+      <span class="attach-chip">
+        <img src="${attachedDataUrl}" alt="">
+        ${escapeHtml(attachedFile.name)}
+        <button id="detachBtn" title="Remove">×</button>
+      </span>`;
+    $("detachBtn").onclick = () => {
+      attachedFile = null; attachedDataUrl = null;
+      fileInput.value = "";
+      paintAttach(); updateSend();
+    };
+  }
+
+  // ── Composer ──────────────────────────────────────────
+  textInput.addEventListener("input", () => {
+    textInput.style.height = "auto";
+    textInput.style.height = Math.min(textInput.scrollHeight, 160) + "px";
+    updateSend();
+  });
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+  });
+  function updateSend() {
+    sendBtn.disabled = busy || !attachedFile || !textInput.value.trim();
+  }
+  document.querySelectorAll(".empty .hint").forEach(el => {
+    el.onclick = () => {
+      textInput.value = el.dataset.hint;
+      textInput.dispatchEvent(new Event("input"));
+      textInput.focus();
+    };
+  });
+
+  // ── Send / generate (two-phase: plan → confirm → execute) ─────
+  async function send() {
+    if (busy) return;
+    if (!ME) { openAuth("signup"); return; }
+    if (!attachedFile || !textInput.value.trim()) return;
+
+    const userText = textInput.value.trim();
+    const userImg = attachedDataUrl;
+    const userImgName = attachedFile.name;
+
+    // Append user turn.
+    addUserMsg(userText, userImg, userImgName);
+    // Add an assistant placeholder we'll mutate as work progresses.
+    const assist = addAssistMsg();
+    setStatus(assist, "Planning…");
+
+    // Capture and reset composer.
+    const fileToSend = attachedFile;
+    busy = true;
+    attachedFile = null; attachedDataUrl = null; fileInput.value = "";
+    textInput.value = ""; textInput.style.height = "auto";
+    paintAttach(); updateSend();
+
+    // ── Phase 1: /plan (no charge) ─────────────────────────────
+    const fd = new FormData();
+    fd.append("image", fileToSend);
+    fd.append("text", userText);
+
+    let planResp;
+    try {
+      const r = await fetch("/api/promptflow/plan", { method: "POST", body: fd });
+      planResp = await r.json();
+      if (!r.ok || !planResp.ok) {
+        if (r.status === 401) {
+          setError(assist, "Please sign in to generate.");
+          openAuth("signin");
+        } else {
+          setError(assist, planResp.message || planResp.error || "Planning failed.");
+        }
+        busy = false; updateSend();
+        return;
+      }
+    } catch (e) {
+      setError(assist, "Network error: " + (e?.message || e));
+      busy = false; updateSend();
+      return;
+    }
+
+    // Show the plan + cost + Confirm/Cancel.
+    clearStatus(assist);
+    if (planResp.plan?.rationale) {
+      const r = document.createElement("div");
+      r.className = "text"; r.textContent = planResp.plan.rationale;
+      assist.body.appendChild(r);
+    }
+    renderPlan(assist, planResp.plan);
+    renderWorkflow(assist, planResp.plan);
+    renderCost(assist, planResp.cost);
+
+    // Insufficient balance — gate the Confirm button.
+    const haveTokens = (ME?.tokens || 0) >= planResp.cost.tokens_charged;
+
+    const actions = document.createElement("div");
+    actions.className = "confirm-actions";
+    actions.innerHTML = `
+      ${haveTokens
+        ? `<button class="btn primary cf-confirm">Confirm — ${planResp.cost.tokens_charged.toLocaleString()} tokens</button>`
+        : `<button class="btn primary" disabled>Need ${planResp.cost.tokens_charged.toLocaleString()} tokens — you have ${(ME?.tokens || 0).toLocaleString()}</button>
+           <button class="btn cf-subscribe">Subscribe</button>`}
+      <button class="btn cf-cancel">Cancel</button>
+    `;
+    assist.body.appendChild(actions);
+
+    busy = false; updateSend();
+
+    const confirmBtn = actions.querySelector(".cf-confirm");
+    const cancelBtn  = actions.querySelector(".cf-cancel");
+    const subBtn     = actions.querySelector(".cf-subscribe");
+
+    if (subBtn) {
+      subBtn.onclick = async () => {
+        const r = await fetch("/api/studio/subscribe", { method: "POST" });
+        const j = await r.json();
+        if (j.ok && j.url) location.href = j.url;
+      };
+    }
+
+    if (cancelBtn) {
+      cancelBtn.onclick = async () => {
+        actions.remove();
+        const note = document.createElement("div");
+        note.className = "status"; note.textContent = "Canceled — no charge.";
+        assist.body.appendChild(note);
+        try {
+          await fetch("/api/promptflow/cancel", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ plan_id: planResp.plan_id }),
+          });
+        } catch {}
+      };
+    }
+
+    if (confirmBtn) {
+      confirmBtn.onclick = async () => {
+        if (busy) return;
+        busy = true; updateSend();
+        actions.remove();
+        setStatus(assist, "Generating… (this can take 1–5 minutes)");
+
+        try {
+          const r = await fetch("/api/promptflow/execute", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ plan_id: planResp.plan_id }),
+          });
+          const j = await r.json();
+          if (!j.ok) {
+            setError(assist, j.message || j.error || "Generation failed.");
+            // Show the adapted workflow so the user can see what was
+            // attempted — it ran via the structured params, but the
+            // Python is the most legible record of intent.
+            if (j.plan) renderWorkflow(assist, j.plan);
+            if (j.refunded_tokens) {
+              const note = document.createElement("div");
+              note.className = "status";
+              note.textContent = `Refunded ${j.refunded_tokens.toLocaleString()} tokens.`;
+              assist.body.appendChild(note);
+            }
+            busy = false; updateSend();
+            return;
+          }
+          clearStatus(assist);
+          const v = document.createElement("video");
+          v.src = j.video_url; v.controls = true; v.autoplay = true; v.loop = true; v.muted = false;
+          assist.body.appendChild(v);
+
+          const charged = document.createElement("div");
+          charged.className = "status";
+          charged.textContent = `Charged ${j.cost.tokens_charged.toLocaleString()} tokens · $${j.cost.bill_usd.toFixed(4)}`;
+          assist.body.appendChild(charged);
+
+          if (typeof j.tokens_remaining === "number" && ME) {
+            ME.tokens = j.tokens_remaining;
+            paintAuthUI();
+          }
+        } catch (e) {
+          setError(assist, "Network error: " + (e?.message || e));
+        } finally {
+          busy = false; updateSend();
+          stream.scrollTop = stream.scrollHeight;
+        }
+      };
+    }
+
+    stream.scrollTop = stream.scrollHeight;
+  }
+  sendBtn.onclick = send;
+
+  // ── Message rendering ─────────────────────────────────
+  function addUserMsg(text, imgDataUrl, imgName) {
+    empty.style.display = "none";
+    const el = document.createElement("div");
+    el.className = "msg user";
+    el.innerHTML = `
+      <div class="role">YOU</div>
+      <div class="body">
+        <div class="text"></div>
+        ${imgDataUrl ? `<img class="thumb" alt="${escapeHtml(imgName || '')}">` : ""}
+      </div>`;
+    el.querySelector(".text").textContent = text;
+    if (imgDataUrl) el.querySelector(".thumb").src = imgDataUrl;
+    stream.appendChild(el);
+    stream.scrollTop = stream.scrollHeight;
+  }
+  function addAssistMsg() {
+    const el = document.createElement("div");
+    el.className = "msg assist";
+    el.innerHTML = `<div class="role">PF</div><div class="body"></div>`;
+    stream.appendChild(el);
+    stream.scrollTop = stream.scrollHeight;
+    return { el, body: el.querySelector(".body") };
+  }
+  function setStatus(assist, label) {
+    let s = assist.body.querySelector(".status");
+    if (!s) {
+      s = document.createElement("div");
+      s.className = "status";
+      s.innerHTML = `<div class="spinner"></div><span></span>`;
+      assist.body.appendChild(s);
+    }
+    s.querySelector("span").textContent = label;
+  }
+  function clearStatus(assist) {
+    const s = assist.body.querySelector(".status"); if (s) s.remove();
+  }
+  function setError(assist, msg) {
+    clearStatus(assist);
+    const e = document.createElement("div");
+    e.className = "text err"; e.textContent = msg;
+    assist.body.appendChild(e);
+  }
+  function renderPlan(assist, plan) {
+    if (!plan) return;
+    const c = document.createElement("div");
+    c.className = "plan-card";
+    const rows = [
+      ["Recipe", plan.recipe_id || "—"],
+      ["Model", prettyModel(plan.model)],
+      ["Duration", plan.duration_seconds + "s"],
+      ["Resolution", plan.resolution],
+    ];
+    if (plan.speech_text) {
+      rows.push(["Voice", plan.voice_id]);
+      rows.push(["Speech", `"${plan.speech_text.length > 80 ? plan.speech_text.slice(0, 80) + '…' : plan.speech_text}"`]);
+    }
+    c.innerHTML = rows.map(([k, v]) =>
+      `<div class="row"><span class="k">${k}</span><span class="v"></span></div>`
+    ).join("");
+    [...c.querySelectorAll(".v")].forEach((el, i) => { el.textContent = rows[i][1]; });
+    assist.body.appendChild(c);
+  }
+  function renderWorkflow(assist, plan) {
+    if (!plan?.adapted_python) return;
+    const wrap = document.createElement("details");
+    wrap.className = "workflow-card";
+    wrap.innerHTML = `
+      <summary><span class="wf-icon">{}</span> Adapted workflow <span class="wf-meta">${escapeHtml(plan.recipe_id || "")} · python</span></summary>
+      <pre class="wf-code"><code></code></pre>
+      <div class="wf-actions"><button class="btn wf-copy">Copy</button></div>
+    `;
+    wrap.querySelector("code").textContent = plan.adapted_python;
+    wrap.querySelector(".wf-copy").onclick = (e) => {
+      e.preventDefault();
+      navigator.clipboard.writeText(plan.adapted_python).then(() => {
+        const b = wrap.querySelector(".wf-copy");
+        const orig = b.textContent;
+        b.textContent = "Copied";
+        setTimeout(() => { b.textContent = orig; }, 1200);
+      });
+    };
+    assist.body.appendChild(wrap);
+  }
+  function renderCost(assist, cost) {
+    if (!cost) return;
+    const c = document.createElement("div");
+    c.className = "cost-card";
+    c.innerHTML = `
+      <div class="row"><span class="k">fal.ai</span><span class="v">$${cost.fal_usd.toFixed(4)}</span></div>
+      ${cost.elevenlabs_usd > 0 ? `<div class="row"><span class="k">ElevenLabs TTS</span><span class="v">$${cost.elevenlabs_usd.toFixed(4)}</span></div>` : ""}
+      <div class="row"><span class="k">Anthropic planner</span><span class="v">$${cost.anthropic_usd.toFixed(4)}</span></div>
+      <div class="row"><span class="k">Markup (×${cost.markup})</span><span class="v">—</span></div>
+      <div class="row total"><span class="k">Charged</span><span class="v">${cost.tokens_charged.toLocaleString()} tokens · $${cost.bill_usd.toFixed(4)}</span></div>
+    `;
+    assist.body.appendChild(c);
+  }
+  function prettyModel(m) {
+    return ({
+      "ltx_image_to_video":      "LTX-2.3 image→video",
+      "ltx_image_to_video_fast": "LTX-2.3 image→video (fast)",
+      "ltx_audio_to_video":      "LTX-2.3 audio→video",
+      "omnihuman_lipsync":       "OmniHuman v1.5 (lip-sync)",
+    })[m] || m;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  // ── Boot ──────────────────────────────────────────────
+  refreshMe().then(() => {
+    // Surface signup CTA for fresh visitors.
+    if (!ME) {
+      // Don't auto-open the modal; the empty-state copy invites them to try first.
+    }
+  });
+
+  // Drag-drop image onto the page.
+  document.addEventListener("dragover", e => { e.preventDefault(); });
+  document.addEventListener("drop", e => {
+    e.preventDefault();
+    const f = [...e.dataTransfer.files].find(f => f.type.startsWith("image/"));
+    if (!f) return;
+    fileInput.files = e.dataTransfer.files;
+    fileInput.dispatchEvent(new Event("change"));
+  });
+})();
+</script>
+</body>
+</html>
