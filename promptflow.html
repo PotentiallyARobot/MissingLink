@@ -65,6 +65,69 @@
   .token-pill.low{ border-color:var(--red); color:var(--red); background:rgba(239,68,68,.08) }
   .avatar{ width:24px; height:24px; border-radius:50%; border:1px solid var(--border); object-fit:cover }
 
+  /* Page shell — flex container that hosts the sidebar (left) and the
+     main chat area (right). Header sits above. The shell takes the
+     remaining vertical space below the header so both columns scroll
+     independently. */
+  .page-shell{
+    flex:1; display:flex; min-height:0;
+  }
+
+  /* Conversation history sidebar. Fixed-width on desktop, full-height,
+     own scroll. On narrow viewports we collapse it to zero width — for
+     now mobile users get the main chat only. */
+  .convo-sidebar{
+    width:240px; flex-shrink:0;
+    background:var(--surface); border-right:1px solid var(--border);
+    display:flex; flex-direction:column; min-height:0;
+  }
+  .convo-sidebar-head{
+    padding:12px; border-bottom:1px solid var(--border);
+  }
+  .convo-new{
+    width:100%; font-size:11px; padding:8px 10px;
+    background:var(--surface-2); color:var(--text);
+    border:1px solid var(--border);
+    text-align:left;
+  }
+  .convo-new:hover{
+    border-color:var(--gold); color:var(--gold);
+  }
+  .convo-list{
+    flex:1; overflow-y:auto; padding:6px;
+  }
+  .convo-list::-webkit-scrollbar{ width:6px }
+  .convo-list::-webkit-scrollbar-track{ background:transparent }
+  .convo-list::-webkit-scrollbar-thumb{ background:var(--surface-3); border-radius:3px }
+  .convo-row{
+    display:block; width:100%; text-align:left;
+    padding:8px 10px; margin-bottom:2px;
+    background:transparent; border:1px solid transparent; border-radius:4px;
+    color:var(--text-dim); font-family:var(--font-mono); font-size:11px;
+    cursor:pointer; line-height:1.35;
+  }
+  .convo-row:hover{
+    background:var(--surface-2); color:var(--text);
+  }
+  .convo-row.active{
+    background:var(--gold-dim); border-color:var(--gold);
+    color:var(--gold);
+  }
+  .convo-row .convo-title{
+    display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .convo-row .convo-meta{
+    display:block; font-size:10px; color:var(--text-muted); margin-top:2px;
+  }
+  .convo-empty{
+    padding:20px 12px; text-align:center;
+    color:var(--text-muted); font-size:11px; font-family:var(--font-mono);
+  }
+
+  @media (max-width: 720px){
+    .convo-sidebar{ display:none !important }
+  }
+
   /* Chat shell */
   .chat-wrap{
     flex:1; display:flex; flex-direction:column;
@@ -378,6 +441,19 @@
   </div>
 </header>
 
+<div class="page-shell">
+
+<!-- Conversation history sidebar. Hidden when signed out (no history
+     to show). Each entry is an in-place button; click loads that
+     conversation's turns into the main stream. The "+ New" button at
+     the top clears state and starts a fresh thread on next /plan. -->
+<aside id="sidebar" class="convo-sidebar" style="display:none">
+  <div class="convo-sidebar-head">
+    <button id="newConvoBtn" class="btn convo-new">+ New conversation</button>
+  </div>
+  <div id="convoList" class="convo-list"></div>
+</aside>
+
 <main class="chat-wrap">
   <div id="stream" class="stream">
     <div id="empty" class="empty">
@@ -410,6 +486,8 @@
     </div>
   </div>
 </main>
+
+</div>
 
 <!-- Auth modal -->
 <div id="authModal" class="modal-bg">
@@ -448,11 +526,16 @@
   let attachedDataUrl = null;     // for thumbnail
   let busy = false;               // in-flight generation flag
   let authMode = "signin";        // "signin" | "signup"
+  let currentConversationId = null;  // active conversation; null = fresh thread on next /plan
+  let conversationsCache = [];    // sidebar list
 
   // ── DOM refs ───────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
   const stream = $("stream");
   const empty = $("empty");
+  const sidebar = $("sidebar");
+  const convoList = $("convoList");
+  const newConvoBtn = $("newConvoBtn");
   const fileInput = $("fileInput");
   const textInput = $("textInput");
   const sendBtn = $("sendBtn");
@@ -469,6 +552,7 @@
     $("subscribeBtn").style.display = loggedIn ? "" : "none";
     $("signoutBtn").style.display = loggedIn ? "" : "none";
     tokenPill.style.display = loggedIn ? "" : "none";
+    sidebar.style.display = loggedIn ? "" : "none";
     if (loggedIn) {
       tokenCount.textContent = (ME.tokens || 0).toLocaleString();
       tokenPill.classList.toggle("low", (ME.tokens || 0) < 1000);
@@ -484,6 +568,167 @@
       ME = j.logged_in ? j : null;
     } catch { ME = null; }
     paintAuthUI();
+  }
+
+  // ── Conversation history (sidebar) ─────────────────────
+  // Loads the user's conversations and renders the sidebar list. Safe
+  // to call any time — re-render replaces the existing rows.
+  async function refreshConversations() {
+    if (!ME) { convoList.innerHTML = ""; return; }
+    try {
+      const r = await fetch("/api/promptflow/conversations");
+      const j = await r.json();
+      conversationsCache = j.ok ? (j.conversations || []) : [];
+    } catch { conversationsCache = []; }
+    paintConversationList();
+  }
+
+  function paintConversationList() {
+    convoList.innerHTML = "";
+    if (conversationsCache.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "convo-empty";
+      empty.textContent = "No conversations yet. Start one below.";
+      convoList.appendChild(empty);
+      return;
+    }
+    for (const c of conversationsCache) {
+      const btn = document.createElement("button");
+      btn.className = "convo-row";
+      if (c.id === currentConversationId) btn.classList.add("active");
+      btn.dataset.cid = c.id;
+      const title = (c.title || "Untitled").slice(0, 80);
+      const ago = formatRelativeTime(c.updated_at);
+      const turns = c.turn_count || 0;
+      btn.innerHTML = `
+        <span class="convo-title"></span>
+        <span class="convo-meta"></span>
+      `;
+      btn.querySelector(".convo-title").textContent = title;
+      btn.querySelector(".convo-meta").textContent =
+        `${turns} turn${turns === 1 ? "" : "s"} · ${ago}`;
+      btn.onclick = () => loadConversation(c.id);
+      convoList.appendChild(btn);
+    }
+  }
+
+  function formatRelativeTime(unixSeconds) {
+    if (!unixSeconds) return "";
+    const diff = Math.floor(Date.now() / 1000 - unixSeconds);
+    if (diff < 60)        return "just now";
+    if (diff < 3600)      return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400)     return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+    const d = new Date(unixSeconds * 1000);
+    return d.toLocaleDateString();
+  }
+
+  // Reset the main view to a new (empty) conversation. Doesn't create
+  // a server-side row — the conversation gets created when the user
+  // sends their first /plan request.
+  function startNewConversation() {
+    currentConversationId = null;
+    clearStream();
+    paintConversationList();
+    textInput.focus();
+  }
+
+  function clearStream() {
+    // Keep the empty state node in DOM but re-show it; remove all
+    // bubbles that were appended to the stream after it.
+    [...stream.querySelectorAll(":scope > *")].forEach((el) => {
+      if (el.id !== "empty") el.remove();
+    });
+    empty.style.display = "";
+  }
+
+  async function loadConversation(cid) {
+    if (busy) return;
+    let resp;
+    try {
+      const r = await fetch("/api/promptflow/conversation/get", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversation_id: cid }),
+      });
+      resp = await r.json();
+    } catch (e) {
+      alert("Could not load conversation: " + (e?.message || e));
+      return;
+    }
+    if (!resp?.ok) return;
+    currentConversationId = cid;
+    clearStream();
+    empty.style.display = "none";
+    for (const turn of resp.turns) renderHistoricalTurn(turn);
+    stream.scrollTop = stream.scrollHeight;
+    paintConversationList();
+  }
+
+  // Read-only render of one historical turn — user message + assistant
+  // result (video, error, or pending stub). Re-uses the bubble/plan/
+  // cost components for visual consistency, but skips the editable
+  // controls and the polling state machine.
+  function renderHistoricalTurn(turn) {
+    const youBubble = addBubble("you");
+    const youText = document.createElement("div");
+    youText.className = "text"; youText.textContent = turn.user_text || "";
+    youBubble.body.appendChild(youText);
+    if (turn.image_public_url) {
+      const img = document.createElement("img");
+      img.className = "msg-thumb";
+      img.src = turn.image_public_url;
+      img.style.maxWidth = "180px";
+      youBubble.body.appendChild(img);
+    }
+
+    const assist = addBubble("assist");
+    if (turn.plan?.rationale) {
+      const r = document.createElement("div");
+      r.className = "text"; r.textContent = turn.plan.rationale;
+      assist.body.appendChild(r);
+    }
+    // Static (read-only) plan summary — same fields as the editable
+    // card but rendered as text.
+    if (turn.plan) {
+      const card = document.createElement("div");
+      card.className = "plan-card";
+      const rows = [
+        ["Recipe", turn.plan.recipe_id || "—"],
+        ["Model", prettyModel(turn.plan.model)],
+        ["Resolution", turn.plan.resolution || "—"],
+      ];
+      if (turn.plan.duration_seconds) rows.push(["Duration", turn.plan.duration_seconds + "s"]);
+      if (turn.plan.speech_text) {
+        const sp = turn.plan.speech_text.length > 80
+          ? turn.plan.speech_text.slice(0, 80) + "…"
+          : turn.plan.speech_text;
+        rows.push(["Voice", turn.plan.voice_id || "—"]);
+        rows.push(["Speech", `"${sp}"`]);
+      }
+      card.innerHTML = rows.map(([k]) =>
+        `<div class="row"><span class="k">${escapeHtml(k)}</span><span class="v"></span></div>`
+      ).join("");
+      [...card.querySelectorAll(".v")].forEach((el, i) => { el.textContent = rows[i][1]; });
+      assist.body.appendChild(card);
+    }
+    if (turn.cost) renderCost(assist, turn.cost);
+
+    if (turn.status === "complete" && turn.video_url) {
+      const v = document.createElement("video");
+      v.src = turn.video_url; v.controls = true; v.preload = "metadata";
+      assist.body.appendChild(v);
+    } else if (turn.status === "failed") {
+      const e = document.createElement("div");
+      e.className = "text err";
+      e.textContent = turn.error_message || "Generation failed.";
+      assist.body.appendChild(e);
+    } else {
+      const note = document.createElement("div");
+      note.className = "status";
+      note.textContent = `(${turn.status || "unknown"})`;
+      assist.body.appendChild(note);
+    }
   }
 
   // ── Modal control ─────────────────────────────────────
@@ -531,12 +776,17 @@
       if (!j.ok) { errEl.textContent = j.message || j.error || "Failed."; return; }
       closeAuth();
       await refreshMe();
+      await refreshConversations();
     } catch (e) { errEl.textContent = "Network error."; }
   };
 
   $("signoutBtn").onclick = async () => {
     await fetch("/auth/logout", { method: "POST" });
     ME = null; paintAuthUI();
+    conversationsCache = [];
+    currentConversationId = null;
+    paintConversationList();
+    clearStream();
   };
   $("subscribeBtn").onclick = async () => {
     try {
@@ -625,6 +875,7 @@
     const fd = new FormData();
     fd.append("image", fileToSend);
     fd.append("text", userText);
+    if (currentConversationId) fd.append("conversation_id", currentConversationId);
 
     let planResp;
     try {
@@ -644,6 +895,14 @@
       setError(assist, "Network error: " + (e?.message || e));
       busy = false; updateSend();
       return;
+    }
+
+    // Server may have created a new conversation for us. Track it so
+    // subsequent turns in this session land in the same thread, and
+    // refresh the sidebar so the new conversation appears at the top.
+    if (planResp.conversation_id) {
+      currentConversationId = planResp.conversation_id;
+      refreshConversations();
     }
 
     // Show the plan + cost + Confirm/Cancel.
@@ -1093,7 +1352,9 @@
   }
 
   // ── Boot ──────────────────────────────────────────────
+  if (newConvoBtn) newConvoBtn.onclick = startNewConversation;
   refreshMe().then(() => {
+    if (ME) refreshConversations();
     // Surface signup CTA for fresh visitors.
     if (!ME) {
       // Don't auto-open the modal; the empty-state copy invites them to try first.
