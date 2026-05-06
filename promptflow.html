@@ -155,6 +155,39 @@
   .cost-card .row.total .k{ color:var(--gold) }
   .cost-card .row.total .v{ color:var(--gold); font-weight:700 }
 
+  /* Editable plan card — each .v hosts an input, select, textarea, or
+     checkbox that the user can modify before clicking Confirm. The
+     inputs are sized to roughly match the surrounding text so the
+     card doesn't visually balloon when it goes from read-only to
+     editable. */
+  .plan-card.editable .row{ align-items:flex-start }
+  .plan-card.editable .row .v{
+    flex:1; min-width:0;
+    display:flex; justify-content:flex-end;
+  }
+  .plan-card.editable input[type="text"],
+  .plan-card.editable input[type="number"],
+  .plan-card.editable select,
+  .plan-card.editable textarea{
+    font-family:var(--font-mono); font-size:11px;
+    background:var(--surface-1); color:var(--text);
+    border:1px solid var(--border); border-radius:4px;
+    padding:4px 6px; width:100%; max-width:280px;
+    text-align:right;
+  }
+  .plan-card.editable textarea{ text-align:left; resize:vertical; min-height:38px }
+  .plan-card.editable input[type="number"]{ max-width:90px }
+  .plan-card.editable select{ max-width:200px }
+  .plan-card.editable input:focus,
+  .plan-card.editable select:focus,
+  .plan-card.editable textarea:focus{
+    outline:none; border-color:var(--gold);
+  }
+  .plan-card.editable input[type="checkbox"]{
+    width:16px; height:16px; accent-color:var(--gold);
+    margin:2px 0;
+  }
+
   /* Confirm / Cancel buttons that appear under the cost card during the
      two-phase plan→execute flow. Tight cluster, gold primary, neutral
      secondary — matches the rest of the auth/header button styling. */
@@ -620,19 +653,21 @@
       r.className = "text"; r.textContent = planResp.plan.rationale;
       assist.body.appendChild(r);
     }
-    renderPlan(assist, planResp.plan);
+    const planAPI = renderEditablePlan(assist, planResp.plan, planResp.cost);
     renderWorkflow(assist, planResp.plan);
-    renderCost(assist, planResp.cost);
+    const costAPI = renderCost(assist, planResp.cost);
+
+    let currentCost = planResp.cost;
 
     // Insufficient balance — gate the Confirm button.
-    const haveTokens = (ME?.tokens || 0) >= planResp.cost.tokens_charged;
+    const haveTokens = (ME?.tokens || 0) >= currentCost.tokens_charged;
 
     const actions = document.createElement("div");
     actions.className = "confirm-actions";
     actions.innerHTML = `
       ${haveTokens
-        ? `<button class="btn primary cf-confirm">Confirm — ${planResp.cost.tokens_charged.toLocaleString()} tokens</button>`
-        : `<button class="btn primary" disabled>Need ${planResp.cost.tokens_charged.toLocaleString()} tokens — you have ${(ME?.tokens || 0).toLocaleString()}</button>
+        ? `<button class="btn primary cf-confirm">Confirm — ${currentCost.tokens_charged.toLocaleString()} tokens</button>`
+        : `<button class="btn primary cf-confirm" disabled>Need ${currentCost.tokens_charged.toLocaleString()} tokens — you have ${(ME?.tokens || 0).toLocaleString()}</button>
            <button class="btn cf-subscribe">Subscribe</button>`}
       <button class="btn cf-cancel">Cancel</button>
     `;
@@ -643,6 +678,23 @@
     const confirmBtn = actions.querySelector(".cf-confirm");
     const cancelBtn  = actions.querySelector(".cf-cancel");
     const subBtn     = actions.querySelector(".cf-subscribe");
+
+    // When the user edits a cost-affecting field, repaint the cost
+    // card and re-evaluate the Confirm button (could now exceed
+    // available balance, or drop back into-affordable range).
+    planAPI.onCostChange((newCost) => {
+      currentCost = newCost;
+      costAPI.update(newCost);
+      const have = (ME?.tokens || 0);
+      const need = newCost.tokens_charged;
+      if (have >= need) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `Confirm — ${need.toLocaleString()} tokens`;
+      } else {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `Need ${need.toLocaleString()} tokens — you have ${have.toLocaleString()}`;
+      }
+    });
 
     if (subBtn) {
       subBtn.onclick = async () => {
@@ -670,16 +722,25 @@
 
     if (confirmBtn) {
       confirmBtn.onclick = async () => {
-        if (busy) return;
+        if (busy || confirmBtn.disabled) return;
         busy = true; updateSend();
         actions.remove();
         setStatus(assist, "Starting…");
+
+        // Send any user-edited fields as plan_overrides. Server
+        // re-validates, recomputes cost from the merged plan, and
+        // charges the actual amount (which may differ from quote).
+        const overrides = planAPI.getOverrides();
+        const hasOverrides = Object.keys(overrides).length > 0;
 
         try {
           const r = await fetch("/api/promptflow/execute", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ plan_id: planResp.plan_id }),
+            body: JSON.stringify({
+              plan_id: planResp.plan_id,
+              ...(hasOverrides ? { plan_overrides: overrides } : {}),
+            }),
           });
           const j = await r.json();
           if (!j.ok) {
@@ -808,26 +869,164 @@
     e.className = "text err"; e.textContent = msg;
     assist.body.appendChild(e);
   }
-  function renderPlan(assist, plan) {
-    if (!plan) return;
-    const c = document.createElement("div");
-    c.className = "plan-card";
-    const rows = [
-      ["Recipe", plan.recipe_id || "—"],
-      ["Model", prettyModel(plan.model)],
-      ["Duration", plan.duration_seconds + "s"],
-      ["Resolution", plan.resolution],
-    ];
-    if (plan.speech_text) {
-      rows.push(["Voice", plan.voice_id]);
-      rows.push(["Speech", `"${plan.speech_text.length > 80 ? plan.speech_text.slice(0, 80) + '…' : plan.speech_text}"`]);
+
+  // Editable plan card. Renders each plan field as an input, returns
+  // { getOverrides, onCostChange } so the caller can read user edits
+  // at Confirm time and update the live cost preview as the user types.
+  function renderEditablePlan(assist, plan, initialCost) {
+    if (!plan) return { getOverrides: () => ({}), onCostChange: () => {} };
+    const card = document.createElement("div");
+    card.className = "plan-card editable";
+
+    const inputs = {};
+    const addRow = (label, key, el) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const k = document.createElement("span"); k.className = "k"; k.textContent = label;
+      const v = document.createElement("span"); v.className = "v"; v.appendChild(el);
+      row.appendChild(k); row.appendChild(v);
+      card.appendChild(row);
+      if (key) inputs[key] = el;
+    };
+    const addStaticRow = (label, value) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const k = document.createElement("span"); k.className = "k"; k.textContent = label;
+      const v = document.createElement("span"); v.className = "v"; v.textContent = value;
+      row.appendChild(k); row.appendChild(v);
+      card.appendChild(row);
+    };
+
+    // Static (non-editable) — recipe + model are decided by Claude.
+    addStaticRow("Recipe", plan.recipe_id || "—");
+    addStaticRow("Model", prettyModel(plan.model));
+
+    // Duration — only meaningful for LTX models. OmniHuman duration is
+    // determined by the audio length, not user input.
+    if (plan.model !== "omnihuman_lipsync") {
+      const dur = document.createElement("input");
+      dur.type = "number"; dur.min = "4"; dur.max = "20"; dur.step = "1";
+      dur.value = String(plan.duration_seconds || 6);
+      addRow("Duration (s)", "duration_seconds", dur);
     }
-    c.innerHTML = rows.map(([k, v]) =>
-      `<div class="row"><span class="k">${k}</span><span class="v"></span></div>`
-    ).join("");
-    [...c.querySelectorAll(".v")].forEach((el, i) => { el.textContent = rows[i][1]; });
-    assist.body.appendChild(c);
+
+    // Resolution
+    const res = document.createElement("select");
+    for (const r of ["720p", "1080p"]) {
+      const o = document.createElement("option"); o.value = r; o.textContent = r;
+      if (r === plan.resolution) o.selected = true;
+      res.appendChild(o);
+    }
+    addRow("Resolution", "resolution", res);
+
+    // Visual prompt (LTX models care more, but it's accepted on omnihuman too)
+    const vis = document.createElement("textarea");
+    vis.rows = 2; vis.value = plan.visual_prompt || "";
+    addRow("Visual prompt", "visual_prompt", vis);
+
+    // Negative prompt (LTX only — omnihuman doesn't accept it)
+    if (plan.model !== "omnihuman_lipsync") {
+      const neg = document.createElement("textarea");
+      neg.rows = 2; neg.value = plan.negative_prompt || "";
+      addRow("Negative prompt", "negative_prompt", neg);
+    }
+
+    // Lipsync-only fields
+    if (plan.model === "omnihuman_lipsync") {
+      const sp = document.createElement("textarea");
+      sp.rows = 3; sp.value = plan.speech_text || "";
+      sp.placeholder = "What the subject should say";
+      addRow("Speech text", "speech_text", sp);
+
+      const vid = document.createElement("input");
+      vid.type = "text"; vid.value = plan.voice_id || "";
+      vid.placeholder = "ElevenLabs voice ID";
+      addRow("Voice ID", "voice_id", vid);
+
+      const vm = document.createElement("select");
+      const opts = [
+        ["eleven_v3",                "v3 — supports [tags]"],
+        ["eleven_multilingual_v2",   "multilingual_v2 — cleaner"],
+      ];
+      for (const [val, label] of opts) {
+        const o = document.createElement("option"); o.value = val; o.textContent = label;
+        if (val === plan.voice_model) o.selected = true;
+        vm.appendChild(o);
+      }
+      addRow("Voice model", "voice_model", vm);
+
+      const turbo = document.createElement("input");
+      turbo.type = "checkbox";
+      turbo.checked = (plan.turbo_mode !== undefined)
+        ? !!plan.turbo_mode
+        : (plan.resolution === "720p");
+      addRow("Turbo mode", "turbo_mode", turbo);
+    }
+
+    assist.body.appendChild(card);
+
+    // Cost-affecting fields: duration, speech_text length. Recompute
+    // from the rates the server gave us in the initial cost payload.
+    let costListener = null;
+    const recompute = () => {
+      const dur = inputs.duration_seconds
+        ? Math.max(4, Math.min(20, Number(inputs.duration_seconds.value) || 0))
+        : (plan.duration_seconds || 0);
+      const speech = inputs.speech_text ? inputs.speech_text.value : "";
+      const falPerSec = initialCost.fal_per_second || 0.06;
+      const elevPerChar = initialCost.elevenlabs_per_char || 0.0001;
+      const anthropicUsd = initialCost.anthropic_usd || 0;
+      const markup = initialCost.markup || 2.0;
+      const falUsd = falPerSec * dur;
+      const elevUsd = elevPerChar * (plan.model === "omnihuman_lipsync" ? speech.length : 0);
+      const upstreamUsd = falUsd + elevUsd + anthropicUsd;
+      const billUsd = upstreamUsd * markup;
+      const tokens = Math.ceil(billUsd / 0.0005);
+      return {
+        fal_usd: falUsd,
+        fal_per_second: falPerSec,
+        elevenlabs_usd: elevUsd,
+        elevenlabs_per_char: elevPerChar,
+        anthropic_usd: anthropicUsd,
+        upstream_usd: upstreamUsd,
+        markup,
+        bill_usd: billUsd,
+        tokens_charged: tokens,
+      };
+    };
+    if (inputs.duration_seconds) {
+      inputs.duration_seconds.addEventListener("input", () => costListener?.(recompute()));
+    }
+    if (inputs.speech_text) {
+      inputs.speech_text.addEventListener("input", () => costListener?.(recompute()));
+    }
+
+    return {
+      // Returns the override object to send to /execute. Only includes
+      // fields the user actually changed from the original plan, so
+      // unchanged fields stay null and the server uses the stored value.
+      getOverrides() {
+        const o = {};
+        for (const [key, el] of Object.entries(inputs)) {
+          let val;
+          if (el.type === "checkbox") val = el.checked;
+          else if (key === "duration_seconds") val = Math.round(Number(el.value));
+          else val = el.value;
+          // Skip if unchanged from the original plan (avoids needlessly
+          // overriding fields the user didn't touch).
+          const original = plan[key];
+          const sameAsOriginal =
+            (val === original) ||
+            (val === "" && (original == null || original === "")) ||
+            (key === "turbo_mode" && val === (original !== undefined ? !!original : (plan.resolution === "720p")));
+          if (!sameAsOriginal) o[key] = val;
+        }
+        return o;
+      },
+      onCostChange(fn) { costListener = fn; },
+    };
   }
+
   function renderWorkflow(assist, plan) {
     if (!plan?.adapted_python) return;
     const wrap = document.createElement("details");
@@ -849,18 +1048,25 @@
     };
     assist.body.appendChild(wrap);
   }
+
+  // Cost card with a paint() method so we can re-render on the fly
+  // when the user edits cost-affecting plan fields.
   function renderCost(assist, cost) {
-    if (!cost) return;
+    if (!cost) return { update: () => {} };
     const c = document.createElement("div");
     c.className = "cost-card";
-    c.innerHTML = `
-      <div class="row"><span class="k">fal.ai</span><span class="v">$${cost.fal_usd.toFixed(4)}</span></div>
-      ${cost.elevenlabs_usd > 0 ? `<div class="row"><span class="k">ElevenLabs TTS</span><span class="v">$${cost.elevenlabs_usd.toFixed(4)}</span></div>` : ""}
-      <div class="row"><span class="k">Anthropic planner</span><span class="v">$${cost.anthropic_usd.toFixed(4)}</span></div>
-      <div class="row"><span class="k">Markup (×${cost.markup})</span><span class="v">—</span></div>
-      <div class="row total"><span class="k">Charged</span><span class="v">${cost.tokens_charged.toLocaleString()} tokens · $${cost.bill_usd.toFixed(4)}</span></div>
-    `;
+    function paint(co) {
+      c.innerHTML = `
+        <div class="row"><span class="k">fal.ai</span><span class="v">$${(co.fal_usd || 0).toFixed(4)}</span></div>
+        ${co.elevenlabs_usd > 0 ? `<div class="row"><span class="k">ElevenLabs TTS</span><span class="v">$${co.elevenlabs_usd.toFixed(4)}</span></div>` : ""}
+        <div class="row"><span class="k">Anthropic planner</span><span class="v">$${(co.anthropic_usd || 0).toFixed(4)}</span></div>
+        <div class="row"><span class="k">Markup (×${co.markup})</span><span class="v">—</span></div>
+        <div class="row total"><span class="k">Charged</span><span class="v">${co.tokens_charged.toLocaleString()} tokens · $${(co.bill_usd || 0).toFixed(4)}</span></div>
+      `;
+    }
+    paint(cost);
     assist.body.appendChild(c);
+    return { update: paint };
   }
   function prettyModel(m) {
     return ({
