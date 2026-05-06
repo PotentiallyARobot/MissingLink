@@ -66,16 +66,31 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 }
 .user-menu-trigger:hover{background:var(--surface-3);border-color:var(--border-strong);color:var(--text)}
 .user-menu-trigger[aria-expanded="true"]{background:var(--surface-3);border-color:var(--gold);color:var(--gold)}
-.user-menu-trigger .user-avatar{width:22px;height:22px;border:none}
+.user-menu-trigger .user-avatar{
+    position:relative;z-index:2;
+    width:22px;height:22px;border:none;border-radius:50%;
+    object-fit:cover;
+}
 .user-menu-fallback{
     position:absolute;left:3px;top:50%;transform:translateY(-50%);
-    width:22px;height:22px;border-radius:50%;
-    background:var(--surface-3);color:var(--text);
+    width:22px;height:22px;border-radius:50%;z-index:1;
+    background:var(--surface-3);color:var(--text-muted);
     display:flex;align-items:center;justify-content:center;
-    font-family:var(--font-mono);font-size:11px;font-weight:700;
-    pointer-events:none;text-transform:uppercase;
+    pointer-events:none;
     border:1px solid var(--border);
 }
+.user-menu-fallback svg{display:block}
+/* Email shown inside the trigger pill so it's visible at a glance.
+   Ellipsis-truncated for long addresses; max-width keeps the trigger
+   from dominating the header on long emails. */
+.user-menu-trigger-email{
+    font-family:var(--font-mono);font-size:10px;
+    color:var(--text-muted);
+    max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    line-height:1;
+}
+.user-menu-trigger:hover .user-menu-trigger-email{color:var(--text)}
+.user-menu-trigger[aria-expanded="true"] .user-menu-trigger-email{color:var(--gold)}
 .user-menu-chevron{font-size:8px;line-height:1;color:var(--text-dim);transition:transform .15s}
 .user-menu-trigger[aria-expanded="true"] .user-menu-chevron{transform:rotate(180deg);color:var(--gold)}
 
@@ -2187,72 +2202,70 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="token-badge" id="tokenBadge" onclick="showBuyModal()" title="Click to buy more tokens">
                 <span>🪙</span><span id="tokenCount">0</span>
             </div>
-            <!-- User menu trigger — clickable avatar that opens a dropdown
-                 with subscription / billing / account actions. The img is
-                 the user's Google profile pic when available; userMenuFallback
-                 shows their email initial when the img fails to load (e.g.
-                 password-only signup, or Google pic blocked). The two are
-                 stacked: img is on top of fallback, error toggles to fallback. -->
-            <button class="user-menu-trigger" id="userMenuTrigger" onclick="toggleUserMenu(event)" aria-haspopup="true" aria-expanded="false" title="Account menu">
-                <img class="user-avatar" id="userAvatar" src="" alt="" onerror="this.style.opacity='0'">
-                <span class="user-menu-fallback" id="userMenuFallback">·</span>
-                <span class="user-menu-chevron" aria-hidden="true">▾</span>
-            </button>
-            <!-- Dropdown menu — opened by toggleUserMenu, dismissed by
-                 clicks outside, Escape key, or any of its action buttons.
-                 Anchored to the trigger via absolute positioning on a
-                 wrapper that's relative to the header. Action buttons
-                 dynamically swap between Subscribe and Manage based on
-                 _user.subscription_status. -->
-            <div class="user-menu" id="userMenu" style="display:none" role="menu" aria-labelledby="userMenuTrigger">
-                <div class="user-menu-head">
-                    <div class="user-menu-email" id="userMenuEmail">—</div>
-                    <div class="user-menu-stats">
-                        <span class="user-menu-stat">🪙 <b id="userMenuTokens">0</b> tokens</span>
-                        <span class="user-menu-stat" id="userMenuSubStatus">No subscription</span>
-                    </div>
-                </div>
-                <div class="user-menu-section">
-                    <!-- Subscribe button: hidden when user already has an
-                         active subscription. Click → close menu, open
-                         Stripe Checkout via doSubscribe. -->
-                    <button class="user-menu-item user-menu-cta" id="userMenuSubscribe" onclick="closeUserMenu();doSubscribe()" role="menuitem" style="display:none">
-                        <span class="user-menu-icon">👑</span>
-                        <span class="user-menu-label">
-                            <span class="user-menu-title">Subscribe — Pro</span>
-                            <span class="user-menu-sub">$20 / month · 50,000 tokens monthly</span>
-                        </span>
-                    </button>
-                    <!-- Manage subscription: shown only for active /
-                         past_due subscribers. Click → Stripe billing
-                         portal (cancel, update card, view invoices). -->
-                    <button class="user-menu-item" id="userMenuManage" onclick="closeUserMenu();doManageSubscription()" role="menuitem" style="display:none">
-                        <span class="user-menu-icon">⚙️</span>
-                        <span class="user-menu-label">
-                            <span class="user-menu-title">Manage subscription</span>
-                            <span class="user-menu-sub">Cancel · update card · invoices</span>
-                        </span>
-                    </button>
-                    <button class="user-menu-item" onclick="closeUserMenu();showBuyModal()" role="menuitem">
-                        <span class="user-menu-icon">🪙</span>
-                        <span class="user-menu-label">
-                            <span class="user-menu-title">Buy tokens</span>
-                            <span class="user-menu-sub">One-time purchase, never expire</span>
-                        </span>
-                    </button>
-                </div>
-                <div class="user-menu-section user-menu-section-foot">
-                    <button class="user-menu-item user-menu-item-danger" onclick="closeUserMenu();doLogout()" role="menuitem">
-                        <span class="user-menu-icon">↪</span>
-                        <span class="user-menu-label">
-                            <span class="user-menu-title">Sign out</span>
-                        </span>
-                    </button>
-                </div>
-            </div>
         </div>
         <button class="hdr-btn" id="btnConsole" onclick="toggleConsole()">▸ Console</button>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
+        <!-- User menu trigger — clickable avatar that opens a dropdown
+             with subscription / billing / account actions. Lives at the
+             far right of the header so it's where users instinctively
+             look for "their account." Only shown when logged in;
+             checkAuth toggles its display. The img is the user's Google
+             profile pic when available; userMenuFallback shows their
+             email initial when the img has no src or fails to load. -->
+        <button class="user-menu-trigger" id="userMenuTrigger" onclick="toggleUserMenu(event)" aria-haspopup="true" aria-expanded="false" title="Account menu" style="display:none">
+            <span class="user-menu-fallback" id="userMenuFallback" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true">
+                    <path d="M12 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0 2c-3.34 0-10 1.67-10 5v3h20v-3c0-3.33-6.66-5-10-5z"/>
+                </svg>
+            </span>
+            <img class="user-avatar" id="userAvatar" src="" alt="" onerror="this.style.opacity='0'">
+            <span class="user-menu-trigger-email" id="userMenuTriggerEmail">—</span>
+            <span class="user-menu-chevron" aria-hidden="true">▾</span>
+        </button>
+        <!-- Dropdown menu — opened by toggleUserMenu, dismissed by
+             clicks outside, Escape key, or any of its action buttons.
+             Anchored top-right of the screen. Action buttons swap
+             between Subscribe and Manage based on subscription_status. -->
+        <div class="user-menu" id="userMenu" style="display:none" role="menu" aria-labelledby="userMenuTrigger">
+            <div class="user-menu-head">
+                <div class="user-menu-email" id="userMenuEmail">—</div>
+                <div class="user-menu-stats">
+                    <span class="user-menu-stat">🪙 <b id="userMenuTokens">0</b> tokens</span>
+                    <span class="user-menu-stat" id="userMenuSubStatus">No subscription</span>
+                </div>
+            </div>
+            <div class="user-menu-section">
+                <button class="user-menu-item user-menu-cta" id="userMenuSubscribe" onclick="closeUserMenu();doSubscribe()" role="menuitem" style="display:none">
+                    <span class="user-menu-icon">👑</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">Subscribe — Pro</span>
+                        <span class="user-menu-sub">$20 / month · 50,000 tokens monthly</span>
+                    </span>
+                </button>
+                <button class="user-menu-item" id="userMenuManage" onclick="closeUserMenu();doManageSubscription()" role="menuitem" style="display:none">
+                    <span class="user-menu-icon">⚙️</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">Manage subscription</span>
+                        <span class="user-menu-sub">Cancel · update card · invoices</span>
+                    </span>
+                </button>
+                <button class="user-menu-item" onclick="closeUserMenu();showBuyModal()" role="menuitem">
+                    <span class="user-menu-icon">🪙</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">Buy tokens</span>
+                        <span class="user-menu-sub">One-time purchase, never expire</span>
+                    </span>
+                </button>
+            </div>
+            <div class="user-menu-section user-menu-section-foot">
+                <button class="user-menu-item user-menu-item-danger" onclick="closeUserMenu();doLogout()" role="menuitem">
+                    <span class="user-menu-icon">↪</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">Sign out</span>
+                    </span>
+                </button>
+            </div>
+        </div>
     </div>
 </header>
 
@@ -3602,24 +3615,29 @@ async function checkAuth(){
             _user=d;
             $('authIn').style.display='flex';
             $('authOut').style.display='none';
+            $('userMenuTrigger').style.display='';
             $('tokenCount').textContent=d.tokens;
             const imgs=Math.floor(d.tokens/100);
             $('sidebarBalance').textContent=`${d.tokens} (${imgs} images)`;
             $('balanceLine').style.display='flex';
-            // Avatar + fallback initial. Fallback shows when img fails;
-            // restore opacity in case a previous session had it dimmed.
+            // Avatar layering — img is z-index:2 above the fallback at
+            // z-index:1. When a picture loads cleanly, img covers
+            // fallback. When it fails (or is missing), opacity:0 reveals
+            // the generic user icon underneath.
             const av = $('userAvatar');
-            const fb = $('userMenuFallback');
             if (av) {
-                av.style.opacity = '1';
-                if (d.picture) av.src = d.picture;
-                else av.removeAttribute('src');  // forces fallback via onerror
+                if (d.picture) {
+                    av.src = d.picture;
+                    av.style.opacity = '1';  // shown; covers fallback
+                } else {
+                    av.removeAttribute('src');
+                    av.style.opacity = '0';  // hidden; fallback shows through
+                }
             }
-            if (fb) {
-                fb.textContent = (d.email && d.email.charAt(0)) || '·';
-            }
-            // Populate user menu dropdown content. Subscription status
-            // line shows different text + accent depending on state.
+            // Email shown inside the trigger pill (visible at a glance)
+            // and again inside the dropdown header (after click).
+            const triggerEmail = $('userMenuTriggerEmail');
+            if (triggerEmail) triggerEmail.textContent = d.email || '—';
             $('userMenuEmail').textContent = d.email || '—';
             $('userMenuTokens').textContent = d.tokens;
             updateUserMenuSubState();
@@ -3646,6 +3664,8 @@ async function checkAuth(){
             _user=null;
             $('authIn').style.display='none';
             $('authOut').style.display='block';
+            $('userMenuTrigger').style.display='none';
+            closeUserMenu();
             // Don't force the modal open on page load — let users browse
             // the UI freely. The per-action checks below (doGenerate,
             // doGenerateMode, generateBatchEdits, generateAngleBatch,
@@ -3656,6 +3676,8 @@ async function checkAuth(){
         _user=null;
         $('authIn').style.display='none';
         $('authOut').style.display='block';
+        $('userMenuTrigger').style.display='none';
+        closeUserMenu();
         // See note above — same reasoning for the network-error path.
         log('Auth check failed: '+e.message,'error');
     }
@@ -3962,6 +3984,8 @@ async function doLogout(){
     _user=null;
     $('authIn').style.display='none';
     $('authOut').style.display='block';
+    $('userMenuTrigger').style.display='none';
+    closeUserMenu();
     // Clear any input images — they're tied to the previous user's uploads
     clearInput();
     for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
