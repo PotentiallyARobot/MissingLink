@@ -673,7 +673,7 @@
         if (busy) return;
         busy = true; updateSend();
         actions.remove();
-        setStatus(assist, "Generating… (this can take 1–5 minutes)");
+        setStatus(assist, "Starting…");
 
         try {
           const r = await fetch("/api/promptflow/execute", {
@@ -683,33 +683,74 @@
           });
           const j = await r.json();
           if (!j.ok) {
-            setError(assist, j.message || j.error || "Generation failed.");
-            // Show the adapted workflow so the user can see what was
-            // attempted — it ran via the structured params, but the
-            // Python is the most legible record of intent.
+            setError(assist, j.message || j.error || "Could not start generation.");
             if (j.plan) renderWorkflow(assist, j.plan);
-            if (j.refunded_tokens) {
-              const note = document.createElement("div");
-              note.className = "status";
-              note.textContent = `Refunded ${j.refunded_tokens.toLocaleString()} tokens.`;
-              assist.body.appendChild(note);
-            }
             busy = false; updateSend();
             return;
           }
-          clearStatus(assist);
-          const v = document.createElement("video");
-          v.src = j.video_url; v.controls = true; v.autoplay = true; v.loop = true; v.muted = false;
-          assist.body.appendChild(v);
 
-          const charged = document.createElement("div");
-          charged.className = "status";
-          charged.textContent = `Charged ${j.cost.tokens_charged.toLocaleString()} tokens · $${j.cost.bill_usd.toFixed(4)}`;
-          assist.body.appendChild(charged);
+          // /execute returned immediately with status='running'. Poll
+          // /status every 4 seconds until the worker reports complete
+          // or failed. Soft-cap the wall time at 15 minutes so a stuck
+          // run can't keep the UI spinning forever.
+          setStatus(assist, "Generating… (this can take 1–5 minutes)");
+          const startedAt = Date.now();
+          const pollDeadline = startedAt + 15 * 60 * 1000;
+          let lastStatus = "running";
 
-          if (typeof j.tokens_remaining === "number" && ME) {
-            ME.tokens = j.tokens_remaining;
-            paintAuthUI();
+          while (Date.now() < pollDeadline) {
+            await new Promise((res) => setTimeout(res, 4000));
+            let s;
+            try {
+              const sr = await fetch("/api/promptflow/status", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ plan_id: planResp.plan_id }),
+              });
+              s = await sr.json();
+            } catch {
+              // Transient — keep polling.
+              continue;
+            }
+            if (!s.ok) {
+              setError(assist, s.message || s.error || "Lost the job.");
+              break;
+            }
+            lastStatus = s.status;
+            if (s.status === "complete") {
+              clearStatus(assist);
+              const v = document.createElement("video");
+              v.src = s.video_url; v.controls = true; v.autoplay = true; v.loop = true; v.muted = false;
+              assist.body.appendChild(v);
+
+              const charged = document.createElement("div");
+              charged.className = "status";
+              charged.textContent = `Charged ${s.cost.tokens_charged.toLocaleString()} tokens · $${s.cost.bill_usd.toFixed(4)}`;
+              assist.body.appendChild(charged);
+
+              if (typeof s.tokens_remaining === "number" && ME) {
+                ME.tokens = s.tokens_remaining;
+                paintAuthUI();
+              }
+              break;
+            }
+            if (s.status === "failed") {
+              setError(assist, s.message || "Generation failed.");
+              if (s.plan) renderWorkflow(assist, s.plan);
+              if (s.refunded_tokens) {
+                const note = document.createElement("div");
+                note.className = "status";
+                note.textContent = `Refunded ${s.refunded_tokens.toLocaleString()} tokens.`;
+                assist.body.appendChild(note);
+              }
+              break;
+            }
+            // still 'running' — update the status line with elapsed time
+            const elapsed = Math.round((Date.now() - startedAt) / 1000);
+            setStatus(assist, `Generating… ${elapsed}s elapsed`);
+          }
+          if (lastStatus === "running" && Date.now() >= pollDeadline) {
+            setError(assist, "Timed out waiting for the worker. The job may still complete — refresh later.");
           }
         } catch (e) {
           setError(assist, "Network error: " + (e?.message || e));
