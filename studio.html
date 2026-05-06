@@ -52,6 +52,90 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .token-badge.low{border-color:var(--red);color:var(--red);background:rgba(239,68,68,.08);animation:pulse-low 2s infinite}
 @keyframes pulse-low{0%,100%{opacity:1}50%{opacity:.6}}
 
+/* User menu trigger — pill-shaped button containing the avatar (or
+   fallback initial) and a small chevron to signal "this opens a menu."
+   The avatar img and fallback span are stacked: avatar's onerror sets
+   opacity:0 so the fallback shows through. Hover lifts the whole pill
+   subtly. Active state (menu open) keeps the highlight applied. */
+.user-menu-trigger{
+    position:relative;display:flex;align-items:center;gap:6px;
+    padding:2px 6px 2px 2px;border-radius:14px;
+    background:var(--surface-2);border:1px solid var(--border);
+    color:var(--text-muted);cursor:pointer;
+    transition:all .15s;font-family:var(--font-mono);font-size:10px;
+}
+.user-menu-trigger:hover{background:var(--surface-3);border-color:var(--border-strong);color:var(--text)}
+.user-menu-trigger[aria-expanded="true"]{background:var(--surface-3);border-color:var(--gold);color:var(--gold)}
+.user-menu-trigger .user-avatar{width:22px;height:22px;border:none}
+.user-menu-fallback{
+    position:absolute;left:3px;top:50%;transform:translateY(-50%);
+    width:22px;height:22px;border-radius:50%;
+    background:var(--surface-3);color:var(--text);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-mono);font-size:11px;font-weight:700;
+    pointer-events:none;text-transform:uppercase;
+    border:1px solid var(--border);
+}
+.user-menu-chevron{font-size:8px;line-height:1;color:var(--text-dim);transition:transform .15s}
+.user-menu-trigger[aria-expanded="true"] .user-menu-chevron{transform:rotate(180deg);color:var(--gold)}
+
+/* Dropdown menu — anchored to the right side of the header. Fixed
+   positioning so it sits above all other surfaces (overlays, modals
+   under it). Glass-morphic background matches the rest of the studio's
+   chrome. Width sized to fit the longest action label comfortably. */
+.user-menu{
+    position:fixed;top:54px;right:14px;z-index:9000;
+    width:280px;background:rgba(17,17,20,.95);backdrop-filter:blur(12px);
+    border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 12px 32px rgba(0,0,0,.5);
+    overflow:hidden;
+    animation:user-menu-in .15s ease-out;
+}
+@keyframes user-menu-in{
+    from{opacity:0;transform:translateY(-4px)}
+    to{opacity:1;transform:translateY(0)}
+}
+.user-menu-head{
+    padding:14px 16px;border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(255,255,255,.02), transparent);
+}
+.user-menu-email{
+    font-family:var(--font-mono);font-size:11px;color:var(--text);
+    font-weight:600;word-break:break-all;line-height:1.4;
+}
+.user-menu-stats{
+    display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;
+    font-family:var(--font-mono);font-size:9px;color:var(--text-muted);
+    text-transform:uppercase;letter-spacing:.5px;
+}
+.user-menu-stat{display:inline-flex;align-items:center;gap:4px}
+.user-menu-stat b{color:var(--gold);font-weight:700}
+.user-menu-stat.subscribed{color:var(--gold)}
+.user-menu-section{padding:6px}
+.user-menu-section + .user-menu-section{border-top:1px solid var(--border)}
+.user-menu-item{
+    width:100%;display:flex;align-items:center;gap:10px;
+    padding:10px 12px;border-radius:6px;background:transparent;
+    border:1px solid transparent;color:var(--text);
+    text-align:left;cursor:pointer;transition:all .12s;
+    font-family:inherit;
+}
+.user-menu-item:hover{background:var(--surface-2);border-color:var(--border)}
+.user-menu-icon{font-size:14px;line-height:1;flex-shrink:0;width:18px;text-align:center}
+.user-menu-label{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.user-menu-title{font-size:12px;font-weight:600;color:var(--text)}
+.user-menu-sub{font-size:10px;color:var(--text-muted);font-family:var(--font-mono)}
+/* Subscribe CTA — gold accent to distinguish from regular menu items.
+   Only shown when the user is NOT already subscribed. */
+.user-menu-cta{background:var(--gold-dim);border-color:var(--gold)}
+.user-menu-cta .user-menu-title{color:var(--gold)}
+.user-menu-cta:hover{background:var(--gold);border-color:var(--gold)}
+.user-menu-cta:hover .user-menu-title,.user-menu-cta:hover .user-menu-sub{color:var(--black)}
+/* Sign-out item — danger styling on hover so the destructive action
+   is visually distinct from the others. */
+.user-menu-item-danger:hover{background:rgba(239,68,68,.1);border-color:var(--red)}
+.user-menu-item-danger:hover .user-menu-title{color:var(--red)}
+
 /* Sidebar */
 .sidebar{grid-area:sidebar;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .sec{padding:14px 16px;border-bottom:1px solid var(--border)}
@@ -2100,12 +2184,72 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <button class="hdr-btn auth-btn" onclick="loginGoogle()">🔑 SIGN IN</button>
         </div>
         <div id="authIn">
-            <span id="userEmail" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)"></span>
             <div class="token-badge" id="tokenBadge" onclick="showBuyModal()" title="Click to buy more tokens">
                 <span>🪙</span><span id="tokenCount">0</span>
             </div>
-            <img class="user-avatar" id="userAvatar" src="" onerror="this.style.display='none'">
-            <button class="hdr-btn" onclick="doLogout()" title="Sign out">Sign Out</button>
+            <!-- User menu trigger — clickable avatar that opens a dropdown
+                 with subscription / billing / account actions. The img is
+                 the user's Google profile pic when available; userMenuFallback
+                 shows their email initial when the img fails to load (e.g.
+                 password-only signup, or Google pic blocked). The two are
+                 stacked: img is on top of fallback, error toggles to fallback. -->
+            <button class="user-menu-trigger" id="userMenuTrigger" onclick="toggleUserMenu(event)" aria-haspopup="true" aria-expanded="false" title="Account menu">
+                <img class="user-avatar" id="userAvatar" src="" alt="" onerror="this.style.opacity='0'">
+                <span class="user-menu-fallback" id="userMenuFallback">·</span>
+                <span class="user-menu-chevron" aria-hidden="true">▾</span>
+            </button>
+            <!-- Dropdown menu — opened by toggleUserMenu, dismissed by
+                 clicks outside, Escape key, or any of its action buttons.
+                 Anchored to the trigger via absolute positioning on a
+                 wrapper that's relative to the header. Action buttons
+                 dynamically swap between Subscribe and Manage based on
+                 _user.subscription_status. -->
+            <div class="user-menu" id="userMenu" style="display:none" role="menu" aria-labelledby="userMenuTrigger">
+                <div class="user-menu-head">
+                    <div class="user-menu-email" id="userMenuEmail">—</div>
+                    <div class="user-menu-stats">
+                        <span class="user-menu-stat">🪙 <b id="userMenuTokens">0</b> tokens</span>
+                        <span class="user-menu-stat" id="userMenuSubStatus">No subscription</span>
+                    </div>
+                </div>
+                <div class="user-menu-section">
+                    <!-- Subscribe button: hidden when user already has an
+                         active subscription. Click → close menu, open
+                         Stripe Checkout via doSubscribe. -->
+                    <button class="user-menu-item user-menu-cta" id="userMenuSubscribe" onclick="closeUserMenu();doSubscribe()" role="menuitem" style="display:none">
+                        <span class="user-menu-icon">👑</span>
+                        <span class="user-menu-label">
+                            <span class="user-menu-title">Subscribe — Pro</span>
+                            <span class="user-menu-sub">$20 / month · 50,000 tokens monthly</span>
+                        </span>
+                    </button>
+                    <!-- Manage subscription: shown only for active /
+                         past_due subscribers. Click → Stripe billing
+                         portal (cancel, update card, view invoices). -->
+                    <button class="user-menu-item" id="userMenuManage" onclick="closeUserMenu();doManageSubscription()" role="menuitem" style="display:none">
+                        <span class="user-menu-icon">⚙️</span>
+                        <span class="user-menu-label">
+                            <span class="user-menu-title">Manage subscription</span>
+                            <span class="user-menu-sub">Cancel · update card · invoices</span>
+                        </span>
+                    </button>
+                    <button class="user-menu-item" onclick="closeUserMenu();showBuyModal()" role="menuitem">
+                        <span class="user-menu-icon">🪙</span>
+                        <span class="user-menu-label">
+                            <span class="user-menu-title">Buy tokens</span>
+                            <span class="user-menu-sub">One-time purchase, never expire</span>
+                        </span>
+                    </button>
+                </div>
+                <div class="user-menu-section user-menu-section-foot">
+                    <button class="user-menu-item user-menu-item-danger" onclick="closeUserMenu();doLogout()" role="menuitem">
+                        <span class="user-menu-icon">↪</span>
+                        <span class="user-menu-label">
+                            <span class="user-menu-title">Sign out</span>
+                        </span>
+                    </button>
+                </div>
+            </div>
         </div>
         <button class="hdr-btn" id="btnConsole" onclick="toggleConsole()">▸ Console</button>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
@@ -3459,11 +3603,26 @@ async function checkAuth(){
             $('authIn').style.display='flex';
             $('authOut').style.display='none';
             $('tokenCount').textContent=d.tokens;
-            $('userEmail').textContent=d.email||'';
             const imgs=Math.floor(d.tokens/100);
             $('sidebarBalance').textContent=`${d.tokens} (${imgs} images)`;
             $('balanceLine').style.display='flex';
-            if(d.picture) $('userAvatar').src=d.picture;
+            // Avatar + fallback initial. Fallback shows when img fails;
+            // restore opacity in case a previous session had it dimmed.
+            const av = $('userAvatar');
+            const fb = $('userMenuFallback');
+            if (av) {
+                av.style.opacity = '1';
+                if (d.picture) av.src = d.picture;
+                else av.removeAttribute('src');  // forces fallback via onerror
+            }
+            if (fb) {
+                fb.textContent = (d.email && d.email.charAt(0)) || '·';
+            }
+            // Populate user menu dropdown content. Subscription status
+            // line shows different text + accent depending on state.
+            $('userMenuEmail').textContent = d.email || '—';
+            $('userMenuTokens').textContent = d.tokens;
+            updateUserMenuSubState();
             $('tokenBadge').classList.toggle('low',d.tokens<200);
             $('secBuyTokens').style.display='';
             closeLoginModal();
@@ -3701,6 +3860,100 @@ async function submitAuthForm(e){
         errEl.textContent = 'Network error: ' + err.message;
         errEl.style.display = 'block';
         btn.disabled = false; btn.textContent = origText;
+    }
+}
+
+// ── User menu (header dropdown) ───────────────────
+//
+// The avatar in the header opens this dropdown — actions for managing
+// subscription, buying tokens, signing out. Single source of truth for
+// all account-level operations. Replaces the old standalone Sign Out
+// button + the "Manage subscription" link buried inside the buy modal.
+//
+// State is driven entirely from _user.subscription_status (set by
+// /auth/me). Active subscribers see Manage; everyone else sees the
+// Subscribe CTA. The dropdown auto-dismisses on outside click, Escape
+// key, or any of its action items being clicked.
+let _userMenuOutsideHandler = null;
+let _userMenuKeyHandler = null;
+
+function toggleUserMenu(ev){
+    if (ev) ev.stopPropagation();
+    const menu = $('userMenu');
+    const trigger = $('userMenuTrigger');
+    if (!menu || !trigger) return;
+    if (menu.style.display === 'none' || !menu.style.display) {
+        // Refresh content right before showing. The user might have
+        // updated their subscription state in another tab, or just
+        // returned from the Stripe portal — pulling latest from
+        // _user keeps the menu accurate without a server round trip.
+        if (_user) {
+            $('userMenuEmail').textContent = _user.email || '—';
+            $('userMenuTokens').textContent = _user.tokens;
+            updateUserMenuSubState();
+        }
+        menu.style.display = '';
+        trigger.setAttribute('aria-expanded', 'true');
+        // Wire dismiss handlers — capture phase on document so a click
+        // inside the menu (which stops propagation) doesn't trigger
+        // the close. The trigger itself stops propagation in its
+        // onclick so the toggle re-click works.
+        _userMenuOutsideHandler = (e) => {
+            if (!menu.contains(e.target) && !trigger.contains(e.target)) {
+                closeUserMenu();
+            }
+        };
+        _userMenuKeyHandler = (e) => {
+            if (e.key === 'Escape') closeUserMenu();
+        };
+        // Defer to next tick so the click that opened us doesn't
+        // immediately close us via this handler.
+        setTimeout(() => {
+            document.addEventListener('click', _userMenuOutsideHandler);
+            document.addEventListener('keydown', _userMenuKeyHandler);
+        }, 0);
+    } else {
+        closeUserMenu();
+    }
+}
+function closeUserMenu(){
+    const menu = $('userMenu');
+    const trigger = $('userMenuTrigger');
+    if (menu) menu.style.display = 'none';
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    if (_userMenuOutsideHandler) {
+        document.removeEventListener('click', _userMenuOutsideHandler);
+        _userMenuOutsideHandler = null;
+    }
+    if (_userMenuKeyHandler) {
+        document.removeEventListener('keydown', _userMenuKeyHandler);
+        _userMenuKeyHandler = null;
+    }
+}
+// Swap Subscribe/Manage visibility based on _user.subscription_status.
+// 'active' → Manage button shown, Subscribe hidden, status line gold.
+// 'past_due' → Manage shown so they can update card; status line warns.
+// 'canceled' or null → Subscribe CTA shown, Manage hidden.
+function updateUserMenuSubState(){
+    if (!_user) return;
+    const status = _user.subscription_status;
+    const isLive = status === 'active' || status === 'past_due';
+    const subBtn = $('userMenuSubscribe');
+    const mngBtn = $('userMenuManage');
+    const statusLine = $('userMenuSubStatus');
+    if (subBtn) subBtn.style.display = isLive ? 'none' : '';
+    if (mngBtn) mngBtn.style.display = isLive ? '' : 'none';
+    if (statusLine) {
+        if (status === 'active') {
+            statusLine.textContent = '👑 Pro · active';
+            statusLine.classList.add('subscribed');
+        } else if (status === 'past_due') {
+            statusLine.textContent = '⚠ Past due — update card';
+            statusLine.classList.remove('subscribed');
+        } else {
+            statusLine.textContent = 'No subscription';
+            statusLine.classList.remove('subscribed');
+        }
     }
 }
 
