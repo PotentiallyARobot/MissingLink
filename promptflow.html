@@ -901,13 +901,25 @@
     addStaticRow("Recipe", plan.recipe_id || "—");
     addStaticRow("Model", prettyModel(plan.model));
 
-    // Duration — only meaningful for LTX models. OmniHuman duration is
-    // determined by the audio length, not user input.
+    // Duration — LTX endpoints only allow a fixed enum {6, 8, 10}.
+    // OmniHuman duration is determined by the audio length, not by
+    // user input, so we omit the field there entirely.
     if (plan.model !== "omnihuman_lipsync") {
-      const dur = document.createElement("input");
-      dur.type = "number"; dur.min = "4"; dur.max = "20"; dur.step = "1";
-      dur.value = String(plan.duration_seconds || 6);
-      addRow("Duration (s)", "duration_seconds", dur);
+      const dur = document.createElement("select");
+      const current = Number(plan.duration_seconds) || 6;
+      // Snap to nearest legal value if Claude picked something else.
+      const allowed = [6, 8, 10];
+      const snapped = allowed.reduce(
+        (best, n) => Math.abs(n - current) < Math.abs(best - current) ? n : best,
+        allowed[0]
+      );
+      for (const n of allowed) {
+        const o = document.createElement("option");
+        o.value = String(n); o.textContent = `${n}s`;
+        if (n === snapped) o.selected = true;
+        dur.appendChild(o);
+      }
+      addRow("Duration", "duration_seconds", dur);
     }
 
     // Resolution
