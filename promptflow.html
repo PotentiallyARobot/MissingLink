@@ -356,11 +356,16 @@
     margin:0 0 6px 0; font-family:var(--font-mono); font-size:10px; color:var(--gold);
   }
   .attach-chip img{ width:20px; height:20px; border-radius:50%; object-fit:cover }
-  .attach-chip button{
+  .attach-chip .kind-tag{
+    display:inline-block; padding:2px 6px; border-radius:3px;
+    background:var(--gold); color:var(--black);
+    font-size:9px; font-weight:700; letter-spacing:.5px;
+  }
+  .attach-chip button,.attach-chip .detach-btn{
     background:none; border:none; color:var(--gold); cursor:pointer;
     font-size:14px; line-height:1; padding:0 2px;
   }
-  .attach-chip button:hover{ color:var(--red) }
+  .attach-chip button:hover,.attach-chip .detach-btn:hover{ color:var(--red) }
 
   /* Powered-by badge — sits ABOVE the chat input, anchored to the
      bottom-right of the chat column. The "TM" superscript is positioned
@@ -452,6 +457,10 @@
     <button id="newConvoBtn" class="btn convo-new">+ New conversation</button>
   </div>
   <div id="convoList" class="convo-list"></div>
+  <div class="convo-sidebar-head" style="border-top:1px solid var(--border);margin-top:8px">
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:.5px;text-transform:uppercase">Processes</span>
+  </div>
+  <div id="processList" class="convo-list"></div>
 </aside>
 
 <main class="chat-wrap">
@@ -475,11 +484,11 @@
   <div class="input-shell">
     <div id="attachWrap"></div>
     <div class="input-bar">
-      <input type="file" id="fileInput" accept="image/*" hidden>
-      <button class="icon-btn" id="attachBtn" title="Attach image">
+      <input type="file" id="fileInput" accept="image/*,video/*,audio/*" multiple hidden>
+      <button class="icon-btn" id="attachBtn" title="Attach image, video, audio (or none — text-only is fine)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
-      <textarea id="textInput" placeholder="Describe what should happen…" rows="1"></textarea>
+      <textarea id="textInput" placeholder="Describe anything. Attach image / video / audio, or none." rows="1"></textarea>
       <button class="icon-btn send" id="sendBtn" disabled title="Send (⌘⏎)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
       </button>
@@ -522,8 +531,7 @@
 (() => {
   // ── State ──────────────────────────────────────────────
   let ME = null;                  // null when logged out, else user object
-  let attachedFile = null;        // File or null
-  let attachedDataUrl = null;     // for thumbnail
+  let attachedFiles = [];        // [{ file, kind, dataUrl }] — kind ∈ "image" | "video" | "audio"
   let busy = false;               // in-flight generation flag
   let authMode = "signin";        // "signin" | "signup"
   let currentConversationId = null;  // active conversation; null = fresh thread on next /plan
@@ -630,6 +638,8 @@
     currentConversationId = null;
     clearStream();
     paintConversationList();
+    updateComposerHint();
+    updateSend();
     textInput.focus();
   }
 
@@ -640,6 +650,17 @@
       if (el.id !== "empty") el.remove();
     });
     empty.style.display = "";
+  }
+
+  // The composer placeholder gives a hint about whether attaching an
+  // image is required. In a fresh conversation we need an image; in
+  // an existing one a text-only refinement is fine.
+  function updateComposerHint() {
+    if (currentConversationId) {
+      textInput.placeholder = "Refine the previous plan, attach more, or text-only…";
+    } else {
+      textInput.placeholder = `Describe anything. Attach image / video / audio, or none. Try "make me a process for…"`;
+    }
   }
 
   async function loadConversation(cid) {
@@ -663,6 +684,8 @@
     for (const turn of resp.turns) renderHistoricalTurn(turn);
     stream.scrollTop = stream.scrollHeight;
     paintConversationList();
+    updateComposerHint();
+    updateSend();
   }
 
   // Read-only render of one historical turn — user message + assistant
@@ -777,6 +800,7 @@
       closeAuth();
       await refreshMe();
       await refreshConversations();
+      refreshProcesses();
     } catch (e) { errEl.textContent = "Network error."; }
   };
 
@@ -798,34 +822,70 @@
   };
 
   // ── Attachment ────────────────────────────────────────
+  // Multi-file model. Users can attach an image, a video, an audio
+  // clip, or any combination — including additional reference images
+  // for recipes like nano_banana_edit / seedance reference. We classify
+  // each file by MIME type at attach time and route it into the right
+  // FormData slot at send time.
   attachBtn.onclick = () => fileInput.click();
   fileInput.onchange = () => {
-    const f = fileInput.files?.[0];
-    if (!f) return;
-    if (!f.type.startsWith("image/")) { alert("Image files only."); return; }
-    if (f.size > 12 * 1024 * 1024) { alert("Max 12 MB."); return; }
-    attachedFile = f;
-    const reader = new FileReader();
-    reader.onload = () => {
-      attachedDataUrl = reader.result;
-      paintAttach();
-      updateSend();
-    };
-    reader.readAsDataURL(f);
+    const files = Array.from(fileInput.files || []);
+    for (const f of files) {
+      let kind = null;
+      let limit = 12 * 1024 * 1024;
+      if (f.type.startsWith("image/")) { kind = "image"; }
+      else if (f.type.startsWith("video/")) { kind = "video"; limit = 200 * 1024 * 1024; }
+      else if (f.type.startsWith("audio/")) { kind = "audio"; limit = 50 * 1024 * 1024; }
+      else { alert(`Unsupported file type: ${f.type || f.name}`); continue; }
+      if (f.size > limit) {
+        alert(`${f.name}: too large (max ${Math.round(limit / (1024 * 1024))} MB).`);
+        continue;
+      }
+      // Disallow more than one video or one audio — backend only routes
+      // to single video/audio slots. Multiple images are fine (image_2…).
+      if (kind === "video" && attachedFiles.some(a => a.kind === "video")) {
+        alert("Only one video can be attached."); continue;
+      }
+      if (kind === "audio" && attachedFiles.some(a => a.kind === "audio")) {
+        alert("Only one audio file can be attached."); continue;
+      }
+      if (kind === "image" && attachedFiles.filter(a => a.kind === "image").length >= 9) {
+        alert("Up to 9 images per turn."); continue;
+      }
+      const entry = { file: f, kind, dataUrl: null };
+      attachedFiles.push(entry);
+      if (kind === "image") {
+        const reader = new FileReader();
+        reader.onload = () => { entry.dataUrl = reader.result; paintAttach(); };
+        reader.readAsDataURL(f);
+      }
+    }
+    fileInput.value = "";
+    paintAttach();
+    updateSend();
   };
+
   function paintAttach() {
-    if (!attachedFile) { attachWrap.innerHTML = ""; return; }
-    attachWrap.innerHTML = `
-      <span class="attach-chip">
-        <img src="${attachedDataUrl}" alt="">
-        ${escapeHtml(attachedFile.name)}
-        <button id="detachBtn" title="Remove">×</button>
-      </span>`;
-    $("detachBtn").onclick = () => {
-      attachedFile = null; attachedDataUrl = null;
-      fileInput.value = "";
-      paintAttach(); updateSend();
-    };
+    if (attachedFiles.length === 0) { attachWrap.innerHTML = ""; return; }
+    const chips = attachedFiles.map((entry, idx) => {
+      const thumb = entry.kind === "image" && entry.dataUrl
+        ? `<img src="${entry.dataUrl}" alt="">`
+        : `<span class="kind-tag">${entry.kind.toUpperCase()}</span>`;
+      return `
+        <span class="attach-chip" data-idx="${idx}">
+          ${thumb}
+          ${escapeHtml(entry.file.name)}
+          <button class="detach-btn" data-idx="${idx}" title="Remove">×</button>
+        </span>`;
+    }).join("");
+    attachWrap.innerHTML = chips;
+    attachWrap.querySelectorAll(".detach-btn").forEach(btn => {
+      btn.onclick = () => {
+        const i = parseInt(btn.dataset.idx, 10);
+        attachedFiles.splice(i, 1);
+        paintAttach(); updateSend();
+      };
+    });
   }
 
   // ── Composer ──────────────────────────────────────────
@@ -838,7 +898,11 @@
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
   });
   function updateSend() {
-    sendBtn.disabled = busy || !attachedFile || !textInput.value.trim();
+    // Text is the only hard requirement. Files are optional — text-only,
+    // text+image, text+video, text+audio, and any combination are all
+    // valid since the backend now accepts multi-modal inputs.
+    const hasText = !!textInput.value.trim();
+    sendBtn.disabled = busy || !hasText;
   }
   document.querySelectorAll(".empty .hint").forEach(el => {
     el.onclick = () => {
@@ -852,29 +916,42 @@
   async function send() {
     if (busy) return;
     if (!ME) { openAuth("signup"); return; }
-    if (!attachedFile || !textInput.value.trim()) return;
-
     const userText = textInput.value.trim();
-    const userImg = attachedDataUrl;
-    const userImgName = attachedFile.name;
+    if (!userText) return;
 
-    // Append user turn.
+    // Classify attachments. Each goes into a specific FormData slot:
+    //   image / video / audio (one each)  +  image_2…image_9 (extra images)
+    // Text-only is allowed; the backend plans accordingly.
+    const filesToSend = attachedFiles.slice();
+    const primaryImage = filesToSend.find(a => a.kind === "image") || null;
+    const primaryVideo = filesToSend.find(a => a.kind === "video") || null;
+    const primaryAudio = filesToSend.find(a => a.kind === "audio") || null;
+    const extraImages  = filesToSend.filter(a => a.kind === "image" && a !== primaryImage);
+
+    const isRefinement = !primaryImage && !primaryVideo && !primaryAudio && !!currentConversationId;
+    const userImg = primaryImage?.dataUrl || null;
+    const userImgName = primaryImage?.file?.name || null;
+
+    // Append user turn — refinements / text-only don't include a thumbnail.
     addUserMsg(userText, userImg, userImgName);
-    // Add an assistant placeholder we'll mutate as work progresses.
     const assist = addAssistMsg();
-    setStatus(assist, "Planning…");
+    setStatus(assist, isRefinement ? "Refining plan…" : "Planning…");
 
     // Capture and reset composer.
-    const fileToSend = attachedFile;
     busy = true;
-    attachedFile = null; attachedDataUrl = null; fileInput.value = "";
+    attachedFiles = []; fileInput.value = "";
     textInput.value = ""; textInput.style.height = "auto";
     paintAttach(); updateSend();
 
     // ── Phase 1: /plan (no charge) ─────────────────────────────
     const fd = new FormData();
-    fd.append("image", fileToSend);
     fd.append("text", userText);
+    if (primaryImage) fd.append("image", primaryImage.file);
+    if (primaryVideo) fd.append("video", primaryVideo.file);
+    if (primaryAudio) fd.append("audio", primaryAudio.file);
+    extraImages.forEach((entry, i) => {
+      fd.append(`image_${i + 2}`, entry.file);     // image_2, image_3, ...
+    });
     if (currentConversationId) fd.append("conversation_id", currentConversationId);
 
     let planResp;
@@ -903,6 +980,28 @@
     if (planResp.conversation_id) {
       currentConversationId = planResp.conversation_id;
       refreshConversations();
+      updateComposerHint();
+    }
+
+    // ── INTENT: design_process ─────────────────────────────────
+    // The user asked Claude to DESIGN a new process (e.g. "make me a
+    // process for storyboards"). The server already saved it. Render a
+    // process card; no execute / confirm step.
+    if (planResp.intent === "design_process" && planResp.process) {
+      clearStatus(assist);
+      if (planResp.rationale) {
+        const r = document.createElement("div");
+        r.className = "text"; r.textContent = planResp.rationale;
+        assist.body.appendChild(r);
+      }
+      renderProcessCard(assist, planResp.process, /*saved=*/true);
+      const note = document.createElement("div");
+      note.className = "status";
+      note.textContent = planResp.message || `Saved process "${planResp.process.name}".`;
+      assist.body.appendChild(note);
+      refreshProcesses();
+      busy = false; updateSend();
+      return;
     }
 
     // Show the plan + cost + Confirm/Cancel.
@@ -915,6 +1014,12 @@
     const planAPI = renderEditablePlan(assist, planResp.plan, planResp.cost);
     renderWorkflow(assist, planResp.plan);
     const costAPI = renderCost(assist, planResp.cost);
+
+    // Multi-step indicator. The plan has a `steps` array — show step
+    // count + a brief sketch so the user knows what they're confirming.
+    if (planResp.multi_step && Array.isArray(planResp.plan?.steps)) {
+      renderStepsPreview(assist, planResp.plan.steps);
+    }
 
     let currentCost = planResp.cost;
 
@@ -1047,6 +1152,12 @@
               charged.className = "status";
               charged.textContent = `Charged ${s.cost.tokens_charged.toLocaleString()} tokens · $${s.cost.bill_usd.toFixed(4)}`;
               assist.body.appendChild(charged);
+
+              // Save-as-process affordance. Show whenever the plan had
+              // structure worth saving — multi-step OR a single recipe
+              // with a non-default duration / prompt the user might
+              // want to reuse. Cheap to offer; no harm if not used.
+              renderSaveAsProcess(assist, planResp.plan_id);
 
               if (typeof s.tokens_remaining === "number" && ME) {
                 ME.tokens = s.tokens_remaining;
@@ -1347,6 +1458,122 @@
       "omnihuman_lipsync":       "OmniHuman v1.5 (lip-sync)",
     })[m] || m;
   }
+  // ── Process / multi-step UI helpers ──────────────────────
+  // Render a saved-process card. Used both for the design_process
+  // intent (server already saved) and for the sidebar list.
+  function renderProcessCard(assist, proc, saved) {
+    const card = document.createElement("div");
+    card.className = "plan-card";
+    const inputs = (proc.input_kinds || []).join(", ") || "text";
+    const stepCount = Array.isArray(proc.steps) ? proc.steps.length : 0;
+    card.innerHTML = `
+      <div class="plan-row">
+        <div class="plan-label">Process</div>
+        <div class="plan-val">${escapeHtml(proc.name)}${saved ? ' <span style="color:var(--green)">✓ saved</span>' : ""}</div>
+      </div>
+      <div class="plan-row">
+        <div class="plan-label">Description</div>
+        <div class="plan-val">${escapeHtml(proc.description || "(none)")}</div>
+      </div>
+      <div class="plan-row">
+        <div class="plan-label">Inputs</div>
+        <div class="plan-val">${escapeHtml(inputs)}</div>
+      </div>
+      <div class="plan-row">
+        <div class="plan-label">Output</div>
+        <div class="plan-val">${escapeHtml(proc.output_kind || "video")}</div>
+      </div>
+      <div class="plan-row">
+        <div class="plan-label">Steps</div>
+        <div class="plan-val">${stepCount} step${stepCount === 1 ? "" : "s"}</div>
+      </div>`;
+    assist.body.appendChild(card);
+  }
+
+  // Render a compact preview of multi-step plan steps so the user
+  // can see what they're about to confirm.
+  function renderStepsPreview(assist, steps) {
+    const wrap = document.createElement("div");
+    wrap.className = "plan-card";
+    const rows = steps.map((s, i) => {
+      let summary = "";
+      if (s.type === "claude") {
+        const up = (s.user_prompt || "").slice(0, 90);
+        summary = `Claude · ${escapeHtml(up)}${up.length === 90 ? "…" : ""}`;
+      } else if (s.type === "recipe") {
+        summary = `Recipe · ${escapeHtml(s.recipe_id || s.model || "?")}`;
+      } else if (s.type === "loop") {
+        summary = `Loop · over ${escapeHtml(s.iterate_over || "?")}`;
+      } else {
+        summary = escapeHtml(s.type);
+      }
+      return `<div class="plan-row">
+        <div class="plan-label">Step ${i + 1}</div>
+        <div class="plan-val">${summary}</div>
+      </div>`;
+    }).join("");
+    wrap.innerHTML = `
+      <div class="plan-row" style="border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:6px">
+        <div class="plan-label">Multi-step plan</div>
+        <div class="plan-val">${steps.length} step${steps.length === 1 ? "" : "s"}</div>
+      </div>
+      ${rows}`;
+    assist.body.appendChild(wrap);
+  }
+
+  // Save-as-process affordance shown after a successful run.
+  function renderSaveAsProcess(assist, planId) {
+    const wrap = document.createElement("div");
+    wrap.className = "confirm-actions";
+    wrap.innerHTML = `<button class="btn save-as-process">Save as process</button>`;
+    assist.body.appendChild(wrap);
+    wrap.querySelector(".save-as-process").onclick = async () => {
+      const name = (prompt("Name this process:") || "").trim();
+      if (!name) return;
+      const description = (prompt("Short description (optional):") || "").trim();
+      try {
+        const r = await fetch("/api/promptflow/process/save", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ plan_id: planId, name, description }),
+        });
+        const j = await r.json();
+        if (!j.ok) { alert(j.message || j.error || "Save failed."); return; }
+        wrap.innerHTML = `<span class="status" style="color:var(--green)">✓ Saved as "${escapeHtml(j.process.name)}"</span>`;
+        refreshProcesses();
+      } catch (e) {
+        alert("Network error: " + (e?.message || e));
+      }
+    };
+  }
+
+  // Pull the list of available processes (system + user's own) and
+  // populate the sidebar section. Wired only when the section exists.
+  async function refreshProcesses() {
+    const list = $("processList");
+    if (!list) return;
+    try {
+      const r = await fetch("/api/promptflow/processes");
+      const j = await r.json();
+      if (!j.ok) { list.innerHTML = ""; return; }
+      const items = (j.processes || []).map(p => {
+        const tag = p.is_system ? "system" : "yours";
+        return `<div class="convo-item" data-pid="${escapeHtml(p.id)}" data-pname="${escapeHtml(p.name)}">
+          <div class="convo-title">${escapeHtml(p.name)}</div>
+          <div class="convo-time">${tag} · ${escapeHtml((p.input_kinds || []).join("+") || "text")} → ${escapeHtml(p.output_kind || "video")}</div>
+        </div>`;
+      }).join("");
+      list.innerHTML = items || `<div class="convo-empty">No processes yet. Try "make me a process for…"</div>`;
+      list.querySelectorAll(".convo-item").forEach(el => {
+        el.onclick = () => {
+          textInput.value = `Use the "${el.dataset.pname}" process: `;
+          textInput.dispatchEvent(new Event("input"));
+          textInput.focus();
+        };
+      });
+    } catch { /* sidebar best-effort */ }
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   }
@@ -1354,20 +1581,21 @@
   // ── Boot ──────────────────────────────────────────────
   if (newConvoBtn) newConvoBtn.onclick = startNewConversation;
   refreshMe().then(() => {
-    if (ME) refreshConversations();
-    // Surface signup CTA for fresh visitors.
-    if (!ME) {
-      // Don't auto-open the modal; the empty-state copy invites them to try first.
-    }
+    if (ME) { refreshConversations(); refreshProcesses(); }
   });
 
-  // Drag-drop image onto the page.
+  // Drag-drop any media file onto the page.
   document.addEventListener("dragover", e => { e.preventDefault(); });
   document.addEventListener("drop", e => {
     e.preventDefault();
-    const f = [...e.dataTransfer.files].find(f => f.type.startsWith("image/"));
-    if (!f) return;
-    fileInput.files = e.dataTransfer.files;
+    const dropped = [...e.dataTransfer.files].filter(f =>
+      f.type.startsWith("image/") || f.type.startsWith("video/") || f.type.startsWith("audio/")
+    );
+    if (dropped.length === 0) return;
+    // Hand them to the same change handler the click flow uses.
+    const dt = new DataTransfer();
+    dropped.forEach(f => dt.items.add(f));
+    fileInput.files = dt.files;
     fileInput.dispatchEvent(new Event("change"));
   });
 })();
