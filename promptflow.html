@@ -119,9 +119,38 @@
   .convo-row .convo-meta{
     display:block; font-size:10px; color:var(--text-muted); margin-top:2px;
   }
+  .convo-row .convo-spinner{ display:none }
+  .convo-row.loading{
+    pointer-events:none; opacity:.85; position:relative;
+    background:var(--surface-2); border-color:var(--gold);
+  }
+  .convo-row.loading .convo-spinner{
+    display:block; position:absolute; right:10px; top:50%;
+    transform:translateY(-50%);
+    width:10px; height:10px; border:1.5px solid var(--gold); border-top-color:transparent;
+    border-radius:50%; animation:spin .8s linear infinite;
+  }
   .convo-empty{
     padding:20px 12px; text-align:center;
     color:var(--text-muted); font-size:11px; font-family:var(--font-mono);
+  }
+  .convo-loading{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:14px 12px; color:var(--text-muted); font-size:11px;
+    font-family:var(--font-mono);
+  }
+  .convo-sentinel{ height:1px }      /* invisible IntersectionObserver target */
+
+  /* Centered overlay shown over the main stream while a conversation
+     is being fetched. Lives inside #stream so it clears with the
+     conversation switch. */
+  .stream-loading{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:10px; padding:60px 20px; color:var(--text-muted);
+    font-family:var(--font-mono); font-size:11px;
+  }
+  .stream-loading .spinner{
+    width:18px; height:18px; border-width:2px;
   }
 
   @media (max-width: 720px){
@@ -579,31 +608,72 @@
   }
 
   // ── Conversation history (sidebar) ─────────────────────
+  // Conversation history is paginated. We fetch in pages of 15 and
+  // append more when the user scrolls near the bottom of the sidebar.
+  // `cursor` is the updated_at of the last loaded row; null means
+  // "start from the top".
+  const CONVO_PAGE_SIZE = 15;
+  let convoCursor = null;          // updated_at of last loaded row, for cursor pagination
+  let convoHasMore = false;
+  let convoLoading = false;        // guards against parallel fetches
+
   // Loads the user's conversations and renders the sidebar list. Safe
-  // to call any time — re-render replaces the existing rows.
+  // to call any time — fully resets the list and fetches page 1.
   async function refreshConversations() {
-    if (!ME) { convoList.innerHTML = ""; return; }
+    if (!ME) { convoList.innerHTML = ""; conversationsCache = []; return; }
+    convoCursor = null;
+    convoHasMore = false;
+    conversationsCache = [];
+    paintConversationList();   // shows top-level spinner immediately
+    await loadMoreConversations();
+  }
+
+  // Fetches one page from the cursor and appends. The DOM is
+  // re-painted incrementally so the user sees rows as they arrive.
+  async function loadMoreConversations() {
+    if (!ME || convoLoading) return;
+    convoLoading = true;
+    paintConversationList();   // re-paint to show the bottom spinner
     try {
-      const r = await fetch("/api/promptflow/conversations");
+      const params = new URLSearchParams({ limit: String(CONVO_PAGE_SIZE) });
+      if (convoCursor != null) params.set("before", String(convoCursor));
+      const r = await fetch(`/api/promptflow/conversations?${params}`);
       const j = await r.json();
-      conversationsCache = j.ok ? (j.conversations || []) : [];
-    } catch { conversationsCache = []; }
-    paintConversationList();
+      if (j.ok) {
+        const page = j.conversations || [];
+        // Dedup against what we already have (in case of clock skew or
+        // a recent /plan that bumped a conversation's updated_at while
+        // we were paginating).
+        const seen = new Set(conversationsCache.map(c => c.id));
+        for (const c of page) if (!seen.has(c.id)) conversationsCache.push(c);
+        convoHasMore = !!j.has_more;
+        convoCursor = j.next_before ?? convoCursor;
+      }
+    } catch { /* network — leave list as-is, user can retry by scrolling */ }
+    finally {
+      convoLoading = false;
+      paintConversationList();
+    }
   }
 
   function paintConversationList() {
     convoList.innerHTML = "";
-    if (conversationsCache.length === 0) {
+
+    // Empty state — only when first page returned 0 rows AND we're
+    // not currently loading.
+    if (conversationsCache.length === 0 && !convoLoading) {
       const empty = document.createElement("div");
       empty.className = "convo-empty";
       empty.textContent = "No conversations yet. Start one below.";
       convoList.appendChild(empty);
       return;
     }
+
     for (const c of conversationsCache) {
       const btn = document.createElement("button");
       btn.className = "convo-row";
       if (c.id === currentConversationId) btn.classList.add("active");
+      if (c.id === loadingConvoId) btn.classList.add("loading");
       btn.dataset.cid = c.id;
       const title = (c.title || "Untitled").slice(0, 80);
       const ago = formatRelativeTime(c.updated_at);
@@ -611,6 +681,7 @@
       btn.innerHTML = `
         <span class="convo-title"></span>
         <span class="convo-meta"></span>
+        <span class="convo-spinner"></span>
       `;
       btn.querySelector(".convo-title").textContent = title;
       btn.querySelector(".convo-meta").textContent =
@@ -618,6 +689,40 @@
       btn.onclick = () => loadConversation(c.id);
       convoList.appendChild(btn);
     }
+
+    // Bottom indicator: spinner while a page is in flight, or a
+    // sentinel div the IntersectionObserver watches to load the next
+    // page when scrolled into view.
+    if (convoLoading) {
+      const sp = document.createElement("div");
+      sp.className = "convo-loading";
+      sp.innerHTML = `<div class="spinner"></div><span>Loading…</span>`;
+      convoList.appendChild(sp);
+    } else if (convoHasMore) {
+      const sentinel = document.createElement("div");
+      sentinel.className = "convo-sentinel";
+      sentinel.id = "convoSentinel";
+      convoList.appendChild(sentinel);
+      observeConvoSentinel(sentinel);
+    }
+  }
+
+  // IntersectionObserver — when the sentinel scrolls into view (user
+  // is near the bottom), trigger the next page load.
+  let convoObserver = null;
+  function observeConvoSentinel(sentinel) {
+    if (!("IntersectionObserver" in window)) {
+      // Fallback: just load now. Crude but no UX regression on old browsers.
+      loadMoreConversations();
+      return;
+    }
+    if (convoObserver) convoObserver.disconnect();
+    convoObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { loadMoreConversations(); break; }
+      }
+    }, { root: convoList, rootMargin: "100px" });
+    convoObserver.observe(sentinel);
   }
 
   function formatRelativeTime(unixSeconds) {
@@ -663,8 +768,19 @@
     }
   }
 
+  let loadingConvoId = null;       // id of the conversation currently being fetched
+
   async function loadConversation(cid) {
     if (busy) return;
+    if (loadingConvoId === cid) return;     // already loading this one — ignore double-clicks
+
+    // Mark the row as loading so paintConversationList can show its
+    // inline spinner. Also surface a centered loading state in the
+    // main stream so the user doesn't think nothing is happening.
+    loadingConvoId = cid;
+    paintConversationList();
+    showStreamLoadingOverlay("Loading conversation…");
+
     let resp;
     try {
       const r = await fetch("/api/promptflow/conversation/get", {
@@ -674,10 +790,16 @@
       });
       resp = await r.json();
     } catch (e) {
+      loadingConvoId = null;
+      hideStreamLoadingOverlay();
+      paintConversationList();
       alert("Could not load conversation: " + (e?.message || e));
       return;
     }
-    if (!resp?.ok) return;
+    loadingConvoId = null;
+    hideStreamLoadingOverlay();
+    if (!resp?.ok) { paintConversationList(); return; }
+
     currentConversationId = cid;
     clearStream();
     empty.style.display = "none";
@@ -686,6 +808,25 @@
     paintConversationList();
     updateComposerHint();
     updateSend();
+  }
+
+  // Stream-level loading overlay — a centered spinner + label that
+  // sits over the whole stream while a conversation is being fetched.
+  // Removed by hideStreamLoadingOverlay() once content arrives.
+  function showStreamLoadingOverlay(label) {
+    let el = document.getElementById("streamLoadingOverlay");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "streamLoadingOverlay";
+      el.className = "stream-loading";
+      el.innerHTML = `<div class="spinner"></div><div class="stream-loading-label"></div>`;
+      stream.appendChild(el);
+    }
+    el.querySelector(".stream-loading-label").textContent = label || "Loading…";
+  }
+  function hideStreamLoadingOverlay() {
+    const el = document.getElementById("streamLoadingOverlay");
+    if (el) el.remove();
   }
 
   // Read-only render of one historical turn — user message + assistant
