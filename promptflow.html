@@ -983,21 +983,26 @@
       updateComposerHint();
     }
 
-    // ── INTENT: design_process ─────────────────────────────────
-    // The user asked Claude to DESIGN a new process (e.g. "make me a
-    // process for storyboards"). The server already saved it. Render a
-    // process card; no execute / confirm step.
-    if (planResp.intent === "design_process" && planResp.process) {
+    // ── INTENT: design_process / update_process ────────────────
+    // The user asked Claude to DESIGN a new process or MODIFY an
+    // existing one. The server already persisted it. Render a process
+    // card; no execute / confirm step.
+    if ((planResp.intent === "design_process" || planResp.intent === "update_process")
+        && planResp.process) {
       clearStatus(assist);
       if (planResp.rationale) {
         const r = document.createElement("div");
         r.className = "text"; r.textContent = planResp.rationale;
         assist.body.appendChild(r);
       }
-      renderProcessCard(assist, planResp.process, /*saved=*/true);
+      const mode = planResp.intent === "update_process" ? "updated" : "saved";
+      renderProcessCard(assist, planResp.process, mode);
       const note = document.createElement("div");
       note.className = "status";
-      note.textContent = planResp.message || `Saved process "${planResp.process.name}".`;
+      note.textContent = planResp.message
+        || (mode === "updated"
+          ? `Updated process "${planResp.process.name}".`
+          : `Saved process "${planResp.process.name}".`);
       assist.body.appendChild(note);
       refreshProcesses();
       busy = false; updateSend();
@@ -1459,17 +1464,24 @@
     })[m] || m;
   }
   // ── Process / multi-step UI helpers ──────────────────────
-  // Render a saved-process card. Used both for the design_process
-  // intent (server already saved) and for the sidebar list.
-  function renderProcessCard(assist, proc, saved) {
+  // Render a saved-process card. Used both for the design_process /
+  // update_process intents (server already saved/updated) and for the
+  // sidebar list. Includes a collapsible Python view when present.
+  function renderProcessCard(assist, proc, mode) {
+    // mode: "saved" | "updated" | "loaded"
     const card = document.createElement("div");
     card.className = "plan-card";
     const inputs = (proc.input_kinds || []).join(", ") || "text";
     const stepCount = Array.isArray(proc.steps) ? proc.steps.length : 0;
+    const tag = mode === "updated"
+      ? '<span style="color:var(--gold)">↻ updated</span>'
+      : mode === "saved"
+      ? '<span style="color:var(--green)">✓ saved</span>'
+      : "";
     card.innerHTML = `
       <div class="plan-row">
         <div class="plan-label">Process</div>
-        <div class="plan-val">${escapeHtml(proc.name)}${saved ? ' <span style="color:var(--green)">✓ saved</span>' : ""}</div>
+        <div class="plan-val">${escapeHtml(proc.name)} ${tag}</div>
       </div>
       <div class="plan-row">
         <div class="plan-label">Description</div>
@@ -1488,6 +1500,23 @@
         <div class="plan-val">${stepCount} step${stepCount === 1 ? "" : "s"}</div>
       </div>`;
     assist.body.appendChild(card);
+
+    if (proc.python_text) {
+      const wrap = document.createElement("details");
+      wrap.className = "process-python";
+      wrap.style.cssText =
+        "margin-top:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);font-family:var(--font-mono);font-size:11px";
+      const summary = document.createElement("summary");
+      summary.style.cssText = "padding:6px 10px;color:var(--text-muted);cursor:pointer;user-select:none";
+      summary.textContent = `▸ View Python (${proc.python_text.split("\n").length} lines) — modify with "update the ${proc.name} process to …"`;
+      const pre = document.createElement("pre");
+      pre.style.cssText =
+        "margin:0;padding:10px 12px;border-top:1px solid var(--border);overflow:auto;max-height:380px;color:var(--text);white-space:pre";
+      pre.textContent = proc.python_text;
+      wrap.appendChild(summary);
+      wrap.appendChild(pre);
+      assist.body.appendChild(wrap);
+    }
   }
 
   // Render a compact preview of multi-step plan steps so the user
@@ -1558,20 +1587,54 @@
       if (!j.ok) { list.innerHTML = ""; return; }
       const items = (j.processes || []).map(p => {
         const tag = p.is_system ? "system" : "yours";
+        const py = p.has_python ? " · py" : "";
         return `<div class="convo-item" data-pid="${escapeHtml(p.id)}" data-pname="${escapeHtml(p.name)}">
           <div class="convo-title">${escapeHtml(p.name)}</div>
-          <div class="convo-time">${tag} · ${escapeHtml((p.input_kinds || []).join("+") || "text")} → ${escapeHtml(p.output_kind || "video")}</div>
+          <div class="convo-time">${tag} · ${escapeHtml((p.input_kinds || []).join("+") || "text")} → ${escapeHtml(p.output_kind || "video")}${py}</div>
         </div>`;
       }).join("");
       list.innerHTML = items || `<div class="convo-empty">No processes yet. Try "make me a process for…"</div>`;
       list.querySelectorAll(".convo-item").forEach(el => {
-        el.onclick = () => {
-          textInput.value = `Use the "${el.dataset.pname}" process: `;
-          textInput.dispatchEvent(new Event("input"));
-          textInput.focus();
-        };
+        el.onclick = () => openProcessInStream(el.dataset.pid, el.dataset.pname);
       });
     } catch { /* sidebar best-effort */ }
+  }
+
+  // Fetch a single process (with full step graph + python) and drop a
+  // read-only card into the stream. Includes a "modify" hint so the
+  // user knows how to ask Claude for changes.
+  async function openProcessInStream(pid, pname) {
+    if (busy) return;
+    try {
+      const r = await fetch("/api/promptflow/process/get", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: pid }),
+      });
+      const j = await r.json();
+      if (!j.ok || !j.process) {
+        textInput.value = `Use the "${pname}" process: `;
+        textInput.dispatchEvent(new Event("input"));
+        textInput.focus();
+        return;
+      }
+      const assist = addAssistMsg();
+      renderProcessCard(assist, j.process, "loaded");
+      const hint = document.createElement("div");
+      hint.className = "status";
+      hint.textContent = j.process.mine
+        ? `Use it: "Use the ${j.process.name} process: …" · Modify it: "Update the ${j.process.name} process to …"`
+        : `Use it: "Use the ${j.process.name} process: …" (system process — read-only)`;
+      assist.body.appendChild(hint);
+      textInput.value = `Use the "${j.process.name}" process: `;
+      textInput.dispatchEvent(new Event("input"));
+      textInput.focus();
+    } catch (e) {
+      // Fall back to the old prefill behavior on error.
+      textInput.value = `Use the "${pname}" process: `;
+      textInput.dispatchEvent(new Event("input"));
+      textInput.focus();
+    }
   }
 
   function escapeHtml(s) {
