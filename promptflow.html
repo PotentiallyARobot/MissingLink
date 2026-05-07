@@ -737,10 +737,8 @@
     }
     if (turn.cost) renderCost(assist, turn.cost);
 
-    if (turn.status === "complete" && turn.video_url) {
-      const v = document.createElement("video");
-      v.src = turn.video_url; v.controls = true; v.preload = "metadata";
-      assist.body.appendChild(v);
+    if (turn.status === "complete") {
+      renderOutputs(assist, turn.outputs, turn.output_kind, turn.video_url);
     } else if (turn.status === "failed") {
       const e = document.createElement("div");
       e.className = "text err";
@@ -1149,9 +1147,7 @@
             lastStatus = s.status;
             if (s.status === "complete") {
               clearStatus(assist);
-              const v = document.createElement("video");
-              v.src = s.video_url; v.controls = true; v.autoplay = true; v.loop = true; v.muted = false;
-              assist.body.appendChild(v);
+              renderOutputs(assist, s.outputs, s.output_kind, s.video_url);
 
               const charged = document.createElement("div");
               charged.className = "status";
@@ -1463,6 +1459,320 @@
       "omnihuman_lipsync":       "OmniHuman v1.5 (lip-sync)",
     })[m] || m;
   }
+  // ── Output renderers ─────────────────────────────────────
+  // Dispatcher. Picks a renderer based on output_kind from the server,
+  // falling back to a single-video render for older responses that only
+  // had video_url. All renderers append into assist.body.
+  function renderOutputs(assist, outputs, outputKind, fallbackVideoUrl) {
+    if (!Array.isArray(outputs) || outputs.length === 0) {
+      if (fallbackVideoUrl) {
+        renderSingleVideo(assist, { url: fallbackVideoUrl, kind: "video", step_id: "main" });
+      }
+      return;
+    }
+    switch (outputKind) {
+      case "video":              return renderSingleVideo(assist, outputs[0]);
+      case "image":              return renderSingleImage(assist, outputs[0]);
+      case "audio":              return renderSingleAudio(assist, outputs[0]);
+      case "3d":                 return renderSingle3D(assist, outputs[0]);
+      case "text":               return renderSingleText(assist, outputs[0]);
+      case "storyboard":         return renderStoryboard(assist, outputs);
+      case "image_set":          return renderImageGallery(assist, outputs);
+      case "video_set":          return renderVideoSet(assist, outputs);
+      case "audio_set":          return renderAudioSet(assist, outputs);
+      case "3d_set":             return render3DSet(assist, outputs);
+      case "3d_with_preview":    return render3DWithPreview(assist, outputs);
+      case "mixed":              return renderMixed(assist, outputs);
+      default:                   return renderMixed(assist, outputs);
+    }
+  }
+
+  // Lazy-load model-viewer (Google's web component for glb/gltf). About
+  // 200KB, only fetched when 3D output actually appears.
+  function ensureModelViewerLoaded() {
+    if (window.__modelViewerInjected) return;
+    const s = document.createElement("script");
+    s.type = "module";
+    s.src = "https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js";
+    document.head.appendChild(s);
+    window.__modelViewerInjected = true;
+  }
+
+  function downloadButton(url, filename, label) {
+    const a = document.createElement("a");
+    a.className = "btn";
+    a.href = url;
+    a.download = filename || "";
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = label || "Download";
+    a.style.cssText = "text-decoration:none;display:inline-block";
+    return a;
+  }
+  function actionsRow(...nodes) {
+    const row = document.createElement("div");
+    row.className = "confirm-actions";
+    row.style.marginTop = "8px";
+    nodes.forEach(n => row.appendChild(n));
+    return row;
+  }
+  function escAttr(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+  function filenameFromUrl(url, fallbackExt) {
+    try {
+      const u = new URL(url);
+      const last = u.pathname.split("/").pop() || "";
+      if (last) return last;
+    } catch {}
+    return `output.${fallbackExt || "bin"}`;
+  }
+
+  // ── Single-output renderers ──────────────────────────────
+  function renderSingleVideo(assist, o) {
+    const v = document.createElement("video");
+    v.src = o.url; v.controls = true; v.autoplay = true; v.loop = true; v.muted = false;
+    v.style.cssText = "width:100%;border-radius:6px;background:#000";
+    assist.body.appendChild(v);
+    assist.body.appendChild(actionsRow(downloadButton(o.url, filenameFromUrl(o.url, "mp4"), "Download .mp4")));
+  }
+  function renderSingleImage(assist, o) {
+    const img = document.createElement("img");
+    img.src = o.url;
+    img.style.cssText = "max-width:100%;border-radius:6px;display:block";
+    img.loading = "lazy";
+    assist.body.appendChild(img);
+    assist.body.appendChild(actionsRow(downloadButton(o.url, filenameFromUrl(o.url, "png"), "Download image")));
+  }
+  function renderSingleAudio(assist, o) {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "padding:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)";
+    const label = document.createElement("div");
+    label.style.cssText = "font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:8px";
+    label.textContent = "Audio output";
+    const a = document.createElement("audio");
+    a.src = o.url; a.controls = true; a.style.cssText = "width:100%";
+    wrap.appendChild(label); wrap.appendChild(a);
+    assist.body.appendChild(wrap);
+    assist.body.appendChild(actionsRow(downloadButton(o.url, filenameFromUrl(o.url, "wav"), "Download audio")));
+  }
+  function renderSingleText(assist, o) {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "padding:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center";
+    wrap.innerHTML = `Text output is ready. <a href="${escAttr(o.url)}" target="_blank" rel="noopener" style="color:var(--gold)">Open in new tab</a>`;
+    assist.body.appendChild(wrap);
+  }
+  function renderSingle3D(assist, o) {
+    ensureModelViewerLoaded();
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `
+      <model-viewer
+        src="${escAttr(o.url)}"
+        camera-controls
+        auto-rotate
+        auto-rotate-delay="500"
+        rotation-per-second="20deg"
+        shadow-intensity="1"
+        exposure="1.0"
+        environment-image="neutral"
+        style="width:100%;height:440px;border-radius:6px;background:radial-gradient(circle at 50% 30%, #2a2a2e 0%, #0a0a0a 100%);display:block">
+      </model-viewer>
+      <div class="status" style="margin-top:4px;font-size:10px">Drag to rotate · scroll to zoom · auto-rotates after 0.5s idle</div>`;
+    assist.body.appendChild(wrap);
+    assist.body.appendChild(actionsRow(downloadButton(o.url, filenameFromUrl(o.url, "glb"), "Download .glb")));
+  }
+
+  // ── Multi-output renderers ──────────────────────────────
+  // Storyboard: pair images and videos by iteration. Loop body steps
+  // emitted by expandLoop have ids like "image_0" / "video_0", so the
+  // trailing _<n> tells us the iteration.
+  function renderStoryboard(assist, outputs) {
+    const byIter = {};
+    let maxIter = 0;
+    for (const o of outputs) {
+      const m = String(o.step_id || "").match(/_(\d+)$/);
+      const iter = m ? parseInt(m[1], 10) : 0;
+      maxIter = Math.max(maxIter, iter);
+      if (!byIter[iter]) byIter[iter] = {};
+      byIter[iter][o.kind] = o.url;
+    }
+    const iters = Object.keys(byIter).map(Number).sort((a, b) => a - b);
+
+    const wrap = document.createElement("div");
+    wrap.className = "storyboard-out";
+    wrap.style.cssText = "border:1px solid var(--border);border-radius:6px;overflow:hidden";
+
+    const head = document.createElement("div");
+    head.style.cssText = "padding:8px 12px;background:var(--surface-2);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border)";
+    head.textContent = `Storyboard · ${iters.length} scene${iters.length === 1 ? "" : "s"}`;
+    wrap.appendChild(head);
+
+    const grid = document.createElement("div");
+    grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;padding:10px;background:var(--black)";
+    for (const i of iters) {
+      const scene = byIter[i];
+      const card = document.createElement("div");
+      card.style.cssText = "border:1px solid var(--border);border-radius:4px;overflow:hidden;background:var(--surface-2)";
+      const num = document.createElement("div");
+      num.style.cssText = "padding:5px 8px;font-family:var(--font-mono);font-size:10px;color:var(--gold);border-bottom:1px solid var(--border)";
+      num.textContent = `Scene ${i + 1}`;
+      card.appendChild(num);
+      if (scene.image) {
+        const img = document.createElement("img");
+        img.src = scene.image; img.loading = "lazy";
+        img.style.cssText = "width:100%;display:block;background:#000";
+        card.appendChild(img);
+      }
+      if (scene.video) {
+        const v = document.createElement("video");
+        v.src = scene.video; v.controls = true; v.loop = true; v.muted = true; v.preload = "metadata";
+        v.style.cssText = "width:100%;display:block;background:#000";
+        card.appendChild(v);
+      }
+      grid.appendChild(card);
+    }
+    wrap.appendChild(grid);
+    assist.body.appendChild(wrap);
+
+    // Actions: standalone HTML download + open-all-images.
+    const htmlBtn = document.createElement("button");
+    htmlBtn.className = "btn";
+    htmlBtn.textContent = "Download HTML";
+    htmlBtn.onclick = () => downloadStoryboardHtml(byIter, iters);
+
+    const imgsBtn = document.createElement("button");
+    imgsBtn.className = "btn";
+    imgsBtn.textContent = "Open all images";
+    imgsBtn.onclick = () => {
+      iters.forEach(i => byIter[i].image && window.open(byIter[i].image, "_blank", "noopener"));
+    };
+    assist.body.appendChild(actionsRow(htmlBtn, imgsBtn));
+  }
+
+  function downloadStoryboardHtml(byIter, iters) {
+    const cards = iters.map(i => {
+      const s = byIter[i];
+      return `
+    <section class="scene">
+      <h2>Scene ${i + 1}</h2>
+      ${s.image ? `<img src="${escAttr(s.image)}" alt="Scene ${i + 1} still">` : ""}
+      ${s.video ? `<video src="${escAttr(s.video)}" controls loop preload="metadata"></video>` : ""}
+    </section>`;
+    }).join("");
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Storyboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; background: #0a0a0a; color: #e4e4e7; line-height: 1.5; }
+  h1 { color: #e8a917; font-family: 'Space Mono', monospace; letter-spacing: -0.02em; }
+  .scene { margin: 32px 0; padding: 20px; background: #18181b; border-radius: 8px; border: 1px solid #27272a; }
+  .scene h2 { margin: 0 0 14px; color: #e8a917; font-size: 14px; font-family: 'JetBrains Mono', monospace; }
+  img, video { max-width: 100%; border-radius: 4px; display: block; margin: 8px 0; }
+</style>
+</head>
+<body>
+  <h1>Storyboard</h1>
+  ${cards}
+</body>
+</html>`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "storyboard.html";
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  }
+
+  function renderImageGallery(assist, outputs) {
+    const grid = document.createElement("div");
+    grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px";
+    outputs.forEach((o, i) => {
+      const a = document.createElement("a");
+      a.href = o.url; a.target = "_blank"; a.rel = "noopener";
+      a.style.cssText = "display:block;border:1px solid var(--border);border-radius:4px;overflow:hidden";
+      const img = document.createElement("img");
+      img.src = o.url; img.loading = "lazy";
+      img.style.cssText = "width:100%;display:block;background:#000";
+      img.alt = `Image ${i + 1}`;
+      a.appendChild(img);
+      grid.appendChild(a);
+    });
+    assist.body.appendChild(grid);
+    const openAll = document.createElement("button");
+    openAll.className = "btn";
+    openAll.textContent = "Open all";
+    openAll.onclick = () => outputs.forEach(o => window.open(o.url, "_blank", "noopener"));
+    assist.body.appendChild(actionsRow(openAll));
+  }
+
+  function renderVideoSet(assist, outputs) {
+    const grid = document.createElement("div");
+    grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px";
+    outputs.forEach(o => {
+      const v = document.createElement("video");
+      v.src = o.url; v.controls = true; v.loop = true; v.muted = true; v.preload = "metadata";
+      v.style.cssText = "width:100%;border-radius:4px;background:#000";
+      grid.appendChild(v);
+    });
+    assist.body.appendChild(grid);
+  }
+
+  function renderAudioSet(assist, outputs) {
+    outputs.forEach((o, i) => {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "padding:8px 12px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);margin-bottom:6px";
+      const label = document.createElement("div");
+      label.style.cssText = "font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px";
+      label.textContent = `Track ${i + 1}`;
+      const a = document.createElement("audio");
+      a.src = o.url; a.controls = true; a.style.cssText = "width:100%";
+      wrap.appendChild(label); wrap.appendChild(a);
+      assist.body.appendChild(wrap);
+    });
+  }
+
+  function render3DSet(assist, outputs) {
+    ensureModelViewerLoaded();
+    outputs.forEach((o, i) => {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `
+        <div class="status" style="margin:6px 0 4px;font-size:10px">Mesh ${i + 1}</div>
+        <model-viewer
+          src="${escAttr(o.url)}"
+          camera-controls auto-rotate shadow-intensity="1"
+          style="width:100%;height:320px;border-radius:6px;background:radial-gradient(circle at 50% 30%, #2a2a2e 0%, #0a0a0a 100%);display:block">
+        </model-viewer>`;
+      assist.body.appendChild(wrap);
+    });
+  }
+
+  // 3D + a video / image preview rendered alongside.
+  function render3DWithPreview(assist, outputs) {
+    const meshes = outputs.filter(o => o.kind === "3d");
+    const previews = outputs.filter(o => o.kind !== "3d");
+    if (meshes.length === 1) renderSingle3D(assist, meshes[0]);
+    else render3DSet(assist, meshes);
+    if (previews.length === 1) {
+      previews[0].kind === "video" ? renderSingleVideo(assist, previews[0])
+      : previews[0].kind === "image" ? renderSingleImage(assist, previews[0])
+      : renderMixed(assist, previews);
+    } else if (previews.length > 1) {
+      renderMixed(assist, previews);
+    }
+  }
+
+  function renderMixed(assist, outputs) {
+    // Render each in turn using its own kind.
+    for (const o of outputs) {
+      if (o.kind === "video")      renderSingleVideo(assist, o);
+      else if (o.kind === "image") renderSingleImage(assist, o);
+      else if (o.kind === "audio") renderSingleAudio(assist, o);
+      else if (o.kind === "3d")    renderSingle3D(assist, o);
+      else if (o.kind === "text")  renderSingleText(assist, o);
+    }
+  }
+
   // ── Process / multi-step UI helpers ──────────────────────
   // Render a saved-process card. Used both for the design_process /
   // update_process intents (server already saved/updated) and for the
