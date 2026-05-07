@@ -141,6 +141,97 @@
   }
   .convo-sentinel{ height:1px }      /* invisible IntersectionObserver target */
 
+  /* ── Process sidebar items ─────────────────────────────── */
+  .process-group-label{
+    padding:10px 10px 4px; font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); letter-spacing:.1em; text-transform:uppercase;
+  }
+  .process-card{
+    position:relative; display:block; width:100%; text-align:left;
+    padding:8px 10px; margin-bottom:3px;
+    background:transparent; border:1px solid transparent; border-radius:4px;
+    color:var(--text-dim); font-family:var(--font-mono); font-size:11px;
+    cursor:pointer; line-height:1.35;
+  }
+  .process-card:hover{
+    background:var(--surface-2); color:var(--text); border-color:var(--surface-3);
+  }
+  .process-card.active{
+    background:var(--gold-dim); border-color:var(--gold); color:var(--gold);
+  }
+  .process-card .pc-name{
+    display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    padding-right:18px;             /* room for the badge */
+  }
+  .process-card .pc-meta{
+    display:block; font-size:9.5px; color:var(--text-muted); margin-top:2px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .process-card .pc-badge{
+    position:absolute; top:7px; right:8px;
+    font-size:8px; padding:1px 4px; border-radius:2px;
+    font-family:var(--font-mono); letter-spacing:.05em; text-transform:uppercase;
+  }
+  .process-card .pc-badge.published{ background:var(--gold-dim); color:var(--gold) }
+  .process-card .pc-badge.system{ background:var(--surface-3); color:var(--text-muted) }
+  .process-card .pc-actions{
+    display:flex; gap:2px; margin-top:6px;
+    opacity:0; transition:opacity 120ms ease;
+  }
+  .process-card:hover .pc-actions,
+  .process-card.active .pc-actions{ opacity:1 }
+  .process-card .pc-action{
+    background:var(--surface-3); border:1px solid var(--border); color:var(--text-muted);
+    border-radius:3px; padding:3px 6px; font-size:10px;
+    cursor:pointer; font-family:var(--font-mono);
+    line-height:1; transition:all 100ms;
+  }
+  .process-card .pc-action:hover{ background:var(--gold); color:var(--black); border-color:var(--gold) }
+  .process-card .pc-action.danger:hover{ background:var(--red); color:var(--white); border-color:var(--red) }
+  .process-card .pc-action[disabled]{ opacity:.4; cursor:not-allowed; pointer-events:none }
+
+  /* ── Editor mode (replaces stream content while editing) ───── */
+  .editor-pane{
+    display:flex; flex-direction:column; gap:14px;
+    padding:18px; max-width:920px; margin:0 auto;
+  }
+  .editor-head{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
+    padding-bottom:12px; border-bottom:1px solid var(--border);
+  }
+  .editor-head h2{
+    margin:0 0 4px; color:var(--gold); font-family:var(--font-mono);
+    font-size:14px; font-weight:600;
+  }
+  .editor-head .editor-desc{
+    color:var(--text-muted); font-size:12px; line-height:1.4;
+  }
+  .editor-head .editor-meta{
+    margin-top:6px; font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); letter-spacing:.05em;
+  }
+  .editor-actions{
+    display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0;
+  }
+  .editor-actions .btn{ font-size:11px; padding:5px 10px }
+  .editor-section-title{
+    font-family:var(--font-mono); font-size:10px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;
+  }
+  .editor-python{
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; overflow:auto; max-height:520px;
+  }
+  .editor-python pre{
+    margin:0; padding:14px 16px; font-family:var(--font-mono); font-size:11px;
+    color:var(--text); white-space:pre; line-height:1.5;
+  }
+  .editor-instruction-hint{
+    padding:10px 12px; background:var(--gold-dim); border:1px solid var(--gold);
+    border-radius:4px; color:var(--gold); font-family:var(--font-mono);
+    font-size:11px; line-height:1.4;
+  }
+
   /* Centered overlay shown over the main stream while a conversation
      is being fetched. Lives inside #stream so it clears with the
      conversation switch. */
@@ -666,6 +757,7 @@
       empty.className = "convo-empty";
       empty.textContent = "No conversations yet. Start one below.";
       convoList.appendChild(empty);
+      detachConvoObserver();
       return;
     }
 
@@ -690,39 +782,56 @@
       convoList.appendChild(btn);
     }
 
-    // Bottom indicator: spinner while a page is in flight, or a
-    // sentinel div the IntersectionObserver watches to load the next
-    // page when scrolled into view.
+    // Bottom indicator: spinner while a page is in flight, "Load more"
+    // button when more pages exist. We use an explicit button instead
+    // of an IntersectionObserver — the sidebar is short enough that an
+    // observer-with-rootMargin trick fired in a loop.
     if (convoLoading) {
       const sp = document.createElement("div");
       sp.className = "convo-loading";
       sp.innerHTML = `<div class="spinner"></div><span>Loading…</span>`;
       convoList.appendChild(sp);
+      detachConvoObserver();
     } else if (convoHasMore) {
-      const sentinel = document.createElement("div");
-      sentinel.className = "convo-sentinel";
-      sentinel.id = "convoSentinel";
-      convoList.appendChild(sentinel);
-      observeConvoSentinel(sentinel);
+      const more = document.createElement("button");
+      more.className = "convo-row convo-more";
+      more.textContent = "Load more conversations";
+      more.style.cssText =
+        "text-align:center;color:var(--text-muted);font-style:italic;border:1px dashed var(--border);";
+      more.onclick = () => loadMoreConversations();
+      convoList.appendChild(more);
+
+      // Also attach a one-shot observer that auto-loads the next page
+      // ONLY when the user has actually scrolled the button into view.
+      // No rootMargin so it can't fire before the user scrolls, and
+      // we disconnect it after one fire.
+      attachConvoObserverOnce(more);
+    } else {
+      detachConvoObserver();
     }
   }
 
-  // IntersectionObserver — when the sentinel scrolls into view (user
-  // is near the bottom), trigger the next page load.
+  // Single-fire IntersectionObserver. Disconnects after the first
+  // intersection so a paint cycle can't re-trigger it. The next page
+  // either re-attaches (after the new page renders) or doesn't (if
+  // we've reached the end).
   let convoObserver = null;
-  function observeConvoSentinel(sentinel) {
-    if (!("IntersectionObserver" in window)) {
-      // Fallback: just load now. Crude but no UX regression on old browsers.
-      loadMoreConversations();
-      return;
-    }
-    if (convoObserver) convoObserver.disconnect();
+  function attachConvoObserverOnce(target) {
+    detachConvoObserver();
+    if (!("IntersectionObserver" in window)) return;
     convoObserver = new IntersectionObserver((entries) => {
       for (const e of entries) {
-        if (e.isIntersecting) { loadMoreConversations(); break; }
+        if (e.isIntersecting) {
+          detachConvoObserver();
+          loadMoreConversations();
+          break;
+        }
       }
-    }, { root: convoList, rootMargin: "100px" });
-    convoObserver.observe(sentinel);
+    }, { root: convoList, threshold: 0.5 });   // no rootMargin
+    convoObserver.observe(target);
+  }
+  function detachConvoObserver() {
+    if (convoObserver) { convoObserver.disconnect(); convoObserver = null; }
   }
 
   function formatRelativeTime(unixSeconds) {
@@ -741,8 +850,11 @@
   // sends their first /plan request.
   function startNewConversation() {
     currentConversationId = null;
+    currentEditorProcessId = null;
+    currentEditorProcess = null;
     clearStream();
     paintConversationList();
+    paintProcessList();
     updateComposerHint();
     updateSend();
     textInput.focus();
@@ -761,7 +873,11 @@
   // image is required. In a fresh conversation we need an image; in
   // an existing one a text-only refinement is fine.
   function updateComposerHint() {
-    if (currentConversationId) {
+    if (currentEditorProcessId && currentEditorProcess?.editable) {
+      textInput.placeholder = `Tell Claude how to update "${currentEditorProcess.name}"…`;
+    } else if (currentEditorProcessId) {
+      textInput.placeholder = `(read-only — close to start a new conversation)`;
+    } else if (currentConversationId) {
       textInput.placeholder = "Refine the previous plan, attach more, or text-only…";
     } else {
       textInput.placeholder = `Describe anything. Attach image / video / audio, or none. Try "make me a process for…"`;
@@ -801,11 +917,14 @@
     if (!resp?.ok) { paintConversationList(); return; }
 
     currentConversationId = cid;
+    currentEditorProcessId = null;
+    currentEditorProcess = null;
     clearStream();
     empty.style.display = "none";
     for (const turn of resp.turns) renderHistoricalTurn(turn);
     stream.scrollTop = stream.scrollHeight;
     paintConversationList();
+    paintProcessList();
     updateComposerHint();
     updateSend();
   }
@@ -1057,6 +1176,19 @@
     if (!ME) { openAuth("signup"); return; }
     const userText = textInput.value.trim();
     if (!userText) return;
+
+    // Editor mode — every chat message becomes a refinement to the
+    // currently-open process. Skips the planner / cost / execute path
+    // entirely; the response just re-paints the editor.
+    if (currentEditorProcessId && currentEditorProcess?.editable) {
+      textInput.value = ""; textInput.style.height = "auto"; updateSend();
+      await refineCurrentProcess(userText);
+      return;
+    }
+    if (currentEditorProcessId && !currentEditorProcess?.editable) {
+      alert("This process is read-only. Close the editor (top right) to start a new conversation.");
+      return;
+    }
 
     // Classify attachments. Each goes into a specific FormData slot:
     //   image / video / audio (one each)  +  image_2…image_9 (extra images)
@@ -2027,8 +2159,13 @@
     };
   }
 
-  // Pull the list of available processes (system + user's own) and
-  // populate the sidebar section. Wired only when the section exists.
+  // Cache of the latest sidebar listing — used by per-card actions
+  // (download / publish / delete / edit) so they don't refetch.
+  let processesCache = [];
+
+  // Pull processes and group them by source: mine first (editable),
+  // then system (read-only), then published-by-others (read-only).
+  // Each card shows a hover row of action buttons.
   async function refreshProcesses() {
     const list = $("processList");
     if (!list) return;
@@ -2036,26 +2173,140 @@
       const r = await fetch("/api/promptflow/processes");
       const j = await r.json();
       if (!j.ok) { list.innerHTML = ""; return; }
-      const items = (j.processes || []).map(p => {
-        const tag = p.is_system ? "system" : "yours";
-        const py = p.has_python ? " · py" : "";
-        return `<div class="convo-item" data-pid="${escapeHtml(p.id)}" data-pname="${escapeHtml(p.name)}">
-          <div class="convo-title">${escapeHtml(p.name)}</div>
-          <div class="convo-time">${tag} · ${escapeHtml((p.input_kinds || []).join("+") || "text")} → ${escapeHtml(p.output_kind || "video")}${py}</div>
-        </div>`;
-      }).join("");
-      list.innerHTML = items || `<div class="convo-empty">No processes yet. Try "make me a process for…"</div>`;
-      list.querySelectorAll(".convo-item").forEach(el => {
-        el.onclick = () => openProcessInStream(el.dataset.pid, el.dataset.pname);
-      });
-    } catch { /* sidebar best-effort */ }
+      processesCache = j.processes || [];
+    } catch { processesCache = []; }
+    paintProcessList();
   }
 
-  // Fetch a single process (with full step graph + python) and drop a
-  // read-only card into the stream. Includes a "modify" hint so the
-  // user knows how to ask Claude for changes.
-  async function openProcessInStream(pid, pname) {
+  function paintProcessList() {
+    const list = $("processList");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (processesCache.length === 0) {
+      list.innerHTML = `<div class="convo-empty">No processes yet. Try "create a process for…"</div>`;
+      return;
+    }
+
+    const groups = [
+      { id: "mine",      label: "Yours" },
+      { id: "system",    label: "System" },
+      { id: "published", label: "Published by others" },
+    ];
+    for (const g of groups) {
+      const items = processesCache.filter(p => p.group === g.id);
+      if (items.length === 0) continue;
+
+      const label = document.createElement("div");
+      label.className = "process-group-label";
+      label.textContent = g.label;
+      list.appendChild(label);
+
+      for (const p of items) list.appendChild(renderProcessSidebarCard(p));
+    }
+  }
+
+  function renderProcessSidebarCard(p) {
+    const card = document.createElement("div");
+    card.className = "process-card";
+    if (p.id === currentEditorProcessId) card.classList.add("active");
+    card.dataset.pid = p.id;
+
+    const badge = p.is_system ? `<span class="pc-badge system">SYS</span>`
+      : p.is_published   ? `<span class="pc-badge published">PUB</span>`
+      : ``;
+    const meta = `${escapeHtml((p.input_kinds || []).join("+") || "text")} → ${escapeHtml(p.output_kind || "video")}`;
+
+    card.innerHTML = `
+      ${badge}
+      <span class="pc-name"></span>
+      <span class="pc-meta"></span>
+      <div class="pc-actions"></div>
+    `;
+    card.querySelector(".pc-name").textContent = p.name;
+    card.querySelector(".pc-meta").textContent = meta;
+
+    // Click on the card body (anywhere except the action buttons) =
+    // open in editor view (or read-only viewer if not the owner).
+    card.onclick = (e) => {
+      if (e.target.closest(".pc-action")) return;
+      openProcessEditor(p.id);
+    };
+
+    const actions = card.querySelector(".pc-actions");
+    actions.appendChild(makeAction("Edit", () => openProcessEditor(p.id),
+      { disabled: !p.mine || p.is_system, title: p.mine ? "Open editor" : "Read-only" }));
+    actions.appendChild(makeAction("⬇", () => downloadProcessPython(p.id),
+      { disabled: !p.has_python, title: "Download .py" }));
+    if (p.mine && !p.is_system) {
+      const pubLabel = p.is_published ? "Unpublish" : "Publish";
+      actions.appendChild(makeAction(pubLabel, () => togglePublish(p.id, !p.is_published),
+        { title: p.is_published ? "Make private" : "Share with others" }));
+      actions.appendChild(makeAction("✕", () => deleteProcess(p.id, p.name),
+        { danger: true, title: "Delete" }));
+    }
+    return card;
+  }
+
+  function makeAction(label, onclick, opts) {
+    const btn = document.createElement("button");
+    btn.className = "pc-action" + (opts?.danger ? " danger" : "");
+    btn.textContent = label;
+    if (opts?.title) btn.title = opts.title;
+    if (opts?.disabled) btn.disabled = true;
+    btn.onclick = (e) => { e.stopPropagation(); onclick(); };
+    return btn;
+  }
+
+  function downloadProcessPython(pid) {
+    // Server-side route streams a Content-Disposition: attachment.
+    window.location.href = `/api/promptflow/process/download/${encodeURIComponent(pid)}.py`;
+  }
+
+  async function togglePublish(pid, publish) {
+    try {
+      const r = await fetch("/api/promptflow/process/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: pid, published: publish }),
+      });
+      const j = await r.json();
+      if (!j.ok) { alert(j.message || j.error || "Failed."); return; }
+      // Patch the local cache so the badge / button updates without
+      // a full re-fetch.
+      const p = processesCache.find(x => x.id === pid);
+      if (p) p.is_published = !!j.is_published;
+      paintProcessList();
+    } catch (e) { alert("Network error: " + (e?.message || e)); }
+  }
+
+  async function deleteProcess(pid, pname) {
+    if (!confirm(`Delete "${pname}"? This cannot be undone.`)) return;
+    try {
+      const r = await fetch("/api/promptflow/process/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: pid }),
+      });
+      const j = await r.json();
+      if (!j.ok) { alert(j.message || j.error || "Delete failed."); return; }
+      processesCache = processesCache.filter(p => p.id !== pid);
+      // If the deleted process was open in the editor, close it.
+      if (currentEditorProcessId === pid) closeProcessEditor();
+      paintProcessList();
+    } catch (e) { alert("Network error: " + (e?.message || e)); }
+  }
+
+  // ── Editor mode ─────────────────────────────────────────
+  // While a process is open in the editor, the main stream area is
+  // replaced by an editor pane and the composer routes chat messages
+  // to /process/refine instead of /plan.
+  let currentEditorProcessId = null;
+  let currentEditorProcess = null;
+
+  async function openProcessEditor(pid) {
     if (busy) return;
+    if (currentEditorProcessId === pid) return;
     try {
       const r = await fetch("/api/promptflow/process/get", {
         method: "POST",
@@ -2063,28 +2314,181 @@
         body: JSON.stringify({ id: pid }),
       });
       const j = await r.json();
-      if (!j.ok || !j.process) {
-        textInput.value = `Use the "${pname}" process: `;
-        textInput.dispatchEvent(new Event("input"));
-        textInput.focus();
+      if (!j.ok || !j.process) { alert(j.message || j.error || "Could not load process."); return; }
+      currentEditorProcessId = pid;
+      currentEditorProcess = j.process;
+      currentConversationId = null;     // detach from any conversation
+      paintConversationList();
+      paintProcessList();
+      paintEditor();
+      updateComposerHint();
+      updateSend();
+    } catch (e) { alert("Network error: " + (e?.message || e)); }
+  }
+
+  function closeProcessEditor() {
+    currentEditorProcessId = null;
+    currentEditorProcess = null;
+    clearStream();
+    paintProcessList();
+    updateComposerHint();
+    updateSend();
+  }
+
+  function paintEditor() {
+    if (!currentEditorProcess) return;
+    const p = currentEditorProcess;
+    clearStream();
+    empty.style.display = "none";
+
+    const pane = document.createElement("div");
+    pane.className = "editor-pane";
+    pane.id = "editorPane";
+
+    // Header
+    const head = document.createElement("div");
+    head.className = "editor-head";
+    const headLeft = document.createElement("div");
+    headLeft.style.flex = "1";
+    headLeft.innerHTML = `
+      <h2></h2>
+      <div class="editor-desc"></div>
+      <div class="editor-meta"></div>
+    `;
+    headLeft.querySelector("h2").textContent = p.name;
+    headLeft.querySelector(".editor-desc").textContent = p.description || "(no description)";
+    headLeft.querySelector(".editor-meta").textContent =
+      `${(p.input_kinds || []).join("+") || "text"} → ${p.output_kind || "video"} · ${p.steps?.length || 0} step${(p.steps?.length || 0) === 1 ? "" : "s"}` +
+      (p.is_published ? " · published" : "") +
+      (p.is_system ? " · system (read-only)" : "");
+    const actionsR = document.createElement("div");
+    actionsR.className = "editor-actions";
+    if (p.python_text) {
+      const dl = document.createElement("button");
+      dl.className = "btn"; dl.textContent = "⬇ Download .py";
+      dl.onclick = () => downloadProcessPython(p.id);
+      actionsR.appendChild(dl);
+    }
+    if (p.editable) {
+      const pub = document.createElement("button");
+      pub.className = "btn";
+      pub.textContent = p.is_published ? "Unpublish" : "Publish";
+      pub.onclick = async () => { await togglePublish(p.id, !p.is_published); reopenEditor(p.id); };
+      actionsR.appendChild(pub);
+      const del = document.createElement("button");
+      del.className = "btn"; del.textContent = "Delete";
+      del.style.cssText = "background:transparent;border-color:var(--red);color:var(--red)";
+      del.onclick = () => deleteProcess(p.id, p.name);
+      actionsR.appendChild(del);
+    }
+    const close = document.createElement("button");
+    close.className = "btn"; close.textContent = "Close";
+    close.onclick = closeProcessEditor;
+    actionsR.appendChild(close);
+    head.appendChild(headLeft);
+    head.appendChild(actionsR);
+    pane.appendChild(head);
+
+    // Hint
+    if (p.editable) {
+      const hint = document.createElement("div");
+      hint.className = "editor-instruction-hint";
+      hint.textContent = `Type below to update this process. Example: "rename to Storyboard 2.0", "add a final video step that animates each scene", "switch the script step to use Veo 3".`;
+      pane.appendChild(hint);
+    }
+
+    // Steps preview
+    const stepsLabel = document.createElement("div");
+    stepsLabel.className = "editor-section-title";
+    stepsLabel.textContent = `Steps (${p.steps?.length || 0})`;
+    pane.appendChild(stepsLabel);
+    const stepsCard = document.createElement("div");
+    stepsCard.className = "plan-card";
+    stepsCard.innerHTML = (p.steps || []).map((s, i) => {
+      let summary = "";
+      if (s.type === "claude") summary = `Claude · ${escapeHtml((s.user_prompt || "").slice(0, 90))}${(s.user_prompt || "").length > 90 ? "…" : ""}`;
+      else if (s.type === "recipe") summary = `Recipe · ${escapeHtml(s.recipe_id || s.model || "?")}`;
+      else if (s.type === "loop") summary = `Loop · over ${escapeHtml(s.iterate_over || "?")}`;
+      else summary = escapeHtml(s.type);
+      return `<div class="plan-row">
+        <div class="plan-label">Step ${i + 1}</div>
+        <div class="plan-val">${summary}</div>
+      </div>`;
+    }).join("");
+    pane.appendChild(stepsCard);
+
+    // Python view
+    if (p.python_text) {
+      const pyLabel = document.createElement("div");
+      pyLabel.className = "editor-section-title";
+      pyLabel.textContent = `Python · ${p.python_text.split("\n").length} lines`;
+      pane.appendChild(pyLabel);
+      const pyWrap = document.createElement("div");
+      pyWrap.className = "editor-python";
+      const pre = document.createElement("pre");
+      pre.textContent = p.python_text;
+      pyWrap.appendChild(pre);
+      pane.appendChild(pyWrap);
+    }
+
+    stream.appendChild(pane);
+    stream.scrollTop = 0;
+  }
+
+  // After a publish toggle, re-fetch and re-render.
+  async function reopenEditor(pid) {
+    currentEditorProcessId = null;
+    await openProcessEditor(pid);
+  }
+
+  // Called by send() when the user types a message while the editor
+  // is open — routes to /process/refine and re-paints the editor.
+  async function refineCurrentProcess(instruction) {
+    const id = currentEditorProcessId;
+    if (!id) return;
+    busy = true; updateSend();
+    showStreamLoadingOverlay("Updating process…");
+    try {
+      const r = await fetch("/api/promptflow/process/refine", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, instruction }),
+      });
+      const j = await r.json();
+      if (!j.ok) {
+        hideStreamLoadingOverlay();
+        alert(j.message || j.error || "Refine failed.");
         return;
       }
-      const assist = addAssistMsg();
-      renderProcessCard(assist, j.process, "loaded");
-      const hint = document.createElement("div");
-      hint.className = "status";
-      hint.textContent = j.process.mine
-        ? `Use it: "Use the ${j.process.name} process: …" · Modify it: "Update the ${j.process.name} process to …"`
-        : `Use it: "Use the ${j.process.name} process: …" (system process — read-only)`;
-      assist.body.appendChild(hint);
-      textInput.value = `Use the "${j.process.name}" process: `;
-      textInput.dispatchEvent(new Event("input"));
-      textInput.focus();
+      currentEditorProcess = j.process;
+      // Patch sidebar cache so the row title / metadata refreshes.
+      const cached = processesCache.find(p => p.id === id);
+      if (cached) {
+        cached.name = j.process.name;
+        cached.description = j.process.description;
+        cached.input_kinds = j.process.input_kinds;
+        cached.output_kind = j.process.output_kind;
+        cached.has_python = !!j.process.python_text;
+      }
+      paintProcessList();
+      paintEditor();
+      // Surface Claude's rationale at the top of the editor so the
+      // user sees what changed.
+      if (j.rationale) {
+        const note = document.createElement("div");
+        note.className = "editor-instruction-hint";
+        note.style.background = "var(--surface-2)";
+        note.style.borderColor = "var(--border)";
+        note.style.color = "var(--text-muted)";
+        note.textContent = `↻ ${j.rationale}`;
+        const pane = $("editorPane");
+        if (pane) pane.insertBefore(note, pane.children[1] || null);
+      }
     } catch (e) {
-      // Fall back to the old prefill behavior on error.
-      textInput.value = `Use the "${pname}" process: `;
-      textInput.dispatchEvent(new Event("input"));
-      textInput.focus();
+      alert("Network error: " + (e?.message || e));
+    } finally {
+      hideStreamLoadingOverlay();
+      busy = false; updateSend();
     }
   }
 
