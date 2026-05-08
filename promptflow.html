@@ -31,6 +31,19 @@
     min-height:100vh;
   }
 
+  /* Hide scrollbars everywhere — desktop AND mobile — while keeping
+     scroll functionality. Wheel/touch/keyboard scroll all still work;
+     only the visual track is suppressed. Three rules cover all browsers:
+       - ::-webkit-scrollbar       → Chrome, Safari, Edge, mobile webviews
+       - scrollbar-width:none      → Firefox 64+
+       - -ms-overflow-style:none   → legacy Edge/IE
+     Applied as a wildcard so any element with overflow scrolls cleanly. */
+  html,body,*{ scrollbar-width:none; -ms-overflow-style:none }
+  ::-webkit-scrollbar{ width:0; height:0; display:none }
+  *::-webkit-scrollbar{ width:0; height:0; display:none }
+  *::-webkit-scrollbar-track{ display:none }
+  *::-webkit-scrollbar-thumb{ display:none }
+
   /* Header */
   .hdr{
     height:var(--header-h); display:flex; align-items:center; padding:0 16px;
@@ -468,6 +481,36 @@
   .mq-error{
     margin-top:4px; font-family:var(--font-mono); font-size:10px;
     color:var(--red);
+  }
+
+  /* ── Discovery chips ─────────────────────────────────── */
+  /* One-click filters that route into /graph/query. Each is a
+     curated subset of the graph — the way to find processes
+     without typing a query. */
+  .discover-row{
+    padding:8px 14px; background:var(--surface-2);
+    border-bottom:1px solid var(--border);
+    display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  }
+  .discover-row .dr-label{
+    font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); letter-spacing:.1em; text-transform:uppercase;
+    margin-right:4px; flex-shrink:0;
+  }
+  .discover-row .dr-chip{
+    background:var(--surface-3); border:1px solid var(--border);
+    color:var(--text-dim);
+    padding:5px 10px; border-radius:14px;
+    font-family:var(--font-mono); font-size:11px;
+    cursor:pointer; transition:all 100ms;
+    line-height:1; flex-shrink:0;
+  }
+  .discover-row .dr-chip:hover{
+    color:var(--text); border-color:var(--gold);
+  }
+  .discover-row .dr-chip.active{
+    background:var(--gold); color:var(--black); border-color:var(--gold);
+    font-weight:600;
   }
   .map-body{
     flex:1 1 auto; display:flex; gap:1px; min-height:0;
@@ -1166,6 +1209,15 @@
   .powered-by .name{ color:var(--gold); font-weight:700 }
   .powered-by sup{ font-size:7px; vertical-align:super; margin-left:1px }
 
+  /* Bottom-of-page copyright. Sits beneath the page-shell, centered,
+     muted enough to be unobtrusive but legible. */
+  .page-copyright{
+    text-align:center; padding:14px 12px 18px;
+    font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); letter-spacing:.05em;
+    user-select:none;
+  }
+
   /* Auth modal */
   .modal-bg{
     position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(4px);
@@ -1325,6 +1377,9 @@
 </main>
 
 </div>
+
+<!-- Footer -->
+<div class="page-copyright">© 2026 PromptFlow Technologies LLC</div>
 
 <!-- Auth modal -->
 <div id="authModal" class="modal-bg">
@@ -3162,7 +3217,7 @@
             ${tagLine}
             <div class="cwp-actions">
               <button class="btn cwp-open-fork" data-fid="${escapeHtml(j.fork.id)}">Open in editor</button>
-              <button class="btn cwp-download-fork" data-fid="${escapeHtml(j.fork.id)}">⬇ Download .py</button>
+              <button class="btn cwp-download-fork" data-fid="${escapeHtml(j.fork.id)}">⬇ Download .promptflow</button>
             </div>`;
           // Refresh sidebar so the new fork shows up immediately.
           refreshProcesses();
@@ -3330,7 +3385,7 @@
     actions.appendChild(makeAction("Edit", () => openProcessEditor(p.id),
       { disabled: !p.mine || p.is_system, title: p.mine ? "Open editor" : "Read-only" }));
     actions.appendChild(makeAction("⬇", () => downloadProcessPython(p.id),
-      { disabled: !p.has_python, title: "Download .py" }));
+      { disabled: !p.has_python, title: "Download .promptflow bundle" }));
     if (p.mine && !p.is_system) {
       const monLabel = p.is_monetized ? "Monetize…" : "Monetize";
       actions.appendChild(makeAction(monLabel, () => openMonetizeModal(p.id),
@@ -3352,8 +3407,17 @@
   }
 
   function downloadProcessPython(pid) {
-    // Server-side route streams a Content-Disposition: attachment.
-    window.location.href = `/api/promptflow/process/download/${encodeURIComponent(pid)}.py`;
+    // Default download is now the structured .promptflow bundle —
+    // ZIP archive with separated prompts. Pass kind="py" for the
+    // legacy single-file Python download.
+    window.location.href = `/api/promptflow/process/bundle/${encodeURIComponent(pid)}.promptflow`;
+  }
+  function downloadProcessAs(pid, kind) {
+    if (kind === "py") {
+      window.location.href = `/api/promptflow/process/download/${encodeURIComponent(pid)}.py`;
+    } else {
+      window.location.href = `/api/promptflow/process/bundle/${encodeURIComponent(pid)}.promptflow`;
+    }
   }
 
   // Modal that lets the owner set monetization terms. Markup is
@@ -3607,7 +3671,7 @@
     actionsR.className = "editor-actions";
     if (p.python_text) {
       const dl = document.createElement("button");
-      dl.className = "btn"; dl.textContent = "⬇ Download .py";
+      dl.className = "btn"; dl.textContent = "⬇ Download .promptflow";
       dl.onclick = () => downloadProcessPython(p.id);
       actionsR.appendChild(dl);
     }
@@ -4094,7 +4158,7 @@
       paintProcessMap();
     };
     queryBar.querySelector(".mq-clear").onclick = () => {
-      mapQueryState = { mode: mapQueryState.mode, text: "", plan: null, explanation: "" };
+      mapQueryState = { mode: mapQueryState.mode, text: "", plan: null, explanation: "", activeChipId: "all" };
       paintProcessMap();
     };
     const runBtn = queryBar.querySelector(".mq-run");
@@ -4102,6 +4166,7 @@
     const runQuery = async () => {
       const text = (inputEl.value || "").trim();
       mapQueryState.text = text;
+      mapQueryState.activeChipId = null;     // custom query — no chip wins
       const errEl = queryBar.querySelector(".mq-error");
       errEl.textContent = "";
       if (!text) {
@@ -4141,6 +4206,56 @@
     if (mapQueryState.explanation) {
       queryBar.querySelector(".mq-explanation").textContent = "▸ " + mapQueryState.explanation;
     }
+
+    // Discovery chips — preset filters that one-click load a curated
+    // subset of the graph. Each chip is a (label, plan) pair that
+    // gets pumped into /graph/query as if the user had typed it.
+    // Clicking a chip toggles it active; clicking the active one
+    // resets to the default everything-view.
+    const discover = document.createElement("div");
+    discover.className = "discover-row";
+    const chips = [
+      { id: "all",       label: "All",          plan: null,
+        hint: "Everything you can see" },
+      { id: "popular",   label: "Most run",     plan: { node_types: ["process"], filters: { published: true, runs_gt: 0 }, order_by: "runs", limit: 50 },
+        hint: "Published processes ranked by total runs" },
+      { id: "trust",     label: "High trust",   plan: { node_types: ["process"], filters: { trust_gt: 0.7 }, order_by: "trust", limit: 50 },
+        hint: "Quality score above 0.7" },
+      { id: "free",      label: "Free",         plan: { node_types: ["process"], filters: { published: true, monetized: false }, order_by: "runs", limit: 50 },
+        hint: "Published, no markup" },
+      { id: "mine",      label: "Mine",         plan: { node_types: ["process"], filters: { mine: true }, order_by: "trust", limit: 100 },
+        hint: "Only your processes (private + published)" },
+      { id: "video",     label: "Video",        plan: { node_types: ["process"], filters: { output_kind: "video" }, order_by: "trust", limit: 50 },
+        hint: "Processes that produce video" },
+      { id: "image",     label: "Image",        plan: { node_types: ["process"], filters: { output_kind: "image" }, order_by: "trust", limit: 50 },
+        hint: "Processes that produce image" },
+      { id: "audio",     label: "Audio",        plan: { node_types: ["process"], filters: { output_kind: "audio" }, order_by: "trust", limit: 50 },
+        hint: "Processes that produce audio" },
+      { id: "forks",     label: "My forks",     plan: { node_types: ["process"], filters: { mine: true, fork: true }, limit: 50 },
+        hint: "Private adaptations you made via chat" },
+    ];
+    discover.innerHTML = `
+      <span class="dr-label">Discover:</span>
+      ${chips.map(c => `<button class="dr-chip" data-id="${c.id}" title="${escapeAttr(c.hint)}">${escapeHtml(c.label)}</button>`).join("")}
+    `;
+    // Mark active chip if the current plan matches.
+    const activeId = mapQueryState.activeChipId || "all";
+    discover.querySelectorAll(".dr-chip").forEach(btn => {
+      if (btn.dataset.id === activeId) btn.classList.add("active");
+      btn.onclick = () => {
+        const c = chips.find(x => x.id === btn.dataset.id);
+        if (!c) return;
+        mapQueryState = {
+          mode: mapQueryState.mode,
+          text: "",
+          plan: c.plan,
+          explanation: c.hint,
+          activeChipId: c.id,
+        };
+        paintProcessMap();
+      };
+    });
+    card.appendChild(discover);
 
     // Body — Cytoscape canvas + side panel.
     const body = document.createElement("div");
@@ -4643,7 +4758,7 @@
     actions.className = "graph-card-actions";
     if (p.python_text) {
       const dl = document.createElement("button");
-      dl.className = "btn"; dl.textContent = "⬇ Download .py";
+      dl.className = "btn"; dl.textContent = "⬇ Download .promptflow";
       dl.onclick = () => downloadProcessPython(p.id);
       actions.appendChild(dl);
     }
