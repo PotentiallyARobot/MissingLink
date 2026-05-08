@@ -49,10 +49,18 @@
     height:var(--header-h); display:flex; align-items:center; padding:0 16px;
     background:var(--surface); border-bottom:1px solid var(--border); gap:12px;
     position:sticky; top:0; z-index:100;
+    flex-shrink:0;       /* don't let the column flex squish the header */
   }
   .hdr .brand{
     font-family:var(--font-display); font-size:14px; font-weight:700;
     letter-spacing:0; color:var(--gold);
+    /* Now a button — strip native styling, add hover affordance. */
+    background:none; border:none; padding:0; margin:0;
+    cursor:pointer; transition:opacity .15s;
+  }
+  .hdr .brand:hover{ opacity:.75 }
+  .hdr .brand:focus-visible{
+    outline:1px solid var(--gold); outline-offset:3px; border-radius:2px;
   }
   .hdr .brand sup{ font-size:9px; vertical-align:super; margin-left:1px; font-weight:700 }
   .hdr-right{ margin-left:auto; display:flex; align-items:center; gap:8px }
@@ -73,12 +81,74 @@
   .token-pill.low{ border-color:var(--red); color:var(--red); background:rgba(239,68,68,.08) }
   .avatar{ width:24px; height:24px; border-radius:50%; border:1px solid var(--border); object-fit:cover }
 
+  /* ── Account menu (gear icon + dropdown) ───────────────
+     Single header trigger that houses Settings, Preferences,
+     Secrets, and Sign-out. Replaces the row of text buttons
+     so the header stays uncluttered as features grow. */
+  .account-menu{
+    position:relative;
+  }
+  .account-trigger{
+    display:flex; align-items:center; justify-content:center;
+    width:30px; height:30px;
+    background:transparent; border:1px solid var(--border);
+    border-radius:6px; color:var(--text-muted);
+    cursor:pointer; padding:0;
+    transition:all .15s;
+  }
+  .account-trigger:hover{ border-color:var(--gold); color:var(--gold) }
+  .account-trigger.open{ border-color:var(--gold); color:var(--gold); background:var(--gold-dim) }
+  .account-dropdown{
+    position:absolute; top:calc(100% + 6px); right:0;
+    min-width:280px;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:6px; padding:4px;
+    box-shadow:0 8px 24px rgba(0,0,0,.5);
+    display:none; z-index:500;
+  }
+  .account-dropdown.show{ display:block }
+  .account-item{
+    display:flex; align-items:flex-start; gap:10px;
+    width:100%; padding:8px 10px;
+    background:transparent; border:none; border-radius:4px;
+    cursor:pointer; text-align:left;
+    transition:background .12s;
+  }
+  .account-item:hover{ background:var(--surface-2) }
+  .account-item .ai-icon{
+    flex:0 0 24px; width:24px; height:24px; border-radius:4px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--gold-dim); color:var(--gold);
+    font-size:13px; font-family:var(--font-mono);
+  }
+  .account-item .ai-body{
+    display:flex; flex-direction:column; gap:1px; min-width:0; flex:1 1 auto;
+  }
+  .account-item .ai-title{
+    font-family:var(--font-mono); font-size:11px;
+    color:var(--text); letter-spacing:.02em;
+  }
+  .account-item .ai-sub{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); line-height:1.4;
+    overflow:hidden; text-overflow:ellipsis;
+    display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical;
+  }
+  .account-item.account-danger .ai-icon{
+    background:rgba(239,68,68,.1); color:var(--red);
+  }
+  .account-item.account-danger:hover{ background:rgba(239,68,68,.08) }
+  .account-item.account-danger:hover .ai-title{ color:var(--red) }
+  .account-divider{
+    height:1px; background:var(--border); margin:4px 8px;
+  }
+
   /* Page shell — flex container that hosts the sidebar (left) and the
      main chat area (right). Header sits above. The shell takes the
      remaining vertical space below the header so both columns scroll
      independently. */
   .page-shell{
-    flex:1; display:flex; min-height:0;
+    flex:1 1 auto; display:flex; min-height:0;
   }
 
   /* Conversation history sidebar. Fixed-width on desktop, full-height,
@@ -303,13 +373,96 @@
     font-family:var(--font-mono); font-size:10px; letter-spacing:.1em;
     text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;
   }
-  .editor-python{
+  /* ── Code viewer ───────────────────────────────────────
+     Used in the process editor for the Python view. Supports two
+     modes via the format toggle:
+       .py         — single inline file (Prism-highlighted Python)
+       .promptflow — bundle view: tabbed file tree with process.py
+                      + prompts/*.txt + manifest.json side-by-side
+     Prism is lazy-loaded the first time a code view renders. */
+  .code-viewer{
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; overflow:hidden;
+    font-family:var(--font-mono); font-size:11px;
+  }
+  .code-viewer-head{
+    display:flex; align-items:center; gap:8px;
+    padding:8px 10px;
+    background:var(--surface); border-bottom:1px solid var(--border);
+  }
+  .code-viewer-head .cv-title{
+    flex:1 1 auto; min-width:0;
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); letter-spacing:.08em; text-transform:uppercase;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .cv-toggle{
+    display:inline-flex; padding:2px; gap:0;
+    background:var(--black); border:1px solid var(--border); border-radius:4px;
+  }
+  .cv-toggle button{
+    padding:3px 9px; background:transparent; border:none; cursor:pointer;
+    color:var(--text-muted); font-family:var(--font-mono); font-size:10px;
+    border-radius:3px; transition:all .12s;
+  }
+  .cv-toggle button.active{
+    background:var(--gold); color:var(--black); font-weight:700;
+  }
+  .cv-toggle button:not(.active):hover{ color:var(--text); background:var(--surface-2) }
+  .cv-tabs{
+    display:flex; gap:0; flex-wrap:wrap;
+    background:var(--surface); border-bottom:1px solid var(--border);
+    padding:0 4px;
+  }
+  .cv-tab{
+    padding:6px 11px; background:transparent; border:none; cursor:pointer;
+    color:var(--text-muted); font-family:var(--font-mono); font-size:10px;
+    border-bottom:2px solid transparent; transition:all .12s;
+    white-space:nowrap;
+  }
+  .cv-tab:hover{ color:var(--text); background:var(--surface-2) }
+  .cv-tab.active{
+    color:var(--gold); border-bottom-color:var(--gold);
+  }
+  .cv-body{
+    overflow:auto; max-height:520px;
+  }
+  .cv-body pre{
+    margin:0; padding:14px 16px; line-height:1.5;
+    color:var(--text); white-space:pre;
+    background:transparent !important;       /* override Prism's default bg */
+    font-size:11px; font-family:var(--font-mono);
+  }
+  .cv-body pre code{
+    font-family:var(--font-mono); font-size:11px;
+    background:transparent !important;
+  }
+  .cv-empty{
+    padding:14px 16px; color:var(--text-muted); font-style:italic; font-size:11px;
+  }
+
+  /* Prism syntax-highlighting palette — overrides the default theme
+     to match this app's gold/dim aesthetic. We load prism-tomorrow
+     for sensible defaults, then override below. */
+  .token.comment, .token.prolog, .token.doctype, .token.cdata{ color:#6c7080 !important; font-style:italic }
+  .token.keyword, .token.builtin, .token.boolean{ color:#d97757 !important }
+  .token.string, .token.char, .token.attr-value{ color:#9aca5e !important }
+  .token.number, .token.constant{ color:#e8a917 !important }
+  .token.function, .token.class-name{ color:#7fb6e0 !important }
+  .token.operator, .token.punctuation{ color:#a0a8b3 !important }
+  .token.decorator, .token.annotation{ color:#e8a917 !important }
+  .token.property{ color:#c397d8 !important }
+
+  /* Backward-compat: the old class still appears in inline assist
+     blocks. Style it the same way. */
+  .editor-python, .process-python{
     background:var(--surface-2); border:1px solid var(--border);
     border-radius:6px; overflow:auto; max-height:520px;
   }
-  .editor-python pre{
+  .editor-python pre, .process-python pre{
     margin:0; padding:14px 16px; font-family:var(--font-mono); font-size:11px;
     color:var(--text); white-space:pre; line-height:1.5;
+    background:transparent !important;
   }
   .editor-instruction-hint{
     padding:10px 12px; background:var(--gold-dim); border:1px solid var(--gold);
@@ -580,12 +733,140 @@
   }
   .map-canvas{
     flex:1 1 auto; min-width:0; position:relative;
-    background:radial-gradient(circle at 50% 30%, #18181b 0%, #0a0a0a 100%);
-    overflow:hidden;
+    background:var(--surface);
+    overflow:auto;
+    padding:14px;
   }
   .map-loading{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:8px;
     color:var(--text-muted); font-family:var(--font-mono); font-size:11px;
+  }
+
+  /* ── Library grid ──────────────────────────────────────
+     Replaces the spatial Cytoscape view. Faster to load
+     (no CDN), denser information per card, scannable.
+     Relationships are shown inline per card as small chips
+     instead of as graph edges. */
+  .lib-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+    gap:10px;
+    padding:0;
+  }
+  .lib-card{
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; padding:12px;
+    cursor:pointer; transition:all .15s;
+    display:grid; grid-template-columns:36px 1fr; gap:10px;
+    align-items:flex-start;
+    min-width:0;
+  }
+  .lib-card:hover{
+    border-color:var(--gold); background:var(--surface-3);
+  }
+  .lib-card.active{
+    border-color:var(--gold); background:var(--gold-dim);
+  }
+  .lib-card .lib-icon{
+    width:36px; height:36px; border-radius:6px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--surface-3); border:1px solid var(--border);
+    font-size:20px; line-height:1; flex-shrink:0;
+  }
+  .lib-card.active .lib-icon{ border-color:var(--gold); background:var(--gold-dim) }
+  .lib-body{ min-width:0; display:flex; flex-direction:column; gap:3px }
+  .lib-name-row{
+    display:flex; align-items:center; gap:6px; min-width:0;
+  }
+  .lib-name{
+    font-family:var(--font-mono); font-size:12px; font-weight:600;
+    color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    flex:1 1 auto; min-width:0;
+  }
+  .lib-card.active .lib-name{ color:var(--gold) }
+  .lib-pricepill{
+    flex-shrink:0; font-family:var(--font-mono); font-size:9px;
+    padding:1px 5px; border-radius:3px;
+    letter-spacing:.04em;
+  }
+  .lib-pricepill.free{ background:var(--surface-3); color:var(--text-muted); border:1px solid var(--border) }
+  .lib-pricepill.paid{ background:var(--gold); color:var(--black); font-weight:700 }
+  .lib-pricepill.system{ background:var(--surface-3); color:var(--text-muted); border:1px solid var(--border); text-transform:uppercase }
+  .lib-author{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); letter-spacing:.02em;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .lib-author .lib-byyou{ color:var(--gold); font-weight:600 }
+  .lib-desc{
+    font-family:var(--font-mono); font-size:10.5px;
+    color:var(--text-dim); line-height:1.4;
+    margin-top:4px;
+    overflow:hidden; display:-webkit-box;
+    -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  }
+  .lib-io{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); margin-top:4px;
+    letter-spacing:.04em;
+  }
+  .lib-io strong{ color:var(--text); font-weight:600 }
+  .lib-stats{
+    display:flex; gap:10px; flex-wrap:wrap;
+    margin-top:6px; padding-top:6px; border-top:1px solid var(--border);
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted);
+  }
+  .lib-stat strong{ color:var(--gold); font-weight:700 }
+  .lib-rel{
+    display:flex; gap:4px; flex-wrap:wrap; margin-top:6px;
+  }
+  .lib-rel-chip{
+    font-family:var(--font-mono); font-size:9px;
+    padding:2px 6px; border-radius:10px;
+    background:var(--surface-3); border:1px solid var(--border);
+    color:var(--text-dim); white-space:nowrap;
+  }
+  .lib-rel-chip.composes{ color:#7fb6e0 }
+  .lib-rel-chip.usedby{ color:#9aca5e }
+  .lib-rel-chip.forks{ color:#c397d8 }
+
+  /* Counts header above the grid */
+  .lib-summary{
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); letter-spacing:.05em;
+    margin-bottom:10px; padding-bottom:8px;
+    border-bottom:1px solid var(--border);
+  }
+  .lib-summary strong{ color:var(--gold) }
+
+  /* ── Right side panel content (active workspace + details) ── */
+  .ms-section{
+    margin-bottom:18px; padding-bottom:14px;
+    border-bottom:1px solid var(--border);
+  }
+  .ms-section:last-child{ border-bottom:none }
+  .ms-section-label{
+    font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); letter-spacing:.1em; text-transform:uppercase;
+    margin-bottom:8px;
+  }
+  .ms-mini-card{
+    display:flex; gap:8px; align-items:center;
+    padding:7px 8px; background:var(--surface-3); border:1px solid var(--border);
+    border-radius:4px; margin-bottom:4px; cursor:pointer;
+    transition:all .12s;
+  }
+  .ms-mini-card:hover{ border-color:var(--gold) }
+  .ms-mini-card .mc-icon{
+    width:24px; height:24px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--surface); border-radius:3px; font-size:14px;
+  }
+  .ms-mini-card .mc-name{
+    flex:1 1 auto; min-width:0;
+    font-family:var(--font-mono); font-size:11px; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .map-side{
     flex:0 0 280px; border-left:1px solid var(--border);
@@ -981,43 +1262,6 @@
   .gs-empty strong{
     color:var(--gold); display:inline; margin-right:6px;
   }
-  /* Recent-activity ticker — horizontally scrolling rail. */
-  .gs-activity{
-    border-top:1px solid var(--border);
-    padding:10px 0 12px;
-    background:var(--black);
-    border:1px solid var(--border); border-radius:6px;
-    overflow:hidden; position:relative;
-    margin-top:14px;
-  }
-  .gs-activity-label{
-    font-family:var(--font-mono); font-size:9px;
-    color:var(--text-muted); letter-spacing:.15em;
-    padding:0 16px 6px; text-transform:uppercase;
-  }
-  .gs-activity-rail{
-    display:flex; gap:24px; flex-wrap:nowrap;
-    width:max-content;
-    animation:gs-marquee 60s linear infinite;
-  }
-  .gs-activity:hover .gs-activity-rail{ animation-play-state:paused }
-  @keyframes gs-marquee{
-    from { transform:translateX(0) }
-    to   { transform:translateX(-50%) }
-  }
-  .gs-act{
-    display:inline-flex; align-items:center; gap:8px;
-    padding:0 14px; flex-shrink:0;
-    font-family:var(--font-mono); font-size:11px;
-    color:var(--text-dim); white-space:nowrap;
-  }
-  .gs-act-dot{
-    display:inline-block; width:6px; height:6px; border-radius:50%;
-    background:var(--text-muted); flex-shrink:0;
-  }
-  .gs-act-earn .gs-act-dot{ background:var(--gold) }
-  .gs-act-pub .gs-act-dot{ background:var(--green) }
-  .gs-act-earn{ color:var(--text) }
   .hp-loading{
     display:flex; align-items:center; justify-content:center; gap:8px;
     padding:24px; color:var(--text-muted);
@@ -1319,10 +1563,109 @@
     transition:border-color .15s;
   }
   .input-bar:focus-within{ border-color:var(--gold) }
+  /* Wrapper that anchors the textarea + its highlight overlay so they
+     share the same position. The overlay sits behind the textarea
+     and renders <mark> tags over recognized command portions; the
+     textarea is transparent-backed so those marks show through. */
+  .input-wrap{
+    position:relative; flex:1;
+    min-width:0;          /* lets it shrink in flex parent */
+  }
   .input-bar textarea{
     flex:1; background:none; border:none; outline:none; resize:none;
     color:var(--text); font-family:var(--font-body); font-size:13px;
     line-height:1.5; padding:6px 0; max-height:160px; min-height:24px;
+  }
+  /* Inside .input-wrap the textarea fills the wrapper. */
+  .input-wrap textarea{
+    position:relative; z-index:2;
+    width:100%; background:transparent;
+    box-sizing:border-box;
+  }
+  .input-highlight{
+    position:absolute; inset:0; z-index:1;
+    padding:6px 0; margin:0;
+    font-family:var(--font-body); font-size:13px; line-height:1.5;
+    color:transparent;
+    white-space:pre-wrap; word-wrap:break-word; overflow:hidden;
+    pointer-events:none;
+    box-sizing:border-box;
+  }
+  .input-highlight mark{
+    background:var(--gold-dim);
+    color:transparent;          /* keep the actual visible text in the textarea on top */
+    border-radius:3px;
+    padding:1px 2px; margin:-1px -2px;
+    box-shadow:inset 0 -1px 0 var(--gold);
+  }
+  .input-highlight mark.cmd-process{
+    background:rgba(76, 175, 80, .15);   /* green tint for process invocations */
+    box-shadow:inset 0 -1px 0 var(--green);
+  }
+
+  /* Suggestion dropdown — sits ABOVE the input bar, slides in when
+     a command-prefix is detected. Items are keyboard-navigable. */
+  .cmd-suggest{
+    background:var(--surface); border:1px solid var(--gold);
+    border-radius:8px; margin-bottom:6px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    max-height:280px; overflow-y:auto;
+  }
+  .cmd-suggest-header{
+    padding:6px 12px; border-bottom:1px solid var(--border);
+    font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); text-transform:uppercase; letter-spacing:.1em;
+    background:var(--black);
+  }
+  .cmd-item{
+    display:flex; align-items:center; gap:10px;
+    padding:8px 12px; cursor:pointer;
+    border-left:2px solid transparent;
+    transition:background .1s;
+  }
+  .cmd-item:hover, .cmd-item.active{
+    background:var(--surface-2); border-left-color:var(--gold);
+  }
+  .cmd-item-icon{
+    flex-shrink:0; width:24px; height:24px;
+    background:var(--surface-3); border:1px solid var(--border); border-radius:4px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; line-height:1;
+  }
+  .cmd-item.active .cmd-item-icon,
+  .cmd-item:hover .cmd-item-icon{
+    background:var(--gold-dim); border-color:var(--gold);
+  }
+  .cmd-item-body{ flex:1; min-width:0 }
+  .cmd-item-key{
+    font-family:var(--font-mono); font-size:11.5px;
+    color:var(--text); font-weight:600;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .cmd-item-key b{ color:var(--gold); font-weight:700 }    /* matched substring */
+  .cmd-item-desc{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); margin-top:1px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .cmd-item-tag{
+    flex-shrink:0; font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); padding:2px 6px;
+    background:var(--surface-3); border:1px solid var(--border); border-radius:3px;
+    text-transform:uppercase; letter-spacing:.05em;
+  }
+  .cmd-item-tag.proc{ color:var(--green); border-color:var(--green) }
+  .cmd-item-tag.cmd{ color:var(--gold); border-color:var(--gold) }
+  .cmd-suggest-hint{
+    padding:6px 12px; border-top:1px solid var(--border);
+    font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); text-align:right;
+    background:var(--black);
+  }
+  .cmd-suggest-hint kbd{
+    background:var(--surface-3); border:1px solid var(--border);
+    border-radius:2px; padding:1px 4px; font-family:var(--font-mono);
+    font-size:9px; margin:0 2px; color:var(--text-dim);
   }
   .input-bar textarea::placeholder{ color:var(--text-muted) }
   .icon-btn{
@@ -1370,21 +1713,35 @@
 
   /* Bottom-of-page copyright. Sits beneath the page-shell, centered,
      muted enough to be unobtrusive but legible. */
-  /* Page footer — sits below the chat area. Two stacked lines:
-     a small uppercase positioning statement (gold, mono) on top,
-     then the corporate copyright underneath in dim text. */
+  /* Page footer — sits below the chat area as a single compact line.
+     Both the positioning statement and the corporate copyright fit
+     on one row, separated by a middot — keeps vertical real estate
+     to ~24px instead of the ~76px the stacked version was eating. */
   .page-footer{
-    text-align:center; padding:18px 12px 22px;
+    flex-shrink:0;       /* don't let the column flex squish the footer */
+    display:flex; flex-wrap:wrap;
+    justify-content:center; align-items:center;
+    column-gap:14px; row-gap:2px;
+    padding:6px 12px 8px;
     user-select:none;
   }
   .page-positioning{
-    font-family:var(--font-mono); font-size:10px;
-    color:var(--gold); letter-spacing:.18em; text-transform:uppercase;
-    opacity:.85; margin-bottom:6px;
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--gold); letter-spacing:.16em; text-transform:uppercase;
+    opacity:.85;
   }
   .page-copyright{
-    font-family:var(--font-mono); font-size:9px;
+    font-family:var(--font-mono); font-size:9.5px;
     color:var(--text-muted); letter-spacing:.05em;
+  }
+  .page-sep{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); opacity:.5;
+  }
+  /* On very narrow viewports the flex-wrap kicks in — hide the
+     middot when items wrap onto separate lines. */
+  @media (max-width: 480px){
+    .page-sep{ display:none }
   }
 
   /* Auth modal */
@@ -1763,7 +2120,7 @@
 <body>
 
 <header class="hdr">
-  <div class="brand">PromptFlow<sup>™</sup></div>
+  <button class="brand" id="brandHome" type="button" title="Home — start a new conversation">PromptFlow<sup>™</sup></button>
   <div class="hdr-right">
     <div id="tokenPill" class="token-pill" style="display:none">
       <span id="tokenCount">0</span> tokens
@@ -1772,10 +2129,58 @@
     <button id="signinBtn" class="btn">Sign in</button>
     <button id="signupBtn" class="btn primary">Sign up</button>
     <img id="userAvatar" class="avatar" style="display:none" alt="">
-    <button id="prefsBtn" class="btn" style="display:none" title="Your learned preferences">Prefs</button>
-    <button id="secretsBtn" class="btn" style="display:none" title="Your secrets / API credentials">Secrets</button>
-    <button id="settingsBtn" class="btn" style="display:none" title="Settings, subscription, API keys, CLI">Settings</button>
-    <button id="signoutBtn" class="btn danger" style="display:none">Sign out</button>
+
+    <!-- Account menu — single gear icon that houses Settings, Prefs,
+         and Secrets to keep the header from getting crowded. The
+         dropdown is just a styled <ul> positioned absolutely below
+         the trigger; opening one of the items closes the menu and
+         hands off to the relevant modal. -->
+    <div id="accountMenu" class="account-menu" style="display:none">
+      <button id="accountMenuBtn" class="account-trigger" title="Settings, preferences, secrets, sign out" aria-haspopup="true" aria-expanded="false">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+      <div class="account-dropdown" id="accountDropdown" role="menu">
+        <button class="account-item" data-action="settings" role="menuitem">
+          <span class="ai-icon">⚙</span>
+          <span class="ai-body">
+            <span class="ai-title">Settings</span>
+            <span class="ai-sub">Ranking, subscription, API keys, CLI</span>
+          </span>
+        </button>
+        <button class="account-item" data-action="prefs" role="menuitem">
+          <span class="ai-icon">★</span>
+          <span class="ai-body">
+            <span class="ai-title">Preferences</span>
+            <span class="ai-sub">What the planner has learned about you</span>
+          </span>
+        </button>
+        <button class="account-item" data-action="secrets" role="menuitem">
+          <span class="ai-icon">🔑</span>
+          <span class="ai-body">
+            <span class="ai-title">Secrets</span>
+            <span class="ai-sub">Encrypted credentials your processes use</span>
+          </span>
+        </button>
+        <div class="account-divider"></div>
+        <button class="account-item account-danger" data-action="signout" role="menuitem">
+          <span class="ai-icon">⏻</span>
+          <span class="ai-body">
+            <span class="ai-title">Sign out</span>
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Hidden originals retained so existing code that references
+         these IDs (open handlers, classifier, refreshMe) keeps
+         working unchanged. They're never rendered to the user. -->
+    <button id="prefsBtn" style="display:none !important" aria-hidden="true"></button>
+    <button id="secretsBtn" style="display:none !important" aria-hidden="true"></button>
+    <button id="settingsBtn" style="display:none !important" aria-hidden="true"></button>
+    <button id="signoutBtn" style="display:none !important" aria-hidden="true"></button>
   </div>
 </header>
 
@@ -1880,12 +2285,25 @@
 
   <div class="input-shell">
     <div id="attachWrap"></div>
+
+    <!-- Command-suggestion dropdown — sits ABOVE the input, scrolls
+         independently. Hidden by default; populated by updateCommandSuggestions(). -->
+    <div id="cmdSuggest" class="cmd-suggest" style="display:none" role="listbox"></div>
+
     <div class="input-bar">
       <input type="file" id="fileInput" accept="image/*,video/*,audio/*" multiple hidden>
       <button class="icon-btn" id="attachBtn" title="Attach image, video, audio (or none — text-only is fine)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
-      <textarea id="textInput" placeholder="Describe anything. Attach image / video / audio, or none." rows="1"></textarea>
+      <!-- Textarea + transparent overlay div for command highlighting.
+           The overlay renders the same text with <mark> tags around
+           recognized command prefixes; the textarea sits on top with
+           transparent background so the colored highlights show
+           through behind the user's text. -->
+      <div class="input-wrap">
+        <div class="input-highlight" id="inputHighlight" aria-hidden="true"></div>
+        <textarea id="textInput" placeholder="What do you want to make?" rows="1"></textarea>
+      </div>
       <button class="icon-btn send" id="sendBtn" disabled title="Send (⌘⏎)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
       </button>
@@ -1898,7 +2316,8 @@
 <!-- Footer — page identity + positioning + copyright -->
 <div class="page-footer">
   <div class="page-positioning">The Premiere Process Layer for AI Agents and Models</div>
-  <div class="page-copyright">© 2026 PromptFlow Technologies LLC</div>
+  <div class="page-sep">·</div>
+  <div class="page-copyright">© 2026 PromptFlowTechnologies LLC</div>
 </div>
 
 <!-- Settings modal — ranking preferences, subscription, API keys, CLI -->
@@ -2156,16 +2575,18 @@ promptflow stats</code></pre>
   const tokenPill = $("tokenPill");
   const tokenCount = $("tokenCount");
 
+
   // ── Auth state UI ─────────────────────────────────────
   function paintAuthUI() {
     const loggedIn = !!ME;
     $("signinBtn").style.display = loggedIn ? "none" : "";
     $("signupBtn").style.display = loggedIn ? "none" : "";
     $("subscribeBtn").style.display = loggedIn ? "" : "none";
-    $("signoutBtn").style.display = loggedIn ? "" : "none";
-    $("prefsBtn").style.display = loggedIn ? "" : "none";
-    $("secretsBtn").style.display = loggedIn ? "" : "none";
-    $("settingsBtn").style.display = loggedIn ? "" : "none";
+    // The hidden ID stubs are never visible regardless of login —
+    // we leave their style untouched so any inline refresh logic
+    // that pokes at them stays harmless. The visible UI is the
+    // single gear-icon dropdown (#accountMenu) below.
+    $("accountMenu").style.display = loggedIn ? "" : "none";
     tokenPill.style.display = loggedIn ? "" : "none";
     sidebar.style.display = loggedIn ? "" : "none";
     if (loggedIn) {
@@ -2239,22 +2660,7 @@ promptflow stats</code></pre>
           </span>
         `).join("")}
       </div>
-      ${data.activity && data.activity.length > 0 ? `
-        <div class="gs-activity">
-          <div class="gs-activity-rail" id="gsActivityRail"></div>
-        </div>` : ""}
     `;
-    if (data.activity && data.activity.length > 0) {
-      const rail = wrap.querySelector("#gsActivityRail");
-      // Render twice for seamless scrolling. The CSS keyframe loops
-      // -50% → 0 so the second copy wraps cleanly behind the first.
-      const dupItems = data.activity.concat(data.activity);
-      rail.innerHTML = dupItems.map(a => `
-        <span class="gs-act ${a.kind === "earned" ? "gs-act-earn" : "gs-act-pub"}">
-          <span class="gs-act-dot"></span>${escapeHtml(a.text)}
-        </span>
-      `).join("");
-    }
   }
 
   // Hero "Your portfolio" snapshot — small earning summary inside
@@ -2845,6 +3251,55 @@ promptflow stats</code></pre>
     } catch { alert("Network error."); }
   };
 
+  // ── Account dropdown ─────────────────────────────────
+  // Single gear-icon menu that replaces the old row of text buttons
+  // (Prefs, Secrets, Settings, Sign out). Each item delegates to
+  // the existing modal openers so the underlying behavior is
+  // unchanged — this is a pure UI consolidation.
+  const accountTrigger = $("accountMenuBtn");
+  const accountDropdown = $("accountDropdown");
+  function openAccountMenu() {
+    accountDropdown.classList.add("show");
+    accountTrigger.classList.add("open");
+    accountTrigger.setAttribute("aria-expanded", "true");
+  }
+  function closeAccountMenu() {
+    accountDropdown.classList.remove("show");
+    accountTrigger.classList.remove("open");
+    accountTrigger.setAttribute("aria-expanded", "false");
+  }
+  accountTrigger.onclick = (e) => {
+    e.stopPropagation();
+    if (accountDropdown.classList.contains("show")) closeAccountMenu();
+    else openAccountMenu();
+  };
+  // Outside-click + Esc close.
+  document.addEventListener("click", (e) => {
+    if (!accountDropdown.classList.contains("show")) return;
+    if (accountDropdown.contains(e.target) || accountTrigger.contains(e.target)) return;
+    closeAccountMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && accountDropdown.classList.contains("show")) closeAccountMenu();
+  });
+  // Item routing — close the menu, then fire the action. Each action
+  // already has its own modal/handler wired up elsewhere; we just
+  // delegate via the hidden ID stubs to keep one source of truth.
+  accountDropdown.querySelectorAll(".account-item").forEach(item => {
+    item.onclick = () => {
+      const action = item.dataset.action;
+      closeAccountMenu();
+      // Defer to next tick so the dropdown's outside-click handler
+      // doesn't interfere with the modal that's about to open.
+      setTimeout(() => {
+        if (action === "settings") $("settingsBtn").click();
+        else if (action === "prefs") $("prefsBtn").click();
+        else if (action === "secrets") $("secretsBtn").click();
+        else if (action === "signout") $("signoutBtn").click();
+      }, 0);
+    };
+  });
+
   // ── Settings modal (ranking prefs, subscription, API keys, CLI) ──
   const settingsModal = $("settingsModal");
   const SETTINGS_DEFAULTS = {
@@ -3151,14 +3606,340 @@ promptflow stats</code></pre>
   }
 
   // ── Composer ──────────────────────────────────────────
-  textInput.addEventListener("input", () => {
+  // Command-aware input. Recognized command prefixes (e.g. "Generate
+  // a process for …") get a gold underline + tinted background via
+  // an overlay div behind the textarea, signaling that the system
+  // sees this as an invocation. As the user types, a suggestion
+  // dropdown above the input lists matching commands and any of
+  // their saved processes — Tab/Enter accepts, Up/Down navigates,
+  // Esc dismisses. Plain natural language still works fine; the
+  // overlay simply stays empty when no command pattern matches.
+  const COMMAND_CATALOG = [
+    {
+      // Order matters: list more-specific patterns first so they win
+      // over shorter ones (e.g. "Generate a process" beats "Generate").
+      match: /^(Generate a process)/i,
+      key: "Generate a process",
+      desc: "Design a new reusable workflow the planner can call forever",
+      icon: "⚙️",
+      phrase: "Generate a process for ",
+      tag: "BUILD",
+    },
+    {
+      match: /^(Build a process)/i,
+      key: "Build a process",
+      desc: "Same as Generate a process",
+      icon: "⚙️",
+      phrase: "Build a process for ",
+      tag: "BUILD",
+    },
+    {
+      match: /^(Generate (?:a |an )?video)/i,
+      key: "Generate a video",
+      desc: "Single video output — the planner picks the model",
+      icon: "🎬",
+      phrase: "Generate a video of ",
+      tag: "RUN",
+    },
+    {
+      match: /^(Generate (?:a |an )?image)/i,
+      key: "Generate an image",
+      desc: "Single image output",
+      icon: "🖼️",
+      phrase: "Generate an image of ",
+      tag: "RUN",
+    },
+    {
+      match: /^(Generate audio)/i,
+      key: "Generate audio",
+      desc: "Voiceover, music, or sound effect",
+      icon: "🎵",
+      phrase: "Generate audio for ",
+      tag: "RUN",
+    },
+    {
+      match: /^(Adapt (?:the |my )?[\w "'-]+? process)/i,
+      key: "Adapt the … process",
+      desc: "Refine an existing process to fit your needs (forks it)",
+      icon: "🔧",
+      phrase: "Adapt the ",
+      tag: "ADAPT",
+    },
+    {
+      match: /^(Compose [\w "'-]+ (?:and|with|into) [\w "'-]+)/i,
+      key: "Compose … and …",
+      desc: "Combine multiple processes into one",
+      icon: "🧩",
+      phrase: "Compose ",
+      tag: "COMPOSE",
+    },
+    {
+      match: /^(Search the Process Graph for [^.]+)/i,
+      key: "Search the Process Graph for …",
+      desc: "Find published processes that match",
+      icon: "🔍",
+      phrase: "Search the Process Graph for ",
+      tag: "SEARCH",
+    },
+    {
+      match: /^(Search for [^.]+)/i,
+      key: "Search for …",
+      desc: "Find published processes",
+      icon: "🔍",
+      phrase: "Search for ",
+      tag: "SEARCH",
+    },
+    {
+      match: /^(Run my "[^"]+")/i,
+      key: 'Run my "…"',
+      desc: "Execute one of your saved processes",
+      icon: "▶",
+      phrase: 'Run my "',
+      tag: "RUN",
+    },
+    {
+      match: /^(Fork (?:the |my )?[\w "'-]+? process)/i,
+      key: "Fork the … process",
+      desc: "Create a private adaptation of someone else's process",
+      icon: "🌿",
+      phrase: "Fork the ",
+      tag: "ADAPT",
+    },
+    {
+      match: /^(Publish my [\w "'-]+? process)/i,
+      key: "Publish my … process",
+      desc: "Make a process available to others",
+      icon: "📤",
+      phrase: "Publish my ",
+      tag: "PUBLISH",
+    },
+  ];
+
+  // Find the longest command-prefix match in the given text. Used by
+  // the highlight overlay. Returns null if the text doesn't start with
+  // a recognized command.
+  function findCommandMatch(text) {
+    let best = null;
+    for (const cmd of COMMAND_CATALOG) {
+      const m = text.match(cmd.match);
+      if (m && (!best || m[1].length > best.length)) {
+        best = { length: m[1].length, command: cmd };
+      }
+    }
+    return best;
+  }
+
+  // Render the highlight overlay. The overlay shows the same text as
+  // the textarea but with a <mark> tag around the recognized command
+  // prefix (if any). Both elements share font/size/padding so the
+  // highlight aligns visually behind the user's text.
+  function updateInputHighlight() {
+    const overlay = $("inputHighlight");
+    if (!overlay) return;
+    const text = textInput.value;
+    if (!text) { overlay.innerHTML = ""; return; }
+    const match = findCommandMatch(text);
+    if (!match) {
+      overlay.textContent = text;     // sets text safely; preserves whitespace via white-space:pre-wrap
+      return;
+    }
+    const before = text.substring(0, match.length);
+    const after  = text.substring(match.length);
+    // Tag class differs for process invocations vs general commands so
+    // the user can visually tell what they've invoked.
+    const klass = (match.command.tag === "RUN" || match.command.tag === "ADAPT") ? "cmd-process" : "";
+    overlay.innerHTML = `<mark${klass ? ` class="${klass}"` : ""}>${escapeHtml(before)}</mark>${escapeHtml(after)}`;
+  }
+  // Keep overlay scrolled in sync with the textarea (long inputs).
+  textInput.addEventListener("scroll", () => {
+    const overlay = $("inputHighlight");
+    if (overlay) overlay.scrollTop = textInput.scrollTop;
+  });
+
+  // ── Suggestion dropdown ────────────────────────────────
+  let _suggestActive = -1;        // currently highlighted item, -1 = none
+  let _suggestItems = [];         // current item list
+
+  function getSuggestions(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+    const lower = trimmed.toLowerCase();
+
+    const out = [];
+    // Commands — prefix match preferred, contains match if user typed 3+ chars.
+    for (const cmd of COMMAND_CATALOG) {
+      const k = cmd.key.toLowerCase();
+      let score = 0;
+      if (k.startsWith(lower)) score = 100 - (k.length - lower.length);    // shorter completions rank higher
+      else if (lower.length >= 3 && k.includes(lower)) score = 30;
+      if (score > 0) out.push({ ...cmd, type: "command", score });
+    }
+    // User's own saved processes — surfaceable as "Run my …" /
+    // "Adapt my …" if their name contains the typed text. Only
+    // surface when the user has typed at least 2 chars and the
+    // process name overlaps meaningfully.
+    if (typeof processesCache !== "undefined" && Array.isArray(processesCache) && lower.length >= 2) {
+      for (const p of processesCache) {
+        if (!p.mine) continue;
+        const pname = String(p.name || "").toLowerCase();
+        if (!pname || pname.length < 2) continue;
+        if (pname.includes(lower) || (lower.length >= 4 && (lower.includes(pname.split(" ")[0]) || lower.startsWith("run my") || lower.startsWith("adapt my")))) {
+          out.push({
+            type: "process",
+            key: `Run my "${p.name}"`,
+            desc: `${(p.input_kinds || []).join("+") || "text"} → ${p.output_kind || "video"}`,
+            icon: (typeof autoIconForProcess === "function" ? autoIconForProcess(p) : "⚙️"),
+            phrase: `Run my "${p.name}" with `,
+            tag: "PROCESS",
+            score: 50 + (pname.startsWith(lower) ? 30 : 0),
+          });
+        }
+      }
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out.slice(0, 8);
+  }
+
+  function highlightMatchInLabel(label, query) {
+    if (!query) return escapeHtml(label);
+    const idx = label.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escapeHtml(label);
+    return escapeHtml(label.substring(0, idx))
+      + "<b>" + escapeHtml(label.substring(idx, idx + query.length)) + "</b>"
+      + escapeHtml(label.substring(idx + query.length));
+  }
+
+  function updateCommandSuggestions() {
+    const wrap = $("cmdSuggest");
+    if (!wrap) return;
+    const text = textInput.value;
+    _suggestItems = getSuggestions(text);
+    if (_suggestItems.length === 0) {
+      wrap.style.display = "none";
+      _suggestActive = -1;
+      return;
+    }
+    _suggestActive = 0;     // first item is highlighted by default
+
+    const trimmedQuery = text.trim();
+    let html = `<div class="cmd-suggest-header">${_suggestItems.length} matching command${_suggestItems.length === 1 ? "" : "s"}</div>`;
+    _suggestItems.forEach((it, i) => {
+      const tagKlass = it.type === "process" ? "proc" : "cmd";
+      html += `
+        <div class="cmd-item${i === 0 ? " active" : ""}" data-i="${i}" role="option">
+          <div class="cmd-item-icon">${escapeHtml(it.icon || "·")}</div>
+          <div class="cmd-item-body">
+            <div class="cmd-item-key">${highlightMatchInLabel(it.key, trimmedQuery)}</div>
+            <div class="cmd-item-desc">${escapeHtml(it.desc || "")}</div>
+          </div>
+          <div class="cmd-item-tag ${tagKlass}">${escapeHtml(it.tag || "")}</div>
+        </div>
+      `;
+    });
+    html += `
+      <div class="cmd-suggest-hint">
+        <kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>Tab</kbd>/<kbd>↵</kbd> accept · <kbd>Esc</kbd> dismiss
+      </div>`;
+    wrap.innerHTML = html;
+    wrap.style.display = "";
+
+    // Click handlers per item.
+    wrap.querySelectorAll(".cmd-item").forEach(el => {
+      el.onclick = () => acceptSuggestion(parseInt(el.dataset.i, 10));
+      el.onmouseenter = () => setActiveSuggestion(parseInt(el.dataset.i, 10));
+    });
+  }
+
+  function setActiveSuggestion(i) {
+    if (i < 0 || i >= _suggestItems.length) return;
+    _suggestActive = i;
+    const wrap = $("cmdSuggest");
+    wrap.querySelectorAll(".cmd-item").forEach((el, idx) => {
+      el.classList.toggle("active", idx === i);
+    });
+  }
+
+  function acceptSuggestion(i) {
+    if (i == null) i = _suggestActive;
+    const it = _suggestItems[i];
+    if (!it) return;
+    // Replace whatever the user typed with the canonical phrase.
+    // Use the phrase (which usually ends with a trailing space) as
+    // the new text, so they can immediately keep typing the rest.
+    textInput.value = it.phrase;
+    textInput.focus();
+    textInput.setSelectionRange(textInput.value.length, textInput.value.length);
+    closeSuggestions();
+    updateInputHighlight();
+    updateSend();
+    autoResizeInput();
+  }
+
+  function closeSuggestions() {
+    const wrap = $("cmdSuggest");
+    if (wrap) { wrap.style.display = "none"; wrap.innerHTML = ""; }
+    _suggestItems = [];
+    _suggestActive = -1;
+  }
+
+  function autoResizeInput() {
     textInput.style.height = "auto";
     textInput.style.height = Math.min(textInput.scrollHeight, 160) + "px";
+  }
+
+  textInput.addEventListener("input", () => {
+    autoResizeInput();
+    updateInputHighlight();
+    updateCommandSuggestions();
     updateSend();
   });
   textInput.addEventListener("keydown", (e) => {
+    // Suggestion-aware keys take priority when the dropdown is open.
+    const open = _suggestItems.length > 0 && $("cmdSuggest").style.display !== "none";
+    if (open) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveSuggestion((_suggestActive + 1) % _suggestItems.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveSuggestion((_suggestActive - 1 + _suggestItems.length) % _suggestItems.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        acceptSuggestion();
+        return;
+      }
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        // Plain Enter accepts the suggestion (when dropdown is open).
+        // Cmd/Ctrl-Enter falls through to send. Shift-Enter falls
+        // through to newline.
+        e.preventDefault();
+        acceptSuggestion();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeSuggestions();
+        return;
+      }
+    }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
   });
+  // Click outside the dropdown closes it.
+  document.addEventListener("click", (e) => {
+    const wrap = $("cmdSuggest");
+    if (!wrap || wrap.style.display === "none") return;
+    if (wrap.contains(e.target) || e.target === textInput) return;
+    closeSuggestions();
+  });
+  // Refocus the input → re-check for suggestions if there's content.
+  textInput.addEventListener("focus", () => {
+    if (textInput.value.trim()) updateCommandSuggestions();
+  });
+
   function updateSend() {
     // Text is the only hard requirement. Files are optional — text-only,
     // text+image, text+video, text+audio, and any combination are all
@@ -4148,9 +4929,16 @@ promptflow stats</code></pre>
       const pre = document.createElement("pre");
       pre.style.cssText =
         "margin:0;padding:10px 12px;border-top:1px solid var(--border);overflow:auto;max-height:380px;color:var(--text);white-space:pre";
-      pre.textContent = proc.python_text;
+      const code = document.createElement("code");
+      code.textContent = proc.python_text;
+      pre.appendChild(code);
       wrap.appendChild(summary);
       wrap.appendChild(pre);
+      // Defer Prism highlight until the user expands — saves work for
+      // the common case where they don't open the panel at all.
+      wrap.addEventListener("toggle", () => {
+        if (wrap.open) highlightCode(code, "python");
+      }, { once: true });
       assist.body.appendChild(wrap);
     }
   }
@@ -5066,18 +5854,16 @@ promptflow stats</code></pre>
     }).join("");
     pane.appendChild(stepsCard);
 
-    // Python view
+    // Python view — rendered via renderCodeViewer so users can toggle
+    // between the inline-prompt .py and the bundled .promptflow view
+    // (process.py + prompts/*.txt + manifest.json + original.py),
+    // with syntax highlighting via lazy-loaded Prism.
     if (p.python_text) {
       const pyLabel = document.createElement("div");
       pyLabel.className = "editor-section-title";
-      pyLabel.textContent = `Python · ${p.python_text.split("\n").length} lines`;
+      pyLabel.textContent = "Code";
       pane.appendChild(pyLabel);
-      const pyWrap = document.createElement("div");
-      pyWrap.className = "editor-python";
-      const pre = document.createElement("pre");
-      pre.textContent = p.python_text;
-      pyWrap.appendChild(pre);
-      pane.appendChild(pyWrap);
+      renderCodeViewer(pane, p, { title: `Python · ${p.python_text.split("\n").length} lines` });
     }
 
     stream.appendChild(pane);
@@ -5405,6 +6191,7 @@ promptflow stats</code></pre>
   // Click a node to drill into that process's step-level graph.
   let cyInstance = null;     // Cytoscape instance for the map
   let mapQueryState = { mode: "default", text: "", plan: null, explanation: "" };
+  let libraryHideMonetized = false;     // toggle: hide monetized in the library grid
 
   // Lazy-load Cytoscape from CDN. Resolves once `cytoscape` is on window.
   async function ensureCytoscape() {
@@ -5418,6 +6205,323 @@ promptflow stats</code></pre>
       document.head.appendChild(s);
     });
     return window.__cyLoading;
+  }
+
+  // Lazy-load Prism for syntax highlighting. We load prism core + the
+  // python and json language definitions — JSON is needed for the
+  // .promptflow bundle view's manifest.json file. Failure falls back
+  // to plain <pre><code> rendering, so highlighting is best-effort.
+  async function ensurePrism() {
+    if (window.Prism) return window.Prism;
+    if (window.__prismLoading) return window.__prismLoading;
+    window.__prismLoading = new Promise((resolve) => {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css";
+      document.head.appendChild(css);
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js";
+      s.onload = () => {
+        // Disable autoloader / autohighlight; we drive it manually via
+        // Prism.highlightElement so it doesn't run on already-rendered
+        // <pre><code> blocks elsewhere on the page.
+        if (window.Prism) window.Prism.manual = true;
+        // Now load the language plugins (sequentially to preserve order).
+        const py = document.createElement("script");
+        py.src = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js";
+        py.onload = () => {
+          const jn = document.createElement("script");
+          jn.src = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js";
+          jn.onload = () => {
+            const md = document.createElement("script");
+            md.src = "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markdown.min.js";
+            md.onload = () => resolve(window.Prism || null);
+            md.onerror = () => resolve(window.Prism || null);
+            document.head.appendChild(md);
+          };
+          jn.onerror = () => resolve(window.Prism || null);
+          document.head.appendChild(jn);
+        };
+        py.onerror = () => resolve(window.Prism || null);
+        document.head.appendChild(py);
+      };
+      s.onerror = () => resolve(null);
+      document.head.appendChild(s);
+    });
+    return window.__prismLoading;
+  }
+
+  // Apply Prism highlighting to a <code> element. Falls back to no-op
+  // if Prism isn't loaded yet — render the raw text first, then upgrade.
+  async function highlightCode(codeEl, language) {
+    if (!codeEl) return;
+    codeEl.className = `language-${language || "none"}`;
+    try {
+      const Prism = await ensurePrism();
+      if (Prism && Prism.languages[language]) {
+        Prism.highlightElement(codeEl);
+      }
+    } catch { /* fall back to plain text — already rendered */ }
+  }
+
+  // Build the .promptflow bundle representation for a process. Walks
+  // the steps, extracts each prompt field as its own "file", and
+  // generates a process.py stub where the inline prompt strings are
+  // replaced by load_prompt() calls — same shape as the server-side
+  // bundle but rebuilt client-side from cached process data so the
+  // toggle is instant (no extra network call).
+  function buildPromptflowFiles(p) {
+    const promptFiles = [];
+    const replacements = [];        // [{ orig, name }]
+    const seen = new Set();
+
+    function addPrompt(stepId, field, text) {
+      if (!text || typeof text !== "string" || text.length === 0) return;
+      const name = `${stepId}__${field}`;
+      // Avoid duplicate file names if the same prompt appears twice.
+      if (seen.has(name)) return;
+      seen.add(name);
+      promptFiles.push({ path: `prompts/${name}.txt`, content: text, language: "none" });
+      replacements.push({ orig: text, name });
+    }
+
+    for (let i = 0; i < (p.steps || []).length; i++) {
+      const s = p.steps[i];
+      const sid = s.id || `step_${i}`;
+      if (s.type === "claude") {
+        addPrompt(sid, "system", s.system_prompt);
+        addPrompt(sid, "user",   s.user_prompt);
+      } else if (s.type === "recipe") {
+        const params = s.params || {};
+        addPrompt(sid, "visual",   params.visual_prompt);
+        addPrompt(sid, "negative", params.negative_prompt);
+        addPrompt(sid, "speech",   params.speech_text);
+      } else if (s.type === "loop" && Array.isArray(s.body)) {
+        // Loops nest; recurse with a synthetic prefix.
+        for (let j = 0; j < s.body.length; j++) {
+          const inner = s.body[j];
+          const innerId = `${sid}.${inner.id || `body_${j}`}`;
+          if (inner.type === "claude") {
+            addPrompt(innerId, "system", inner.system_prompt);
+            addPrompt(innerId, "user",   inner.user_prompt);
+          } else if (inner.type === "recipe") {
+            const ip = inner.params || {};
+            addPrompt(innerId, "visual",   ip.visual_prompt);
+            addPrompt(innerId, "negative", ip.negative_prompt);
+            addPrompt(innerId, "speech",   ip.speech_text);
+          }
+        }
+      }
+    }
+
+    // Generate the stripped process.py. Walks python_text and replaces
+    // each long-enough inline prompt with a load_prompt(name) call.
+    // Replacements are ordered longest-first to avoid prefix collisions.
+    let processPy = p.python_text || "";
+    const sortedReplacements = replacements.slice().sort((a, b) => b.orig.length - a.orig.length);
+    for (const { orig, name } of sortedReplacements) {
+      if (orig.length < 8) continue;
+      // Try the most common embedded forms in order.
+      const candidates = [
+        `"""${orig}"""`,
+        `'''${orig}'''`,
+        JSON.stringify(orig),                                    // "escaped string"
+        `"${orig.replace(/"/g, '\\"')}"`,
+        `'${orig.replace(/'/g, "\\'")}'`,
+      ];
+      for (const c of candidates) {
+        if (processPy.indexOf(c) !== -1) {
+          processPy = processPy.split(c).join(`load_prompt("${name}")`);
+          break;
+        }
+      }
+    }
+    // Add a small header comment so users see the prompt-resolution
+    // pattern at the top of the file.
+    const header = `# process.py — workflow logic with prompts factored out.
+# Each load_prompt(name) call reads from prompts/<name>.txt at runtime.
+# Run this bundle: python ${p.id || "this"}.promptflow
+
+`;
+    processPy = header + processPy;
+
+    // Manifest mirrors the server-side shape (subset).
+    const manifest = {
+      format: "promptflow/1",
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      input_kinds: p.input_kinds,
+      output_kind: p.output_kind,
+      author_display_name: p.author_display_name || null,
+      is_monetized: !!p.is_monetized,
+      markup_tokens: p.markup_tokens || 0,
+      stats: {
+        total_runs: p.total_runs || 0,
+        total_helpful: p.total_helpful || 0,
+      },
+      spirit_file: "spirit.md",
+      has_design_intent: !!(p.design_intent && p.design_intent.length > 0),
+      prompt_files: promptFiles.map(f => f.path),
+    };
+
+    // Build the spirit.md content from cached process data. This is the
+    // SAME shape as the server's buildBundleSpirit but rebuilt locally so
+    // the .promptflow tab view is instant. Captures intent (what the
+    // user wanted) separately from implementation (the synthesized
+    // python + prompts) so a future better model can regenerate the
+    // process from scratch without being locked to today's synthesis.
+    const intent = String(p.design_intent || "").trim();
+    const inputs = (p.input_kinds || ["text"]).join(", ");
+    const output = p.output_kind || "video";
+    const stepKindCounts = {};
+    function walkSteps(arr) {
+      if (!Array.isArray(arr)) return;
+      for (const s of arr) {
+        stepKindCounts[s.type] = (stepKindCounts[s.type] || 0) + 1;
+        if (s.type === "loop" && Array.isArray(s.body)) walkSteps(s.body);
+      }
+    }
+    walkSteps(p.steps);
+    const capabilitySummary = Object.entries(stepKindCounts)
+      .map(([k, n]) => `${n} ${k}${n === 1 ? "" : " steps"}`).join(", ") || "no steps yet";
+    const intentSection = intent
+      ? `## Original user intent\n\nThe process was created in response to this request:\n\n> ${intent.split("\n").join("\n> ")}\n`
+      : `## Original user intent\n\n(Not captured. This process predates intent-tracking, or was imported. The Goal section above is the best available summary.)\n`;
+    const spiritMd = `# spirit.md
+
+> The spirit of "${p.name}" — its intent, decoupled from its current implementation.
+> When a future model can build something better, hand it this file.
+
+## Goal
+
+${p.description || "(no description set)"}
+
+## Inputs and output
+
+- **Inputs:** ${inputs}
+- **Output:** ${output}
+
+${intentSection}
+## Current implementation summary
+
+This process is currently implemented as: ${capabilitySummary}.
+
+The actual code lives in \`process.py\` (with prompts factored into
+\`prompts/<name>.txt\`); the inline-prompt version lives in
+\`original.py\`. Those files are SNAPSHOTS — frozen at the model and
+recipes available when the process was synthesized. They will age.
+This file will not.
+
+## Regeneration prompt
+
+To rebuild this process from scratch with a newer/better model, paste
+the prompt below into the PromptFlow chat:
+
+\`\`\`
+Build me a new process that does:
+
+${p.description || "(see goal section above)"}
+
+Inputs: ${inputs}
+Output: ${output}
+
+${intent ? `Original intent that motivated this:\n${intent}\n\n` : ""}Use the best available recipes and models. The current implementation
+uses ${capabilitySummary}, but you should choose afresh — match the
+goal, not the legacy structure. Preserve the input/output contract so
+existing callers don't break.
+\`\`\`
+
+The planner will pick fresh recipes, write fresh prompts, and emit a
+new process. Compare its output to the current one before replacing.
+`;
+
+    return [
+      { path: "process.py",    content: processPy,                          language: "python" },
+      { path: "spirit.md",     content: spiritMd,                           language: "markdown" },
+      ...promptFiles,
+      { path: "manifest.json", content: JSON.stringify(manifest, null, 2),  language: "json" },
+      { path: "original.py",   content: p.python_text || "",                language: "python" },
+    ];
+  }
+
+  // Render the code viewer. Drops a .code-viewer card into `mount` with
+  // a format toggle (.py / .promptflow) and — when in .promptflow mode —
+  // a tab strip for switching between bundle files. Stateful: keeps the
+  // active tab and the selected mode in closure so the user can flip
+  // back and forth without re-rendering the whole editor.
+  function renderCodeViewer(mount, p, opts = {}) {
+    const titleText = opts.title || `Python · ${(p.python_text || "").split("\n").length} lines`;
+    const card = document.createElement("div");
+    card.className = "code-viewer";
+    card.innerHTML = `
+      <div class="code-viewer-head">
+        <div class="cv-title">${escapeHtml(titleText)}</div>
+        <div class="cv-toggle">
+          <button class="active" data-mode="py">.py</button>
+          <button data-mode="promptflow">.promptflow</button>
+        </div>
+      </div>
+      <div class="cv-tabs" style="display:none"></div>
+      <div class="cv-body"></div>
+    `;
+    const tabs = card.querySelector(".cv-tabs");
+    const body = card.querySelector(".cv-body");
+    const titleEl = card.querySelector(".cv-title");
+    let mode = "py";
+    let activeFile = "process.py";
+    let bundleFiles = null;
+
+    function renderBody() {
+      if (mode === "py") {
+        tabs.style.display = "none";
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = p.python_text || "";
+        pre.appendChild(code);
+        body.innerHTML = "";
+        body.appendChild(pre);
+        if (p.python_text) highlightCode(code, "python");
+        else body.innerHTML = `<div class="cv-empty">No Python available for this process.</div>`;
+        titleEl.textContent = titleText;
+        return;
+      }
+      // .promptflow bundle view
+      if (!bundleFiles) bundleFiles = buildPromptflowFiles(p);
+      tabs.style.display = "flex";
+      tabs.innerHTML = "";
+      for (const f of bundleFiles) {
+        const t = document.createElement("button");
+        t.className = "cv-tab" + (f.path === activeFile ? " active" : "");
+        t.textContent = f.path;
+        t.onclick = () => { activeFile = f.path; renderBody(); };
+        tabs.appendChild(t);
+      }
+      const file = bundleFiles.find(f => f.path === activeFile) || bundleFiles[0];
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = file.content || "";
+      pre.appendChild(code);
+      body.innerHTML = "";
+      body.appendChild(pre);
+      if (file.language && file.language !== "none") highlightCode(code, file.language);
+      titleEl.textContent = `${file.path} · ${(file.content || "").split("\n").length} lines · part of ${escapeHtml(p.name || "process")}.promptflow`;
+    }
+
+    // Wire the format toggle.
+    card.querySelectorAll(".cv-toggle button").forEach(btn => {
+      btn.onclick = () => {
+        const m = btn.dataset.mode;
+        if (m === mode) return;
+        mode = m;
+        card.querySelectorAll(".cv-toggle button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+        renderBody();
+      };
+    });
+
+    renderBody();
+    mount.appendChild(card);
+    return card;
   }
 
   async function paintProcessMap() {
@@ -5531,10 +6635,23 @@ promptflow stats</code></pre>
     discover.innerHTML = `
       <span class="dr-label">Discover:</span>
       ${chips.map(c => `<button class="dr-chip" data-id="${c.id}" title="${escapeAttr(c.hint)}">${escapeHtml(c.label)}</button>`).join("")}
+      <span style="flex:1"></span>
+      <button class="dr-chip dr-hide-monetized" data-toggle="hidem"
+              title="Hide processes that charge a markup. Only free + your own remain visible.">
+        ${libraryHideMonetized ? "✓ " : ""}Hide $
+      </button>
     `;
     // Mark active chip if the current plan matches.
     const activeId = mapQueryState.activeChipId || "all";
     discover.querySelectorAll(".dr-chip").forEach(btn => {
+      if (btn.dataset.toggle === "hidem") {
+        if (libraryHideMonetized) btn.classList.add("active");
+        btn.onclick = () => {
+          libraryHideMonetized = !libraryHideMonetized;
+          paintProcessMap();    // re-render to apply the filter
+        };
+        return;
+      }
       if (btn.dataset.id === activeId) btn.classList.add("active");
       btn.onclick = () => {
         const c = chips.find(x => x.id === btn.dataset.id);
@@ -5551,16 +6668,18 @@ promptflow stats</code></pre>
     });
     card.appendChild(discover);
 
-    // Body — Cytoscape canvas + side panel.
+    // Body — card grid + side panel. The side panel shows the user's
+    // active workspace (recently-edited processes) when nothing is
+    // selected, and full details when a card is clicked.
     const body = document.createElement("div");
     body.className = "graph-card-body map-body";
     body.innerHTML = `
       <div class="map-canvas" id="mapCanvas"></div>
-      <aside class="map-side" id="mapSide">
-        <div class="map-side-empty">Click any node to see its full stats here.</div>
-      </aside>
+      <aside class="map-side" id="mapSide"></aside>
     `;
     card.appendChild(body);
+    // Initial side panel state — show the user's recent processes.
+    renderMapSidePanelEmpty(card);
 
     // Action row.
     const actions = document.createElement("div");
@@ -5610,10 +6729,17 @@ promptflow stats</code></pre>
   }
 
   // Fetch graph data (using either /graph/data or /graph/query if a
-  // plan is set), then render into the Cytoscape canvas.
+  // plan is set), then render as a card-grid library view. We dropped
+  // the Cytoscape spatial graph because:
+  //   - labels overlapped at any reasonable zoom
+  //   - CDN load was slow
+  //   - low information density per visible node
+  //   - users couldn't scan / filter intuitively
+  // The card grid shows ~3× more processes per screen, surfaces price /
+  // author / IO / stats / relationships at a glance, and loads instantly.
   async function loadAndRenderMap(card) {
     const canvas = card.querySelector("#mapCanvas");
-    canvas.innerHTML = `<div class="map-loading"><div class="spinner"></div><span>Loading graph…</span></div>`;
+    canvas.innerHTML = `<div class="map-loading"><div class="spinner"></div><span>Loading library…</span></div>`;
 
     let graph;
     try {
@@ -5621,7 +6747,7 @@ promptflow stats</code></pre>
       const r = await fetch(useQuery ? "/api/promptflow/graph/query" : "/api/promptflow/graph/data", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(useQuery ? { plan: mapQueryState.plan } : { limit: 100 }),
+        body: JSON.stringify(useQuery ? { plan: mapQueryState.plan } : { limit: 200 }),
       });
       graph = await r.json();
     } catch (e) {
@@ -5632,98 +6758,191 @@ promptflow stats</code></pre>
       canvas.innerHTML = `<div class="map-loading">${escapeHtml(graph.message || graph.error || "Failed.")}</div>`;
       return;
     }
-    if ((graph.nodes || []).length === 0) {
-      canvas.innerHTML = `<div class="map-loading">No nodes match. Adjust the query above.</div>`;
+
+    // Filter to processes (the actual library content); recipes and
+    // users are infrastructure that don't belong in the library view.
+    let processes = (graph.nodes || []).filter(n => n.type === "process" && n.primary !== false);
+
+    // Apply the "Hide monetized" toggle if active. This is a CLIENT-side
+    // filter because it's a viewer preference, not a query change —
+    // toggling it doesn't burn another /graph/query call.
+    if (libraryHideMonetized) {
+      processes = processes.filter(n => !n?.meta?.is_monetized);
+    }
+
+    if (processes.length === 0) {
+      canvas.innerHTML = `<div class="map-loading">No processes match. Adjust the query above.</div>`;
+      renderMapSidePanelEmpty(card);
       return;
     }
 
-    let cytoscape;
-    try { cytoscape = await ensureCytoscape(); }
-    catch (e) {
-      canvas.innerHTML = `<div class="map-loading">Could not load graph library.</div>`;
-      return;
-    }
-
-    canvas.innerHTML = "";
-    if (cyInstance) { try { cyInstance.destroy(); } catch {} cyInstance = null; }
-
-    // Build elements for Cytoscape.
-    const elements = [];
-    for (const n of graph.nodes) {
-      // Node weight scales with quality_score for processes; recipes
-      // and users get a constant size.
-      const weight = n.type === "process"
-        ? 25 + 30 * (n.stats?.quality || 0.3)
-        : n.type === "recipe" ? 22
-        : 18;
-      elements.push({
-        data: {
-          id: n.id,
-          label: truncate(n.label, 22),
-          full_label: n.label,
-          type: n.type,
-          group: n.group || n.type,
-          weight,
-          stats: n.stats || {},
-          meta: n.meta || {},
-          // Subtitle shown under the label.
-          subtitle: n.type === "process"
-            ? formatProcessSubtitle(n)
-            : n.type === "recipe"
-              ? `${n.meta?.family || ""}`.trim()
-              : "",
-        },
-        classes: nodeClassesFor(n),
-      });
-    }
-    for (const e of graph.edges) {
-      elements.push({
-        data: { id: e.id, source: e.source, target: e.target, type: e.type },
-        classes: `edge-${e.type}`,
-      });
-    }
-
-    cyInstance = cytoscape({
-      container: canvas,
-      elements,
-      style: cytoscapeStyleSheet(),
-      wheelSensitivity: 0.2,
-      minZoom: 0.3,
-      maxZoom: 3,
-      pixelRatio: 1,         // sharper text on zoom
-    });
-
-    cyInstance.layout(buildLayoutOptions("cose")).run();
-
-    // Click handlers.
-    cyInstance.on("tap", "node", (e) => {
-      const n = e.target.data();
-      renderMapSidePanel(card, n);
-      cyInstance.elements().removeClass("highlight faded");
-      e.target.addClass("highlight");
-      e.target.connectedEdges().addClass("highlight");
-      e.target.connectedEdges().connectedNodes().addClass("highlight");
-      cyInstance.elements().not(".highlight").addClass("faded");
-    });
-    cyInstance.on("tap", (e) => {
-      // Click on background clears highlight.
-      if (e.target === cyInstance) {
-        cyInstance.elements().removeClass("highlight faded");
-        renderMapSidePanelEmpty(card);
+    // Compute relationship counts per process from the edges array.
+    const composesCount = new Map();
+    const usedByCount = new Map();
+    const forksCount = new Map();
+    for (const e of (graph.edges || [])) {
+      if (e.type === "composes") {
+        composesCount.set(e.source, (composesCount.get(e.source) || 0) + 1);
+        usedByCount.set(e.target, (usedByCount.get(e.target) || 0) + 1);
+      } else if (e.type === "fork_of" || e.type === "forks") {
+        forksCount.set(e.target, (forksCount.get(e.target) || 0) + 1);
       }
-    });
-    cyInstance.on("dblclick", "node", (e) => {
-      const id = e.target.data("id");
-      if (id.startsWith("process:")) openProcessGraph(id.slice("process:".length));
-    });
+    }
 
-    // Show summary above the canvas.
+    // Build the grid.
+    canvas.innerHTML = "";
+    const summary = document.createElement("div");
+    summary.className = "lib-summary";
+    summary.innerHTML = `
+      <strong>${processes.length}</strong> ${processes.length === 1 ? "process" : "processes"}${graph.truncated ? " (truncated)" : ""} ·
+      <strong>${graph.counts?.edges || (graph.edges || []).length}</strong> relationships
+      ${libraryHideMonetized ? `· <strong>monetized hidden</strong>` : ""}
+    `;
+    canvas.appendChild(summary);
+
+    const grid = document.createElement("div");
+    grid.className = "lib-grid";
+    for (const n of processes) {
+      grid.appendChild(renderLibraryCard(n, {
+        composes: composesCount.get(n.id) || 0,
+        usedBy:   usedByCount.get(n.id)   || 0,
+        forks:    forksCount.get(n.id)    || 0,
+      }, card));
+    }
+    canvas.appendChild(grid);
+
+    // Update the meta line in the card header (count badge above canvas)
     const headMeta = card.querySelector(".gh-meta");
     if (headMeta) {
       headMeta.textContent =
-        `${graph.counts?.processes || 0} processes · ${graph.counts?.recipes || 0} recipes · ${graph.counts?.edges || elements.filter(x=>x.data.source).length} edges` +
-        (graph.truncated ? " · truncated to 100" : "");
+        `${graph.counts?.processes || processes.length} processes · ${graph.counts?.edges || (graph.edges || []).length} edges` +
+        (graph.truncated ? " · truncated" : "");
     }
+  }
+
+  // Render one card in the library grid. Pure DOM construction so user
+  // content doesn't get HTML-interpolated.
+  function renderLibraryCard(node, rels, mapCard) {
+    const meta = node.meta || {};
+    const stats = node.stats || {};
+    const div = document.createElement("div");
+    div.className = "lib-card";
+    div.dataset.nodeId = node.id;
+
+    // Icon — same emoji-or-auto logic as the sidebar cards.
+    const fakeProc = {
+      icon: meta.icon || null,
+      output_kind: meta.output_kind,
+      input_kinds: meta.input_kinds,
+    };
+    const icon = document.createElement("div");
+    icon.className = "lib-icon";
+    icon.textContent = autoIconForProcess(fakeProc);
+    div.appendChild(icon);
+
+    const body = document.createElement("div");
+    body.className = "lib-body";
+
+    // Name + price pill
+    const nameRow = document.createElement("div");
+    nameRow.className = "lib-name-row";
+    const nameEl = document.createElement("div");
+    nameEl.className = "lib-name";
+    nameEl.textContent = node.label || "(unnamed)";
+    nameRow.appendChild(nameEl);
+
+    const pricePill = document.createElement("span");
+    pricePill.className = "lib-pricepill";
+    if (meta.is_system) {
+      pricePill.classList.add("system");
+      pricePill.textContent = "SYS";
+    } else if (meta.is_monetized) {
+      pricePill.classList.add("paid");
+      pricePill.textContent = `${meta.markup_tokens || 0}t`;
+    } else {
+      pricePill.classList.add("free");
+      pricePill.textContent = "free";
+    }
+    nameRow.appendChild(pricePill);
+    body.appendChild(nameRow);
+
+    // Author line — "by alice" or "by you" or omitted for system.
+    if (!meta.is_system) {
+      const author = document.createElement("div");
+      author.className = "lib-author";
+      if (meta.mine || (ME && meta.author_user_id === ME.id)) {
+        author.innerHTML = `by <span class="lib-byyou">you</span>`;
+      } else if (meta.author_display_name) {
+        author.textContent = `by ${meta.author_display_name}`;
+      } else {
+        author.textContent = "anonymous";
+      }
+      body.appendChild(author);
+    }
+
+    // Description (truncated to 2 lines via CSS).
+    if (meta.description) {
+      const desc = document.createElement("div");
+      desc.className = "lib-desc";
+      desc.textContent = meta.description;
+      body.appendChild(desc);
+    }
+
+    // I/O kinds
+    const io = document.createElement("div");
+    io.className = "lib-io";
+    const inK = (meta.input_kinds || ["text"]).join("+");
+    io.innerHTML = `<strong>${escapeHtml(inK)}</strong> → <strong>${escapeHtml(meta.output_kind || "video")}</strong>`;
+    body.appendChild(io);
+
+    // Stats line (runs / helpful / quality)
+    const statsRow = document.createElement("div");
+    statsRow.className = "lib-stats";
+    statsRow.innerHTML = `
+      <span class="lib-stat"><strong>${stats.runs || 0}</strong> runs</span>
+      ${stats.helpful > 0 ? `<span class="lib-stat"><strong>${stats.helpful}</strong> 👍</span>` : ""}
+      ${stats.quality != null ? `<span class="lib-stat">quality <strong>${(stats.quality || 0).toFixed(2)}</strong></span>` : ""}
+    `;
+    body.appendChild(statsRow);
+
+    // Relationship chips — only show if non-zero.
+    if (rels.composes || rels.usedBy || rels.forks) {
+      const rel = document.createElement("div");
+      rel.className = "lib-rel";
+      if (rels.composes) {
+        const c = document.createElement("span");
+        c.className = "lib-rel-chip composes";
+        c.textContent = `composes ${rels.composes}`;
+        rel.appendChild(c);
+      }
+      if (rels.usedBy) {
+        const c = document.createElement("span");
+        c.className = "lib-rel-chip usedby";
+        c.textContent = `used by ${rels.usedBy}`;
+        rel.appendChild(c);
+      }
+      if (rels.forks) {
+        const c = document.createElement("span");
+        c.className = "lib-rel-chip forks";
+        c.textContent = `${rels.forks} fork${rels.forks === 1 ? "" : "s"}`;
+        rel.appendChild(c);
+      }
+      body.appendChild(rel);
+    }
+
+    div.appendChild(body);
+
+    // Click → highlight + render side panel.
+    div.onclick = () => {
+      mapCard.querySelectorAll(".lib-card.active").forEach(c => c.classList.remove("active"));
+      div.classList.add("active");
+      renderMapSidePanel(mapCard, { ...node, full_label: node.label });
+    };
+    div.ondblclick = () => {
+      if (node.id?.startsWith("process:")) openProcessGraph(node.id.slice("process:".length));
+    };
+
+    return div;
   }
 
   function buildLayoutOptions(name) {
@@ -5918,7 +7137,51 @@ promptflow stats</code></pre>
   }
   function renderMapSidePanelEmpty(card) {
     const side = card.querySelector("#mapSide");
-    if (side) side.innerHTML = `<div class="map-side-empty">Click any node to see its full stats here.</div>`;
+    if (!side) return;
+
+    // When nothing is selected, show the user's working set: their
+    // most recently edited processes. This makes the right panel
+    // useful by default — it's the user's own library at a glance.
+    // Click any → opens the editor.
+    const mine = (processesCache || [])
+      .filter(p => p.mine && !p.is_system)
+      .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+      .slice(0, 8);
+
+    side.innerHTML = "";
+
+    if (mine.length > 0) {
+      const sec = document.createElement("div");
+      sec.className = "ms-section";
+      sec.innerHTML = `<div class="ms-section-label">Your workspace</div>`;
+      for (const p of mine) {
+        const mc = document.createElement("div");
+        mc.className = "ms-mini-card";
+        const ic = document.createElement("div");
+        ic.className = "mc-icon";
+        ic.textContent = autoIconForProcess(p);
+        const nm = document.createElement("div");
+        nm.className = "mc-name";
+        nm.textContent = p.name;
+        mc.appendChild(ic);
+        mc.appendChild(nm);
+        mc.title = `${p.is_published ? (p.is_monetized ? "monetized" : "published") : "private"} · ${p.total_runs || 0} runs`;
+        mc.onclick = () => openProcessEditor(p.id);
+        sec.appendChild(mc);
+      }
+      side.appendChild(sec);
+    }
+
+    const tip = document.createElement("div");
+    tip.className = "ms-section";
+    tip.innerHTML = `
+      <div class="ms-section-label">Tips</div>
+      <div style="font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); line-height:1.55">
+        Click any card on the left to inspect its full stats and relationships here.
+        Double-click to open its step graph.
+      </div>
+    `;
+    side.appendChild(tip);
   }
 
   // Lets a user pick which existing process they want to challenge
@@ -6433,6 +7696,10 @@ promptflow stats</code></pre>
 
   // ── Boot ──────────────────────────────────────────────
   if (newConvoBtn) newConvoBtn.onclick = startNewConversation;
+  // The brand logo doubles as the "Home" button — clicking it returns
+  // to the empty-state hero, same as clicking "+ New" in the sidebar.
+  const _brandHomeBtn = $("brandHome");
+  if (_brandHomeBtn) _brandHomeBtn.onclick = startNewConversation;
   const _processViewToggleBtn = $("processViewToggle");
   if (_processViewToggleBtn) _processViewToggleBtn.onclick = toggleProcessView;
   refreshMe().then(() => {
