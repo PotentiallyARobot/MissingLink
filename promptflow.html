@@ -1285,8 +1285,214 @@
     width:18px; height:18px; border-width:2px;
   }
 
+  /* ──────────────────────────────────────────────────────
+     Hamburger button + sidebar backdrop. Hidden by default;
+     shown only at narrow viewports. The hamburger sits at
+     the very left of the header on mobile so users can pull
+     up conversation history / process list without it eating
+     desktop real estate. */
+  .hdr-hamburger{
+    display:none;     /* shown only on mobile via the media query below */
+    width:32px; height:32px;
+    background:transparent; border:1px solid var(--border);
+    border-radius:6px;
+    color:var(--text-muted);
+    cursor:pointer;
+    align-items:center; justify-content:center;
+    padding:0; flex-shrink:0;
+    transition:all .15s;
+  }
+  .hdr-hamburger:hover{ border-color:var(--gold); color:var(--gold) }
+  .sidebar-backdrop{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,.5);
+    backdrop-filter:blur(2px);
+    z-index:90;
+    opacity:0; pointer-events:none;
+    transition:opacity .2s ease-out;
+    display:none;     /* shown only on mobile */
+  }
+  .sidebar-backdrop.show{ opacity:1; pointer-events:auto }
+
+  /* ──────────────────────────────────────────────────────
+     MOBILE LAYOUT (≤720px)
+     Single comprehensive media query that overrides desktop
+     defaults for the entire app. Strategy:
+       - Sidebar slides in as overlay via hamburger
+       - Modals expand to nearly full-screen with less padding
+       - Hero pillars and stats stack vertically
+       - Header gets compact: hamburger + brand + gear; the
+         sign-in/up + subscribe buttons collapse to minimal
+       - Graph view shrinks but keeps pan/zoom (touch works)
+       - Library cards stay 1-column for scannability
+     One breakpoint covers most cases; a tighter ≤480px nested
+     media query at the bottom handles very-small phones. */
   @media (max-width: 720px){
-    .convo-sidebar{ display:none !important }
+    /* Show the hamburger; hide the sidebar by default. The
+       sidebar transitions to position:fixed and slides in from
+       the left when .mobile-open is set. */
+    .hdr-hamburger{ display:flex }
+    .sidebar-backdrop{ display:block }
+
+    /* Sidebar must be display:flex (not none) for the slide
+       transition to work; the !important here defeats the
+       inline style="display:none" set by paintAuthUI when
+       the user is logged out. Logged-out users won't see
+       the hamburger trigger anyway because we hide the
+       toggle when sidebar is empty. */
+    .convo-sidebar{
+      position:fixed !important;
+      top:var(--header-h); left:0; bottom:0;
+      width:280px; max-width:85vw;
+      z-index:100;
+      transform:translateX(-100%);
+      transition:transform .22s ease-out;
+      box-shadow:0 4px 24px rgba(0,0,0,.6);
+    }
+    .convo-sidebar.mobile-open{
+      transform:translateX(0);
+      display:flex !important;
+    }
+
+    /* Header — keep brand + gear; trim the rest. */
+    .hdr{ padding:0 10px; gap:8px }
+    .hdr .brand{ font-size:13px }
+    .hdr-right{ gap:6px }
+    /* Sign-in / Sign-up shrink; subscribe goes icon-only feel. */
+    .btn{ font-size:9.5px; padding:5px 8px; letter-spacing:.3px }
+    .token-pill{ font-size:9px; padding:3px 7px }
+
+    /* Main chat region — pull padding in. */
+    .chat-wrap{ padding:0 12px }
+    .stream{ padding:18px 0 16px 0; gap:14px }
+
+    /* Empty state hero — tighter, single-column. */
+    .empty{ padding:22px 8px 40px }
+    .empty h1{ font-size:24px; line-height:1.15 }
+    .hero-headline{ font-size:18px }
+    .hero-sub{ font-size:13px }
+    .empty-tag{ font-size:11px }
+
+    /* Hero pillars stack vertically on mobile. */
+    .hero-pillars{
+      grid-template-columns:1fr !important;
+      gap:10px;
+    }
+    .hero-pillar{ padding:14px }
+
+    /* Proof row — wrap onto multiple lines, tighter font. */
+    .gs-proof{
+      flex-wrap:wrap;
+      justify-content:center;
+      gap:6px 10px;
+      font-size:10px;
+    }
+    .gs-proof-item + .gs-proof-item::before{ display:none }
+    .gs-proof-item{
+      padding:3px 8px;
+      background:var(--surface-2);
+      border-radius:10px;
+      border:1px solid var(--border);
+    }
+
+    /* Activity ticker — smaller text, faster loop. */
+    .gs-activity{ margin-top:10px }
+    .gs-act{ font-size:10px; padding:0 10px }
+    .gs-activity-rail{ animation-duration:60s }
+
+    /* Input bar — full-width, slightly smaller controls. */
+    .input-shell{ padding:10px 0 16px 0 }
+    .input-bar{ padding:6px 6px 6px 10px }
+    .input-bar textarea{ font-size:14px }    /* avoid iOS zoom-on-focus */
+    .icon-btn{ width:30px; height:30px }
+
+    /* Modals — nearly full-screen with padding sized for thumbs. */
+    .modal{
+      width:calc(100vw - 16px) !important;
+      max-width:none !important;
+      max-height:calc(100vh - 24px);
+      margin:8px;
+      border-radius:8px;
+    }
+    .modal.settings-modal,
+    .modal.profile-modal,
+    .modal.compose-modal,
+    .modal.challenge-modal,
+    .modal.prefs-modal{
+      padding:24px 18px 20px;
+    }
+    .modal h2{ font-size:18px }
+    .modal h3{ font-size:14px }
+    .learn-close{ top:10px; right:10px; width:32px; height:32px }
+
+    /* Graph view — shorter on mobile, but pan/zoom still works
+       via touch (browsers translate single-finger drag to
+       mouse events; pinch needs gesturestart, not implemented
+       yet — wheel zoom is the desktop primary). */
+    .graph-stage-wrap{
+      height:calc(100vh - 280px); min-height:340px;
+    }
+    .map-card{
+      height:calc(100vh - 130px); min-height:0;
+    }
+    .map-side{
+      flex:0 0 100%;     /* drop the side panel below the canvas */
+      max-height:none;
+      border-left:none;
+      border-top:1px solid var(--border);
+    }
+    .map-body{
+      flex-direction:column;
+    }
+    .discover-row{ padding:6px 8px; gap:4px }
+    .discover-row .dr-chip{ font-size:10px; padding:4px 8px }
+    .discover-row .dr-label{ font-size:8.5px }
+
+    /* Library grid — single column. */
+    .lib-grid{ grid-template-columns:1fr; gap:8px }
+    .lib-card{ padding:10px }
+
+    /* Per-process editor — pull paddings, stack any side panels. */
+    .editor-pane{ padding:14px 12px }
+    .editor-head h2{ font-size:16px }
+    .step-card{ padding:10px }
+
+    /* Sidebar process / convo cards — tighter row height. */
+    .convo-row, .proc-row{ padding:8px 10px; font-size:11px }
+
+    /* Conversation message bubbles. */
+    .msg{ padding:10px 12px }
+    .msg .role{ font-size:9px }
+    .msg .text{ font-size:13px }
+
+    /* Page footer — already compact, reduce slightly more. */
+    .page-footer{ padding:4px 8px 6px }
+    .page-positioning,
+    .page-copyright{ font-size:8.5px }
+
+    /* Account dropdown — anchor right edge of viewport with margin. */
+    .account-dropdown{
+      right:-4px;
+      min-width:240px;
+      max-width:calc(100vw - 16px);
+    }
+
+    /* Hide the central middot in the footer when items wrap. */
+    .page-sep{ display:none }
+  }
+
+  /* Very small phones (≤480px) — even tighter. */
+  @media (max-width: 480px){
+    .hdr .brand{ font-size:12px }
+    .empty h1{ font-size:21px }
+    .hero-headline{ font-size:16px }
+    .hero-sub{ font-size:12px }
+    .empty-tag{ font-size:10px }
+    .hero-pillar{ padding:12px }
+    .gs-proof{ font-size:9.5px; gap:4px 8px }
+    .convo-sidebar{ width:260px }
+    /* Subscribe button hides — they can still subscribe via Settings. */
+    #subscribeBtn{ display:none !important }
   }
 
   /* Chat shell */
@@ -2307,6 +2513,14 @@
 <body>
 
 <header class="hdr">
+  <!-- Mobile-only sidebar toggle. Hidden by default (≥720px); the
+       media query at the bottom shows it on narrow viewports where
+       the sidebar is offscreen-by-default. -->
+  <button class="hdr-hamburger" id="sidebarToggle" type="button" aria-label="Open menu">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
   <button class="brand" id="brandHome" type="button" title="Home — start a new conversation">PromptFlow<sup>™</sup></button>
   <div class="hdr-right">
     <div id="tokenPill" class="token-pill" style="display:none">
@@ -2384,6 +2598,11 @@
      to show). Each entry is an in-place button; click loads that
      conversation's turns into the main stream. The "+ New" button at
      the top clears state and starts a fresh thread on next /plan. -->
+<!-- Mobile-only backdrop. Sits behind the sidebar when it slides in
+     on narrow viewports; tapping it closes the sidebar. Inert at
+     desktop widths via the media query. -->
+<div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+
 <aside id="sidebar" class="convo-sidebar" style="display:none">
   <div class="convo-sidebar-head">
     <button id="newConvoBtn" class="btn convo-new">+ New conversation</button>
@@ -2803,6 +3022,12 @@ promptflow stats</code></pre>
     $("accountMenu").style.display = loggedIn ? "" : "none";
     tokenPill.style.display = loggedIn ? "" : "none";
     sidebar.style.display = loggedIn ? "" : "none";
+    // Hide the mobile hamburger when there's no sidebar to open.
+    // The CSS media query handles the actual desktop/mobile show/hide;
+    // this just defeats the rule when the user is logged out so the
+    // header stays clean on signed-out mobile.
+    const _ham = $("sidebarToggle");
+    if (_ham) _ham.style.display = loggedIn ? "" : "none";
     if (loggedIn) {
       tokenCount.textContent = (ME.tokens || 0).toLocaleString();
       tokenPill.classList.toggle("low", (ME.tokens || 0) < 1000);
@@ -4147,7 +4372,11 @@ promptflow stats</code></pre>
     updateSend();
   });
   textInput.addEventListener("keydown", (e) => {
-    // Suggestion-aware keys take priority when the dropdown is open.
+    // Suggestion-aware keys take priority when the dropdown is open
+    // — but ONLY for keys that explicitly target the dropdown. Enter
+    // always sends; if you want to accept a suggestion, hit Tab. This
+    // matches the convention in Slack/Discord/ChatGPT where Enter
+    // sends regardless of any inline autocomplete.
     const open = _suggestItems.length > 0 && $("cmdSuggest").style.display !== "none";
     if (open) {
       if (e.key === "ArrowDown") {
@@ -4165,14 +4394,6 @@ promptflow stats</code></pre>
         acceptSuggestion();
         return;
       }
-      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
-        // Plain Enter accepts the suggestion (when dropdown is open).
-        // Cmd/Ctrl-Enter falls through to send. Shift-Enter falls
-        // through to newline.
-        e.preventDefault();
-        acceptSuggestion();
-        return;
-      }
       if (e.key === "Escape") {
         e.preventDefault();
         closeSuggestions();
@@ -4180,8 +4401,8 @@ promptflow stats</code></pre>
       }
     }
     // Plain Enter sends. Shift+Enter inserts a newline. Cmd/Ctrl+Enter
-    // also sends (preserved for muscle memory on platforms where that
-    // shortcut is the chat convention).
+    // also sends (preserved for muscle memory). The dropdown, if
+    // open, is closed implicitly because send() resets the composer.
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -8351,6 +8572,34 @@ new process. Compare its output to the current one before replacing.
   if (_brandHomeBtn) _brandHomeBtn.onclick = startNewConversation;
   const _processViewToggleBtn = $("processViewToggle");
   if (_processViewToggleBtn) _processViewToggleBtn.onclick = toggleProcessView;
+
+  // Mobile sidebar toggle. The button is only visible on narrow
+  // viewports (CSS-hidden ≥720px). Adds .show to the sidebar to
+  // slide it in over the chat, plus an opaque backdrop. Tapping
+  // the backdrop, hitting Esc, or selecting a sidebar item all
+  // close it again so it doesn't get stuck open.
+  const _sidebarToggle = $("sidebarToggle");
+  const _sidebarBackdrop = $("sidebarBackdrop");
+  function openMobileSidebar() {
+    sidebar.classList.add("mobile-open");
+    _sidebarBackdrop?.classList.add("show");
+  }
+  function closeMobileSidebar() {
+    sidebar.classList.remove("mobile-open");
+    _sidebarBackdrop?.classList.remove("show");
+  }
+  if (_sidebarToggle) _sidebarToggle.onclick = openMobileSidebar;
+  if (_sidebarBackdrop) _sidebarBackdrop.onclick = closeMobileSidebar;
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sidebar.classList.contains("mobile-open")) closeMobileSidebar();
+  });
+  // Also close when the user taps a conversation, a process, or "+ New"
+  // — they wanted to go somewhere, the sidebar's job is done.
+  sidebar.addEventListener("click", (e) => {
+    const target = e.target.closest(".convo-row, .proc-row, .convo-new");
+    if (target) setTimeout(closeMobileSidebar, 0);
+  });
+
   refreshMe().then(() => {
     if (ME) { refreshConversations(); refreshProcesses(); }
   });
