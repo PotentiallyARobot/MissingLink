@@ -2056,6 +2056,42 @@
     position:sticky; bottom:0; padding:12px 0 18px 0; background:var(--black);
     border-top:1px solid var(--border);
   }
+  /* Refine-bind chip — sits between attach previews and the input
+     bar. Subtle gold-tinted pill with the bound process name and
+     a × to dismiss. Indicates the LLM has memory of this thread
+     and the next send updates the named process. */
+  .refine-bind-chip{
+    display:flex; align-items:center; gap:8px;
+    margin-bottom:8px;
+    padding:6px 10px;
+    background:var(--gold-dim); border:1px solid var(--gold);
+    border-radius:6px;
+    font-family:var(--font-mono); font-size:11px;
+    color:var(--gold);
+  }
+  .refine-bind-chip .rbc-icon{
+    flex-shrink:0; font-size:12px;
+  }
+  .refine-bind-chip .rbc-label{
+    flex:1 1 auto; min-width:0; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .refine-bind-chip .rbc-name{ color:var(--gold); font-weight:700 }
+  .refine-bind-chip .rbc-hint{
+    color:var(--text-muted); margin-left:6px; font-size:10px;
+  }
+  .refine-bind-chip .rbc-exit{
+    flex-shrink:0;
+    background:transparent; border:1px solid transparent;
+    color:var(--text-muted); cursor:pointer;
+    width:20px; height:20px; padding:0;
+    border-radius:3px; font-size:14px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    transition:all .12s;
+  }
+  .refine-bind-chip .rbc-exit:hover{
+    border-color:var(--red); color:var(--red);
+  }
   .input-bar{
     display:flex; align-items:flex-end; gap:8px;
     background:var(--surface); border:1px solid var(--border); border-radius:10px;
@@ -2842,6 +2878,20 @@ $ promptflow run my-process.promptflow</code></pre>
   <div class="input-shell">
     <div id="attachWrap"></div>
 
+    <!-- Refine-bind chip. Visible when refineBoundProcessId is set;
+         indicates the conversation is pinned to a process and the
+         next message will refine it. Click × to exit refine mode and
+         return to fresh-plan mode. The chip is also dismissed
+         implicitly by typing "Generate process …" in the textarea. -->
+    <div id="refineBindChip" class="refine-bind-chip" style="display:none" role="status">
+      <span class="rbc-icon">↻</span>
+      <span class="rbc-label">
+        Refining: <strong class="rbc-name"></strong>
+        <span class="rbc-hint">— next message updates it</span>
+      </span>
+      <button class="rbc-exit" type="button" aria-label="Exit refine mode" title="Exit refine mode (or type 'Generate process …')">×</button>
+    </div>
+
     <!-- Command-suggestion dropdown — sits ABOVE the input, scrolls
          independently. Hidden by default; populated by updateCommandSuggestions(). -->
     <div id="cmdSuggest" class="cmd-suggest" style="display:none" role="listbox"></div>
@@ -3138,6 +3188,14 @@ promptflow stats</code></pre>
   let currentRunCancellable = true;
   let authMode = "signin";        // "signin" | "signup"
   let currentConversationId = null;  // active conversation; null = fresh thread on next /plan
+  // When a process is just saved/updated, the conversation enters
+  // "refine mode": subsequent messages are routed through /process/refine
+  // (with conversation history for memory) instead of /plan, and the
+  // composer shows a chip indicating the bound process. The user
+  // exits by clicking the chip's × OR by typing a "Generate process …"
+  // command which always escapes back to fresh-plan mode.
+  let refineBoundProcessId = null;
+  let refineBoundProcessName = null;
   let conversationsCache = [];    // sidebar list
 
   // ── DOM refs ───────────────────────────────────────────
@@ -3523,12 +3581,38 @@ promptflow stats</code></pre>
     currentEditorProcessId = null;
     currentEditorProcess = null;
     currentGraphProcessId = null;
+    refineBoundProcessId = null;
+    refineBoundProcessName = null;
+    paintRefineBindChip();
     clearStream();
     paintConversationList();
     paintProcessList();
     updateComposerHint();
     updateSend();
     textInput.focus();
+  }
+
+  // Paint the refine-bind chip. Shows when refineBoundProcessId is
+  // set, hidden otherwise. Wires the × button to clear the binding.
+  function paintRefineBindChip() {
+    const chip = $("refineBindChip");
+    if (!chip) return;
+    if (!refineBoundProcessId) {
+      chip.style.display = "none";
+      return;
+    }
+    chip.style.display = "";
+    chip.querySelector(".rbc-name").textContent = refineBoundProcessName || "current process";
+    const exitBtn = chip.querySelector(".rbc-exit");
+    if (exitBtn && !exitBtn._wired) {
+      exitBtn._wired = true;
+      exitBtn.onclick = () => {
+        refineBoundProcessId = null;
+        refineBoundProcessName = null;
+        paintRefineBindChip();
+        textInput.focus();
+      };
+    }
   }
 
   function clearStream() {
@@ -4664,6 +4748,36 @@ promptflow stats</code></pre>
       return;
     }
 
+    // Refine-bound mode — the conversation is pinned to a process that
+    // was just saved/updated. Subsequent messages route through
+    // /process/refine with conversation history attached, so the LLM
+    // has memory of prior turns ("yes but smaller", "now make it
+    // landscape"). The user escapes back to fresh-plan mode by typing
+    // a "Generate process …" / "Generate a process …" command — that
+    // pattern is the explicit signal to break out and start over.
+    if (refineBoundProcessId) {
+      const escapePattern = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
+      if (escapePattern.test(userText)) {
+        // Break the binding and fall through to the normal /plan flow
+        // below. The user's text is preserved verbatim — the planner
+        // will see "Generate a process that …" which is its native
+        // design-process intent trigger.
+        const exitedName = refineBoundProcessName;
+        refineBoundProcessId = null;
+        refineBoundProcessName = null;
+        paintRefineBindChip();
+        // No-op visual: just continue to the normal send path. We
+        // don't add a system message because the planner about to
+        // run will produce its own response. The composer chip
+        // disappearing is itself the affordance.
+      } else {
+        // Stay in refine mode. Reset composer and route to refine.
+        textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        await refineBoundProcess(userText);
+        return;
+      }
+    }
+
     // Classify attachments. Each goes into a specific FormData slot:
     //   image / video / audio (one each)  +  image_2…image_9 (extra images)
     // Text-only is allowed; the backend plans accordingly.
@@ -4761,9 +4875,15 @@ promptflow stats</code></pre>
       note.className = "status";
       note.textContent = planResp.message
         || (mode === "updated"
-          ? `Updated process "${planResp.process.name}".`
-          : `Saved process "${planResp.process.name}".`);
+          ? `Updated process "${planResp.process.name}". Keep chatting to refine it, or type "Generate process …" to start fresh.`
+          : `Saved process "${planResp.process.name}". Keep chatting to refine it, or type "Generate process …" to start fresh.`);
       assist.body.appendChild(note);
+      // Bind the conversation to this process — subsequent sends will
+      // route through /process/refine instead of /plan, with the prior
+      // chat history attached for LLM memory.
+      refineBoundProcessId = planResp.process.id;
+      refineBoundProcessName = planResp.process.name;
+      paintRefineBindChip();
       refreshProcesses();
       busy = false; updateSend();
       return;
@@ -6860,6 +6980,90 @@ promptflow stats</code></pre>
       busy = false; updateSend();
     }
   }
+
+  // Build the conversation history payload for /process/refine. We
+  // walk the current message stream (.msg.user / .msg.assist) and
+  // emit alternating turns. The final user turn (the one we're about
+  // to send) is excluded — refineBoundProcess handles that one
+  // separately as the new "instruction". History is capped at the
+  // last 20 turns; older ones are dropped.
+  function buildConversationHistoryForRefine() {
+    const turns = [];
+    const nodes = stream.querySelectorAll(".msg");
+    nodes.forEach((node, i) => {
+      // Skip the last node — that's the in-flight assistant bubble.
+      if (i === nodes.length - 1 && node.classList.contains("assist")) return;
+      const isUser = node.classList.contains("user");
+      const textEl = node.querySelector(".text") || node.querySelector(".body");
+      if (!textEl) return;
+      const content = (textEl.textContent || "").trim();
+      if (!content) return;
+      turns.push({ role: isUser ? "user" : "assistant", content });
+    });
+    return turns.slice(-20);
+  }
+
+  // Chat-driven refinement of a refine-bound process. Adds a user
+  // message to the stream, calls /process/refine with conversation
+  // history, then renders the updated process card (same component
+  // as the initial save) inline in the chat. Stays in refine mode
+  // so the user can keep iterating.
+  async function refineBoundProcess(instruction) {
+    const id = refineBoundProcessId;
+    if (!id) return;
+    addUserMsg(instruction, null, null);
+    const assist = addAssistMsg();
+    setStatus(assist, "Updating process…");
+    busy = true; updateSend();
+    try {
+      const history = buildConversationHistoryForRefine();
+      const r = await fetch("/api/promptflow/process/refine", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id,
+          instruction,
+          conversation_history: history,
+        }),
+      });
+      const j = await r.json();
+      if (!j.ok) {
+        setError(assist, j.message || j.error || "Refine failed.");
+        busy = false; updateSend();
+        return;
+      }
+      // Patch sidebar cache for the updated row.
+      const cached = processesCache.find(p => p.id === id);
+      if (cached) {
+        cached.name = j.process.name;
+        cached.description = j.process.description;
+        cached.input_kinds = j.process.input_kinds;
+        cached.output_kind = j.process.output_kind;
+        cached.has_python = !!j.process.python_text;
+      }
+      paintProcessList();
+      // Update the binding name in case Claude renamed the process.
+      refineBoundProcessName = j.process.name;
+      paintRefineBindChip();
+      // Render assistant turn: rationale + updated process card.
+      clearStatus(assist);
+      if (j.rationale) {
+        const r2 = document.createElement("div");
+        r2.className = "text"; r2.textContent = j.rationale;
+        assist.body.appendChild(r2);
+      }
+      renderProcessCard(assist, j.process, "updated");
+      const note = document.createElement("div");
+      note.className = "status";
+      note.textContent = `Updated "${j.process.name}". Keep going, or type "Generate process …" to start fresh.`;
+      assist.body.appendChild(note);
+    } catch (e) {
+      setError(assist, "Network error: " + (e?.message || e));
+    } finally {
+      busy = false; updateSend();
+    }
+  }
+
 
   // ── Graph view ─────────────────────────────────────────
   // Sidebar toggle flips between the standard process list and a
