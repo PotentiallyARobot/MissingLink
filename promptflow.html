@@ -476,6 +476,52 @@
   .cv-empty{
     padding:14px 16px; color:var(--text-muted); font-style:italic; font-size:11px;
   }
+  /* Action row at the foot of the code viewer — Edit, Copy, status.
+     Only the .py mode shows Edit; bundle-mode hides it via JS. The
+     status span is for save state ("Saving…", "✓ Saved", errors). */
+  .cv-actions{
+    display:flex; align-items:center; gap:8px;
+    padding:6px 10px;
+    background:var(--surface); border-top:1px solid var(--border);
+  }
+  .cv-actions .btn{
+    padding:5px 11px; font-size:10px;
+    text-transform:none; letter-spacing:.3px;
+  }
+  .cv-actions .cv-edit-btn{
+    background:transparent; border:1px solid var(--gold); color:var(--gold);
+  }
+  .cv-actions .cv-edit-btn:hover{
+    background:var(--gold-dim);
+  }
+  .cv-actions .cv-edit-btn.cv-edit-active{
+    background:var(--gold); color:var(--black); font-weight:700;
+  }
+  .cv-actions .cv-copy-btn{
+    background:transparent; border:1px solid var(--border); color:var(--text-dim);
+  }
+  .cv-actions .cv-copy-btn:hover{ color:var(--gold); border-color:var(--gold) }
+  .cv-actions .cv-status{
+    flex:1 1 auto; text-align:right;
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); font-style:italic;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  /* Editable textarea — same monospace + sizing as the read-only
+     <pre>; sits in place of it when the user clicks ✎ Edit. */
+  .cv-body .cv-edit{
+    width:100%; box-sizing:border-box;
+    margin:0; padding:14px 16px;
+    background:var(--black); color:var(--text);
+    border:none;
+    font-family:var(--font-mono); font-size:11px; line-height:1.5;
+    resize:vertical; outline:none;
+    tab-size:2;
+    min-height:240px;
+  }
+  .cv-body .cv-edit:focus{
+    box-shadow:inset 0 0 0 1px var(--gold-dim);
+  }
 
   /* Prism syntax-highlighting palette — overrides the default theme
      to match this app's gold/dim aesthetic. We load prism-tomorrow
@@ -9107,6 +9153,11 @@ new process. Compare its output to the current one before replacing.
   // back and forth without re-rendering the whole editor.
   function renderCodeViewer(mount, p, opts = {}) {
     const titleText = opts.title || `Python · ${(p.python_text || "").split("\n").length} lines`;
+    // Editing is allowed when the process is the user's own. System
+    // processes and others' published processes are read-only — the
+    // server's python_patch endpoint enforces this too, but we hide
+    // the buttons here to avoid showing affordances that won't work.
+    const canEdit = !!(p.editable !== false && !p.is_system);
     const card = document.createElement("div");
     card.className = "code-viewer";
     card.innerHTML = `
@@ -9119,29 +9170,76 @@ new process. Compare its output to the current one before replacing.
       </div>
       <div class="cv-tabs" style="display:none"></div>
       <div class="cv-body"></div>
+      <div class="cv-actions">
+        ${canEdit ? `<button class="btn cv-edit-btn" type="button" title="Edit this Python and save in place">✎ Edit</button>` : ""}
+        <button class="btn cv-copy-btn" type="button" title="Copy the code shown to clipboard">⎘ Copy</button>
+        <span class="cv-status"></span>
+      </div>
     `;
     const tabs = card.querySelector(".cv-tabs");
     const body = card.querySelector(".cv-body");
     const titleEl = card.querySelector(".cv-title");
+    const editBtn = card.querySelector(".cv-edit-btn");
+    const copyBtn = card.querySelector(".cv-copy-btn");
+    const statusEl = card.querySelector(".cv-status");
     let mode = "py";
     let activeFile = "process.py";
     let bundleFiles = null;
+    let editing = false;
+    let pendingEditValue = null;     // textarea value while in edit mode
+
+    function setStatus(text, color) {
+      statusEl.textContent = text || "";
+      statusEl.style.color = color || "var(--text-muted)";
+    }
+
+    function getCurrentCode() {
+      if (mode === "py") return p.python_text || "";
+      const file = (bundleFiles || []).find(f => f.path === activeFile);
+      return file?.content || "";
+    }
 
     function renderBody() {
       if (mode === "py") {
         tabs.style.display = "none";
-        const pre = document.createElement("pre");
-        const code = document.createElement("code");
-        code.textContent = p.python_text || "";
-        pre.appendChild(code);
         body.innerHTML = "";
-        body.appendChild(pre);
-        if (p.python_text) highlightCode(code, "python");
-        else body.innerHTML = `<div class="cv-empty">No Python available for this process.</div>`;
+        if (editing) {
+          const ta = document.createElement("textarea");
+          ta.className = "cv-edit";
+          ta.spellcheck = false;
+          ta.value = pendingEditValue ?? (p.python_text || "");
+          const lineCount = ta.value.split("\n").length;
+          ta.rows = Math.max(12, Math.min(50, lineCount + 1));
+          ta.addEventListener("input", () => { pendingEditValue = ta.value; });
+          ta.addEventListener("keydown", (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+              e.preventDefault(); commitEdit();
+            } else if (e.key === "Escape") {
+              e.preventDefault(); cancelEdit();
+            }
+          });
+          body.appendChild(ta);
+          setTimeout(() => ta.focus(), 30);
+        } else {
+          const pre = document.createElement("pre");
+          const code = document.createElement("code");
+          code.textContent = p.python_text || "";
+          pre.appendChild(code);
+          body.appendChild(pre);
+          if (p.python_text) highlightCode(code, "python");
+          else body.innerHTML = `<div class="cv-empty">No Python available for this process.</div>`;
+        }
         titleEl.textContent = titleText;
+        // Disable mode toggle and bundle view while editing —
+        // switching files mid-edit would lose the textarea contents.
+        card.querySelectorAll(".cv-toggle button").forEach(b => {
+          b.disabled = editing;
+          b.style.opacity = editing ? "0.5" : "";
+          b.style.cursor = editing ? "not-allowed" : "";
+        });
         return;
       }
-      // .promptflow bundle view
+      // .promptflow bundle view (read-only — editing only available on .py)
       if (!bundleFiles) bundleFiles = buildPromptflowFiles(p);
       tabs.style.display = "flex";
       tabs.innerHTML = "";
@@ -9161,11 +9259,103 @@ new process. Compare its output to the current one before replacing.
       body.appendChild(pre);
       if (file.language && file.language !== "none") highlightCode(code, file.language);
       titleEl.textContent = `${file.path} · ${(file.content || "").split("\n").length} lines · part of ${escapeHtml(p.name || "process")}.promptflow`;
+      // Hide Edit button in bundle mode — editing the bundle's
+      // generated files directly would just get overwritten when the
+      // .py changes. The .py is the source of truth.
+      if (editBtn) editBtn.style.display = mode === "py" ? "" : "none";
+    }
+
+    function enterEdit() {
+      if (!canEdit) return;
+      editing = true;
+      pendingEditValue = p.python_text || "";
+      editBtn.innerHTML = "✓ Save";
+      editBtn.classList.add("cv-edit-active");
+      setStatus("Editing — Cmd/Ctrl+Enter to save · Esc to cancel");
+      renderBody();
+    }
+    async function commitEdit() {
+      if (!editing) return;
+      const val = pendingEditValue ?? (p.python_text || "");
+      // Only POST if it actually changed.
+      if (val === (p.python_text || "")) {
+        cancelEdit();
+        return;
+      }
+      editBtn.disabled = true;
+      editBtn.innerHTML = "Saving…";
+      setStatus("Saving…");
+      try {
+        const r = await fetch("/api/promptflow/process/python_patch", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ process_id: p.id, python_text: val }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          setStatus(j.message || j.error || "Save failed.", "var(--red)");
+          editBtn.disabled = false;
+          editBtn.innerHTML = "✓ Save";
+          return;
+        }
+        // Local + cache update so the bundle view rebuilds from the
+        // edited source on next .promptflow toggle.
+        p.python_text = val;
+        bundleFiles = null;
+        const cached = (processesCache || []).find(x => x.id === p.id);
+        if (cached) cached.python_text = val;
+        if (currentEditorProcess && currentEditorProcess.id === p.id) {
+          currentEditorProcess.python_text = val;
+        }
+        editing = false;
+        pendingEditValue = null;
+        editBtn.disabled = false;
+        editBtn.innerHTML = "✎ Edit";
+        editBtn.classList.remove("cv-edit-active");
+        setStatus("✓ Saved", "var(--green)");
+        setTimeout(() => setStatus(""), 2000);
+        renderBody();
+      } catch (e) {
+        setStatus("Network error: " + (e?.message || e), "var(--red)");
+        editBtn.disabled = false;
+        editBtn.innerHTML = "✓ Save";
+      }
+    }
+    function cancelEdit() {
+      editing = false;
+      pendingEditValue = null;
+      if (editBtn) {
+        editBtn.innerHTML = "✎ Edit";
+        editBtn.classList.remove("cv-edit-active");
+      }
+      setStatus("");
+      renderBody();
+    }
+
+    if (editBtn) {
+      editBtn.onclick = (e) => {
+        e.preventDefault();
+        if (editing) commitEdit(); else enterEdit();
+      };
+    }
+    if (copyBtn) {
+      copyBtn.onclick = (e) => {
+        e.preventDefault();
+        const txt = editing ? (pendingEditValue ?? "") : getCurrentCode();
+        navigator.clipboard.writeText(txt).then(() => {
+          const orig = copyBtn.innerHTML;
+          copyBtn.innerHTML = "✓ Copied";
+          setTimeout(() => { copyBtn.innerHTML = orig; }, 1200);
+        }).catch(() => {
+          setStatus("Copy failed.", "var(--red)");
+        });
+      };
     }
 
     // Wire the format toggle.
     card.querySelectorAll(".cv-toggle button").forEach(btn => {
       btn.onclick = () => {
+        if (editing) return;          // disabled while editing
         const m = btn.dataset.mode;
         if (m === mode) return;
         mode = m;
