@@ -1749,6 +1749,45 @@
   .hero-graph-canvas .hg-node.hg-active .hg-n-stats{
     fill:rgba(212,175,55,1);
   }
+  /* Newly-spawned nodes (adapted, composed) get a green-tinted
+     border for the first second to mark them as fresh additions
+     to the graph. */
+  .hero-graph-canvas .hg-node.hg-new rect{
+    stroke:rgba(154,202,94,0.95);
+    filter:drop-shadow(0 0 10px rgba(154,202,94,0.5));
+    animation:hg-new-fade 1800ms ease-out forwards;
+  }
+  @keyframes hg-new-fade{
+    0%   { stroke:rgba(154,202,94,1); filter:drop-shadow(0 0 12px rgba(154,202,94,0.7)) }
+    100% { stroke:rgba(212,175,55,0.30); filter:none }
+  }
+  /* Fade-in for newly created nodes/edges. Plays once on creation. */
+  .hero-graph-canvas .hg-fadein{
+    animation:hg-fade-in 700ms ease-out forwards;
+  }
+  @keyframes hg-fade-in{
+    from { opacity:0; transform:scale(0.7) }
+    to   { opacity:1; transform:scale(1) }
+  }
+  /* Fade-out for migrating nodes / shrinking paths. Plays once,
+     then the JS removes the element from the DOM. */
+  .hero-graph-canvas .hg-fadeout{
+    animation:hg-fade-out 700ms ease-in forwards;
+  }
+  @keyframes hg-fade-out{
+    from { opacity:1; transform:scale(1) }
+    to   { opacity:0; transform:scale(0.7) }
+  }
+  /* Temporary dimmed state — used on edges when a shorter path
+     replaces them, before they snap back. */
+  .hero-graph-canvas .hg-edge.hg-fading{
+    stroke:rgba(255,255,255,0.06);
+    transition:stroke 250ms;
+  }
+  .hero-graph-canvas .hg-node.hg-fading rect{
+    stroke:rgba(255,255,255,0.08);
+    fill:rgba(20,20,22,0.5);
+  }
   /* Pulse ring — expanding circle from a node when an event fires. */
   .hero-graph-canvas .hg-pulse{
     fill:none;
@@ -3511,42 +3550,79 @@ promptflow whoami</code></pre>
   }
 
   function buildHeroGraph(svg) {
-    // Realistic process records: name + (synthesized) stats + author.
-    // The stats and authors are simulated like the activity ticker — feels
-    // alive even at zero real users. A fixed seeded set so the same names
-    // appear in roughly the same places when the page reloads (the layout
-    // itself is random per-load, but each name carries consistent stats).
+    // Realistic process records: name + stats + author + tier + composes.
+    //   tier 1 = primitive  (atomic processes that don't compose others)
+    //   tier 2 = mid-level  (compose 2–3 primitives)
+    //   tier 3 = complex    (hub processes that orchestrate many)
+    // The `composes` field names which other processes this one uses,
+    // so when we wire the initial edges we get real composition
+    // hierarchy instead of geographic nearest-neighbor noise. Hubs
+    // visibly read as hubs (many incoming edges); primitives sit at
+    // the leaves.
     const NODE_LIBRARY = [
-      { name: "shopify-listing",       runs: 12480, forks:  87, author: "maya.chen"      },
-      { name: "podcast-to-shorts",     runs:  8932, forks:  42, author: "ruby.volkov"    },
-      { name: "story-to-storyboard",   runs:  5641, forks:  31, author: "theo.park"      },
-      { name: "brand-kit-gen",         runs:  4218, forks:  56, author: "asha.patel"     },
-      { name: "real-estate-walkthru",  runs:  2876, forks:  18, author: "leo.marchetti"  },
-      { name: "kickstarter-builder",   runs:  3142, forks:  24, author: "iris.tanaka"    },
-      { name: "youtube-channel",       runs:  9405, forks: 102, author: "jordan.reyes"   },
-      { name: "newsletter-pipeline",   runs:  2187, forks:  19, author: "sage.lindgren"  },
-      { name: "ad-creative-batch",     runs:  6720, forks:  64, author: "felix.mwangi"   },
-      { name: "voiceover-character",   runs:  3984, forks:  37, author: "kai.yamamoto"   },
-      { name: "logo-variants",         runs:  5238, forks:  29, author: "nina.bauer"     },
-      { name: "lyrics-to-music",       runs:  1890, forks:  14, author: "wren.holloway"  },
-      { name: "product-photo-clean",   runs:  7104, forks:  73, author: "rio.castaneda"  },
-      { name: "tiktok-hook-writer",    runs:  4356, forks:  41, author: "ezra.kim"       },
-      { name: "anime-stylize",         runs:  3621, forks:  28, author: "zoe.almeida"    },
-      { name: "lo-fi-composer",        runs:  2410, forks:  16, author: "ben.carter"     },
-      { name: "spritesheet-gen",       runs:  1745, forks:  22, author: "lila.voss"      },
-      { name: "translate-multi",       runs:  6048, forks:  45, author: "omar.haddad"    },
-      { name: "screenplay-formatter",  runs:  1432, forks:  11, author: "tess.reilly"    },
-      { name: "thumbnail-ab-test",     runs:  3287, forks:  33, author: "sam.okonkwo"    },
-      { name: "pitch-deck",            runs:  4815, forks:  52, author: "maya.chen"      },
-      { name: "case-study-gen",        runs:  2098, forks:  17, author: "iris.tanaka"    },
-      { name: "recipe-video",          runs:  3674, forks:  26, author: "felix.mwangi"   },
-      { name: "memorize-flashcards",   runs:  1521, forks:  12, author: "sage.lindgren"  },
+      // ── tier 3: complex hubs (orchestrate many sub-processes) ──
+      { name: "shopify-listing",       runs: 12480, forks:  87, author: "maya.chen",     tier: 3,
+        composes: ["product-photo-clean", "logo-variants", "translate-multi", "ad-creative-batch"] },
+      { name: "youtube-channel",       runs:  9405, forks: 102, author: "jordan.reyes",  tier: 3,
+        composes: ["thumbnail-ab-test", "tiktok-hook-writer", "voiceover-character", "screenplay-formatter"] },
+      { name: "podcast-to-shorts",     runs:  8932, forks:  42, author: "ruby.volkov",   tier: 3,
+        composes: ["voiceover-character", "thumbnail-ab-test", "translate-multi"] },
+      { name: "kickstarter-builder",   runs:  3142, forks:  24, author: "iris.tanaka",   tier: 3,
+        composes: ["pitch-deck", "case-study-gen", "logo-variants", "ad-creative-batch"] },
+      { name: "brand-kit-gen",         runs:  4218, forks:  56, author: "asha.patel",    tier: 3,
+        composes: ["logo-variants", "translate-multi", "screenplay-formatter"] },
+
+      // ── tier 2: mid-level (compose 1–3 primitives) ──
+      { name: "ad-creative-batch",     runs:  6720, forks:  64, author: "felix.mwangi",  tier: 2,
+        composes: ["product-photo-clean", "thumbnail-ab-test"] },
+      { name: "story-to-storyboard",   runs:  5641, forks:  31, author: "theo.park",     tier: 2,
+        composes: ["screenplay-formatter", "anime-stylize"] },
+      { name: "real-estate-walkthru",  runs:  2876, forks:  18, author: "leo.marchetti", tier: 2,
+        composes: ["product-photo-clean", "voiceover-character"] },
+      { name: "newsletter-pipeline",   runs:  2187, forks:  19, author: "sage.lindgren", tier: 2,
+        composes: ["screenplay-formatter", "translate-multi"] },
+      { name: "pitch-deck",            runs:  4815, forks:  52, author: "maya.chen",     tier: 2,
+        composes: ["logo-variants", "case-study-gen"] },
+      { name: "case-study-gen",        runs:  2098, forks:  17, author: "iris.tanaka",   tier: 2,
+        composes: ["screenplay-formatter"] },
+      { name: "recipe-video",          runs:  3674, forks:  26, author: "felix.mwangi",  tier: 2,
+        composes: ["voiceover-character", "thumbnail-ab-test"] },
+      { name: "lyrics-to-music",       runs:  1890, forks:  14, author: "wren.holloway", tier: 2,
+        composes: ["lo-fi-composer"] },
+
+      // ── tier 1: primitives (atomic, no composition) ──
+      { name: "voiceover-character",   runs:  3984, forks:  37, author: "kai.yamamoto",  tier: 1, composes: [] },
+      { name: "logo-variants",         runs:  5238, forks:  29, author: "nina.bauer",    tier: 1, composes: [] },
+      { name: "product-photo-clean",   runs:  7104, forks:  73, author: "rio.castaneda", tier: 1, composes: [] },
+      { name: "tiktok-hook-writer",    runs:  4356, forks:  41, author: "ezra.kim",      tier: 1, composes: [] },
+      { name: "anime-stylize",         runs:  3621, forks:  28, author: "zoe.almeida",   tier: 1, composes: [] },
+      { name: "lo-fi-composer",        runs:  2410, forks:  16, author: "ben.carter",    tier: 1, composes: [] },
+      { name: "spritesheet-gen",       runs:  1745, forks:  22, author: "lila.voss",     tier: 1, composes: [] },
+      { name: "translate-multi",       runs:  6048, forks:  45, author: "omar.haddad",   tier: 1, composes: [] },
+      { name: "screenplay-formatter",  runs:  1432, forks:  11, author: "tess.reilly",   tier: 1, composes: [] },
+      { name: "thumbnail-ab-test",     runs:  3287, forks:  33, author: "sam.okonkwo",   tier: 1, composes: [] },
+      { name: "memorize-flashcards",   runs:  1521, forks:  12, author: "sage.lindgren", tier: 1, composes: [] },
     ];
-    const ACTIONS = ["reused", "forked", "adapted", "migrated", "composed"];
+    // Names used when spawning brand-new nodes via "adapted" or
+    // "composed" events — feels like a real network where novel
+    // processes keep arriving.
+    const NEW_NODE_POOL = [
+      "manga-stylize-v2", "shopify-v2", "pitch-deck-fast",
+      "logo-variants-mini", "youtube-channel-pro", "podcast-to-shorts-2x",
+      "newsletter-pipeline-lite", "ad-creative-cheap", "voiceover-fast",
+      "case-study-pro", "translate-budget", "kickstarter-v3",
+      "tiktok-hook-x", "lo-fi-budget", "anime-portrait-pro",
+      "thumbnail-batch", "story-to-board-pro", "recipe-video-quick",
+      "real-estate-fast", "ad-batch-cheap",
+    ];
+    const NEW_AUTHORS = [
+      "alex.chen", "sam.thomas", "kai.lin", "tess.k",
+      "nova.r", "milo.j", "yuki.s", "river.f",
+    ];
 
     // Use viewport dimensions (canvas is fixed-position).
     const W = window.innerWidth;
-    const H = window.innerHeight - 56;     // minus header height
+    const H = window.innerHeight - 56;
 
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     svg.setAttribute("preserveAspectRatio", "none");
@@ -3560,80 +3636,54 @@ promptflow whoami</code></pre>
     svg.appendChild(nodeLayer);
     svg.appendChild(fxLayer);
 
-    // Node dimensions — bigger now to fit stats + author lines.
     const NODE_W = 158, NODE_H = 50;
-    const MIN_DIST = 220;     // generous spacing for the larger cards
+    const MIN_DIST = 220;
     const PAD_X = 60, PAD_Y = 40;
 
-    // Density target: ~1 node per 90,000 px². On a 1920×900 viewport
-    // that's about 19 nodes; on 1280×720, about 10. Capped at the
-    // library size (24 unique processes).
     const targetCount = Math.min(NODE_LIBRARY.length, Math.max(8, Math.floor((W * H) / 90000)));
 
-    // Rejection-sample placement.
-    const placed = [];
-    let tries = 0;
-    while (placed.length < targetCount && tries < 600) {
-      tries++;
-      const x = PAD_X + Math.random() * (W - PAD_X * 2);
-      const y = PAD_Y + Math.random() * (H - PAD_Y * 2);
-      const tooClose = placed.some(p => {
-        const dx = p.x - x, dy = p.y - y;
-        return Math.sqrt(dx*dx + dy*dy) < MIN_DIST;
-      });
-      if (!tooClose) {
-        const lib = NODE_LIBRARY[placed.length % NODE_LIBRARY.length];
-        placed.push({
-          x, y,
-          name:   lib.name,
-          runs:   lib.runs,
-          forks:  lib.forks,
-          author: lib.author,
-          id: `hg-n-${placed.length}`,
-        });
-      }
-    }
-
-    // Connect each node to its 1–2 nearest neighbors.
-    const edges = [];
-    const edgeSet = new Set();
-    for (const a of placed) {
-      const sorted = placed
-        .filter(b => b !== a)
-        .map(b => ({ b, d: Math.hypot(b.x - a.x, b.y - a.y) }))
-        .sort((p, q) => p.d - q.d)
-        .slice(0, 1 + Math.floor(Math.random() * 2));
-      for (const { b } of sorted) {
-        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
-        if (edgeSet.has(key)) continue;
-        edgeSet.add(key);
-        edges.push({ a, b, key });
-      }
-    }
-
-    // Render edges as quadratic Beziers with random curve offsets.
-    for (const e of edges) {
-      const path = document.createElementNS(SVG_NS, "path");
-      const mx = (e.a.x + e.b.x) / 2;
-      const my = (e.a.y + e.b.y) / 2;
-      const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
-      const len = Math.hypot(dx, dy) || 1;
-      const offset = (Math.random() - 0.5) * 40;
-      const cx = mx - (dy / len) * offset;
-      const cy = my + (dx / len) * offset;
-      path.setAttribute("d", `M ${e.a.x} ${e.a.y} Q ${cx} ${cy} ${e.b.x} ${e.b.y}`);
-      path.setAttribute("class", "hg-edge");
-      path.dataset.from = e.a.id;
-      path.dataset.to = e.b.id;
-      edgeLayer.appendChild(path);
-      e.path = path;
-    }
-
-    // Render nodes as multi-line cards.
     const fmt = (n) => n >= 1000 ? `${(n/1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
-    for (const n of placed) {
+
+    // Live state — nodes and edges arrays mutate as events fire.
+    const nodes = [];
+    const edges = [];
+    let nextId = 0;
+    const newNodeIdx = { i: 0 };
+    const newAuthorIdx = { i: 0 };
+
+    // ── Helpers that mutate the graph ──────────────────────
+    function findFreeSpot(near) {
+      // Try N times to find a position that satisfies MIN_DIST.
+      // If `near` is provided, bias toward 80–160px from that node.
+      for (let i = 0; i < 80; i++) {
+        let x, y;
+        if (near) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 100 + Math.random() * 80;
+          x = near.x + Math.cos(angle) * dist;
+          y = near.y + Math.sin(angle) * dist;
+        } else {
+          x = PAD_X + Math.random() * (W - PAD_X * 2);
+          y = PAD_Y + Math.random() * (H - PAD_Y * 2);
+        }
+        if (x < PAD_X || x > W - PAD_X) continue;
+        if (y < PAD_Y || y > H - PAD_Y) continue;
+        const tooClose = nodes.some(p => {
+          if (p.dying) return false;
+          const dx = p.x - x, dy = p.y - y;
+          return Math.sqrt(dx*dx + dy*dy) < MIN_DIST;
+        });
+        if (!tooClose) return { x, y };
+      }
+      return null;
+    }
+
+    function createNodeEl(n, opts) {
+      // Build the SVG for a node and append. opts.fadeIn = true plays
+      // a fade-in animation; the default is no animation (used for
+      // initial layout).
       const g = document.createElementNS(SVG_NS, "g");
-      g.setAttribute("class", "hg-node");
+      g.setAttribute("class", "hg-node" + (opts?.fadeIn ? " hg-fadein" : ""));
       g.dataset.id = n.id;
 
       const rect = document.createElementNS(SVG_NS, "rect");
@@ -3645,7 +3695,6 @@ promptflow whoami</code></pre>
       rect.setAttribute("ry", 6);
       g.appendChild(rect);
 
-      // Process name (top line).
       const nameEl = document.createElementNS(SVG_NS, "text");
       nameEl.setAttribute("class", "hg-n-name");
       nameEl.setAttribute("x", n.x);
@@ -3654,7 +3703,6 @@ promptflow whoami</code></pre>
       nameEl.textContent = n.name;
       g.appendChild(nameEl);
 
-      // Stats line (middle).
       const statsEl = document.createElementNS(SVG_NS, "text");
       statsEl.setAttribute("class", "hg-n-stats");
       statsEl.setAttribute("x", n.x);
@@ -3663,7 +3711,6 @@ promptflow whoami</code></pre>
       statsEl.textContent = `${fmt(n.runs)} runs · ${n.forks} forks`;
       g.appendChild(statsEl);
 
-      // Author line (bottom).
       const authorEl = document.createElementNS(SVG_NS, "text");
       authorEl.setAttribute("class", "hg-n-author");
       authorEl.setAttribute("x", n.x);
@@ -3675,23 +3722,82 @@ promptflow whoami</code></pre>
       nodeLayer.appendChild(g);
       n.el = g;
       n.w = NODE_W; n.h = NODE_H;
+      return n;
     }
 
-    function fireEvent() {
-      if (!svg.isConnected) {
-        if (_heroGraphTimer) { clearInterval(_heroGraphTimer); _heroGraphTimer = null; }
-        return;
+    function createEdgeEl(a, b, opts) {
+      // Connect two nodes with a curved path. opts.fadeIn fades it in.
+      const path = document.createElementNS(SVG_NS, "path");
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const offset = (Math.random() - 0.5) * 40;
+      const cx = mx - (dy / len) * offset;
+      const cy = my + (dx / len) * offset;
+      path.setAttribute("d", `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`);
+      path.setAttribute("class", "hg-edge" + (opts?.fadeIn ? " hg-fadein" : ""));
+      path.dataset.from = a.id;
+      path.dataset.to = b.id;
+      edgeLayer.appendChild(path);
+      const e = { a, b, path, key: a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}` };
+      edges.push(e);
+      return e;
+    }
+
+    function addNode(name, author, runs, forks, pos, opts) {
+      const n = {
+        id: `hg-n-${nextId++}`,
+        name, author, runs, forks,
+        x: pos.x, y: pos.y,
+        // `composes` is a list of process NAMES this node uses. Carried
+        // through so the seed-edge wiring can express composition
+        // hierarchy (high-tier hubs connect down to the primitives
+        // they orchestrate). Empty for primitives and dynamically-
+        // spawned new nodes.
+        composes: (opts && opts.composes) || [],
+        tier: (opts && opts.tier) || 1,
+      };
+      nodes.push(n);
+      return n;
+    }
+
+    function removeNode(n, animateOut) {
+      // Mark dying first so layout helpers ignore. Then fade out the
+      // SVG and the node's edges, then remove from data structures.
+      n.dying = true;
+      if (animateOut) {
+        n.el.classList.add("hg-fadeout");
       }
-      // Skip tick if the graph is hidden (user navigated away) — still
-      // running but invisible saves work.
-      if (svg.classList.contains("hg-hidden")) return;
+      const myEdges = edges.filter(e => e.a === n || e.b === n);
+      for (const e of myEdges) {
+        if (animateOut) e.path.classList.add("hg-fadeout");
+      }
+      const cleanup = () => {
+        if (n.el && n.el.parentNode) n.el.parentNode.removeChild(n.el);
+        for (const e of myEdges) {
+          if (e.path && e.path.parentNode) e.path.parentNode.removeChild(e.path);
+        }
+        const ni = nodes.indexOf(n); if (ni >= 0) nodes.splice(ni, 1);
+        for (const e of myEdges) {
+          const ei = edges.indexOf(e); if (ei >= 0) edges.splice(ei, 1);
+        }
+      };
+      if (animateOut) setTimeout(cleanup, 700);
+      else cleanup();
+    }
 
-      const n = placed[Math.floor(Math.random() * placed.length)];
-      if (!n) return;
+    function nextNewNodeName() {
+      const name = NEW_NODE_POOL[newNodeIdx.i % NEW_NODE_POOL.length];
+      newNodeIdx.i++;
+      return name;
+    }
+    function nextNewAuthor() {
+      const a = NEW_AUTHORS[newAuthorIdx.i % NEW_AUTHORS.length];
+      newAuthorIdx.i++;
+      return a;
+    }
 
-      n.el.classList.add("hg-active");
-      setTimeout(() => n.el.classList.remove("hg-active"), 900);
-
+    function spawnPulse(n) {
       const pulse = document.createElementNS(SVG_NS, "circle");
       pulse.setAttribute("class", "hg-pulse");
       pulse.setAttribute("cx", n.x);
@@ -3699,27 +3805,274 @@ promptflow whoami</code></pre>
       pulse.setAttribute("r", 8);
       fxLayer.appendChild(pulse);
       setTimeout(() => pulse.remove(), 1500);
+    }
 
+    function spawnLabel(n, text) {
       const label = document.createElementNS(SVG_NS, "text");
       label.setAttribute("class", "hg-event-label");
       label.setAttribute("x", n.x);
       label.setAttribute("y", n.y - n.h / 2 - 6);
       label.setAttribute("text-anchor", "middle");
-      label.textContent = ACTIONS[Math.floor(Math.random() * ACTIONS.length)];
+      label.textContent = text;
       fxLayer.appendChild(label);
       setTimeout(() => label.remove(), 1700);
+    }
 
-      const connectedEdges = edges.filter(e => e.a.id === n.id || e.b.id === n.id);
-      if (connectedEdges.length > 0) {
-        const e = connectedEdges[Math.floor(Math.random() * connectedEdges.length)];
+    // ── Initial layout ────────────────────────────────────
+    let tries = 0;
+    while (nodes.length < targetCount && tries < 600) {
+      tries++;
+      const x = PAD_X + Math.random() * (W - PAD_X * 2);
+      const y = PAD_Y + Math.random() * (H - PAD_Y * 2);
+      const tooClose = nodes.some(p => {
+        const dx = p.x - x, dy = p.y - y;
+        return Math.sqrt(dx*dx + dy*dy) < MIN_DIST;
+      });
+      if (!tooClose) {
+        const lib = NODE_LIBRARY[nodes.length % NODE_LIBRARY.length];
+        const n = addNode(lib.name, lib.author, lib.runs, lib.forks, { x, y }, {
+          composes: lib.composes || [],
+          tier: lib.tier || 1,
+        });
+        createNodeEl(n, { fadeIn: false });
+      }
+    }
+
+    // Initial edges. We wire the seed graph by composition first
+    // (each tier-2/3 node connects to whichever of its named children
+    // are also placed in the scene) so the graph reads as a real DAG
+    // — hubs visibly orchestrate primitives. Then a SMALL amount of
+    // geographic noise gets added (each node optionally to its
+    // single nearest neighbor) so the layout doesn't feel like a
+    // formal tree — it still has the organic scattered look.
+    const seedSet = new Set();
+    const nameToNode = Object.fromEntries(nodes.map(n => [n.name, n]));
+    // 1) Composition edges — every (parent, child) pair in `composes`
+    //    where both ends are in the scene.
+    for (const parent of nodes) {
+      if (!parent.composes || parent.composes.length === 0) continue;
+      for (const childName of parent.composes) {
+        const child = nameToNode[childName];
+        if (!child) continue;
+        const key = parent.id < child.id ? `${parent.id}|${child.id}` : `${child.id}|${parent.id}`;
+        if (seedSet.has(key)) continue;
+        seedSet.add(key);
+        createEdgeEl(parent, child);
+      }
+    }
+    // 2) Geographic noise — give about 30% of nodes one extra edge
+    //    to a nearby neighbor that isn't already wired. Keeps the
+    //    network from feeling rigidly hierarchical: side connections
+    //    suggest peers that occasionally cross-reference each other.
+    for (const a of nodes) {
+      if (Math.random() > 0.3) continue;
+      const sorted = nodes
+        .filter(b => b !== a)
+        .map(b => ({ b, d: Math.hypot(b.x - a.x, b.y - a.y) }))
+        .sort((p, q) => p.d - q.d);
+      for (const { b } of sorted) {
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+        if (seedSet.has(key)) continue;
+        seedSet.add(key);
+        createEdgeEl(a, b);
+        break;     // just one extra edge per qualifying node
+      }
+    }
+
+    // ── Event types ───────────────────────────────────────
+    // Each function below performs ONE graph dynamic. The driver
+    // picks one at random with weighted probabilities and runs it.
+    // All async via setTimeout chains so multiple effects can
+    // overlap visually.
+
+    function eventReused() {
+      // A node lights up and one of its edges brightens. Increments
+      // its run counter visibly to suggest live use.
+      const n = nodes.filter(x => !x.dying)[Math.floor(Math.random() * nodes.length)];
+      if (!n) return;
+      n.el.classList.add("hg-active");
+      setTimeout(() => n.el.classList.remove("hg-active"), 900);
+      spawnPulse(n);
+      spawnLabel(n, "reused");
+      // Bump runs and re-render the stats line.
+      n.runs += 1 + Math.floor(Math.random() * 12);
+      const statsEl = n.el.querySelector(".hg-n-stats");
+      if (statsEl) statsEl.textContent = `${fmt(n.runs)} runs · ${n.forks} forks`;
+      const myEdges = edges.filter(e => (e.a === n || e.b === n) && !e.a.dying && !e.b.dying);
+      if (myEdges.length > 0) {
+        const e = myEdges[Math.floor(Math.random() * myEdges.length)];
         e.path.classList.add("hg-active");
         setTimeout(() => e.path.classList.remove("hg-active"), 800);
       }
     }
 
-    setTimeout(fireEvent, 600);
-    setTimeout(fireEvent, 1400);
-    _heroGraphTimer = setInterval(fireEvent, 1400);
+    function eventAdapted() {
+      // Pick a parent node, spawn a new variant nearby, draw an edge
+      // from the parent to the new node. The new node is marked as
+      // "fresh" with a small green pulse.
+      const parent = nodes.filter(x => !x.dying)[Math.floor(Math.random() * nodes.length)];
+      if (!parent) return;
+      const pos = findFreeSpot(parent);
+      if (!pos) return;
+      const child = addNode(nextNewNodeName(), nextNewAuthor(), 1, 0, pos);
+      createNodeEl(child, { fadeIn: true });
+      createEdgeEl(parent, child, { fadeIn: true });
+      parent.el.classList.add("hg-active");
+      setTimeout(() => parent.el.classList.remove("hg-active"), 900);
+      spawnLabel(parent, "adapted →");
+      setTimeout(() => {
+        if (child.el) {
+          child.el.classList.add("hg-active", "hg-new");
+          spawnPulse(child);
+          spawnLabel(child, "new");
+        }
+        setTimeout(() => child.el && child.el.classList.remove("hg-active"), 900);
+      }, 400);
+    }
+
+    function eventComposed() {
+      // Pick two existing nodes, spawn a NEW node that composes them,
+      // draw edges from both into the new node.
+      const live = nodes.filter(x => !x.dying);
+      if (live.length < 2) return;
+      const a = live[Math.floor(Math.random() * live.length)];
+      let b = live[Math.floor(Math.random() * live.length)];
+      let safety = 6;
+      while (b === a && safety-- > 0) b = live[Math.floor(Math.random() * live.length)];
+      if (a === b) return;
+      // Spawn the composed node between them, with a perpendicular
+      // offset so it doesn't sit on the connecting line.
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const offset = (Math.random() - 0.5) * 100 + 80 * (Math.random() < 0.5 ? -1 : 1);
+      let pos = {
+        x: mx - (dy / len) * offset,
+        y: my + (dx / len) * offset,
+      };
+      // Validate; if too close to others, give up to keep visuals clean.
+      pos.x = Math.max(PAD_X, Math.min(W - PAD_X, pos.x));
+      pos.y = Math.max(PAD_Y, Math.min(H - PAD_Y, pos.y));
+      const tooClose = nodes.some(p => {
+        if (p.dying) return false;
+        return Math.hypot(p.x - pos.x, p.y - pos.y) < MIN_DIST * 0.7;
+      });
+      if (tooClose) return;
+      const child = addNode(nextNewNodeName(), nextNewAuthor(), 1, 0, pos);
+      createNodeEl(child, { fadeIn: true });
+      createEdgeEl(a, child, { fadeIn: true });
+      createEdgeEl(b, child, { fadeIn: true });
+      a.el.classList.add("hg-active");
+      b.el.classList.add("hg-active");
+      spawnLabel(a, "composed →");
+      setTimeout(() => {
+        a.el.classList.remove("hg-active");
+        b.el.classList.remove("hg-active");
+      }, 1000);
+      setTimeout(() => {
+        if (child.el) {
+          child.el.classList.add("hg-active", "hg-new");
+          spawnPulse(child);
+          spawnLabel(child, "composed");
+        }
+      }, 500);
+    }
+
+    function eventMigrated() {
+      // An older node gets surpassed by a newer one. The old node
+      // fades out; its incoming edges redirect to the replacement
+      // (the closest other node). Suggests "this got eclipsed".
+      const live = nodes.filter(x => !x.dying);
+      if (live.length < 4) return;     // need critical mass to remove
+      // Prefer older / lower-runs as the "outdated" one.
+      live.sort((a, b) => (a.runs - b.runs));
+      const old = live[Math.floor(Math.random() * Math.min(4, live.length))];
+      // Find the closest replacement (excluding the dying one).
+      const candidates = live.filter(n => n !== old);
+      candidates.sort((a, b) =>
+        Math.hypot(a.x - old.x, a.y - old.y) - Math.hypot(b.x - old.x, b.y - old.y)
+      );
+      const replacement = candidates[0];
+      if (!replacement) return;
+      old.el.classList.add("hg-fading");
+      spawnLabel(old, "migrated");
+      // Redirect incoming edges to replacement after a moment.
+      setTimeout(() => {
+        const myEdges = edges.filter(e => e.a === old || e.b === old);
+        for (const e of myEdges) {
+          const other = e.a === old ? e.b : e.a;
+          if (other === replacement || other.dying) continue;
+          // Animate the edge migrating: build a new edge to the
+          // replacement with fade-in and remove the old.
+          createEdgeEl(other, replacement, { fadeIn: true });
+        }
+        replacement.el.classList.add("hg-active");
+        spawnPulse(replacement);
+        setTimeout(() => replacement.el.classList.remove("hg-active"), 900);
+        // Remove the old node.
+        removeNode(old, true);
+      }, 600);
+    }
+
+    function eventShortcut() {
+      // The graph found a shorter path. Pick a node A that has a
+      // neighbor B which itself has a neighbor C. Add a new direct
+      // edge A→C, fade the intermediate hop A→B briefly to suggest
+      // "the path now skips B for this flow."
+      const live = nodes.filter(x => !x.dying);
+      if (live.length < 3) return;
+      const a = live[Math.floor(Math.random() * live.length)];
+      const aNeighbors = edges
+        .filter(e => (e.a === a || e.b === a) && !e.a.dying && !e.b.dying)
+        .map(e => e.a === a ? e.b : e.a);
+      if (aNeighbors.length === 0) return;
+      const b = aNeighbors[Math.floor(Math.random() * aNeighbors.length)];
+      const bNeighbors = edges
+        .filter(e => (e.a === b || e.b === b) && !e.a.dying && !e.b.dying)
+        .map(e => e.a === b ? e.b : e.a)
+        .filter(n => n !== a);
+      if (bNeighbors.length === 0) return;
+      const c = bNeighbors[Math.floor(Math.random() * bNeighbors.length)];
+      // Don't draw if direct edge already exists.
+      const existsKey = a.id < c.id ? `${a.id}|${c.id}` : `${c.id}|${a.id}`;
+      if (edges.some(e => e.key === existsKey)) return;
+      // Fade A→B and B→C briefly; create A→C.
+      const intermediate = edges.filter(e =>
+        (e.a === a && e.b === b) || (e.b === a && e.a === b) ||
+        (e.a === b && e.b === c) || (e.b === b && e.a === c)
+      );
+      for (const ie of intermediate) ie.path.classList.add("hg-fading");
+      setTimeout(() => {
+        for (const ie of intermediate) ie.path.classList.remove("hg-fading");
+      }, 1200);
+      const newEdge = createEdgeEl(a, c, { fadeIn: true });
+      newEdge.path.classList.add("hg-active");
+      setTimeout(() => newEdge.path.classList.remove("hg-active"), 900);
+      spawnLabel(a, "shorter path →");
+    }
+
+    // ── Driver ────────────────────────────────────────────
+    // Runs every tick; picks an event type by weight. "reused" is
+    // by far the most common (most graph activity is reuse), with
+    // structural events sprinkled in periodically.
+    function tickEvent() {
+      if (!svg.isConnected) {
+        if (_heroGraphTimer) { clearInterval(_heroGraphTimer); _heroGraphTimer = null; }
+        return;
+      }
+      if (svg.classList.contains("hg-hidden")) return;
+
+      const r = Math.random();
+      if (r < 0.55)        eventReused();
+      else if (r < 0.72)   eventAdapted();
+      else if (r < 0.84)   eventComposed();
+      else if (r < 0.93)   eventShortcut();
+      else                 eventMigrated();
+    }
+
+    setTimeout(tickEvent, 600);
+    setTimeout(tickEvent, 1400);
+    _heroGraphTimer = setInterval(tickEvent, 1400);
   }
 
   // Show/hide the hero graph based on whether the home view is active.
