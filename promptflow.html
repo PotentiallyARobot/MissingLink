@@ -1645,28 +1645,40 @@
     position:relative;     /* anchor for absolute-positioned graph canvas */
   }
 
-  /* ── Hero Process Graph background animation ──────────
-     Lives behind the hero copy. Pure SVG: nodes are pill-
-     shaped <g> elements with a real-looking process name
-     inside, connected by faint gold <path> edges. The whole
-     network slowly drifts and breathes; periodically a node
-     fires a "reuse" pulse (gold ring expanding outward) and
-     a connected edge brightens to suggest the process flow
-     just completed. Pointer-events:none so the SVG doesn't
-     block any of the hero text or buttons above it. */
+  /* ── Page-wide Process Graph background animation ──────
+     Lives behind the page-shell as a fixed-position SVG that
+     spans from the header bottom down to the page footer.
+     Nodes are richer than the previous compact pills — each
+     shows a process name, a tiny line of stats (runs · forks
+     · author), and they sit at varying scales so the network
+     feels three-dimensional. Activity events pulse periodically
+     to suggest live multi-user usage. */
   .hero-graph-canvas{
-    position:absolute; inset:0;
-    width:100%; height:100%;
+    position:fixed;
+    top:var(--header-h);
+    left:0;
+    right:0;
+    bottom:0;
+    width:100%;
     pointer-events:none;
     z-index:0;
     opacity:.85;
-    /* Mask edges of the canvas so nodes don't sit hard against
-       the visible edge of the empty container. Soft-fades them
-       out into the background. */
-    mask-image:radial-gradient(ellipse at center, black 50%, transparent 95%);
-    -webkit-mask-image:radial-gradient(ellipse at center, black 50%, transparent 95%);
+    /* Vignette mask: full intensity in the middle, fades to
+       transparent at the edges. Keeps the graph from feeling
+       like a uniform pattern and pushes attention back to the
+       center where the hero copy lives. */
+    mask-image:radial-gradient(ellipse 70% 60% at 50% 45%, black 30%, transparent 95%);
+    -webkit-mask-image:radial-gradient(ellipse 70% 60% at 50% 45%, black 30%, transparent 95%);
   }
-  /* Lift hero content above the graph. */
+  /* Hidden when the user navigates away from the home view. */
+  .hero-graph-canvas.hg-hidden{
+    display:none;
+  }
+  /* Lift hero content above the graph. The page-shell needs an
+     explicit position so its children stack predictably above
+     the fixed background. */
+  .page-shell{ position:relative; z-index:1 }
+  .convo-sidebar{ position:relative; z-index:2 }
   .empty h1,
   .empty .empty-tag,
   .empty .hero-pitch,
@@ -1683,7 +1695,7 @@
      appears on top during a flow event for a brief gold pulse. */
   .hero-graph-canvas .hg-edge{
     fill:none;
-    stroke:rgba(212,175,55,0.18);
+    stroke:rgba(212,175,55,0.16);
     stroke-width:1;
   }
   .hero-graph-canvas .hg-edge.hg-active{
@@ -1692,33 +1704,52 @@
     filter:drop-shadow(0 0 4px rgba(212,175,55,0.6));
     transition:stroke 200ms, stroke-width 200ms;
   }
-  /* Node pills — rounded rect with a thin gold-tinted stroke
-     and a label inside. The label is the process name. Active
-     state (during a flow pulse) brightens border + adds glow. */
+  /* Node — multi-line card. Background rect, name in white,
+     stats in dim text. Stroke and inner content brighten on
+     activity. */
   .hero-graph-canvas .hg-node rect{
-    fill:rgba(20,20,22,0.85);
+    fill:rgba(20,20,22,0.88);
     stroke:rgba(212,175,55,0.30);
     stroke-width:1;
     transition:stroke 250ms, filter 250ms;
   }
-  .hero-graph-canvas .hg-node text{
-    fill:rgba(255,255,255,0.6);
+  .hero-graph-canvas .hg-node .hg-n-name{
+    fill:rgba(255,255,255,0.7);
     font-family:var(--font-mono);
-    font-size:9.5px;
+    font-size:10px;
+    font-weight:600;
     pointer-events:none;
     user-select:none;
     transition:fill 250ms;
   }
+  .hero-graph-canvas .hg-node .hg-n-stats{
+    fill:rgba(212,175,55,0.6);
+    font-family:var(--font-mono);
+    font-size:8px;
+    pointer-events:none;
+    user-select:none;
+    transition:fill 250ms;
+  }
+  .hero-graph-canvas .hg-node .hg-n-author{
+    fill:rgba(255,255,255,0.35);
+    font-family:var(--font-mono);
+    font-size:8px;
+    font-style:italic;
+    pointer-events:none;
+    user-select:none;
+  }
   .hero-graph-canvas .hg-node.hg-active rect{
     stroke:rgba(212,175,55,0.95);
     stroke-width:1.4;
-    filter:drop-shadow(0 0 6px rgba(212,175,55,0.5));
+    filter:drop-shadow(0 0 8px rgba(212,175,55,0.5));
   }
-  .hero-graph-canvas .hg-node.hg-active text{
+  .hero-graph-canvas .hg-node.hg-active .hg-n-name{
     fill:rgba(212,175,55,1);
   }
-  /* Pulse ring — expanding circle from a node when an event fires.
-     One animation cycle per pulse, then removed. */
+  .hero-graph-canvas .hg-node.hg-active .hg-n-stats{
+    fill:rgba(212,175,55,1);
+  }
+  /* Pulse ring — expanding circle from a node when an event fires. */
   .hero-graph-canvas .hg-pulse{
     fill:none;
     stroke:rgba(212,175,55,0.7);
@@ -1726,31 +1757,30 @@
     animation:hg-pulse-anim 1.4s ease-out forwards;
   }
   @keyframes hg-pulse-anim{
-    from { r:6; opacity:0.8; stroke-width:2 }
-    to   { r:38; opacity:0; stroke-width:0.5 }
+    from { r:8;  opacity:0.8; stroke-width:2 }
+    to   { r:50; opacity:0;   stroke-width:0.5 }
   }
-  /* Action label that floats up from a node when an event fires —
-     "reused", "forked", "adapted", "migrated". Fades and rises. */
+  /* Floating event label — "reused", "forked", "migrated",
+     "adapted", "composed". */
   .hero-graph-canvas .hg-event-label{
     fill:rgba(212,175,55,0.95);
-    font-family:var(--font-mono); font-size:8.5px;
+    font-family:var(--font-mono); font-size:9px; font-weight:700;
+    letter-spacing:.05em; text-transform:uppercase;
     pointer-events:none; user-select:none;
     animation:hg-label-anim 1.6s ease-out forwards;
   }
   @keyframes hg-label-anim{
     0%   { opacity:0; transform:translateY(0) }
     20%  { opacity:1 }
-    100% { opacity:0; transform:translateY(-18px) }
+    100% { opacity:0; transform:translateY(-22px) }
   }
-  /* Reduce motion preference — kill all the animations entirely. */
+  /* Reduce motion: kill all animations, dim the canvas. */
   @media (prefers-reduced-motion: reduce){
     .hero-graph-canvas .hg-pulse{ animation:none; opacity:0 }
     .hero-graph-canvas .hg-event-label{ animation:none; opacity:0 }
     .hero-graph-canvas{ opacity:.4 }
   }
-  /* On narrow viewports the graph crowds the hero. Drop opacity
-     and mask harder so it reads as a faint backdrop, not a
-     competing layer. */
+  /* Mobile: dim further so it doesn't compete. */
   @media (max-width: 720px){
     .hero-graph-canvas{ opacity:.35 }
   }
@@ -2932,6 +2962,19 @@
   </div>
 </header>
 
+<!-- Animated Process Graph background. Lives at page-shell level
+     and covers the entire content area below the header. SVG nodes
+     are pill-shaped with real-looking process names + stats (runs,
+     forks, author). Periodic activity events (reused / forked /
+     migrated / adapted / composed) pulse on random nodes. The whole
+     network is pointer-events:none and sits at z-index:0 so all
+     normal UI (sidebar, chat, modals) stacks on top.
+
+     Visible only on the home/empty state. JavaScript hides it when
+     the user enters a conversation, opens an editor, or navigates
+     to graph view, and re-shows it when they return home. -->
+<svg id="heroGraphCanvas" class="hero-graph-canvas" aria-hidden="true"></svg>
+
 <div class="page-shell">
 
 <!-- Conversation history sidebar. Hidden when signed out (no history
@@ -2961,15 +3004,6 @@
 <main class="chat-wrap">
   <div id="stream" class="stream">
     <div id="empty" class="empty">
-      <!-- Animated Process Graph background. SVG with floating
-           process nodes (real-looking names) connected by subtle
-           gold edges that pulse. The whole thing breathes — slow
-           drift, periodic node lighting up to suggest "someone
-           just ran this", new edges fading in to suggest
-           composition. Pointer-events:none so it never blocks
-           the hero content above it. -->
-      <svg id="heroGraphCanvas" class="hero-graph-canvas" aria-hidden="true"></svg>
-
       <h1>Generate <span>anything</span></h1>
       <p class="empty-tag">Build, Generate, Re-Use, Migrate, Adapt AI workflows via <span class="pf-brand">PromptFlow<sup>™</sup></span></p>
 
@@ -3477,31 +3511,47 @@ promptflow whoami</code></pre>
   }
 
   function buildHeroGraph(svg) {
-    // Process names that read as plausible real-world workflows.
-    // Mix of media gen, analysis, transformation, business — what
-    // a Process Graph would actually contain.
-    const NODES = [
-      "shopify-listing", "podcast-to-shorts", "story-to-storyboard",
-      "brand-kit-gen", "real-estate-walkthrough", "kickstarter-builder",
-      "youtube-channel", "newsletter-pipeline", "ad-creative-batch",
-      "voiceover-character", "logo-variants", "lyrics-to-music",
-      "product-photo-clean", "tiktok-hook-writer", "anime-stylize",
-      "lo-fi-composer", "spritesheet-gen", "translate-multi",
-      "screenplay-formatter", "thumbnail-ab-test", "pitch-deck",
-      "case-study-gen", "recipe-video", "memorize-flashcards",
+    // Realistic process records: name + (synthesized) stats + author.
+    // The stats and authors are simulated like the activity ticker — feels
+    // alive even at zero real users. A fixed seeded set so the same names
+    // appear in roughly the same places when the page reloads (the layout
+    // itself is random per-load, but each name carries consistent stats).
+    const NODE_LIBRARY = [
+      { name: "shopify-listing",       runs: 12480, forks:  87, author: "maya.chen"      },
+      { name: "podcast-to-shorts",     runs:  8932, forks:  42, author: "ruby.volkov"    },
+      { name: "story-to-storyboard",   runs:  5641, forks:  31, author: "theo.park"      },
+      { name: "brand-kit-gen",         runs:  4218, forks:  56, author: "asha.patel"     },
+      { name: "real-estate-walkthru",  runs:  2876, forks:  18, author: "leo.marchetti"  },
+      { name: "kickstarter-builder",   runs:  3142, forks:  24, author: "iris.tanaka"    },
+      { name: "youtube-channel",       runs:  9405, forks: 102, author: "jordan.reyes"   },
+      { name: "newsletter-pipeline",   runs:  2187, forks:  19, author: "sage.lindgren"  },
+      { name: "ad-creative-batch",     runs:  6720, forks:  64, author: "felix.mwangi"   },
+      { name: "voiceover-character",   runs:  3984, forks:  37, author: "kai.yamamoto"   },
+      { name: "logo-variants",         runs:  5238, forks:  29, author: "nina.bauer"     },
+      { name: "lyrics-to-music",       runs:  1890, forks:  14, author: "wren.holloway"  },
+      { name: "product-photo-clean",   runs:  7104, forks:  73, author: "rio.castaneda"  },
+      { name: "tiktok-hook-writer",    runs:  4356, forks:  41, author: "ezra.kim"       },
+      { name: "anime-stylize",         runs:  3621, forks:  28, author: "zoe.almeida"    },
+      { name: "lo-fi-composer",        runs:  2410, forks:  16, author: "ben.carter"     },
+      { name: "spritesheet-gen",       runs:  1745, forks:  22, author: "lila.voss"      },
+      { name: "translate-multi",       runs:  6048, forks:  45, author: "omar.haddad"    },
+      { name: "screenplay-formatter",  runs:  1432, forks:  11, author: "tess.reilly"    },
+      { name: "thumbnail-ab-test",     runs:  3287, forks:  33, author: "sam.okonkwo"    },
+      { name: "pitch-deck",            runs:  4815, forks:  52, author: "maya.chen"      },
+      { name: "case-study-gen",        runs:  2098, forks:  17, author: "iris.tanaka"    },
+      { name: "recipe-video",          runs:  3674, forks:  26, author: "felix.mwangi"   },
+      { name: "memorize-flashcards",   runs:  1521, forks:  12, author: "sage.lindgren"  },
     ];
     const ACTIONS = ["reused", "forked", "adapted", "migrated", "composed"];
 
-    const rect = svg.getBoundingClientRect();
-    const W = Math.max(rect.width  || 880, 600);
-    const H = Math.max(rect.height || 720, 400);
+    // Use viewport dimensions (canvas is fixed-position).
+    const W = window.innerWidth;
+    const H = window.innerHeight - 56;     // minus header height
 
-    // Set viewBox to actual pixel dimensions so 1 unit = 1 pixel.
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.setAttribute("preserveAspectRatio", "none");
     svg.innerHTML = "";
 
-    // Layered groups — edges first (behind), then nodes, then
-    // pulse-effect overlay so events render on top of everything.
     const SVG_NS = "http://www.w3.org/2000/svg";
     const edgeLayer = document.createElementNS(SVG_NS, "g");
     const nodeLayer = document.createElementNS(SVG_NS, "g");
@@ -3510,19 +3560,20 @@ promptflow whoami</code></pre>
     svg.appendChild(nodeLayer);
     svg.appendChild(fxLayer);
 
-    // ── Layout ────────────────────────────────────────────
-    // Place nodes pseudo-randomly within the canvas with minimum
-    // spacing. A simple rejection-sample approach: try a random
-    // point, accept if no other node is closer than MIN_DIST.
-    // The node count scales with viewport area to keep density
-    // reasonable on different screen sizes.
-    const targetCount = Math.min(18, Math.max(10, Math.floor((W * H) / 38000)));
-    const MIN_DIST = 130;
-    const PAD_X = 80, PAD_Y = 60;
+    // Node dimensions — bigger now to fit stats + author lines.
+    const NODE_W = 158, NODE_H = 50;
+    const MIN_DIST = 220;     // generous spacing for the larger cards
+    const PAD_X = 60, PAD_Y = 40;
 
+    // Density target: ~1 node per 90,000 px². On a 1920×900 viewport
+    // that's about 19 nodes; on 1280×720, about 10. Capped at the
+    // library size (24 unique processes).
+    const targetCount = Math.min(NODE_LIBRARY.length, Math.max(8, Math.floor((W * H) / 90000)));
+
+    // Rejection-sample placement.
     const placed = [];
     let tries = 0;
-    while (placed.length < targetCount && tries < 400) {
+    while (placed.length < targetCount && tries < 600) {
       tries++;
       const x = PAD_X + Math.random() * (W - PAD_X * 2);
       const y = PAD_Y + Math.random() * (H - PAD_Y * 2);
@@ -3531,17 +3582,19 @@ promptflow whoami</code></pre>
         return Math.sqrt(dx*dx + dy*dy) < MIN_DIST;
       });
       if (!tooClose) {
+        const lib = NODE_LIBRARY[placed.length % NODE_LIBRARY.length];
         placed.push({
           x, y,
-          name: NODES[placed.length % NODES.length],
+          name:   lib.name,
+          runs:   lib.runs,
+          forks:  lib.forks,
+          author: lib.author,
           id: `hg-n-${placed.length}`,
         });
       }
     }
 
-    // ── Edges ─────────────────────────────────────────────
-    // Connect each node to its 1-3 nearest neighbors. Dedupe
-    // unordered pairs so each connection is one edge.
+    // Connect each node to its 1–2 nearest neighbors.
     const edges = [];
     const edgeSet = new Set();
     for (const a of placed) {
@@ -3549,7 +3602,7 @@ promptflow whoami</code></pre>
         .filter(b => b !== a)
         .map(b => ({ b, d: Math.hypot(b.x - a.x, b.y - a.y) }))
         .sort((p, q) => p.d - q.d)
-        .slice(0, 1 + Math.floor(Math.random() * 2));      // 1 or 2 neighbors
+        .slice(0, 1 + Math.floor(Math.random() * 2));
       for (const { b } of sorted) {
         const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
         if (edgeSet.has(key)) continue;
@@ -3558,15 +3611,14 @@ promptflow whoami</code></pre>
       }
     }
 
-    // Render edges as cubic Beziers for organic curves.
+    // Render edges as quadratic Beziers with random curve offsets.
     for (const e of edges) {
       const path = document.createElementNS(SVG_NS, "path");
       const mx = (e.a.x + e.b.x) / 2;
       const my = (e.a.y + e.b.y) / 2;
-      // Slight curve offset perpendicular to the edge.
       const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
       const len = Math.hypot(dx, dy) || 1;
-      const offset = (Math.random() - 0.5) * 30;
+      const offset = (Math.random() - 0.5) * 40;
       const cx = mx - (dy / len) * offset;
       const cy = my + (dx / len) * offset;
       path.setAttribute("d", `M ${e.a.x} ${e.a.y} Q ${cx} ${cy} ${e.b.x} ${e.b.y}`);
@@ -3577,70 +3629,86 @@ promptflow whoami</code></pre>
       e.path = path;
     }
 
-    // Render nodes as pill-shaped <g> with a rect + text.
+    // Render nodes as multi-line cards.
+    const fmt = (n) => n >= 1000 ? `${(n/1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
     for (const n of placed) {
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute("class", "hg-node");
       g.dataset.id = n.id;
+
       const rect = document.createElementNS(SVG_NS, "rect");
-      // Sized to text length — measure by char count for cheap.
-      const w = Math.max(n.name.length * 6.5 + 16, 80);
-      const h = 22;
-      rect.setAttribute("x", n.x - w / 2);
-      rect.setAttribute("y", n.y - h / 2);
-      rect.setAttribute("width", w);
-      rect.setAttribute("height", h);
-      rect.setAttribute("rx", h / 2);
-      rect.setAttribute("ry", h / 2);
-      const text = document.createElementNS(SVG_NS, "text");
-      text.setAttribute("x", n.x);
-      text.setAttribute("y", n.y);
-      text.setAttribute("text-anchor", "middle");
-      text.setAttribute("dominant-baseline", "central");
-      text.textContent = n.name;
+      rect.setAttribute("x", n.x - NODE_W / 2);
+      rect.setAttribute("y", n.y - NODE_H / 2);
+      rect.setAttribute("width", NODE_W);
+      rect.setAttribute("height", NODE_H);
+      rect.setAttribute("rx", 6);
+      rect.setAttribute("ry", 6);
       g.appendChild(rect);
-      g.appendChild(text);
+
+      // Process name (top line).
+      const nameEl = document.createElementNS(SVG_NS, "text");
+      nameEl.setAttribute("class", "hg-n-name");
+      nameEl.setAttribute("x", n.x);
+      nameEl.setAttribute("y", n.y - 10);
+      nameEl.setAttribute("text-anchor", "middle");
+      nameEl.textContent = n.name;
+      g.appendChild(nameEl);
+
+      // Stats line (middle).
+      const statsEl = document.createElementNS(SVG_NS, "text");
+      statsEl.setAttribute("class", "hg-n-stats");
+      statsEl.setAttribute("x", n.x);
+      statsEl.setAttribute("y", n.y + 4);
+      statsEl.setAttribute("text-anchor", "middle");
+      statsEl.textContent = `${fmt(n.runs)} runs · ${n.forks} forks`;
+      g.appendChild(statsEl);
+
+      // Author line (bottom).
+      const authorEl = document.createElementNS(SVG_NS, "text");
+      authorEl.setAttribute("class", "hg-n-author");
+      authorEl.setAttribute("x", n.x);
+      authorEl.setAttribute("y", n.y + 16);
+      authorEl.setAttribute("text-anchor", "middle");
+      authorEl.textContent = `by ${n.author}`;
+      g.appendChild(authorEl);
+
       nodeLayer.appendChild(g);
       n.el = g;
-      n.w = w; n.h = h;
+      n.w = NODE_W; n.h = NODE_H;
     }
 
-    // ── Activity events ──────────────────────────────────
-    // Every ~1.4s, pick a random node, fire a pulse ring + an
-    // event label, and brighten one of its connected edges.
     function fireEvent() {
       if (!svg.isConnected) {
-        // Hero unmounted (e.g. user opened a process). Stop animating.
         if (_heroGraphTimer) { clearInterval(_heroGraphTimer); _heroGraphTimer = null; }
         return;
       }
+      // Skip tick if the graph is hidden (user navigated away) — still
+      // running but invisible saves work.
+      if (svg.classList.contains("hg-hidden")) return;
+
       const n = placed[Math.floor(Math.random() * placed.length)];
       if (!n) return;
 
-      // Highlight the node.
       n.el.classList.add("hg-active");
       setTimeout(() => n.el.classList.remove("hg-active"), 900);
 
-      // Pulse ring at node center.
       const pulse = document.createElementNS(SVG_NS, "circle");
       pulse.setAttribute("class", "hg-pulse");
       pulse.setAttribute("cx", n.x);
       pulse.setAttribute("cy", n.y);
-      pulse.setAttribute("r", 6);
+      pulse.setAttribute("r", 8);
       fxLayer.appendChild(pulse);
       setTimeout(() => pulse.remove(), 1500);
 
-      // Floating action label above the node.
       const label = document.createElementNS(SVG_NS, "text");
       label.setAttribute("class", "hg-event-label");
       label.setAttribute("x", n.x);
-      label.setAttribute("y", n.y - n.h);
+      label.setAttribute("y", n.y - n.h / 2 - 6);
       label.setAttribute("text-anchor", "middle");
       label.textContent = ACTIONS[Math.floor(Math.random() * ACTIONS.length)];
       fxLayer.appendChild(label);
       setTimeout(() => label.remove(), 1700);
 
-      // Brighten one connected edge briefly.
       const connectedEdges = edges.filter(e => e.a.id === n.id || e.b.id === n.id);
       if (connectedEdges.length > 0) {
         const e = connectedEdges[Math.floor(Math.random() * connectedEdges.length)];
@@ -3649,10 +3717,18 @@ promptflow whoami</code></pre>
       }
     }
 
-    // Stagger initial events so the page doesn't flash a bunch on load.
     setTimeout(fireEvent, 600);
     setTimeout(fireEvent, 1400);
     _heroGraphTimer = setInterval(fireEvent, 1400);
+  }
+
+  // Show/hide the hero graph based on whether the home view is active.
+  // Called from the various navigation entry points (clearStream,
+  // openProcessEditor, openProcessGraph, etc.) via setHeroGraphVisible.
+  function setHeroGraphVisible(visible) {
+    const svg = $("heroGraphCanvas");
+    if (!svg) return;
+    svg.classList.toggle("hg-hidden", !visible);
   }
 
   // Re-init the graph if the viewport resizes substantially —
@@ -4023,6 +4099,9 @@ promptflow whoami</code></pre>
       if (el.id !== "empty") el.remove();
     });
     empty.style.display = "";
+    // Returning to the home view — show the animated process graph
+    // background. Hidden when a chat / editor / graph view is active.
+    setHeroGraphVisible(true);
   }
 
   // The composer placeholder gives a hint about whether attaching an
@@ -4077,7 +4156,7 @@ promptflow whoami</code></pre>
     currentEditorProcess = null;
     currentGraphProcessId = null;
     clearStream();
-    empty.style.display = "none";
+    empty.style.display = "none"; setHeroGraphVisible(false);
     for (const turn of resp.turns) renderHistoricalTurn(turn);
     stream.scrollTop = stream.scrollHeight;
     paintConversationList();
@@ -5548,7 +5627,7 @@ promptflow whoami</code></pre>
 
   // ── Message rendering ─────────────────────────────────
   function addUserMsg(text, imgDataUrl, imgName) {
-    empty.style.display = "none";
+    empty.style.display = "none"; setHeroGraphVisible(false);
     const el = document.createElement("div");
     el.className = "msg user";
     el.innerHTML = `
@@ -7015,7 +7094,7 @@ promptflow whoami</code></pre>
     if (!currentEditorProcess) return;
     const p = currentEditorProcess;
     clearStream();
-    empty.style.display = "none";
+    empty.style.display = "none"; setHeroGraphVisible(false);
 
     const pane = document.createElement("div");
     pane.className = "editor-pane";
@@ -7599,7 +7678,7 @@ promptflow whoami</code></pre>
 
   function paintGraphPaneEmpty() {
     clearStream();
-    empty.style.display = "none";
+    empty.style.display = "none"; setHeroGraphVisible(false);
     const pane = document.createElement("div");
     pane.className = "graph-pane-empty";
     pane.textContent = "Pick a process from the sidebar to see its step graph, or close the editor to see the full process map.";
@@ -7955,7 +8034,7 @@ new process. Compare its output to the current one before replacing.
 
   async function paintProcessMap() {
     clearStream();
-    empty.style.display = "none";
+    empty.style.display = "none"; setHeroGraphVisible(false);
 
     const pane = document.createElement("div");
     pane.className = "graph-pane graph-pane-map";
@@ -9183,7 +9262,7 @@ new process. Compare its output to the current one before replacing.
 
   function paintGraph(p) {
     clearStream();
-    empty.style.display = "none";
+    empty.style.display = "none"; setHeroGraphVisible(false);
 
     const pane = document.createElement("div");
     pane.className = "graph-pane";
