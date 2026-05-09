@@ -29,6 +29,24 @@
     -webkit-font-smoothing:antialiased;
     display:flex; flex-direction:column;
     min-height:100vh;
+    /* Kill rubber-band / bounce-on-overscroll. The default lets the
+       page pull past the edges and snap back, which feels jarring
+       on trackpads and especially on macOS. `contain` stops that
+       and also blocks scroll chaining (so reaching the end of an
+       inner scroll container doesn't bubble up and start scrolling
+       the page). */
+    overscroll-behavior:none;
+  }
+  /* Apply the same lock to inner scroll containers so reaching the
+     bottom of, say, the chat stream or sidebar list doesn't kick
+     the body into a bounce. */
+  .stream,
+  .convo-list,
+  .map-canvas,
+  .editor-pane,
+  .modal,
+  .graph-stage-wrap{
+    overscroll-behavior:contain;
   }
 
   /* Hide scrollbars everywhere — desktop AND mobile — while keeping
@@ -1455,12 +1473,29 @@
     .hero-sub{ font-size:13px }
     .empty-tag{ font-size:11px }
 
-    /* Hero pillars stack vertically on mobile. */
-    .hero-pillars{
+    /* How-it-works steps stack vertically on mobile, with the
+       arrows rotating to point downward instead of right. */
+    .how-it-works{
       grid-template-columns:1fr !important;
-      gap:10px;
+      gap:0;
+      padding:18px 4px;
+      margin-bottom:24px;
     }
-    .hero-pillar{ padding:14px }
+    .hiw-step{ padding:0 4px }
+    .hiw-arrow{
+      width:1px; height:20px; margin:8px auto;
+      background:linear-gradient(180deg,
+        transparent 0%,
+        rgba(212,175,55,0.4) 30%,
+        rgba(212,175,55,0.4) 70%,
+        transparent 100%);
+    }
+    .hiw-arrow::after{
+      right:50%; top:auto; bottom:-1px;
+      transform:translateX(50%) rotate(135deg);
+    }
+    .hiw-title{ font-size:15px }
+    .hiw-body{ font-size:11px }
 
     /* Interpreter CTA — single column on mobile, terminal preview
        moves below the copy with a smaller font so it fits. */
@@ -1581,7 +1616,8 @@
     .hero-headline{ font-size:16px }
     .hero-sub{ font-size:12px }
     .empty-tag{ font-size:10px }
-    .hero-pillar{ padding:12px }
+    .hiw-title{ font-size:14px }
+    .hiw-body{ font-size:10.5px }
     .gs-proof{ font-size:9.5px; gap:4px 8px }
     .convo-sidebar{ width:260px }
     /* Subscribe button hides — they can still subscribe via Settings. */
@@ -1773,46 +1809,80 @@
   }
   .hp-actions .btn{ font-size:11px; padding:6px 14px }
 
-  /* Three-pillar Run / Build / Earn block. */
-  .hero-pillars{
-    display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-    gap:10px; margin:0 auto 32px; max-width:880px;
+  /* ── How it works ──────────────────────────────────────
+     Three numbered steps connected by horizontal arrows. The
+     visual treatment is restrained: large monospace numerals,
+     a single line of color (gold) for accent, no boxes around
+     each step. The arrow between steps reinforces the linear
+     narrative. Stacks vertically on mobile with arrows pointing
+     down instead of right. */
+  .how-it-works{
+    display:grid;
+    grid-template-columns:1fr 24px 1fr 24px 1fr;
+    align-items:flex-start;
+    gap:0;
+    margin:0 auto 36px; max-width:980px;
+    padding:24px 8px;
+    text-align:left;
   }
-  .hero-pillar{
-    background:var(--surface); border:1px solid var(--border); border-radius:8px;
-    padding:18px 16px 14px; text-align:left;
-    display:flex; flex-direction:column; gap:6px;
-    transition:border-color 100ms;
+  .hiw-step{
+    display:flex; flex-direction:column; gap:8px;
+    padding:0 12px;
+    min-width:0;
   }
-  .hero-pillar:hover{ border-color:var(--gold) }
-  .hero-pillar.hp-build{ border-color:var(--surface-3) }
-  .hero-pillar.hp-earn{
-    background:linear-gradient(135deg, rgba(232,169,23,.06) 0%, var(--surface) 60%);
-    border-color:var(--gold);
+  .hiw-num{
+    font-family:var(--font-mono); font-size:11px; font-weight:700;
+    color:var(--gold); letter-spacing:.15em;
+    opacity:.65;
+    margin-bottom:2px;
   }
-  .hero-pillar .hp-icon{
-    font-size:18px; color:var(--gold); line-height:1;
+  .hiw-title{
+    font-family:var(--font-display); font-size:16px; font-weight:600;
+    color:var(--text); line-height:1.3;
   }
-  .hero-pillar .hp-title{
-    font-family:var(--font-mono); font-size:13px; font-weight:700;
-    color:var(--text); letter-spacing:.02em;
+  .hiw-body{
+    font-family:var(--font-mono); font-size:11.5px;
+    color:var(--text-dim); line-height:1.6;
   }
-  .hero-pillar .hp-body{
-    font-family:var(--font-mono); font-size:11px; color:var(--text-dim);
-    line-height:1.6; flex:1 1 auto;
+  .hiw-link{
+    display:inline; padding:0; margin:0;
+    background:transparent; border:none;
+    color:var(--gold); cursor:pointer;
+    font-family:var(--font-mono); font-size:11.5px;
+    margin-left:6px;
+    border-bottom:1px dashed transparent;
+    transition:border-color .15s;
   }
-  .hero-pillar .hp-cta{
-    margin-top:8px; padding:8px 12px;
-    background:transparent; border:1px solid var(--border);
-    color:var(--text); border-radius:4px; cursor:pointer;
-    font-family:var(--font-mono); font-size:11px; text-align:left;
-    transition:all 100ms;
+  .hiw-link:hover{ border-bottom-color:var(--gold) }
+
+  /* The earn step gets a slight visual emphasis since it's the
+     payoff — gold-accented top border and a heavier title color. */
+  .hiw-step.hiw-earn .hiw-num{ opacity:1 }
+  .hiw-step.hiw-earn .hiw-title{ color:var(--gold) }
+
+  /* Arrow column — a horizontal line ending in an arrowhead.
+     SVG would be cleaner but a CSS-only approach keeps this in
+     one file. The line uses a gold gradient that fades into both
+     ends so the arrow doesn't feel anchored to a hard edge. */
+  .hiw-arrow{
+    position:relative;
+    align-self:center;
+    height:1px;
+    margin-top:32px;
+    background:linear-gradient(90deg,
+      transparent 0%,
+      rgba(212,175,55,0.4) 30%,
+      rgba(212,175,55,0.4) 70%,
+      transparent 100%);
   }
-  .hero-pillar .hp-cta:hover{ background:var(--gold); color:var(--black); border-color:var(--gold) }
-  .hero-pillar.hp-earn .hp-cta{
-    background:var(--gold); color:var(--black); border-color:var(--gold);
+  .hiw-arrow::after{
+    content:""; position:absolute;
+    right:-1px; top:50%;
+    width:6px; height:6px;
+    border-top:1px solid rgba(212,175,55,0.5);
+    border-right:1px solid rgba(212,175,55,0.5);
+    transform:translateY(-50%) rotate(45deg);
   }
-  .hero-pillar.hp-earn .hp-cta:hover{ filter:brightness(1.1) }
 
   /* ── Interpreter CTA card ──────────────────────────────
      Two-column layout: left explains, right shows a tiny
@@ -2796,24 +2866,38 @@
         <!-- Filled by paintGlobalStats(). -->
       </div>
 
-      <div class="hero-pillars">
-        <div class="hero-pillar">
-          <div class="hp-icon">▶</div>
-          <div class="hp-title">Run</div>
-          <div class="hp-body">Describe what you want. The planner walks the Process Graph, picks the best fit, confirms the price, and runs it.</div>
-          <button class="hp-cta" data-prefill="Generate a profitable YouTube channel — niche analysis, 10 video concepts, thumbnails, posting schedule, and a growth strategy">Try one</button>
+      <!-- How it works — three connected steps that flow horizontally,
+           bound by subtle arrows. Replaces the boxed Run/Build/Earn
+           pillars which felt like 2014 SaaS feature blocks. The
+           narrative follows the actual user journey: describe →
+           save → earn. Inline pill links replace the standalone
+           CTA buttons since the whole step row is what's read. -->
+      <div class="how-it-works">
+        <div class="hiw-step">
+          <div class="hiw-num">01</div>
+          <div class="hiw-title">Describe what you want.</div>
+          <div class="hiw-body">
+            The planner walks the Process Graph and picks the best fit, or builds a new one from existing steps.
+            <button class="hiw-link" data-prefill="Generate a profitable YouTube channel — niche analysis, 10 video concepts, thumbnails, posting schedule, and a growth strategy">try a request →</button>
+          </div>
         </div>
-        <div class="hero-pillar hp-build">
-          <div class="hp-icon">⚙</div>
-          <div class="hp-title">Build</div>
-          <div class="hp-body">Publish successful workflows to the Process Graph. Each process runs as real Python locally or in the cloud, and decomposes into reusable steps — the planner uses it to fulfill new process requests forever.</div>
-          <button class="hp-cta" data-prefill="Make me a process for turning a single product photo into a complete Shopify listing — copy, lifestyle shots, ad creative, and a 30-day social calendar">Design a process</button>
+        <div class="hiw-arrow"></div>
+        <div class="hiw-step">
+          <div class="hiw-num">02</div>
+          <div class="hiw-title">Keep refining until it's right.</div>
+          <div class="hiw-body">
+            Chat to update it — the LLM rewrites the process with memory of every prior turn. Save the final version as a reusable asset.
+            <button class="hiw-link" data-prefill="Make me a process for turning a single product photo into a complete Shopify listing — copy, lifestyle shots, ad creative, and a 30-day social calendar">design a process →</button>
+          </div>
         </div>
-        <div class="hero-pillar hp-earn">
-          <div class="hp-icon">💰</div>
-          <div class="hp-title">Earn</div>
-          <div class="hp-body">Publish, set a price, get paid every time someone runs it — or adapts it into a new process. Compose others' processes and make money while royalties flow to every author in the chain.</div>
-          <button class="hp-cta" data-show-portfolio>How earnings work</button>
+        <div class="hiw-arrow"></div>
+        <div class="hiw-step hiw-earn">
+          <div class="hiw-num">03</div>
+          <div class="hiw-title">Earn every time someone reuses it.</div>
+          <div class="hiw-body">
+            Publish, set a price. When others run it, fork it, or compose it into something bigger, royalties flow back — automatically.
+            <button class="hiw-link" data-show-portfolio>how earnings work →</button>
+          </div>
         </div>
       </div>
 
@@ -7117,18 +7201,36 @@ promptflow whoami</code></pre>
           stream.scrollTop = stream.scrollHeight;
         }
       }
-      // Render assistant turn: rationale + updated process card.
+      // Render assistant turn. When the editor pane is open above
+      // the chat, the structured Python view + step list are already
+      // visible there and they were just patched in place — so the
+      // chat bubble only needs a brief status line ("✓ Updated.
+      // <rationale>"). Adding a full process card to the chat on
+      // every refinement would duplicate what the editor already
+      // shows and bloat the stream.
+      // When the editor is NOT open (refine-bound from a fresh save,
+      // no editor pane), we still want to show the process card in
+      // the chat as the visible representation of what was built.
       clearStatus(assist);
-      if (j.rationale) {
+      if (currentEditorProcessId === id) {
+        // Editor open — short status only.
         const r2 = document.createElement("div");
-        r2.className = "text"; r2.textContent = j.rationale;
+        r2.className = "text";
+        r2.textContent = j.rationale ? `✓ ${j.rationale}` : `✓ Updated.`;
         assist.body.appendChild(r2);
+      } else {
+        // No editor — full card so user sees what was built.
+        if (j.rationale) {
+          const r2 = document.createElement("div");
+          r2.className = "text"; r2.textContent = j.rationale;
+          assist.body.appendChild(r2);
+        }
+        renderProcessCard(assist, j.process, "updated");
+        const note = document.createElement("div");
+        note.className = "status";
+        note.textContent = `Updated "${j.process.name}". Keep going, or type "Generate process …" to start fresh.`;
+        assist.body.appendChild(note);
       }
-      renderProcessCard(assist, j.process, "updated");
-      const note = document.createElement("div");
-      note.className = "status";
-      note.textContent = `Updated "${j.process.name}". Keep going, or type "Generate process …" to start fresh.`;
-      assist.body.appendChild(note);
     } catch (e) {
       setError(assist, "Network error: " + (e?.message || e));
     } finally {
