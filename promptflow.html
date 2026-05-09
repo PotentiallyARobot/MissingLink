@@ -632,16 +632,26 @@
   .graph-card-head{
     padding:10px 14px; background:var(--black);
     border-bottom:1px solid var(--border);
-    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    display:flex; align-items:center; gap:12px;
   }
   .graph-card-head .gh-name{
     font-family:var(--font-mono); font-size:12px; color:var(--gold);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    flex:1 1 auto; min-width:0;
   }
   .graph-card-head .gh-meta{
     font-family:var(--font-mono); font-size:9px; color:var(--text-muted);
     letter-spacing:.05em; text-transform:uppercase; flex-shrink:0;
   }
+  .graph-card-head .gh-back{
+    display:flex; align-items:center; gap:4px;
+    background:transparent; border:1px solid var(--border);
+    color:var(--text-muted); cursor:pointer;
+    font-family:var(--font-mono); font-size:10px;
+    padding:4px 9px 4px 6px; border-radius:4px;
+    flex-shrink:0; transition:all .15s;
+  }
+  .graph-card-head .gh-back:hover{ border-color:var(--gold); color:var(--gold) }
   .graph-card-body{
     padding:14px; overflow:auto; max-height:520px;
     background:
@@ -752,8 +762,10 @@
     position:relative;
     width:100%; height:calc(100vh - 320px); min-height:500px;
     background:
-      radial-gradient(circle at 1px 1px, var(--surface-3) 1px, transparent 0)
-      0 0 / 24px 24px var(--black);
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.04) 1px, transparent 0)
+      0 0 / 28px 28px,
+      radial-gradient(ellipse at 50% 30%, rgba(212,175,55,0.04) 0%, transparent 60%),
+      var(--black);
     border:1px solid var(--border); border-radius:6px;
     overflow:hidden;
     cursor:grab;
@@ -762,19 +774,25 @@
   .graph-svg{
     display:block; width:100%; height:100%;
   }
-  .graph-stage{ transition:transform 80ms ease-out }
+  .graph-stage{ transition:transform 60ms linear }
+
+  /* Edges — semi-transparent gold by default; brightening when
+     active (connected to selected node). Stroke uses two
+     stacked paths in the renderer so the active state can layer
+     a glow without re-drawing the geometry. */
   .graph-edges path{
     fill:none;
-    stroke:rgba(212,175,55,0.32);
-    stroke-width:1.4;
+    stroke:rgba(212,175,55,0.30);
+    stroke-width:1.5;
     transition:stroke .15s, stroke-opacity .15s, stroke-width .15s;
   }
   .graph-edges path.active{
     stroke:var(--gold);
-    stroke-width:2.2;
+    stroke-width:2.4;
+    filter:drop-shadow(0 0 4px rgba(212,175,55,0.4));
   }
   .graph-edges path.faded{
-    stroke:rgba(255,255,255,0.06);
+    stroke:rgba(255,255,255,0.04);
   }
 
   .graph-node-fo{ overflow:visible }
@@ -782,24 +800,28 @@
     box-sizing:border-box;
     width:100%; height:100%;
     background:var(--surface-2); border:1px solid var(--border);
-    border-radius:6px; padding:8px 10px;
-    display:grid; grid-template-columns:28px 1fr; gap:8px;
+    border-radius:7px; padding:9px 11px;
+    display:grid; grid-template-columns:28px 1fr; gap:9px;
     align-items:flex-start;
     cursor:pointer;
-    transition:all .15s;
+    transition:all .15s ease-out;
     overflow:hidden;
+    box-shadow:0 1px 0 rgba(0,0,0,0.4);
   }
   .graph-node:hover{
     border-color:var(--gold);
     background:var(--surface-3);
+    transform:translateY(-1px);
+    box-shadow:0 4px 12px rgba(0,0,0,0.5);
   }
   .graph-node.active{
     border-color:var(--gold);
     background:var(--gold-dim);
-    box-shadow:0 0 0 2px rgba(212,175,55,0.18);
+    box-shadow:0 0 0 2px rgba(212,175,55,0.25), 0 4px 16px rgba(212,175,55,0.15);
   }
   .graph-node.faded{
-    opacity:.35;
+    opacity:.28;
+    filter:saturate(0.4);
   }
   /* Parent processes (those that compose others) get a slightly
      bolder treatment so hubs read as hubs at a glance. */
@@ -859,6 +881,48 @@
   .graph-node .gn-rel-c{ color:#7fb6e0 }     /* composes children */
   .graph-node .gn-rel-u{ color:#9aca5e }     /* used by parents */
   .graph-node .gn-rel-f{ color:#c397d8 }     /* forks */
+
+  /* Floating zoom controls — bottom-right of the stage. Fixed to
+     viewport corner so they're always reachable regardless of pan. */
+  .graph-zoom-ctl{
+    position:absolute; right:12px; bottom:12px;
+    display:flex; flex-direction:column; gap:4px;
+    z-index:10;
+  }
+  .graph-zoom-ctl .gz-btn{
+    width:30px; height:30px; border-radius:5px;
+    background:var(--surface-2); border:1px solid var(--border);
+    color:var(--text-muted); cursor:pointer;
+    font-family:var(--font-mono); font-size:14px; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+    transition:all .12s;
+  }
+  .graph-zoom-ctl .gz-btn:hover{
+    border-color:var(--gold); color:var(--gold);
+    background:var(--surface-3);
+  }
+  .graph-zoom-ctl .gz-fit{ margin-top:4px; font-size:13px }
+
+  /* Floating summary chip — top-left of the stage. Reads the count
+     and the interaction hint without taking layout space. */
+  .graph-summary-chip{
+    position:absolute; left:12px; top:12px;
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:5px;
+    padding:6px 10px;
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); letter-spacing:.02em;
+    pointer-events:none;
+    z-index:10;
+    backdrop-filter:blur(4px);
+    background-color:rgba(20,20,22,0.7);
+  }
+  .graph-summary-chip strong{ color:var(--gold) }
+  .graph-summary-chip .gsc-hint{
+    color:var(--text-muted); opacity:.6;
+    margin-left:8px;
+    font-size:9px;
+  }
 
   /* ── Library grid (kept as fallback / future toggle) ───
      Replaces the spatial Cytoscape view. Faster to load
@@ -2083,20 +2147,6 @@
   }
   .attach-chip button:hover,.attach-chip .detach-btn:hover{ color:var(--red) }
 
-  /* Powered-by badge — sits ABOVE the chat input, anchored to the
-     bottom-right of the chat column. The "TM" superscript is positioned
-     manually so it tucks against PromptFlow without inflating leading. */
-  .powered-by{
-    position:absolute; right:24px; bottom:78px;
-    font-family:var(--font-mono); font-size:9px; letter-spacing:.5px;
-    color:var(--text-muted); text-transform:uppercase;
-    pointer-events:none; user-select:none;
-  }
-  .powered-by .name{ color:var(--gold); font-weight:700 }
-  .powered-by sup{ font-size:7px; vertical-align:super; margin-left:1px }
-
-  /* Bottom-of-page copyright. Sits beneath the page-shell, centered,
-     muted enough to be unobtrusive but legible. */
   /* Page footer — sits below the chat area as a single compact line.
      Both the positioning statement and the corporate copyright fit
      on one row, separated by a middot — keeps vertical real estate
@@ -2686,10 +2736,6 @@
         </button>
       </div>
     </div>
-  </div>
-
-  <div class="powered-by">
-    Powered by <span class="name">PromptFlow</span><sup>™</sup>
   </div>
 
   <div class="input-shell">
@@ -6747,6 +6793,11 @@ promptflow stats</code></pre>
   let cyInstance = null;     // Cytoscape instance for the map
   let mapQueryState = { mode: "default", text: "", plan: null, explanation: "" };
   let libraryHideMonetized = false;     // toggle: hide monetized in the library grid
+  // Graph navigation stack. When a user double-clicks a node to drill
+  // into its step graph, we push the previous view onto this stack so
+  // the back button can return them to where they came from. Each
+  // entry: {kind: "library"|"process", processId?: string}.
+  let graphNavStack = [];
 
   // Lazy-load Cytoscape from CDN. Resolves once `cytoscape` is on window.
   async function ensureCytoscape() {
@@ -7628,35 +7679,89 @@ new process. Compare its output to the current one before replacing.
     }
     stage.appendChild(nodeLayer);
 
-    // Summary chip top-left.
-    const summary = document.createElement("div");
-    summary.className = "lib-summary";
-    summary.innerHTML = `
-      <strong>${processes.length}</strong> ${processes.length === 1 ? "process" : "processes"}${truncated ? " (truncated)" : ""} ·
-      <strong>${composes.length}</strong> compositions
-      ${libraryHideMonetized ? `· <strong>monetized hidden</strong>` : ""}
-      <span style="float:right; opacity:.6">drag to pan · wheel to zoom</span>
-    `;
-    container.appendChild(summary);
-
     // Mount.
     const stageWrap = document.createElement("div");
     stageWrap.className = "graph-stage-wrap";
     stageWrap.appendChild(svg);
+
+    // Floating summary chip — top-left of the stage. Counts + the
+    // "monetized hidden" indicator (when active) + a small hint
+    // about interaction. Pointer-events:none so it never blocks
+    // drags or clicks.
+    const summary = document.createElement("div");
+    summary.className = "graph-summary-chip";
+    summary.innerHTML = `
+      <strong>${processes.length}</strong> ${processes.length === 1 ? "process" : "processes"}${truncated ? " (truncated)" : ""} ·
+      <strong>${composes.length}</strong> compositions
+      ${libraryHideMonetized ? ` · <strong>monetized hidden</strong>` : ""}
+      <span class="gsc-hint">drag to pan · pinch / ⌘-scroll to zoom · double-click to drill in</span>
+    `;
+    stageWrap.appendChild(summary);
+
+    // Floating zoom controls (top-right corner of the stage).
+    // Trackpad-friendly zooming is tricky because trackpads emit
+    // continuous wheel events even for two-finger scrolls (which
+    // should pan, not zoom). Buttons + keyboard give a reliable
+    // fallback path.
+    const zoomCtl = document.createElement("div");
+    zoomCtl.className = "graph-zoom-ctl";
+    zoomCtl.innerHTML = `
+      <button class="gz-btn" data-act="zoom-in"  title="Zoom in (+)" aria-label="Zoom in">+</button>
+      <button class="gz-btn" data-act="zoom-out" title="Zoom out (−)" aria-label="Zoom out">−</button>
+      <button class="gz-btn gz-fit" data-act="fit" title="Fit to view (F)" aria-label="Fit">⤢</button>
+    `;
+    stageWrap.appendChild(zoomCtl);
     container.appendChild(stageWrap);
 
-    // Pan + zoom. Track translate (panX, panY) and scale (zoom) and
-    // apply them as a single transform on the stage <g>. Wheel zoom
-    // is anchored on the cursor position so pinching feels natural.
+    // ── Pan + zoom ──────────────────────────────────────────
+    // Three input sources are unified into translate (panX, panY)
+    // and scale (zoom) applied as a single transform on the stage <g>:
+    //   1. Mouse drag → pan
+    //   2. Wheel: trackpads fire scroll events for two-finger drags
+    //      (deltaY without ctrlKey). Holding Ctrl/Cmd OR a hardware
+    //      mouse wheel (large quantized deltaY) triggers zoom. We
+    //      detect "real wheel" via the magnitude — physical mouse
+    //      wheels usually produce |deltaY| ≥ 50, while trackpads
+    //      send ≤ 10–20. This isn't 100% reliable but combined with
+    //      ctrlKey detection (which trackpad pinch-zoom emulates on
+    //      most browsers) it covers all common cases.
+    //   3. Buttons + keyboard (+/−/0/F) for accessibility.
     let panX = 0, panY = 0, zoom = 1;
     let dragging = false, startX = 0, startY = 0, basePanX = 0, basePanY = 0;
+    function clampZoom(z) { return Math.max(0.2, Math.min(3, z)); }
     function applyXform() {
       stage.setAttribute("transform", `translate(${panX}, ${panY}) scale(${zoom})`);
     }
+    function zoomAt(clientX, clientY, factor) {
+      const rect = stageWrap.getBoundingClientRect();
+      const newZoom = clampZoom(zoom * factor);
+      const ratio = newZoom / zoom;
+      // Translate so the point under the cursor stays stationary.
+      const cx = clientX - rect.left - rect.width / 2;
+      const cy = clientY - rect.top;
+      panX = cx - (cx - panX) * ratio;
+      panY = cy - (cy - panY) * ratio;
+      zoom = newZoom;
+      applyXform();
+    }
+    function fitToView() {
+      // Compute layout bounding box from the SVG viewBox; fit it to
+      // the stageWrap dimensions with a generous margin.
+      const rect = stageWrap.getBoundingClientRect();
+      const margin = 60;
+      const fitX = (rect.width  - margin * 2) / viewW;
+      const fitY = (rect.height - margin * 2) / viewH;
+      zoom = clampZoom(Math.min(fitX, fitY, 1));     // never auto-zoom-in past 1×
+      panX = 0;
+      panY = (rect.height - viewH * zoom) / 2 - (-20 * zoom);
+      applyXform();
+    }
+
+    // Mouse drag → pan.
     stageWrap.addEventListener("mousedown", (e) => {
-      // Don't start a pan when the click lands on a node — let click
-      // handlers run.
-      if (e.target.closest(".graph-node")) return;
+      // Don't start a pan when the click lands on a node or on the
+      // zoom controls — let those handle their own clicks.
+      if (e.target.closest(".graph-node, .graph-zoom-ctl")) return;
       dragging = true;
       startX = e.clientX; startY = e.clientY;
       basePanX = panX; basePanY = panY;
@@ -7673,20 +7778,73 @@ new process. Compare its output to the current one before replacing.
       if (!dragging) return;
       dragging = false; stageWrap.style.cursor = "grab";
     });
+
+    // Wheel — trackpad and mouse-wheel disambiguation.
     stageWrap.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const delta = e.deltaY > 0 ? 0.92 : 1.08;
-      const newZoom = Math.max(0.3, Math.min(2.5, zoom * delta));
-      const ratio = newZoom / zoom;
-      const rect = stageWrap.getBoundingClientRect();
-      const cx = e.clientX - rect.left - rect.width / 2;
-      const cy = e.clientY - rect.top;
-      panX = cx - (cx - panX) * ratio;
-      panY = cy - (cy - panY) * ratio;
-      zoom = newZoom;
-      applyXform();
+      // Browser convention for trackpad pinch is to fire wheel with
+      // ctrlKey=true even when no actual ctrl key is held. So:
+      //   ctrlKey or meta → pinch-zoom (or explicit ctrl+wheel)
+      //   otherwise → two-finger pan
+      // We also opt into wheel-zoom for hardware mice via the deltaY
+      // magnitude heuristic: physical wheels produce large quantized
+      // deltas, trackpads produce small continuous ones.
+      const wheelLikeMouse = !e.ctrlKey && !e.metaKey && Math.abs(e.deltaY) >= 50 && e.deltaX === 0;
+      if (e.ctrlKey || e.metaKey || wheelLikeMouse) {
+        // Zoom. Magnitude scales the factor so a slow trackpad pinch
+        // still zooms smoothly.
+        const intensity = Math.min(Math.abs(e.deltaY) / 100, 0.5);
+        const factor = e.deltaY > 0 ? (1 - intensity) : (1 + intensity);
+        zoomAt(e.clientX, e.clientY, factor);
+      } else {
+        // Two-finger trackpad → pan. deltaX/deltaY directly map to
+        // pan offsets, but inverted (scrolling down should pan
+        // content up, like a normal scrollable surface).
+        panX -= e.deltaX;
+        panY -= e.deltaY;
+        applyXform();
+      }
     }, { passive: false });
+
+    // Zoom controls.
+    zoomCtl.addEventListener("click", (e) => {
+      const btn = e.target.closest(".gz-btn");
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const rect = stageWrap.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      if (act === "zoom-in")       zoomAt(cx, cy, 1.25);
+      else if (act === "zoom-out") zoomAt(cx, cy, 0.8);
+      else if (act === "fit")      fitToView();
+    });
+
+    // Keyboard — +/− zoom from center, 0 or F to fit.
+    function onKey(e) {
+      if (!stageWrap.isConnected) {
+        document.removeEventListener("keydown", onKey);
+        return;
+      }
+      const ae = document.activeElement;
+      // Don't fight with text inputs.
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      const rect = stageWrap.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      if (e.key === "+" || e.key === "=") { zoomAt(cx, cy, 1.25); }
+      else if (e.key === "-" || e.key === "_") { zoomAt(cx, cy, 0.8); }
+      else if (e.key === "0" || e.key === "f" || e.key === "F") { fitToView(); }
+      else { return; }
+      e.preventDefault();
+    }
+    document.addEventListener("keydown", onKey);
+
     stageWrap.style.cursor = "grab";
+
+    // Auto-fit once the wrap has measurable dimensions. We wait one
+    // frame because container is freshly inserted and its size isn't
+    // committed until layout runs.
+    requestAnimationFrame(() => fitToView());
   }
 
 
@@ -8123,9 +8281,19 @@ new process. Compare its output to the current one before replacing.
   }
 
 
-  async function openProcessGraph(pid) {
+  async function openProcessGraph(pid, opts = {}) {
     if (busy) return;
     if (currentGraphProcessId === pid) return;
+    // Track where we came from so the back button can return us.
+    // Pass {fromBack: true} when we're already going back, to avoid
+    // pushing a duplicate.
+    if (!opts.fromBack) {
+      if (currentGraphProcessId) {
+        graphNavStack.push({ kind: "process", processId: currentGraphProcessId });
+      } else if (processViewMode === "graph") {
+        graphNavStack.push({ kind: "library" });
+      }
+    }
     showStreamLoadingOverlay("Loading graph…");
     try {
       const r = await fetch("/api/promptflow/process/get", {
@@ -8154,6 +8322,42 @@ new process. Compare its output to the current one before replacing.
     }
   }
 
+  // Pop the most recent entry off the graph navigation stack and
+  // navigate to it. If the stack is empty, do nothing. Used by the
+  // back button in the per-process graph header and by Esc when in
+  // graph view.
+  async function goBackInGraph() {
+    if (graphNavStack.length === 0) return;
+    const target = graphNavStack.pop();
+    if (target.kind === "library") {
+      currentGraphProcessId = null;
+      processViewMode = "graph";
+      const tb = $("processViewToggle");
+      if (tb) {
+        tb.classList.add("active");
+        const lbl = tb.querySelector(".pvt-label");
+        if (lbl) lbl.textContent = "List";
+      }
+      paintProcessMap();
+      paintProcessList();
+    } else if (target.kind === "process" && target.processId) {
+      // Going back into a process we drilled out of — fetch + paint
+      // without pushing a new stack entry.
+      await openProcessGraph(target.processId, { fromBack: true });
+    }
+  }
+
+  // Esc inside the graph view goes back one step.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (graphNavStack.length === 0) return;
+    if (currentEditorProcessId) return;     // editor has its own Esc handling
+    // Don't fight with modals — only act when no modal is open.
+    const anyModalOpen = document.querySelector(".modal-bg.show");
+    if (anyModalOpen) return;
+    goBackInGraph();
+  });
+
   function paintGraph(p) {
     clearStream();
     empty.style.display = "none";
@@ -8164,13 +8368,25 @@ new process. Compare its output to the current one before replacing.
     const card = document.createElement("div");
     card.className = "graph-card";
 
-    // Header
+    // Header — back button + name + meta. Back button only shows
+    // when there's something on the navigation stack.
     const head = document.createElement("div");
     head.className = "graph-card-head";
-    head.innerHTML = `<div class="gh-name"></div><div class="gh-meta"></div>`;
+    const canGoBack = graphNavStack.length > 0;
+    head.innerHTML = `
+      ${canGoBack ? `<button class="gh-back" title="Back (Esc)" aria-label="Back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Back</span>
+      </button>` : ""}
+      <div class="gh-name"></div>
+      <div class="gh-meta"></div>
+    `;
     head.querySelector(".gh-name").textContent = p.name;
     head.querySelector(".gh-meta").textContent =
       `${(p.input_kinds || []).join("+") || "text"} → ${p.output_kind || "video"} · ${p.steps?.length || 0} step${(p.steps?.length || 0) === 1 ? "" : "s"}`;
+    if (canGoBack) {
+      head.querySelector(".gh-back").onclick = goBackInGraph;
+    }
     card.appendChild(head);
 
     // Body — the SVG graph
