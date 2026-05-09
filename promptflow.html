@@ -4736,42 +4736,48 @@ promptflow stats</code></pre>
     if (!userText) return;
 
     // Editor mode — every chat message becomes a refinement to the
-    // currently-open process. Skips the planner / cost / execute path
-    // entirely; the response just re-paints the editor.
+    // currently-open process. Falls through to the normal /plan flow
+    // if the user types "Generate process …" so they can break out
+    // of editor mode without manually closing it. Editor pane stays
+    // visible above the chat stream so refinement results render
+    // inline as chat bubbles below the structured editor view.
     if (currentEditorProcessId && currentEditorProcess?.editable) {
-      textInput.value = ""; textInput.style.height = "auto"; updateSend();
-      await refineCurrentProcess(userText);
-      return;
-    }
-    if (currentEditorProcessId && !currentEditorProcess?.editable) {
+      const escapePattern = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
+      if (escapePattern.test(userText)) {
+        // Escape: close the editor, clear the bind, fall through to
+        // the normal /plan flow (which is below).
+        currentEditorProcessId = null;
+        currentEditorProcess = null;
+        refineBoundProcessId = null;
+        refineBoundProcessName = null;
+        paintRefineBindChip();
+        paintProcessList();
+        clearStream();
+        // Fall through to normal /plan path.
+      } else {
+        // Normal editor refinement — chat-driven, same flow as
+        // refineBoundProcess. Resets composer, adds user/assistant
+        // bubbles to the stream below the editor pane.
+        textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        await refineBoundProcess(userText);
+        return;
+      }
+    } else if (currentEditorProcessId && !currentEditorProcess?.editable) {
       alert("This process is read-only. Close the editor (top right) to start a new conversation.");
       return;
     }
 
     // Refine-bound mode — the conversation is pinned to a process that
-    // was just saved/updated. Subsequent messages route through
-    // /process/refine with conversation history attached, so the LLM
-    // has memory of prior turns ("yes but smaller", "now make it
-    // landscape"). The user escapes back to fresh-plan mode by typing
-    // a "Generate process …" / "Generate a process …" command — that
-    // pattern is the explicit signal to break out and start over.
+    // was just saved/updated (no editor pane open). Same chat-driven
+    // refinement; user escapes by typing "Generate process …".
     if (refineBoundProcessId) {
       const escapePattern = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
       if (escapePattern.test(userText)) {
-        // Break the binding and fall through to the normal /plan flow
-        // below. The user's text is preserved verbatim — the planner
-        // will see "Generate a process that …" which is its native
-        // design-process intent trigger.
-        const exitedName = refineBoundProcessName;
         refineBoundProcessId = null;
         refineBoundProcessName = null;
         paintRefineBindChip();
-        // No-op visual: just continue to the normal send path. We
-        // don't add a system message because the planner about to
-        // run will produce its own response. The composer chip
-        // disappearing is itself the affordance.
+        // Fall through to the normal /plan flow below.
       } else {
-        // Stay in refine mode. Reset composer and route to refine.
         textInput.value = ""; textInput.style.height = "auto"; updateSend();
         await refineBoundProcess(userText);
         return;
@@ -6528,6 +6534,19 @@ promptflow stats</code></pre>
       currentEditorProcessId = pid;
       currentEditorProcess = j.process;
       currentConversationId = null;     // detach from any conversation
+      // Also bind the conversation to this process so the input bar
+      // shows the "Refining: …" chip and the standard chat-driven
+      // refinement path is available. Editor mode and refine-bound
+      // mode are now the same flow — opening the editor just gives
+      // you the structured pane above the chat stream.
+      if (j.process.editable) {
+        refineBoundProcessId = pid;
+        refineBoundProcessName = j.process.name;
+      } else {
+        refineBoundProcessId = null;
+        refineBoundProcessName = null;
+      }
+      paintRefineBindChip();
       paintConversationList();
       paintProcessList();
       paintEditor();
@@ -6539,6 +6558,9 @@ promptflow stats</code></pre>
   function closeProcessEditor() {
     currentEditorProcessId = null;
     currentEditorProcess = null;
+    refineBoundProcessId = null;
+    refineBoundProcessName = null;
+    paintRefineBindChip();
     clearStream();
     paintProcessList();
     updateComposerHint();
@@ -7045,6 +7067,30 @@ promptflow stats</code></pre>
       // Update the binding name in case Claude renamed the process.
       refineBoundProcessName = j.process.name;
       paintRefineBindChip();
+      // If the editor pane is open for this process, patch its
+      // visible fields in place without re-painting (which would
+      // nuke the chat stream below). The fields most likely to
+      // change are name, description, meta line, and the code
+      // viewer. Step list also updates if Claude added/removed
+      // steps, so we do a partial replace of just the steps section.
+      if (currentEditorProcessId === id) {
+        currentEditorProcess = j.process;
+        const pane = $("editorPane");
+        if (pane) {
+          const nameEl = pane.querySelector(".editor-head h2");
+          const descEl = pane.querySelector(".editor-head .editor-desc");
+          if (nameEl) nameEl.textContent = j.process.name;
+          if (descEl) descEl.textContent = j.process.description || "(no description)";
+          // The code viewer + steps list have complex internal state;
+          // simplest safe path is to re-paint just those subtrees.
+          // We snapshot the chat bubbles below the editor, re-paint
+          // the editor, then put the bubbles back.
+          const bubbles = [...stream.querySelectorAll(":scope > .msg")];
+          paintEditor();
+          for (const b of bubbles) stream.appendChild(b);
+          stream.scrollTop = stream.scrollHeight;
+        }
+      }
       // Render assistant turn: rationale + updated process card.
       clearStatus(assist);
       if (j.rationale) {
