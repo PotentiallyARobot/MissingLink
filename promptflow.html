@@ -2264,9 +2264,24 @@
   }
   .msg.user .body{ background:var(--surface-2) }
   .msg .text{ white-space:pre-wrap; word-wrap:break-word; line-height:1.6 }
+  /* Single-image case keeps the original 240px max so legacy turns
+     render unchanged. The .thumbs wrapper is only used when there's
+     at least one image; layout naturally handles 1..N. */
+  .msg .thumbs{
+    margin-top:8px;
+    display:flex; flex-wrap:wrap; gap:6px;
+    align-items:flex-start;
+  }
   .msg .thumb{
-    margin-top:8px; max-width:240px; max-height:240px;
+    max-width:240px; max-height:240px;
     border:1px solid var(--border); border-radius:6px; display:block;
+    object-fit:cover;
+  }
+  /* When two or more images are present, shrink them so the row
+     reads as a strip rather than dominating the bubble. */
+  .msg .thumbs .thumb:nth-child(n+2),
+  .msg .thumbs:has(.thumb:nth-child(2)) .thumb{
+    max-width:140px; max-height:140px;
   }
   .msg video{
     margin-top:10px; width:100%; max-width:560px; border-radius:6px;
@@ -5862,9 +5877,15 @@ promptflow whoami</code></pre>
     const isRefinement = !primaryImage && !primaryVideo && !primaryAudio && !!currentConversationId;
     const userImg = primaryImage?.dataUrl || null;
     const userImgName = primaryImage?.file?.name || null;
+    // Build the thumbnail array for any image_2..N extras the user
+    // attached. Each entry is shown as a small thumb beside the
+    // primary so the chat record reflects what was actually sent.
+    const extraThumbs = extraImages.map(e => ({
+      url: e.dataUrl, name: e.file?.name || "",
+    }));
 
     // Append user turn — refinements / text-only don't include a thumbnail.
-    addUserMsg(userText, userImg, userImgName);
+    addUserMsg(userText, userImg, userImgName, extraThumbs);
     const assist = addAssistMsg();
     setStatus(assist, isRefinement ? "Refining plan…" : "Planning…");
 
@@ -6259,18 +6280,41 @@ promptflow whoami</code></pre>
   };
 
   // ── Message rendering ─────────────────────────────────
-  function addUserMsg(text, imgDataUrl, imgName) {
+  // Append a user-turn bubble. Accepts one or more attached images
+  // for the thumbnail row. Backwards-compatible: callers passing a
+  // single dataUrl + name still work (they're auto-wrapped into a
+  // single-element array). Multi-image attachments render as a
+  // horizontal strip of small thumbnails so the user can confirm
+  // which uploads went with this turn.
+  function addUserMsg(text, imgDataUrl, imgName, extras) {
     empty.style.display = "none"; setHeroGraphVisible(false);
+    // Normalize: collect all images into an array of {url, name}.
+    const images = [];
+    if (imgDataUrl) images.push({ url: imgDataUrl, name: imgName || "" });
+    if (Array.isArray(extras)) {
+      for (const x of extras) {
+        if (x && x.url) images.push({ url: x.url, name: x.name || "" });
+      }
+    }
     const el = document.createElement("div");
     el.className = "msg user";
     el.innerHTML = `
       <div class="role">YOU</div>
       <div class="body">
         <div class="text"></div>
-        ${imgDataUrl ? `<img class="thumb" alt="${escapeHtml(imgName || '')}">` : ""}
+        ${images.length > 0 ? `<div class="thumbs"></div>` : ""}
       </div>`;
     el.querySelector(".text").textContent = text;
-    if (imgDataUrl) el.querySelector(".thumb").src = imgDataUrl;
+    if (images.length > 0) {
+      const wrap = el.querySelector(".thumbs");
+      for (const img of images) {
+        const t = document.createElement("img");
+        t.className = "thumb";
+        t.alt = img.name;
+        t.src = img.url;
+        wrap.appendChild(t);
+      }
+    }
     stream.appendChild(el);
     stream.scrollTop = stream.scrollHeight;
   }
