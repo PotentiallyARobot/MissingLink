@@ -4875,6 +4875,7 @@ promptflow whoami</code></pre>
       refineBoundProcessId = planResp.process.id;
       refineBoundProcessName = planResp.process.name;
       paintRefineBindChip();
+      paintEditorDoneRow();     // surface the Stop-refining button
       refreshProcesses();
       busy = false; updateSend();
       return;
@@ -6560,16 +6561,36 @@ promptflow whoami</code></pre>
     updateSend();
   }
 
-  // Show/hide the Done-editing button based on whether the editor
-  // is open. Wires the click on first call.
+  // Show/hide the "Done editing" button. Visible whenever the user
+  // is in either editor mode (a process pane is mounted) OR
+  // refine-bound mode (the conversation just saved a process and is
+  // now pinned to it). Either way, the button breaks the binding
+  // and returns the user to fresh-plan mode.
   function paintEditorDoneRow() {
     const row = $("editorDoneRow");
     if (!row) return;
-    row.style.display = currentEditorProcessId ? "" : "none";
+    const inRefineMode = !!currentEditorProcessId || !!refineBoundProcessId;
+    row.style.display = inRefineMode ? "" : "none";
     const btn = $("editorDoneBtn");
-    if (btn && !btn._wired) {
-      btn._wired = true;
-      btn.onclick = closeProcessEditor;
+    if (btn) {
+      // Re-wire each call to ensure the click target is always
+      // current — defends against any earlier wiring being cleared
+      // by DOM mutations elsewhere.
+      btn.onclick = () => {
+        // If editor pane is open, full close. Otherwise just clear
+        // the refine binding without touching the chat.
+        if (currentEditorProcessId) {
+          closeProcessEditor();
+        } else {
+          refineBoundProcessId = null;
+          refineBoundProcessName = null;
+          paintEditorDoneRow();
+        }
+        textInput?.focus();
+      };
+      // Label adapts: editor-mode = "Done editing", refine-bound
+      // (no editor) = "Stop refining".
+      btn.textContent = currentEditorProcessId ? "✕ Done editing" : "✕ Stop refining";
     }
   }
 
