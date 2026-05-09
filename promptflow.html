@@ -6176,132 +6176,221 @@ promptflow whoami</code></pre>
         const overrides = planAPI.getOverrides();
         const hasOverrides = Object.keys(overrides).length > 0;
 
+        // ── Retry loop ──────────────────────────────────────────
+        // The /execute → /status flow runs once normally. If it fails
+        // with a fal/upstream error that looks fixable (image too
+        // small, wrong resolution, content-policy nudge, enum
+        // violation), the client calls /retry_with_fix to ask the
+        // planner to revise the plan, then re-runs /execute on the
+        // new plan. Hard cap of 2 retries (3 total attempts) so a
+        // pathological error can't loop indefinitely.
+        //
+        // Stop-button cooperation: each iteration honors the abort
+        // controller. The cancel button signals the controller and
+        // the loop exits via the abort check at the top of polling
+        // OR via the catch block on the retry fetch.
+        const MAX_RETRIES = 2;
+        let retryCount = 0;
+        let activePlanId = planResp.plan_id;
+        let activeOverrides = hasOverrides ? overrides : null;
+        let outcome = "init";       // "complete" | "failed" | "aborted" | "error"
+        let lastErrorMessage = "";
+        let lastFailurePlan = null;
+        let lastRefunded = 0;
+
         try {
-          const r = await fetch("/api/promptflow/execute", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              plan_id: planResp.plan_id,
-              ...(hasOverrides ? { plan_overrides: overrides } : {}),
-            }),
-            signal: currentAbortController.signal,
-          });
-          const j = await r.json();
-          if (!j.ok) {
-            setError(assist, j.message || j.error || "Could not start generation.");
-            if (j.plan) renderWorkflow(assist, j.plan);
-            busy = false; updateSend();
-            return;
-          }
+          while (true) {
+            // Attempt indicator (only show retry banner from attempt 2 onward)
+            if (retryCount > 0) {
+              setStatus(assist, `🔧 Auto-fixing and retrying (${retryCount} of ${MAX_RETRIES})…`);
+            }
 
-          // /execute returned immediately with status='running'. Poll
-          // /status every 4 seconds until the worker reports complete
-          // or failed. Soft-cap the wall time at 15 minutes so a stuck
-          // run can't keep the UI spinning forever.
-          setStatus(assist, "Generating… (this can take 1–5 minutes)");
-          const startedAt = Date.now();
-          const pollDeadline = startedAt + 15 * 60 * 1000;
-          let lastStatus = "running";
+            // ── Phase 2a: /execute ─────────────────────────────
+            const r = await fetch("/api/promptflow/execute", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                plan_id: activePlanId,
+                ...(activeOverrides ? { plan_overrides: activeOverrides } : {}),
+              }),
+              signal: currentAbortController.signal,
+            });
+            const j = await r.json();
+            if (!j.ok) {
+              // /execute itself rejected (insufficient tokens, missing
+              // image input, etc.) — these are NOT model-side errors so
+              // retrying with Claude's fix likely won't help. Fail out.
+              setError(assist, j.message || j.error || "Could not start generation.");
+              if (j.plan) renderWorkflow(assist, j.plan);
+              outcome = "error";
+              break;
+            }
 
-          while (Date.now() < pollDeadline) {
-            // Bail out if user clicked Stop. We stop polling locally;
-            // the server-side run may still complete but the user has
-            // moved on. Only cancellable runs reach this branch
-            // because the Stop button is disabled for process runs.
-            if (currentAbortController.signal.aborted) {
-              setError(assist, "Cancelled.");
+            // ── Phase 2b: poll /status ─────────────────────────
+            setStatus(assist, retryCount === 0
+              ? "Generating… (this can take 1–5 minutes)"
+              : `Generating retry ${retryCount}…`);
+            const startedAt = Date.now();
+            const pollDeadline = startedAt + 15 * 60 * 1000;
+            let lastStatus = "running";
+            let pollOutcome = "running";
+            while (Date.now() < pollDeadline) {
+              if (currentAbortController.signal.aborted) {
+                pollOutcome = "aborted";
+                break;
+              }
+              await new Promise(res => setTimeout(res, 4000));
+              if (currentAbortController.signal.aborted) { pollOutcome = "aborted"; break; }
+              let s;
               try {
-                await fetch("/api/promptflow/cancel", {
+                const sr = await fetch("/api/promptflow/status", {
                   method: "POST",
                   headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ plan_id: planResp.plan_id }),
+                  body: JSON.stringify({ plan_id: activePlanId }),
+                  signal: currentAbortController.signal,
                 });
-              } catch { /* best-effort */ }
-              busy = false; updateSend();
-              return;
+                s = await sr.json();
+              } catch (err) {
+                if (currentAbortController.signal.aborted) { pollOutcome = "aborted"; break; }
+                continue;
+              }
+              if (!s.ok) {
+                lastErrorMessage = s.message || s.error || "Lost the job.";
+                pollOutcome = "failed";
+                break;
+              }
+              lastStatus = s.status;
+              if (s.status === "complete") {
+                clearStatus(assist);
+                renderOutputs(assist, s.outputs, s.output_kind, s.video_url);
+
+                const charged = document.createElement("div");
+                charged.className = "status";
+                charged.textContent = `Charged ${s.cost.tokens_charged.toLocaleString()} tokens · $${s.cost.bill_usd.toFixed(4)}`;
+                assist.body.appendChild(charged);
+
+                const pickedPid = s.plan?.picked_process_id || planResp.plan?.picked_process_id;
+                if (pickedPid) {
+                  await maybeBillProcessUse(assist, pickedPid, activePlanId);
+                }
+                if (pickedPid) {
+                  renderChatWithProcessButton(assist, activePlanId, pickedPid);
+                }
+
+                renderSaveAsProcess(assist, activePlanId, planResp.plan);
+
+                if (typeof s.tokens_remaining === "number" && ME) {
+                  ME.tokens = s.tokens_remaining;
+                  paintAuthUI();
+                }
+                pollOutcome = "complete";
+                break;
+              }
+              if (s.status === "failed") {
+                lastErrorMessage = s.message || "Generation failed.";
+                lastFailurePlan = s.plan || null;
+                lastRefunded = s.refunded_tokens || 0;
+                pollOutcome = "failed";
+                break;
+              }
+              const elapsed = Math.round((Date.now() - startedAt) / 1000);
+              setStatus(assist, retryCount === 0
+                ? `Generating… ${elapsed}s elapsed`
+                : `Generating retry ${retryCount}… ${elapsed}s elapsed`);
             }
-            await new Promise((res) => setTimeout(res, 4000));
-            let s;
+            if (pollOutcome === "running" && Date.now() >= pollDeadline) {
+              lastErrorMessage = "Timed out waiting for the worker.";
+              pollOutcome = "failed";
+            }
+
+            if (pollOutcome === "complete") { outcome = "complete"; break; }
+            if (pollOutcome === "aborted")  { outcome = "aborted";  break; }
+
+            // pollOutcome === "failed" — decide retry vs terminal.
+            if (retryCount >= MAX_RETRIES) {
+              outcome = "failed";
+              break;
+            }
+            // Brief inline note that we're attempting a fix. The status
+            // line above will be replaced with the "Auto-fixing…" banner
+            // at the top of the next iteration.
+            const note = document.createElement("div");
+            note.className = "status";
+            note.style.color = "var(--text-muted)";
+            note.textContent = `Attempt ${retryCount + 1} failed: ${lastErrorMessage.slice(0, 200)}`;
+            assist.body.appendChild(note);
+
+            // ── Phase 2c: /retry_with_fix ────────────────────────
+            setStatus(assist, `🔧 Asking the planner to fix this…`);
+            let fixResp;
             try {
-              const sr = await fetch("/api/promptflow/status", {
+              const rr = await fetch("/api/promptflow/retry_with_fix", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ plan_id: planResp.plan_id }),
+                body: JSON.stringify({
+                  failed_plan_id: activePlanId,
+                  error_message: lastErrorMessage,
+                }),
                 signal: currentAbortController.signal,
               });
-              s = await sr.json();
-            } catch (e) {
-              if (e?.name === "AbortError") {
-                setError(assist, "Cancelled.");
-                busy = false; updateSend();
-                return;
-              }
-              // Other transient — keep polling.
-              continue;
-            }
-            if (!s.ok) {
-              setError(assist, s.message || s.error || "Lost the job.");
+              fixResp = await rr.json();
+            } catch (err) {
+              if (currentAbortController.signal.aborted) { outcome = "aborted"; break; }
+              outcome = "failed";
+              lastErrorMessage = "Network error contacting fix endpoint: " + (err?.message || err);
               break;
             }
-            lastStatus = s.status;
-            if (s.status === "complete") {
-              clearStatus(assist);
-              renderOutputs(assist, s.outputs, s.output_kind, s.video_url);
-
-              const charged = document.createElement("div");
-              charged.className = "status";
-              charged.textContent = `Charged ${s.cost.tokens_charged.toLocaleString()} tokens · $${s.cost.bill_usd.toFixed(4)}`;
-              assist.body.appendChild(charged);
-
-              // If the planner used a saved process (and it isn't ours),
-              // bill its author cascade now and surface a feedback row.
-              const pickedPid = s.plan?.picked_process_id || planResp.plan?.picked_process_id;
-              if (pickedPid) {
-                await maybeBillProcessUse(assist, pickedPid, planResp.plan_id);
-              }
-
-              // If a process was used (owned or not), let the user
-              // chat with it to refine future runs. Forks the process
-              // into a private copy on first message.
-              if (pickedPid) {
-                renderChatWithProcessButton(assist, planResp.plan_id, pickedPid);
-              }
-
-              // Save-as-process affordance. Show whenever the plan had
-              // structure worth saving — multi-step OR a single recipe
-              // with a non-default duration / prompt the user might
-              // want to reuse. Cheap to offer; no harm if not used.
-              // Pass `planResp.plan` so the modal can include any
-              // local edits the user made to the Adapted Workflow
-              // card's Python before clicking save.
-              renderSaveAsProcess(assist, planResp.plan_id, planResp.plan);
-
-              if (typeof s.tokens_remaining === "number" && ME) {
-                ME.tokens = s.tokens_remaining;
-                paintAuthUI();
-              }
+            if (!fixResp || !fixResp.ok) {
+              // Couldn't get a corrected plan. Fall through to terminal failure.
+              outcome = "failed";
+              lastErrorMessage = (fixResp?.message || fixResp?.error || "Fix request failed") + " · last upstream error: " + lastErrorMessage;
               break;
             }
-            if (s.status === "failed") {
-              setError(assist, s.message || "Generation failed.");
-              if (s.plan) renderWorkflow(assist, s.plan);
-              if (s.refunded_tokens) {
-                const note = document.createElement("div");
-                note.className = "status";
-                note.textContent = `Refunded ${s.refunded_tokens.toLocaleString()} tokens.`;
-                assist.body.appendChild(note);
-              }
-              break;
+            // Swap to the new plan and loop. Keep overrides null —
+            // the corrected plan already incorporates any tweaks via
+            // the planner; user-edited overrides from the original
+            // card don't carry over.
+            activePlanId = fixResp.plan_id;
+            activeOverrides = null;
+            retryCount++;
+            // Tell the user what the fix changed.
+            if (fixResp.plan?.rationale) {
+              const rNote = document.createElement("div");
+              rNote.className = "text";
+              rNote.style.color = "var(--gold)";
+              rNote.textContent = `↻ ${fixResp.plan.rationale}`;
+              assist.body.appendChild(rNote);
             }
-            // still 'running' — update the status line with elapsed time
-            const elapsed = Math.round((Date.now() - startedAt) / 1000);
-            setStatus(assist, `Generating… ${elapsed}s elapsed`);
           }
-          if (lastStatus === "running" && Date.now() >= pollDeadline) {
-            setError(assist, "Timed out waiting for the worker. The job may still complete — refresh later.");
+
+          // ── Outcome handling ─────────────────────────────────
+          if (outcome === "aborted") {
+            setError(assist, "Cancelled.");
+            try {
+              await fetch("/api/promptflow/cancel", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ plan_id: activePlanId }),
+              });
+            } catch {}
+          } else if (outcome === "failed") {
+            setError(assist, lastErrorMessage || "Generation failed after all retries.");
+            if (lastFailurePlan) renderWorkflow(assist, lastFailurePlan);
+            if (lastRefunded > 0) {
+              const ref = document.createElement("div");
+              ref.className = "status";
+              ref.textContent = `Refunded ${lastRefunded.toLocaleString()} tokens.`;
+              assist.body.appendChild(ref);
+            }
           }
+          // outcome === "complete" or "error" need no extra rendering;
+          // their bodies already updated assist.body.
         } catch (e) {
-          setError(assist, "Network error: " + (e?.message || e));
+          if (currentAbortController.signal.aborted) {
+            setError(assist, "Cancelled.");
+          } else {
+            setError(assist, "Network error: " + (e?.message || e));
+          }
         } finally {
           busy = false; updateSend();
           stream.scrollTop = stream.scrollHeight;
