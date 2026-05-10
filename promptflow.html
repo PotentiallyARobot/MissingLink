@@ -385,6 +385,14 @@
   .editor-pane{
     display:flex; flex-direction:column; gap:14px;
     padding:18px; max-width:920px; margin:0 auto;
+    /* Flex/grid children default to min-width:auto, which means a long
+       code line in a child .code-viewer can stretch this pane past its
+       max-width and trigger horizontal scroll on the whole page. The
+       page-level scroll then breaks position:sticky on the input bar
+       and causes the visible "jumbling". Clamping min-width here makes
+       overflow stay contained inside the child .cv-body. */
+    min-width:0;
+    width:100%;
   }
   .editor-head{
     display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
@@ -420,6 +428,10 @@
     background:var(--surface-2); border:1px solid var(--border);
     border-radius:6px; overflow:hidden;
     font-family:var(--font-mono); font-size:11px;
+    /* Same min-width:0 fix as .editor-pane — without it, a child
+       <pre> with very long lines can stretch this card past its
+       intended width inside flex/grid parents. */
+    min-width:0; max-width:100%;
   }
   .code-viewer-head{
     display:flex; align-items:center; gap:8px;
@@ -461,13 +473,21 @@
     color:var(--gold); border-bottom-color:var(--gold);
   }
   .cv-body{
+    /* Both axes — pre exceeds height too. overflow-x:auto specifically
+       contains long code lines so the page itself doesn't get a
+       horizontal scrollbar (which would break the sticky input bar
+       layout downstream). */
     overflow:auto; max-height:520px;
+    max-width:100%;
   }
   .cv-body pre{
     margin:0; padding:14px 16px; line-height:1.5;
     color:var(--text); white-space:pre;
     background:transparent !important;       /* override Prism's default bg */
     font-size:11px; font-family:var(--font-mono);
+    /* Allow the pre's own intrinsic width to flow — cv-body's
+       overflow:auto catches it and produces a contained scrollbar. */
+    width:max-content; min-width:100%;
   }
   .cv-body pre code{
     font-family:var(--font-mono); font-size:11px;
@@ -613,6 +633,70 @@
   .cs-trust{ color:var(--gold) }
   .cs-trust.cs-new{ color:var(--green); font-style:italic }
   .cs-fail{ color:var(--red) }
+
+  /* ── Outward composition cards (cs-comp-card) ──────────────
+     Used by "Build something with this" panel. Same base shell
+     as cs-card, but pitch-focused (no stats/trust noise),
+     references existing processes as pills, and has a gold
+     Generate-this CTA. Density tuned tighter than inward cards
+     since the pitch text carries most of the meaning. */
+  .cs-comp-list{
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .cs-meta{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); font-style:italic;
+    padding:0 2px 2px;
+  }
+  .cs-card.cs-comp-card{
+    gap:7px;
+    padding:11px 13px;
+  }
+  .cs-card.cs-comp-card .cs-card-name{
+    font-size:13px; font-family:var(--font-display);
+    font-weight:700; letter-spacing:-.2px;
+    color:var(--gold);
+  }
+  .cs-card.cs-comp-card .cs-card-desc{
+    font-family:var(--font-display); font-size:12px;
+    color:var(--text); line-height:1.55;
+  }
+  .cs-uses{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); line-height:1.7;
+    display:flex; flex-wrap:wrap; gap:4px; align-items:center;
+    padding-top:2px;
+  }
+  .cs-uses-pill{
+    display:inline-block;
+    padding:1px 7px;
+    background:var(--surface-3); border-radius:10px;
+    color:var(--text-dim); font-size:9.5px;
+  }
+  .cs-uses-pill em{ color:var(--text-muted); font-style:normal }
+  .cs-uses-solo{
+    color:var(--text-muted); font-style:italic;
+  }
+  .cs-design-btn{
+    align-self:flex-start;
+    padding:5px 12px; font-size:10.5px;
+    background:var(--gold); color:var(--black);
+    border:1px solid var(--gold); font-weight:700;
+    letter-spacing:.2px;
+  }
+  .cs-design-btn:hover{
+    background:var(--gold-light); border-color:var(--gold-light);
+  }
+  .compose-outward .cs-actions{
+    justify-content:flex-end;
+  }
+  .compose-outward .cs-refresh-comp{
+    background:transparent; border:1px solid var(--border);
+    color:var(--text-muted); font-size:10px; padding:4px 10px;
+  }
+  .compose-outward .cs-refresh-comp:hover{
+    color:var(--gold); border-color:var(--gold);
+  }
   .cs-card-reasons{ display:flex; gap:4px; flex-wrap:wrap }
   .cs-badge{
     background:var(--surface-3); color:var(--text-muted); font-family:var(--font-mono);
@@ -766,6 +850,29 @@
   }
   .mq-row{
     display:flex; gap:6px; align-items:center;
+    flex-wrap:wrap;
+  }
+  /* Scope toggle — Private/Public pill group. Sits at the left of
+     the query bar; clearly the first thing the user sees. Selected
+     state uses gold to match the rest of the chrome. */
+  .mq-scope{
+    display:inline-flex; padding:2px;
+    background:var(--black); border:1px solid var(--border);
+    border-radius:4px; flex-shrink:0;
+  }
+  .mq-scope-btn{
+    padding:5px 12px;
+    background:transparent; border:none; cursor:pointer;
+    color:var(--text-muted);
+    font-family:var(--font-mono); font-size:10px;
+    letter-spacing:.05em;
+    border-radius:3px; transition:all .12s;
+  }
+  .mq-scope-btn.active{
+    background:var(--gold); color:var(--black); font-weight:700;
+  }
+  .mq-scope-btn:not(.active):hover{
+    color:var(--text); background:var(--surface-2);
   }
   .mq-mode-label{
     font-family:var(--font-mono); font-size:9px; color:var(--gold);
@@ -1184,6 +1291,112 @@
   }
   .ms-actions{ display:flex; gap:4px; flex-wrap:wrap }
   .ms-actions .btn{ font-size:10px; padding:5px 10px }
+  .ms-edit-primary{
+    background:var(--gold); color:var(--black); border-color:var(--gold);
+    font-weight:600;
+  }
+  .ms-edit-primary:hover{ background:var(--gold-light); border-color:var(--gold-light) }
+
+  /* Side panel section dividers (Steps, When to use). Compact, with
+     a small uppercase title. */
+  .ms-section-title{
+    font-family:var(--font-mono); font-size:9px;
+    color:var(--text-muted); letter-spacing:.1em;
+    text-transform:uppercase;
+    margin:14px 0 6px 0;
+    padding-top:10px;
+    border-top:1px solid var(--border);
+  }
+  .ms-steps-list{
+    display:flex; flex-direction:column; gap:4px;
+  }
+  /* Single step row in the side panel. Header is always visible;
+     detail collapses on click. Designed for narrow column. */
+  .ms-step-row{
+    background:var(--black); border:1px solid var(--border);
+    border-radius:3px; overflow:hidden;
+    font-family:var(--font-mono);
+  }
+  .ms-step-head{
+    display:flex; align-items:center; gap:6px;
+    padding:6px 8px; cursor:pointer;
+    transition:background .12s;
+  }
+  .ms-step-head:hover{ background:var(--surface-2) }
+  .ms-step-num{
+    font-size:9px; color:var(--text-muted);
+    flex-shrink:0;
+  }
+  .ms-step-badge{
+    font-size:9px; padding:1px 5px; border-radius:2px;
+    background:var(--surface-3); color:var(--text-dim);
+    flex-shrink:0;
+  }
+  .ms-step-badge-claude  { background:#1f2f4a; color:#9bbeff }
+  .ms-step-badge-recipe  { background:#2a1a3a; color:#c89cf0 }
+  .ms-step-badge-process { background:var(--gold-dim); color:var(--gold) }
+  .ms-step-badge-loop    { background:#1c2a1c; color:#9bcd9b }
+  .ms-step-summary{
+    flex:1 1 auto; font-size:10px; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    min-width:0;
+  }
+  .ms-step-expand{
+    font-size:9px; color:var(--text-muted);
+    flex-shrink:0;
+  }
+  .ms-step-detail{
+    padding:8px;
+    border-top:1px solid var(--border);
+    background:var(--surface);
+  }
+  .ms-step-block{ margin-bottom:8px }
+  .ms-step-block:last-child{ margin-bottom:0 }
+  .ms-step-label{
+    font-size:8.5px; color:var(--text-muted);
+    text-transform:uppercase; letter-spacing:.08em;
+    margin-bottom:2px;
+  }
+  .ms-step-pre{
+    margin:0; padding:6px 8px;
+    background:var(--black); border:1px solid var(--border);
+    border-radius:3px;
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-dim); line-height:1.45;
+    white-space:pre-wrap; word-wrap:break-word;
+    max-height:160px; overflow-y:auto;
+  }
+  .ms-step-kv{
+    display:flex; gap:6px;
+    font-size:9.5px;
+    padding:2px 0;
+  }
+  .ms-step-kv .ms-k{
+    color:var(--text-muted);
+    min-width:80px; flex-shrink:0;
+  }
+  .ms-step-kv .ms-v{
+    color:var(--text); word-break:break-word;
+  }
+  .ms-step-link-btn{
+    margin-top:4px; font-size:9.5px; padding:3px 8px;
+    background:transparent; border:1px solid var(--gold-dim);
+    color:var(--gold);
+  }
+  .ms-step-link-btn:hover{ background:var(--gold-dim) }
+  .ms-utility-content{
+    background:var(--black); border:1px solid var(--border);
+    border-radius:3px; padding:8px 10px;
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-dim); line-height:1.5;
+    white-space:pre-wrap;
+    max-height:200px; overflow-y:auto;
+  }
+  .ms-loading, .ms-empty{
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); font-style:italic;
+    padding:6px 0;
+  }
 
   /* Legend */
   .map-legend{
@@ -1229,6 +1442,198 @@
     background:rgba(0,0,0,.7); backdrop-filter:blur(4px);
     display:flex; align-items:center; justify-content:center;
     padding:20px;
+  }
+
+  /* ── Generation preferences popover ─────────────────────────
+     Distinct from .modal-overlay because it's smaller / scoped to
+     the chat-bar workflow. Backdrop is lighter (less attention-
+     grabbing — the user opened it deliberately and shouldn't feel
+     trapped). Card is taller because it's a list. */
+  .genprefs-overlay{
+    position:fixed; inset:0; z-index:1010;
+    background:rgba(0,0,0,.55); backdrop-filter:blur(2px);
+    display:flex; align-items:center; justify-content:center;
+    padding:20px;
+  }
+  .genprefs-card{
+    background:var(--surface); border:1px solid var(--gold-dim);
+    border-radius:8px; box-shadow:0 16px 48px rgba(0,0,0,.7);
+    max-width:560px; width:100%;
+    max-height:calc(100vh - 40px);
+    display:flex; flex-direction:column;
+    color:var(--text);
+  }
+  .genprefs-head{
+    display:flex; align-items:flex-start; gap:12px;
+    padding:16px 18px 12px;
+    border-bottom:1px solid var(--border);
+  }
+  .genprefs-title{
+    flex:1 1 auto;
+  }
+  .genprefs-title strong{
+    display:block;
+    font-family:var(--font-mono); font-size:13px;
+    color:var(--gold); letter-spacing:-.01em;
+    margin-bottom:3px;
+  }
+  .genprefs-sub{
+    font-family:var(--font-display); font-size:11.5px;
+    color:var(--text-muted); line-height:1.45;
+  }
+  .genprefs-close{
+    flex-shrink:0; color:var(--text-muted);
+    padding:4px; border-radius:3px;
+  }
+  .genprefs-close:hover{ color:var(--gold); background:var(--surface-2) }
+  .genprefs-mode-row{
+    display:flex; align-items:center; gap:10px;
+    padding:10px 18px;
+    border-bottom:1px solid var(--border);
+    background:var(--surface-2);
+  }
+  .genprefs-mode-label{
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted); letter-spacing:.05em;
+    text-transform:uppercase;
+  }
+  .genprefs-mode-toggle{
+    display:inline-flex; padding:2px;
+    background:var(--black); border:1px solid var(--border);
+    border-radius:4px;
+  }
+  .gpm-btn{
+    padding:4px 10px;
+    background:transparent; border:none; cursor:pointer;
+    color:var(--text-muted);
+    font-family:var(--font-mono); font-size:10.5px;
+    border-radius:3px; transition:all .12s;
+  }
+  .gpm-btn.active{ background:var(--gold); color:var(--black); font-weight:700 }
+  .gpm-btn:not(.active):hover{ color:var(--text); background:var(--surface-3) }
+  .genprefs-search-row{
+    display:flex; gap:6px; align-items:center;
+    padding:10px 18px;
+    border-bottom:1px solid var(--border);
+  }
+  .genprefs-search{
+    flex:1 1 auto;
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:4px; color:var(--text);
+    padding:6px 10px;
+    font-family:var(--font-mono); font-size:11px;
+    outline:none;
+  }
+  .genprefs-search:focus{ border-color:var(--gold) }
+  .genprefs-search-row .btn{ font-size:10px; padding:5px 9px; flex-shrink:0 }
+  .genprefs-list{
+    flex:1 1 auto; overflow-y:auto;
+    padding:10px 18px;
+    min-height:200px; max-height:380px;
+  }
+  .genprefs-empty{
+    font-family:var(--font-mono); font-size:11px;
+    color:var(--text-muted); font-style:italic;
+    padding:20px 0; text-align:center;
+  }
+  .gp-group{ margin-bottom:14px }
+  .gp-group:last-child{ margin-bottom:0 }
+  .gp-group-head{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-muted); letter-spacing:.08em;
+    text-transform:uppercase;
+    margin-bottom:4px; padding-bottom:3px;
+    border-bottom:1px solid var(--border);
+  }
+  .gp-row{
+    display:flex; align-items:flex-start; gap:8px;
+    padding:6px 6px; border-radius:4px;
+    cursor:pointer;
+    transition:background .12s;
+  }
+  .gp-row:hover{ background:var(--surface-2) }
+  .gp-row-system{ opacity:0.85 }
+  .gp-row-system:hover{ background:transparent; cursor:default }
+  .gp-cb{
+    margin:2px 0 0 0; flex-shrink:0;
+    accent-color:var(--gold);
+  }
+  .gp-row-text{
+    display:flex; flex-direction:column; flex:1 1 auto;
+    min-width:0;
+  }
+  .gp-name{
+    font-family:var(--font-mono); font-size:11.5px;
+    color:var(--text); font-weight:500;
+    line-height:1.3;
+  }
+  .gp-desc{
+    font-family:var(--font-display); font-size:10.5px;
+    color:var(--text-muted); line-height:1.4;
+    margin-top:2px;
+    overflow:hidden; text-overflow:ellipsis;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  }
+  .gp-pin{
+    font-size:11px; color:var(--gold);
+    flex-shrink:0;
+  }
+  .genprefs-note{
+    padding:8px 18px;
+    background:var(--surface-2);
+    border-top:1px solid var(--border);
+    font-family:var(--font-display); font-size:10.5px;
+    color:var(--text-muted); line-height:1.5;
+  }
+  .genprefs-note strong{ color:var(--gold) }
+  .genprefs-actions{
+    display:flex; align-items:center; gap:6px;
+    padding:12px 18px;
+    border-top:1px solid var(--border);
+  }
+  .genprefs-actions .btn{ font-size:10.5px; padding:6px 12px }
+  .genprefs-actions .gp-save{
+    background:var(--gold); color:var(--black); font-weight:700;
+    border-color:var(--gold);
+  }
+  .genprefs-actions .gp-save:hover{
+    background:var(--gold-light); border-color:var(--gold-light);
+  }
+  .genprefs-actions .gp-once{
+    background:transparent; border:1px solid var(--gold);
+    color:var(--gold);
+  }
+  .genprefs-actions .gp-once:hover{ background:var(--gold-dim) }
+  .genprefs-actions .gp-reset{
+    background:transparent; border:1px solid var(--border);
+    color:var(--text-muted); font-size:10px;
+  }
+  .genprefs-actions .gp-reset:hover{ color:var(--red); border-color:var(--red) }
+
+  /* Gear button badge — shows count of selected processes in the
+     current allowlist. Asterisk after the count means the active
+     layer is an override (clears after next send). */
+  #genPrefsBtn{ position:relative }
+  .genprefs-badge{
+    position:absolute; top:-3px; right:-3px;
+    min-width:14px; height:14px; padding:0 3px;
+    border-radius:7px;
+    background:var(--gold); color:var(--black);
+    font-family:var(--font-mono); font-size:9px; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+    box-shadow:0 0 0 2px var(--surface);
+  }
+
+  /* Brief border flash on the textarea when "For next send only"
+     is clicked — confirms the override will apply. */
+  @keyframes genprefsFlash {
+    0%   { box-shadow:0 0 0 0 var(--gold) }
+    50%  { box-shadow:0 0 0 2px var(--gold) }
+    100% { box-shadow:0 0 0 0 var(--gold) }
+  }
+  .genprefs-flash{
+    animation:genprefsFlash 700ms ease-out;
   }
   .modal-card{
     background:var(--surface); border:1px solid var(--border); border-radius:8px;
@@ -2544,6 +2949,7 @@
      exit affordance, sized to thumb-tap. */
   .editor-done-row{
     display:flex; justify-content:flex-end;
+    align-items:center; gap:8px;
     margin-bottom:8px;
   }
   .editor-done-btn{
@@ -2557,6 +2963,62 @@
   }
   .editor-done-btn:hover{
     background:var(--gold-dim);
+  }
+  /* Draft commit button — primary action when editing a draft. Solid
+     gold so it reads as the obvious "you want to click this" affordance
+     vs the bordered "Done editing" / "Discard" siblings. */
+  .editor-commit-btn{
+    background:var(--gold) !important;
+    border:1px solid var(--gold) !important;
+    color:var(--black) !important;
+    font-size:11px !important;
+    font-weight:700 !important;
+    padding:6px 14px !important;
+    text-transform:none !important;
+    letter-spacing:.3px !important;
+  }
+  .editor-commit-btn:hover{
+    background:var(--gold-light) !important;
+    border-color:var(--gold-light) !important;
+  }
+  .editor-commit-btn:disabled{
+    opacity:0.6; cursor:wait;
+  }
+  /* Discard button — red-tinted ghost, deemphasized so the user sees
+     Save first. Asks for confirm() before deleting. */
+  .editor-discard-btn{
+    background:transparent !important;
+    border:1px solid var(--red) !important;
+    color:var(--red) !important;
+    font-size:11px !important;
+    padding:6px 12px !important;
+    text-transform:none !important;
+    letter-spacing:.3px !important;
+  }
+  .editor-discard-btn:hover{
+    background:rgba(220, 50, 47, 0.1) !important;
+  }
+  /* Draft banner — appears at the top of the editor pane when
+     viewing a process that hasn't been committed yet. Gold-tinted
+     so it's visible but not alarming; gives the user clear context
+     about what state the process is in. */
+  .editor-draft-banner{
+    display:flex; align-items:flex-start; gap:10px;
+    padding:10px 14px;
+    background:rgba(232, 169, 23, 0.08);
+    border:1px solid var(--gold-dim);
+    border-left:3px solid var(--gold);
+    border-radius:6px;
+    font-size:12px; line-height:1.5;
+    color:var(--text-dim);
+  }
+  .editor-draft-banner strong{
+    color:var(--gold); font-family:var(--font-mono);
+    font-size:11px; letter-spacing:.05em;
+    flex-shrink:0;
+  }
+  .editor-draft-banner em{
+    color:var(--gold); font-style:normal; font-weight:600;
   }
   .input-bar{
     display:flex; align-items:flex-end; gap:8px;
@@ -3457,6 +3919,8 @@ $ promptflow run my-process.promptflow</code></pre>
          affordance — no chip, no header bar, just a button right
          where the user's hand already is (next to the input). -->
     <div id="editorDoneRow" class="editor-done-row" style="display:none">
+      <button id="editorDiscardBtn" class="btn editor-discard-btn" type="button" style="display:none" title="Discard this draft — delete without keeping it">🗑 Discard draft</button>
+      <button id="editorCommitBtn" class="btn editor-commit-btn" type="button" style="display:none" title="Save this draft as a permanent process in your workspace">💾 Save to workspace</button>
       <button id="editorDoneBtn" class="btn editor-done-btn" type="button">✕ Done editing</button>
     </div>
 
@@ -3478,6 +3942,19 @@ $ promptflow run my-process.promptflow</code></pre>
         <div class="input-highlight" id="inputHighlight" aria-hidden="true"></div>
         <textarea id="textInput" placeholder="What do you want to make?" rows="1"></textarea>
       </div>
+      <!-- Generation preferences — controls which processes the
+           planner considers for the next request. Persistent default
+           lives in /me/settings.process_allowlist; the popover also
+           offers a "this message only" override. Distinct from the
+           hidden #prefsBtn (which opens the learned-preferences
+           modal — different concept). -->
+      <button class="icon-btn" id="genPrefsBtn" title="Generation preferences — which processes the planner considers" aria-haspopup="dialog">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span id="genPrefsBtnBadge" class="genprefs-badge" style="display:none">0</span>
+      </button>
       <button class="icon-btn send" id="sendBtn" disabled title="Send (Enter) — Shift+Enter for newline">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
       </button>
@@ -3781,9 +4258,21 @@ promptflow whoami</code></pre>
   const textInput = $("textInput");
   const sendBtn = $("sendBtn");
   const attachBtn = $("attachBtn");
+  const genPrefsBtn = $("genPrefsBtn");
+  const genPrefsBtnBadge = $("genPrefsBtnBadge");
   const attachWrap = $("attachWrap");
   const tokenPill = $("tokenPill");
   const tokenCount = $("tokenCount");
+
+  // Process allowlist state. Two layers:
+  //   genPrefsPersistent — synced to /me/settings.process_allowlist.
+  //                        Applies to every send until the user changes
+  //                        it. { ids: string[], mode: "only"|"exclude" }.
+  //                        null = no preference (all processes allowed).
+  //   genPrefsOverride   — one-shot override for the next send only.
+  //                        null = no override; use persistent.
+  let genPrefsPersistent = null;
+  let genPrefsOverride = null;
 
 
   // ── Auth state UI ─────────────────────────────────────
@@ -3822,6 +4311,9 @@ promptflow whoami</code></pre>
     paintAuthUI();
     paintGlobalStats();
     initHeroGraph();
+    // Generation preferences are user-scoped — hydrate after auth.
+    // Best-effort; failures leave the badge hidden.
+    loadGenPrefsFromServer().catch(() => {});
   }
 
   // ── Hero Process Graph animation ──────────────────────────
@@ -5393,6 +5885,311 @@ promptflow whoami</code></pre>
   // each file by MIME type at attach time and route it into the right
   // FormData slot at send time.
   attachBtn.onclick = () => fileInput.click();
+
+  // ── Generation preferences (process allowlist) ──────────────
+  //
+  // Two-tier model:
+  //   persistent — saved to /me/settings.process_allowlist, applies
+  //                until the user changes it
+  //   override   — one-shot, used for the very next send then cleared
+  //
+  // Both have the same shape: { ids: string[], mode: "only"|"exclude" }.
+  // "only" = planner sees ONLY these ids; "exclude" = filter these
+  // out. System processes are always allowed regardless.
+  //
+  // The badge on the gear button shows the count of selected ids
+  // when any non-empty allowlist (persistent OR override) is active.
+  // An asterisk after the number indicates the active layer is an
+  // override (cleared after next send).
+
+  function paintGenPrefsBadge() {
+    if (!genPrefsBtnBadge) return;
+    const active = genPrefsOverride || genPrefsPersistent;
+    if (active && Array.isArray(active.ids) && active.ids.length > 0) {
+      const star = genPrefsOverride ? "*" : "";
+      genPrefsBtnBadge.textContent = String(active.ids.length) + star;
+      genPrefsBtnBadge.style.display = "";
+      genPrefsBtnBadge.title = genPrefsOverride
+        ? `Override active for next send: ${active.mode === "exclude" ? "excluding" : "only"} ${active.ids.length} process${active.ids.length === 1 ? "" : "es"}`
+        : `Default applied: ${active.mode === "exclude" ? "excluding" : "only"} ${active.ids.length} process${active.ids.length === 1 ? "" : "es"}`;
+    } else {
+      genPrefsBtnBadge.style.display = "none";
+    }
+  }
+
+  // Load persistent prefs once on boot, when ME is known.
+  async function loadGenPrefsFromServer() {
+    if (!ME) return;
+    try {
+      const r = await fetch("/api/promptflow/me/settings");
+      const j = await r.json();
+      if (!j.ok) return;
+      const settings = j.settings || {};
+      if (settings.process_allowlist
+          && Array.isArray(settings.process_allowlist.ids)) {
+        genPrefsPersistent = {
+          ids: settings.process_allowlist.ids.map(String),
+          mode: settings.process_allowlist.mode === "exclude" ? "exclude" : "only",
+        };
+      } else {
+        genPrefsPersistent = null;
+      }
+      paintGenPrefsBadge();
+    } catch { /* defaults are fine */ }
+  }
+
+  // Save persistent prefs back to /me/settings. Merges with existing
+  // settings so other fields (ranking knobs etc.) are preserved.
+  async function saveGenPrefsToServer(allowlist) {
+    if (!ME) return false;
+    try {
+      const cur = await fetch("/api/promptflow/me/settings").then(r => r.json()).catch(() => null);
+      const existing = (cur && cur.ok && cur.settings) ? cur.settings : {};
+      const merged = { ...existing };
+      if (allowlist && Array.isArray(allowlist.ids) && allowlist.ids.length > 0) {
+        merged.process_allowlist = {
+          ids: allowlist.ids,
+          mode: allowlist.mode === "exclude" ? "exclude" : "only",
+        };
+      } else {
+        delete merged.process_allowlist;
+      }
+      const r = await fetch("/api/promptflow/me/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: merged }),
+      });
+      return (await r.json())?.ok === true;
+    } catch { return false; }
+  }
+
+  // Compute which prefs apply on the next send (override first, then
+  // persistent). Returns the allowlist object or null. Called by send().
+  function getActiveGenPrefs() {
+    return genPrefsOverride || genPrefsPersistent || null;
+  }
+
+  // Called by send() after a send is initiated. Clears the override
+  // so it only applies once.
+  function consumeGenPrefsOverride() {
+    if (genPrefsOverride) {
+      genPrefsOverride = null;
+      paintGenPrefsBadge();
+    }
+  }
+
+  // The popover. Lists all processes the user can see, grouped by
+  // source (mine / system / published). Checkboxes pick the allowlist;
+  // a mode toggle switches "only" vs "exclude". Two save paths:
+  //   "Save as default"  — writes to /me/settings, applies persistently
+  //   "Just this message" — sets the override, applies on next send only
+  function openGenPrefsPopover() {
+    const existing = document.getElementById("genPrefsPopover");
+    if (existing) { existing.remove(); return; }
+    // Seed selection from current active prefs (override > persistent
+    // > empty).
+    const seed = getActiveGenPrefs() || { ids: [], mode: "only" };
+    const selectedIds = new Set(seed.ids || []);
+    let mode = seed.mode === "exclude" ? "exclude" : "only";
+
+    const overlay = document.createElement("div");
+    overlay.id = "genPrefsPopover";
+    overlay.className = "genprefs-overlay";
+    overlay.innerHTML = `
+      <div class="genprefs-card" role="dialog" aria-label="Generation preferences">
+        <div class="genprefs-head">
+          <div class="genprefs-title">
+            <strong>Generation preferences</strong>
+            <div class="genprefs-sub">Choose which processes the planner should consider when you send a message.</div>
+          </div>
+          <button class="icon-btn genprefs-close" title="Close" aria-label="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="genprefs-mode-row">
+          <span class="genprefs-mode-label">Mode:</span>
+          <div class="genprefs-mode-toggle">
+            <button class="gpm-btn ${mode === "only" ? "active" : ""}" data-mode="only" title="Planner sees ONLY the checked processes">Only these</button>
+            <button class="gpm-btn ${mode === "exclude" ? "active" : ""}" data-mode="exclude" title="Planner sees everything EXCEPT the checked processes">Exclude these</button>
+          </div>
+        </div>
+        <div class="genprefs-search-row">
+          <input class="genprefs-search" type="text" placeholder="Filter processes by name…">
+          <button class="btn gp-select-mine">Select my processes</button>
+          <button class="btn gp-clear">Clear all</button>
+        </div>
+        <div class="genprefs-list" id="genPrefsList">
+          <div class="genprefs-empty">Loading processes…</div>
+        </div>
+        <div class="genprefs-note">
+          <strong>Tip:</strong> system processes are always considered — they're the meta-actions (Generate, Evaluate, Adapt) that run the planner itself.
+        </div>
+        <div class="genprefs-actions">
+          <button class="btn gp-reset" title="Clear preferences entirely">Clear</button>
+          <span style="flex:1"></span>
+          <button class="btn gp-once" title="Apply only to the next send; persistent default unchanged">For next send only</button>
+          <button class="btn gp-save" title="Save as your default; applies to every future send until changed">💾 Save as default</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Close on backdrop click / Esc.
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    const esc = (e) => { if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", esc); } };
+    document.addEventListener("keydown", esc);
+    overlay.querySelector(".genprefs-close").onclick = () => overlay.remove();
+
+    // Mode toggle.
+    overlay.querySelectorAll(".gpm-btn").forEach(btn => {
+      btn.onclick = () => {
+        mode = btn.dataset.mode === "exclude" ? "exclude" : "only";
+        overlay.querySelectorAll(".gpm-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+      };
+    });
+
+    // Populate process list. Use processesCache if available
+    // (sidebar loaded it); otherwise pull from /me/processes.
+    async function loadList() {
+      let processes = processesCache;
+      if (!processes || processes.length === 0) {
+        try {
+          const r = await fetch("/api/promptflow/processes");
+          const j = await r.json();
+          if (j.ok) processes = j.processes || [];
+        } catch { processes = []; }
+      }
+      renderList(processes || []);
+    }
+    function renderList(processes) {
+      const listEl = overlay.querySelector("#genPrefsList");
+      const query = (overlay.querySelector(".genprefs-search").value || "").toLowerCase().trim();
+      const matches = (p) => {
+        if (!query) return true;
+        return (p.name || "").toLowerCase().includes(query)
+            || (p.description || "").toLowerCase().includes(query);
+      };
+      const groups = {
+        system:    processes.filter(p => p.is_system && matches(p)),
+        mine:      processes.filter(p => !p.is_system && (p.mine || p.created_by_user_id === (ME && ME.id)) && !p.is_fork && matches(p)),
+        forks:     processes.filter(p => !p.is_system && p.is_fork && (p.mine || p.created_by_user_id === (ME && ME.id)) && matches(p)),
+        published: processes.filter(p => !p.is_system && !p.mine && p.is_published && matches(p)),
+      };
+      const order = [
+        ["mine",      "My processes"],
+        ["forks",     "My forks"],
+        ["system",    "System (always considered)"],
+        ["published", "Published by others"],
+      ];
+      const total = Object.values(groups).reduce((n, arr) => n + arr.length, 0);
+      if (total === 0) {
+        listEl.innerHTML = `<div class="genprefs-empty">${query ? `No processes match "${escapeHtml(query)}"` : "No processes available."}</div>`;
+        return;
+      }
+      let html = "";
+      for (const [key, label] of order) {
+        const arr = groups[key];
+        if (arr.length === 0) continue;
+        html += `<div class="gp-group"><div class="gp-group-head">${escapeHtml(label)}</div>`;
+        for (const p of arr) {
+          const checked = selectedIds.has(p.id) ? "checked" : "";
+          const isSystem = !!p.is_system;
+          // System processes are always considered — checkbox is
+          // disabled to communicate that, but still visible so the
+          // user knows they're in the catalog.
+          const disabled = isSystem ? "disabled" : "";
+          const desc = (p.description || "").slice(0, 110);
+          html += `
+            <label class="gp-row ${isSystem ? "gp-row-system" : ""}">
+              <input type="checkbox" class="gp-cb" data-pid="${escapeAttr(p.id)}" ${checked} ${disabled}>
+              <span class="gp-row-text">
+                <span class="gp-name">${escapeHtml(p.icon || "")} ${escapeHtml(p.name || p.id)}</span>
+                <span class="gp-desc">${escapeHtml(desc)}${(p.description || "").length > 110 ? "…" : ""}</span>
+              </span>
+              ${isSystem ? '<span class="gp-pin" title="System process — always considered">★</span>' : ""}
+            </label>
+          `;
+        }
+        html += `</div>`;
+      }
+      listEl.innerHTML = html;
+      listEl.querySelectorAll(".gp-cb").forEach(cb => {
+        cb.onchange = () => {
+          const id = cb.dataset.pid;
+          if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+        };
+      });
+    }
+
+    // Search filter — re-render on input (debounced via requestAnimationFrame).
+    let searchRaf = 0;
+    overlay.querySelector(".genprefs-search").oninput = () => {
+      if (searchRaf) cancelAnimationFrame(searchRaf);
+      searchRaf = requestAnimationFrame(() => {
+        renderList(processesCache || []);
+      });
+    };
+
+    overlay.querySelector(".gp-select-mine").onclick = () => {
+      const myIds = (processesCache || [])
+        .filter(p => !p.is_system && (p.mine || p.created_by_user_id === (ME && ME.id)))
+        .map(p => p.id);
+      for (const id of myIds) selectedIds.add(id);
+      renderList(processesCache || []);
+    };
+    overlay.querySelector(".gp-clear").onclick = () => {
+      selectedIds.clear();
+      renderList(processesCache || []);
+    };
+
+    overlay.querySelector(".gp-reset").onclick = async () => {
+      if (!confirm("Clear the persistent generation-preferences default? The planner will consider all your processes again.")) return;
+      genPrefsPersistent = null;
+      await saveGenPrefsToServer(null);
+      paintGenPrefsBadge();
+      overlay.remove();
+    };
+
+    overlay.querySelector(".gp-once").onclick = () => {
+      const ids = [...selectedIds];
+      if (ids.length === 0) {
+        // No selection = clearing the override entirely.
+        genPrefsOverride = null;
+      } else {
+        genPrefsOverride = { ids, mode };
+      }
+      paintGenPrefsBadge();
+      overlay.remove();
+      // Visual confirmation: gently flash the textarea border so the
+      // user knows the next send will pick this up.
+      if (textInput) {
+        textInput.classList.add("genprefs-flash");
+        setTimeout(() => textInput.classList.remove("genprefs-flash"), 700);
+      }
+    };
+
+    overlay.querySelector(".gp-save").onclick = async () => {
+      const ids = [...selectedIds];
+      const allowlist = ids.length === 0 ? null : { ids, mode };
+      const btn = overlay.querySelector(".gp-save");
+      btn.disabled = true; const orig = btn.innerHTML; btn.innerHTML = "Saving…";
+      const ok = await saveGenPrefsToServer(allowlist);
+      btn.disabled = false; btn.innerHTML = orig;
+      if (!ok) {
+        alert("Could not save preferences. Try again?");
+        return;
+      }
+      genPrefsPersistent = allowlist;
+      // If user just saved persistent, the override is redundant — clear it.
+      genPrefsOverride = null;
+      paintGenPrefsBadge();
+      overlay.remove();
+    };
+
+    loadList();
+  }
+
+  if (genPrefsBtn) genPrefsBtn.onclick = openGenPrefsPopover;
   fileInput.onchange = () => {
     const files = Array.from(fileInput.files || []);
     for (const f of files) {
@@ -5969,6 +6766,19 @@ promptflow whoami</code></pre>
       fd.append(`image_${i + 2}`, entry.file);     // image_2, image_3, ...
     });
     if (currentConversationId) fd.append("conversation_id", currentConversationId);
+
+    // Generation preferences — pass the active allowlist if set. The
+    // override layer wins over the persistent default when both
+    // exist (per planGeneration logic). After append, consume the
+    // override so it only applies to this single send.
+    const activeGenPrefs = getActiveGenPrefs();
+    if (activeGenPrefs && Array.isArray(activeGenPrefs.ids) && activeGenPrefs.ids.length > 0) {
+      fd.append("process_overrides", JSON.stringify({
+        ids: activeGenPrefs.ids,
+        mode: activeGenPrefs.mode === "exclude" ? "exclude" : "only",
+      }));
+    }
+    consumeGenPrefsOverride();
 
     let planResp;
     try {
@@ -8410,6 +9220,95 @@ promptflow whoami</code></pre>
       // (no editor) = "Stop refining".
       btn.textContent = currentEditorProcessId ? "✕ Done editing" : "✕ Stop refining";
     }
+
+    // ── Draft-only buttons: Save to workspace + Discard ──────────
+    // Visible only when the user is editing a draft they own. Drafts
+    // are pre-commit state — owned + enabled + visible to the user,
+    // but hidden from the planner's catalog until committed. The
+    // commit button flips is_draft=0; the discard button hard-deletes.
+    const commitBtn = $("editorCommitBtn");
+    const discardBtn = $("editorDiscardBtn");
+    const proc = currentEditorProcess;
+    const isDraft = !!(proc && proc.is_draft && proc.editable !== false && !proc.is_system);
+    if (commitBtn) {
+      commitBtn.style.display = isDraft ? "" : "none";
+      commitBtn.onclick = async () => {
+        if (!proc) return;
+        commitBtn.disabled = true;
+        const origLabel = commitBtn.innerHTML;
+        commitBtn.innerHTML = "Saving…";
+        try {
+          const r = await fetch("/api/promptflow/process/commit_draft", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ process_id: proc.id }),
+          });
+          const j = await r.json();
+          if (!j.ok) {
+            commitBtn.disabled = false;
+            commitBtn.innerHTML = origLabel;
+            alert(j.message || j.error || "Could not save to workspace.");
+            return;
+          }
+          // Local state: flip the draft flag everywhere so the buttons
+          // hide on next paint and the planner picks it up.
+          proc.is_draft = false;
+          const cached = (processesCache || []).find(x => x.id === proc.id);
+          if (cached) cached.is_draft = false;
+          if (currentEditorProcess && currentEditorProcess.id === proc.id) {
+            currentEditorProcess.is_draft = false;
+          }
+          commitBtn.disabled = false;
+          commitBtn.innerHTML = origLabel;
+          // Close editor and refresh sidebar so user sees their new process.
+          closeProcessEditor();
+          if (typeof refreshProcessList === "function") refreshProcessList();
+          textInput?.focus();
+        } catch (e) {
+          commitBtn.disabled = false;
+          commitBtn.innerHTML = origLabel;
+          alert("Network error: " + (e?.message || e));
+        }
+      };
+    }
+    if (discardBtn) {
+      discardBtn.style.display = isDraft ? "" : "none";
+      discardBtn.onclick = async () => {
+        if (!proc) return;
+        if (!confirm(`Discard draft "${proc.name}"? This cannot be undone.`)) return;
+        discardBtn.disabled = true;
+        const origLabel = discardBtn.innerHTML;
+        discardBtn.innerHTML = "Discarding…";
+        try {
+          const r = await fetch("/api/promptflow/process/discard_draft", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ process_id: proc.id }),
+          });
+          const j = await r.json();
+          if (!j.ok) {
+            discardBtn.disabled = false;
+            discardBtn.innerHTML = origLabel;
+            alert(j.message || j.error || "Could not discard.");
+            return;
+          }
+          discardBtn.disabled = false;
+          discardBtn.innerHTML = origLabel;
+          // Local state: remove from cache, close editor.
+          if (processesCache) {
+            const idx = processesCache.findIndex(x => x.id === proc.id);
+            if (idx >= 0) processesCache.splice(idx, 1);
+          }
+          closeProcessEditor();
+          if (typeof refreshProcessList === "function") refreshProcessList();
+          textInput?.focus();
+        } catch (e) {
+          discardBtn.disabled = false;
+          discardBtn.innerHTML = origLabel;
+          alert("Network error: " + (e?.message || e));
+        }
+      };
+    }
   }
 
   function paintEditor() {
@@ -8476,6 +9375,21 @@ promptflow whoami</code></pre>
     head.appendChild(actionsR);
     pane.appendChild(head);
 
+    // ── Draft banner ─────────────────────────────────────────────
+    // Shown when this process is a freshly-generated draft that
+    // hasn't been committed to the workspace yet. Reminds the user
+    // the work isn't in their permanent library and the planner
+    // won't pick it for future runs until they commit.
+    if (p.is_draft) {
+      const banner = document.createElement("div");
+      banner.className = "editor-draft-banner";
+      banner.innerHTML = `
+        <strong>📝 Draft</strong>
+        <span>This process was generated and is in draft state. Tweak it however you like, then click <em>Save to workspace</em> (bottom right) to add it permanently. The planner won't pick it for new requests until you save.</span>
+      `;
+      pane.appendChild(banner);
+    }
+
     // Hint
     if (p.editable) {
       const hint = document.createElement("div");
@@ -8484,34 +9398,32 @@ promptflow whoami</code></pre>
       pane.appendChild(hint);
     }
 
-    // ── Suggestions panel ────────────────────────────────
-    // Always visible for editable processes. Server returns up to 8
-    // ranked candidates; user can preview each and one-click add the
-    // chosen one as a process step. Composing existing processes
-    // raises the editing process's trust score AND pays the original
-    // author a depth-decayed cut while the user keeps full markup.
-    if (p.editable) {
-      const suggestWrap = document.createElement("div");
-      suggestWrap.className = "compose-suggest";
-      suggestWrap.innerHTML = `
+    // ── Compositions panel — outward-looking ─────────────────
+    // Suggests NEW processes the user could build that USE this one
+    // as a component, optionally chaining with other existing
+    // processes. Replaces the older inward-looking "add steps to
+    // this" panel. Each suggestion has a "Generate this" button
+    // that submits a design_process request to /plan.
+    if (p.editable !== false && !p.is_system) {
+      const compWrap = document.createElement("div");
+      compWrap.className = "compose-suggest compose-outward";
+      compWrap.innerHTML = `
         <div class="cs-head">
           <div class="cs-title">
-            <span class="cs-spark">⚡</span>
-            <strong>Compose existing processes</strong>
+            <span class="cs-spark">✦</span>
+            <strong>Build something with this</strong>
           </div>
-          <div class="cs-sub">Adding a process step links to a proven workflow — your process inherits its trust, you keep your full markup, and the original author gets a small royalty.</div>
+          <div class="cs-sub">Process compositions you could create using <em>${escapeHtml(p.name)}</em> as a step. Each suggestion combines it with other existing processes when there's a good fit.</div>
         </div>
-        <div class="cs-list" id="csList-${escapeAttr(p.id)}"><div class="cs-loading"><div class="spinner"></div><span>Looking for matches…</span></div></div>
+        <div class="cs-list cs-comp-list" id="csCompList-${escapeAttr(p.id)}"><div class="cs-loading"><div class="spinner"></div><span>Imagining compositions…</span></div></div>
         <div class="cs-actions">
-          <button class="btn cs-add-explicit">+ Add process step…</button>
-          <button class="btn cs-refresh" title="Refresh suggestions">↻</button>
+          <button class="btn cs-refresh-comp" title="Get fresh suggestions">↻ New ideas</button>
         </div>
       `;
-      pane.appendChild(suggestWrap);
-      suggestWrap.querySelector(".cs-add-explicit").onclick = () => openComposePicker(p.id);
-      suggestWrap.querySelector(".cs-refresh").onclick = () => loadSuggestionsInto(p.id, suggestWrap.querySelector(".cs-list"));
-      // Kick off the load.
-      loadSuggestionsInto(p.id, suggestWrap.querySelector(".cs-list"));
+      pane.appendChild(compWrap);
+      compWrap.querySelector(".cs-refresh-comp").onclick = () =>
+        loadCompositionsInto(p.id, compWrap.querySelector(".cs-comp-list"), true);
+      loadCompositionsInto(p.id, compWrap.querySelector(".cs-comp-list"), false);
     }
 
     // ── Used By panel (visible to owners of published processes) ──
@@ -8604,6 +9516,79 @@ promptflow whoami</code></pre>
       listEl.innerHTML = `<div class="cs-empty">Could not load suggestions.</div>`;
     }
   }
+
+  // Outward compositions: load the server's "what could you build
+  // with this" recommendations. Cached per (process_id, user_id) for
+  // 24h server-side; refresh=true forces a regenerate.
+  async function loadCompositionsInto(processId, listEl, refresh) {
+    listEl.innerHTML = `<div class="cs-loading"><div class="spinner"></div><span>${refresh ? "Brainstorming fresh ideas…" : "Imagining compositions…"}</span></div>`;
+    try {
+      const r = await fetch("/api/promptflow/process/compositions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: processId, refresh: !!refresh }),
+      });
+      const j = await r.json();
+      if (!j.ok || !Array.isArray(j.compositions) || j.compositions.length === 0) {
+        listEl.innerHTML = `<div class="cs-empty">Couldn't think of compositions for this one yet — try refreshing, or publish a few more processes to widen the catalog.</div>`;
+        return;
+      }
+      listEl.innerHTML = "";
+      const meta = document.createElement("div");
+      meta.className = "cs-meta";
+      meta.textContent = j.cached
+        ? `Cached ideas · ${Math.round((j.cache_age_sec || 0) / 60)}m old · click ↻ for fresh ones`
+        : `Fresh ideas`;
+      listEl.appendChild(meta);
+      for (const c of j.compositions) {
+        listEl.appendChild(renderCompositionCard(c));
+      }
+    } catch (e) {
+      listEl.innerHTML = `<div class="cs-empty">Could not load compositions.</div>`;
+    }
+  }
+
+  // One composition card. Outward-looking — name, pitch, the existing
+  // processes it would compose with, and a "Generate this" CTA that
+  // submits the design_prompt through the regular planner.
+  function renderCompositionCard(c) {
+    const card = document.createElement("div");
+    card.className = "cs-card cs-comp-card";
+    const usesLine = (c.uses_existing || []).length > 0
+      ? `<div class="cs-uses">Composes with: ${c.uses_existing.map(u => `<span class="cs-uses-pill">${escapeHtml(u.name)}${u.author ? ` <em>· ${escapeHtml(u.author)}</em>` : ""}</span>`).join("")}</div>`
+      : `<div class="cs-uses cs-uses-solo">Uses just this process.</div>`;
+    card.innerHTML = `
+      <div class="cs-card-head">
+        <div class="cs-card-name">${escapeHtml(c.name)}</div>
+      </div>
+      <div class="cs-card-desc">${escapeHtml(c.pitch)}</div>
+      ${usesLine}
+      <div class="cs-card-actions">
+        <button class="btn cs-design-btn" type="button">⚡ Generate this</button>
+      </div>
+    `;
+    card.querySelector(".cs-design-btn").onclick = () => generateCompositionFromPitch(c);
+    return card;
+  }
+
+  // Click handler for "Generate this" — closes the editor, drops the
+  // user back into chat with the design_prompt pre-filled, sends it
+  // through the regular send() path so the planner's design_process
+  // intent handles it. The user sees the same process-card flow as
+  // typing "Generate a process that ..." themselves.
+  function generateCompositionFromPitch(c) {
+    if (typeof closeProcessEditor === "function") {
+      closeProcessEditor();
+    }
+    const phrasing = `Generate a process: ${c.name}. ${c.pitch}\n\n${c.design_prompt}`;
+    textInput.value = phrasing;
+    textInput.focus();
+    // Optimistic: trigger send immediately if not busy. The planner
+    // routes to design_process and saves the new process server-side;
+    // the chat surfaces the new process card on response.
+    if (!busy) send();
+  }
+
 
   // One suggestion card. The framing here is "trust signals first,
   // money signals second" — usage stats are larger than price.
@@ -9266,12 +10251,32 @@ The planner will pick fresh recipes, write fresh prompts, and emit a
 new process. Compare its output to the current one before replacing.
 `;
 
+    // Default content for files that haven't been generated yet —
+    // the user sees a "Generate metadata" call-to-action with sample
+    // shape rather than an empty file.
+    const utilityMd = (p.utility_md && p.utility_md.trim())
+      ? p.utility_md
+      : `# When to use ${p.name}\n\n_(AI-generated metadata not yet created. Click "Generate metadata" in the editor to fill in this file.)_\n\nThis file should explain when the planner should pick this process — what user requests it's good for, what it does, what it's NOT for, and how to get good results.\n`;
+    const discoverabilityMd = (p.discoverability_md && p.discoverability_md.trim())
+      ? p.discoverability_md
+      : `# Compositions\n\n_(AI-generated metadata not yet created. Click "Generate metadata" in the editor to fill in this file.)_\n\nThis file lists existing processes that compose well with this one, plus new compositions the user could build.\n`;
+    const statsMd = (p.stats_md && p.stats_md.trim())
+      ? p.stats_md
+      : `# Stats\n\n_No successful runs yet._\n\nThis file is auto-populated from the first successful run: total runs, average duration, last successful run timestamp, and a sample output preview.\n`;
+    const requirementsTxt = (p.requirements_txt && p.requirements_txt.trim())
+      ? p.requirements_txt
+      : `# Python dependencies for this process\nfal-client>=0.6.0\nanthropic>=0.40.0\n`;
+
     return [
-      { path: "process.py",    content: processPy,                          language: "python" },
-      { path: "spirit.md",     content: spiritMd,                           language: "markdown" },
+      { path: "process.py",         content: processPy,                          language: "python" },
+      { path: "utility.md",         content: utilityMd,                          language: "markdown" },
+      { path: "discoverability.md", content: discoverabilityMd,                  language: "markdown" },
+      { path: "stats.md",           content: statsMd,                            language: "markdown" },
+      { path: "requirements.txt",   content: requirementsTxt,                    language: "none" },
+      { path: "spirit.md",          content: spiritMd,                           language: "markdown" },
       ...promptFiles,
-      { path: "manifest.json", content: JSON.stringify(manifest, null, 2),  language: "json" },
-      { path: "original.py",   content: p.python_text || "",                language: "python" },
+      { path: "manifest.json",      content: JSON.stringify(manifest, null, 2),  language: "json" },
+      { path: "original.py",        content: p.python_text || "",                language: "python" },
     ];
   }
 
@@ -9300,8 +10305,10 @@ new process. Compare its output to the current one before replacing.
       <div class="cv-tabs" style="display:none"></div>
       <div class="cv-body"></div>
       <div class="cv-actions">
-        ${canEdit ? `<button class="btn cv-edit-btn" type="button" title="Edit this Python and save in place">✎ Edit</button>` : ""}
+        ${canEdit ? `<button class="btn cv-edit-btn" type="button" title="Edit the current file and save in place">✎ Edit</button>` : ""}
         <button class="btn cv-copy-btn" type="button" title="Copy the code shown to clipboard">⎘ Copy</button>
+        ${canEdit ? `<button class="btn cv-gen-meta-btn" type="button" title="Generate utility.md, discoverability.md, requirements.txt with AI">✨ Generate metadata</button>` : ""}
+        <button class="btn cv-download-btn" type="button" title="Download the full .promptflow bundle as a ZIP">⬇ Download .promptflow</button>
         <span class="cv-status"></span>
       </div>
     `;
@@ -9310,10 +10317,21 @@ new process. Compare its output to the current one before replacing.
     const titleEl = card.querySelector(".cv-title");
     const editBtn = card.querySelector(".cv-edit-btn");
     const copyBtn = card.querySelector(".cv-copy-btn");
+    const genMetaBtn = card.querySelector(".cv-gen-meta-btn");
+    const downloadBtn = card.querySelector(".cv-download-btn");
     const statusEl = card.querySelector(".cv-status");
+    // The three metadata files an owner can edit directly via the
+    // bundle view. Everything else in the bundle (process.py,
+    // manifest.json, original.py, __main__.py, prompts/*.txt,
+    // spirit.md, stats.md) is synthesized — edit via .py mode or
+    // through real run completion (stats.md).
+    const EDITABLE_BUNDLE_FILES = new Set([
+      "utility.md", "discoverability.md", "requirements.txt",
+    ]);
     let mode = "py";
     let activeFile = "process.py";
     let bundleFiles = null;
+    let metadataFetched = false;     // true after first /process/metadata GET
     let editing = false;
     let pendingEditValue = null;     // textarea value while in edit mode
 
@@ -9366,9 +10384,19 @@ new process. Compare its output to the current one before replacing.
           b.style.opacity = editing ? "0.5" : "";
           b.style.cursor = editing ? "not-allowed" : "";
         });
+        // Update edit button visibility/state for .py mode
+        if (editBtn) {
+          editBtn.style.display = "";
+          editBtn.disabled = false;
+        }
         return;
       }
-      // .promptflow bundle view (read-only — editing only available on .py)
+      // .promptflow bundle view — supports per-file editing of the
+      // three owner-editable metadata files (utility.md,
+      // discoverability.md, requirements.txt). Other bundle files
+      // (process.py, manifest.json, etc.) are synthesized from the
+      // source-of-truth python_text and aren't directly editable
+      // here — edit them via the .py mode or the process spec.
       if (!bundleFiles) bundleFiles = buildPromptflowFiles(p);
       tabs.style.display = "flex";
       tabs.innerHTML = "";
@@ -9376,49 +10404,164 @@ new process. Compare its output to the current one before replacing.
         const t = document.createElement("button");
         t.className = "cv-tab" + (f.path === activeFile ? " active" : "");
         t.textContent = f.path;
-        t.onclick = () => { activeFile = f.path; renderBody(); };
+        t.onclick = () => {
+          if (editing) {
+            // Switching tabs while editing would lose buffered changes
+            // — confirm or block.
+            if (!confirm("You have unsaved edits. Discard them and switch file?")) return;
+            cancelEdit();
+          }
+          activeFile = f.path;
+          renderBody();
+        };
         tabs.appendChild(t);
       }
       const file = bundleFiles.find(f => f.path === activeFile) || bundleFiles[0];
-      const pre = document.createElement("pre");
-      const code = document.createElement("code");
-      code.textContent = file.content || "";
-      pre.appendChild(code);
+      const isEditableBundleFile = canEdit && EDITABLE_BUNDLE_FILES.has(file.path);
       body.innerHTML = "";
-      body.appendChild(pre);
-      if (file.language && file.language !== "none") highlightCode(code, file.language);
+      if (editing && isEditableBundleFile) {
+        const ta = document.createElement("textarea");
+        ta.className = "cv-edit";
+        ta.spellcheck = false;
+        ta.value = pendingEditValue ?? (file.content || "");
+        const lineCount = ta.value.split("\n").length;
+        ta.rows = Math.max(12, Math.min(50, lineCount + 1));
+        ta.addEventListener("input", () => { pendingEditValue = ta.value; });
+        ta.addEventListener("keydown", (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault(); commitEdit();
+          } else if (e.key === "Escape") {
+            e.preventDefault(); cancelEdit();
+          }
+        });
+        body.appendChild(ta);
+        setTimeout(() => ta.focus(), 30);
+      } else {
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = file.content || "";
+        pre.appendChild(code);
+        body.appendChild(pre);
+        if (file.language && file.language !== "none") highlightCode(code, file.language);
+      }
       titleEl.textContent = `${file.path} · ${(file.content || "").split("\n").length} lines · part of ${escapeHtml(p.name || "process")}.promptflow`;
-      // Hide Edit button in bundle mode — editing the bundle's
-      // generated files directly would just get overwritten when the
-      // .py changes. The .py is the source of truth.
-      if (editBtn) editBtn.style.display = mode === "py" ? "" : "none";
+      // Edit button: visible only on editable bundle files (and the
+      // owner has edit rights). Other files have a disabled
+      // greyed-out edit button so it's clear why it's not clickable.
+      if (editBtn) {
+        editBtn.style.display = "";
+        editBtn.disabled = !isEditableBundleFile;
+        editBtn.title = isEditableBundleFile
+          ? "Edit this file and save in place"
+          : `${file.path} is auto-generated — edit the .py instead, or use Generate metadata for AI files.`;
+      }
+      // Lock mode toggle and tabs while editing.
+      card.querySelectorAll(".cv-toggle button").forEach(b => {
+        b.disabled = editing;
+        b.style.opacity = editing ? "0.5" : "";
+        b.style.cursor = editing ? "not-allowed" : "";
+      });
+    }
+
+    // Lazily fetch the four metadata fields from the server the first
+    // time the user opens .promptflow view. loadProcesses pulls
+    // utility_md + discoverability_md but not stats_md /
+    // requirements_txt; the dedicated endpoint returns everything.
+    // We hydrate p in place so subsequent renders see the values.
+    async function ensureMetadataFetched() {
+      if (metadataFetched || !p.id) return;
+      metadataFetched = true;       // best-effort, even if fetch fails
+      try {
+        const r = await fetch(`/api/promptflow/process/metadata?id=${encodeURIComponent(p.id)}`);
+        const j = await r.json();
+        if (j.ok) {
+          if (j.utility_md != null)         p.utility_md = j.utility_md;
+          if (j.discoverability_md != null) p.discoverability_md = j.discoverability_md;
+          if (j.stats_md != null)           p.stats_md = j.stats_md;
+          if (j.requirements_txt != null)   p.requirements_txt = j.requirements_txt;
+          bundleFiles = null;       // force rebuild with hydrated values
+          renderBody();
+        }
+      } catch { /* fall back to placeholder content already in bundleFiles */ }
     }
 
     function enterEdit() {
       if (!canEdit) return;
+      // What we're editing depends on the current mode + active file.
+      // In .py mode, we always edit p.python_text. In bundle mode, we
+      // edit the content of the active file IF it's in EDITABLE_BUNDLE_FILES.
+      if (mode === "py") {
+        pendingEditValue = p.python_text || "";
+      } else {
+        if (!EDITABLE_BUNDLE_FILES.has(activeFile)) return;
+        if (!bundleFiles) bundleFiles = buildPromptflowFiles(p);
+        const file = bundleFiles.find(f => f.path === activeFile);
+        pendingEditValue = file?.content || "";
+      }
       editing = true;
-      pendingEditValue = p.python_text || "";
       editBtn.innerHTML = "✓ Save";
       editBtn.classList.add("cv-edit-active");
       setStatus("Editing — Cmd/Ctrl+Enter to save · Esc to cancel");
       renderBody();
     }
+
     async function commitEdit() {
       if (!editing) return;
-      const val = pendingEditValue ?? (p.python_text || "");
-      // Only POST if it actually changed.
-      if (val === (p.python_text || "")) {
-        cancelEdit();
+      const val = pendingEditValue ?? "";
+
+      if (mode === "py") {
+        // .py mode → /process/python_patch (existing endpoint)
+        if (val === (p.python_text || "")) { cancelEdit(); return; }
+        editBtn.disabled = true;
+        editBtn.innerHTML = "Saving…";
+        setStatus("Saving…");
+        try {
+          const r = await fetch("/api/promptflow/process/python_patch", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ process_id: p.id, python_text: val }),
+          });
+          const j = await r.json();
+          if (!j.ok) {
+            setStatus(j.message || j.error || "Save failed.", "var(--red)");
+            editBtn.disabled = false;
+            editBtn.innerHTML = "✓ Save";
+            return;
+          }
+          p.python_text = val;
+          bundleFiles = null;
+          const cached = (processesCache || []).find(x => x.id === p.id);
+          if (cached) cached.python_text = val;
+          if (currentEditorProcess && currentEditorProcess.id === p.id) {
+            currentEditorProcess.python_text = val;
+          }
+          finishEditSuccess();
+        } catch (e) {
+          setStatus("Network error: " + (e?.message || e), "var(--red)");
+          editBtn.disabled = false;
+          editBtn.innerHTML = "✓ Save";
+        }
         return;
       }
+
+      // Bundle-mode editable files → /process/metadata_patch
+      if (!EDITABLE_BUNDLE_FILES.has(activeFile)) { cancelEdit(); return; }
+      const fieldByFile = {
+        "utility.md":         "utility_md",
+        "discoverability.md": "discoverability_md",
+        "requirements.txt":   "requirements_txt",
+      };
+      const localField = fieldByFile[activeFile];
+      const current = p[localField] || "";
+      if (val === current) { cancelEdit(); return; }
       editBtn.disabled = true;
       editBtn.innerHTML = "Saving…";
       setStatus("Saving…");
       try {
-        const r = await fetch("/api/promptflow/process/python_patch", {
+        const r = await fetch("/api/promptflow/process/metadata_patch", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ process_id: p.id, python_text: val }),
+          body: JSON.stringify({ process_id: p.id, file: activeFile, content: val }),
         });
         const j = await r.json();
         if (!j.ok) {
@@ -9427,29 +10570,35 @@ new process. Compare its output to the current one before replacing.
           editBtn.innerHTML = "✓ Save";
           return;
         }
-        // Local + cache update so the bundle view rebuilds from the
-        // edited source on next .promptflow toggle.
-        p.python_text = val;
+        // Local cache update so bundle view rebuilds with new content.
+        p[localField] = val;
         bundleFiles = null;
         const cached = (processesCache || []).find(x => x.id === p.id);
-        if (cached) cached.python_text = val;
+        if (cached) cached[localField] = val;
         if (currentEditorProcess && currentEditorProcess.id === p.id) {
-          currentEditorProcess.python_text = val;
+          currentEditorProcess[localField] = val;
         }
-        editing = false;
-        pendingEditValue = null;
-        editBtn.disabled = false;
-        editBtn.innerHTML = "✎ Edit";
-        editBtn.classList.remove("cv-edit-active");
-        setStatus("✓ Saved", "var(--green)");
-        setTimeout(() => setStatus(""), 2000);
-        renderBody();
+        finishEditSuccess();
       } catch (e) {
         setStatus("Network error: " + (e?.message || e), "var(--red)");
         editBtn.disabled = false;
         editBtn.innerHTML = "✓ Save";
       }
     }
+
+    // Shared post-save cleanup. Resets the edit toggle state and shows
+    // a transient "✓ Saved" indicator before clearing.
+    function finishEditSuccess() {
+      editing = false;
+      pendingEditValue = null;
+      editBtn.disabled = false;
+      editBtn.innerHTML = "✎ Edit";
+      editBtn.classList.remove("cv-edit-active");
+      setStatus("✓ Saved", "var(--green)");
+      setTimeout(() => setStatus(""), 2000);
+      renderBody();
+    }
+
     function cancelEdit() {
       editing = false;
       pendingEditValue = null;
@@ -9481,6 +10630,68 @@ new process. Compare its output to the current one before replacing.
       };
     }
 
+    if (genMetaBtn) {
+      genMetaBtn.onclick = async (e) => {
+        e.preventDefault();
+        // Shift-click = regenerate (overwrites user edits with fresh AI output).
+        // Plain click = generate only fields that are empty.
+        const regen = !!e.shiftKey;
+        if (regen && !confirm("Regenerate will OVERWRITE your edits to utility.md, discoverability.md, and requirements.txt. Continue?")) return;
+        genMetaBtn.disabled = true;
+        const origLabel = genMetaBtn.innerHTML;
+        genMetaBtn.innerHTML = "Generating…";
+        setStatus(regen ? "Regenerating metadata with AI (this can take 10–20s)…" : "Generating missing metadata with AI…");
+        try {
+          const r = await fetch("/api/promptflow/process/generate_metadata", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ process_id: p.id, regenerate: regen }),
+          });
+          const j = await r.json();
+          if (!j.ok) {
+            setStatus(j.message || j.error || "Generation failed.", "var(--red)");
+            genMetaBtn.disabled = false;
+            genMetaBtn.innerHTML = origLabel;
+            return;
+          }
+          // Hydrate p and refresh bundle view.
+          if (j.utility_md != null)         p.utility_md = j.utility_md;
+          if (j.discoverability_md != null) p.discoverability_md = j.discoverability_md;
+          if (j.requirements_txt != null)   p.requirements_txt = j.requirements_txt;
+          const cached = (processesCache || []).find(x => x.id === p.id);
+          if (cached) {
+            cached.utility_md = p.utility_md;
+            cached.discoverability_md = p.discoverability_md;
+            cached.requirements_txt = p.requirements_txt;
+          }
+          bundleFiles = null;
+          genMetaBtn.disabled = false;
+          genMetaBtn.innerHTML = origLabel;
+          if (j.unchanged) {
+            setStatus("All metadata already filled — shift-click to regenerate.", "var(--text-muted)");
+          } else {
+            setStatus(regen ? "✓ Regenerated" : "✓ Generated missing fields", "var(--green)");
+          }
+          setTimeout(() => setStatus(""), 3000);
+          // If user is currently in bundle mode, re-render so they see the new content.
+          if (mode === "promptflow") renderBody();
+        } catch (err) {
+          setStatus("Network error: " + (err?.message || err), "var(--red)");
+          genMetaBtn.disabled = false;
+          genMetaBtn.innerHTML = origLabel;
+        }
+      };
+    }
+    if (downloadBtn) {
+      downloadBtn.onclick = (e) => {
+        e.preventDefault();
+        // Navigate to the bundle endpoint — browser handles the
+        // attachment download. Cookies (session) ride along so the
+        // /process/bundle endpoint can authorize.
+        window.location.href = `/api/promptflow/process/bundle?id=${encodeURIComponent(p.id)}&format=zip`;
+      };
+    }
+
     // Wire the format toggle.
     card.querySelectorAll(".cv-toggle button").forEach(btn => {
       btn.onclick = () => {
@@ -9489,6 +10700,11 @@ new process. Compare its output to the current one before replacing.
         if (m === mode) return;
         mode = m;
         card.querySelectorAll(".cv-toggle button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+        // First time entering bundle view: fetch the four metadata
+        // fields from the server (they're not surfaced by the
+        // sidebar's loadProcesses call). Returns quickly if missing
+        // and lets the placeholders show.
+        if (mode === "promptflow") ensureMetadataFetched();
         renderBody();
       };
     });
@@ -9509,10 +10725,17 @@ new process. Compare its output to the current one before replacing.
     card.className = "graph-card map-card";
 
     // Query bar at the top — NL by default, click toggle for DSL.
+    // Scope toggle (Private/Public) sits on the left, prominent so
+    // it's the first thing users notice.
+    const currentGraphScope = mapQueryState.scope || "private";
     const queryBar = document.createElement("div");
     queryBar.className = "map-query-bar";
     queryBar.innerHTML = `
       <div class="mq-row">
+        <div class="mq-scope" role="group" aria-label="Graph scope">
+          <button class="mq-scope-btn ${currentGraphScope === "private" ? "active" : ""}" data-scope="private" title="My workspace: my processes, my forks, and system processes">Private</button>
+          <button class="mq-scope-btn ${currentGraphScope === "public" ? "active" : ""}" data-scope="public" title="The full public graph: everything published">Public</button>
+        </div>
         <span class="mq-mode-label">${mapQueryState.mode === "dsl" ? "DSL" : "Ask"}</span>
         <input class="mq-input" type="text"
                placeholder="${mapQueryState.mode === "dsl" ? `{"node_types":["process"],"filters":{"mine":true,"trust_gt":0.7}}` : `e.g. \"my processes with high trust\", \"all forks of storyboard\", \"published video processes\"`}"
@@ -9525,6 +10748,16 @@ new process. Compare its output to the current one before replacing.
       <div class="mq-error"></div>
     `;
     card.appendChild(queryBar);
+    // Scope buttons — clicking switches scope and repaints, fetches
+    // fresh graph data with the new scope.
+    queryBar.querySelectorAll(".mq-scope-btn").forEach(btn => {
+      btn.onclick = () => {
+        const newScope = btn.dataset.scope;
+        if (newScope === currentGraphScope) return;
+        mapQueryState.scope = newScope;
+        paintProcessMap();
+      };
+    });
     queryBar.querySelector(".mq-toggle").onclick = () => {
       mapQueryState.mode = mapQueryState.mode === "dsl" ? "default" : "dsl";
       paintProcessMap();
@@ -9718,10 +10951,15 @@ new process. Compare its output to the current one before replacing.
     let graph;
     try {
       const useQuery = !!mapQueryState.plan;
+      const scopeArg = mapQueryState.scope || "private";
+      // Pass scope to both endpoints so private/public toggle applies
+      // whether the user is browsing or has typed a query.
       const r = await fetch(useQuery ? "/api/promptflow/graph/query" : "/api/promptflow/graph/data", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(useQuery ? { plan: mapQueryState.plan } : { limit: 200 }),
+        body: JSON.stringify(useQuery
+          ? { plan: mapQueryState.plan, scope: scopeArg }
+          : { limit: 200, scope: scopeArg }),
       });
       graph = await r.json();
     } catch (e) {
@@ -10481,6 +11719,7 @@ new process. Compare its output to the current one before replacing.
       const priceLine = meta.is_monetized
         ? `<div class="ms-price">${meta.markup_tokens || 0}t markup${(meta.bonus_tokens || 0) > 0 ? ` · ${meta.bonus_tokens}t bonus` : ""}</div>`
         : `<div class="ms-price">free</div>`;
+      const processId = n.id.slice("process:".length);
       side.innerHTML = `
         <div class="ms-head">
           <div class="ms-name"></div>
@@ -10498,19 +11737,67 @@ new process. Compare its output to the current one before replacing.
         </div>
         ${priceLine}
         <div class="ms-meta">${escapeHtml((meta.input_kinds || []).join("+") || "text")} → ${escapeHtml(meta.output_kind || "video")}</div>
+        <div class="ms-steps-section">
+          <div class="ms-section-title">Steps</div>
+          <div class="ms-steps-list">
+            <div class="ms-loading">Loading…</div>
+          </div>
+        </div>
+        <div class="ms-utility-section" style="display:none">
+          <div class="ms-section-title">When to use</div>
+          <div class="ms-utility-content"></div>
+        </div>
         <div class="ms-actions">
-          <button class="btn ms-open">Open graph</button>
-          ${meta.mine ? `<button class="btn ms-edit">Edit</button>` : ""}
+          <button class="btn ms-open" title="View this process as the root of its own graph">View graph</button>
+          <button class="btn ms-edit ms-edit-primary" title="Open the process in the full editor">${meta.mine ? "✎ Edit" : "👁 Open in editor"}</button>
           ${(!meta.mine && !meta.is_fork) ? `<button class="btn ms-challenge">Challenge…</button>` : ""}
         </div>
       `;
       side.querySelector(".ms-name").textContent = n.full_label;
       side.querySelector(".ms-desc").textContent = (meta.description || "").slice(0, 200);
-      side.querySelector(".ms-open").onclick = () => openProcessGraph(n.id.slice("process:".length));
+      side.querySelector(".ms-open").onclick = () => openProcessGraph(processId);
       const editBtn = side.querySelector(".ms-edit");
-      if (editBtn) editBtn.onclick = () => openProcessEditor(n.id.slice("process:".length));
+      if (editBtn) editBtn.onclick = () => openProcessEditor(processId);
       const chalBtn = side.querySelector(".ms-challenge");
-      if (chalBtn) chalBtn.onclick = () => openChallengePicker(n.id.slice("process:".length));
+      if (chalBtn) chalBtn.onclick = () => openChallengePicker(processId);
+
+      // Lazy-fetch full process detail (steps + utility) for rich render.
+      // Uses /process/get since it returns the full row including steps
+      // and metadata fields. Best-effort — if it fails, the side panel
+      // still shows everything else.
+      (async () => {
+        try {
+          const r = await fetch("/api/promptflow/process/get", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: processId }),
+          });
+          const j = await r.json();
+          if (!j.ok || !j.process) return;
+          const stepsList = side.querySelector(".ms-steps-list");
+          if (!stepsList) return;
+          const steps = j.process.steps || [];
+          if (steps.length === 0) {
+            stepsList.innerHTML = `<div class="ms-empty">No steps.</div>`;
+          } else {
+            stepsList.innerHTML = "";
+            steps.forEach((step, idx) => {
+              stepsList.appendChild(renderMapStepRow(step, idx, j.process));
+            });
+          }
+          // Show utility.md if present (collapsed for compactness).
+          if (j.process.utility_md && j.process.utility_md.trim()) {
+            const uSection = side.querySelector(".ms-utility-section");
+            const uContent = side.querySelector(".ms-utility-content");
+            if (uSection && uContent) {
+              uSection.style.display = "";
+              // Render as preformatted markdown text — small monospace
+              // since space is tight in the side panel.
+              uContent.textContent = j.process.utility_md.trim();
+            }
+          }
+        } catch { /* best effort */ }
+      })();
     } else if (n.type === "recipe") {
       const meta = n.meta || {};
       side.innerHTML = `
@@ -10530,6 +11817,105 @@ new process. Compare its output to the current one before replacing.
       `;
       side.querySelector(".ms-name").textContent = n.full_label;
     }
+  }
+
+  // Single step row in the side panel. Collapsed by default (title +
+  // type/model line); click to expand into prompts/params. Designed
+  // for narrow side-panel width — heavy truncation, monospace.
+  function renderMapStepRow(step, idx, proc) {
+    const row = document.createElement("div");
+    row.className = "ms-step-row";
+    const num = String(idx + 1).padStart(2, "0");
+
+    // Header line varies by step type. Keep it scannable.
+    let kindBadge = "";
+    let summary = "";
+    if (step.type === "claude") {
+      kindBadge = "Claude";
+      const userPreview = (step.user_prompt || "").trim().split("\n")[0] || "";
+      summary = userPreview.slice(0, 60) + (userPreview.length > 60 ? "…" : "");
+    } else if (step.type === "recipe") {
+      kindBadge = "Recipe";
+      summary = step.recipe_id || step.model || "?";
+    } else if (step.type === "process") {
+      kindBadge = "Process";
+      summary = step.process_id || "?";
+    } else if (step.type === "loop") {
+      kindBadge = "Loop";
+      summary = `over ${step.iterate_over || "?"}`;
+    } else {
+      kindBadge = step.type || "step";
+    }
+
+    row.innerHTML = `
+      <div class="ms-step-head">
+        <span class="ms-step-num">${num}</span>
+        <span class="ms-step-badge ms-step-badge-${escapeAttr(step.type || "x")}">${escapeHtml(kindBadge)}</span>
+        <span class="ms-step-summary">${escapeHtml(summary)}</span>
+        <span class="ms-step-expand">▾</span>
+      </div>
+      <div class="ms-step-detail" style="display:none"></div>
+    `;
+    const detail = row.querySelector(".ms-step-detail");
+    const expandIcon = row.querySelector(".ms-step-expand");
+
+    function buildDetail() {
+      if (step.type === "claude") {
+        const sys = (step.system_prompt || "").trim();
+        const usr = (step.user_prompt || "").trim();
+        let html = "";
+        if (sys) {
+          html += `<div class="ms-step-block"><div class="ms-step-label">System prompt</div><pre class="ms-step-pre">${escapeHtml(sys.slice(0, 600))}${sys.length > 600 ? "…" : ""}</pre></div>`;
+        }
+        if (usr) {
+          html += `<div class="ms-step-block"><div class="ms-step-label">User prompt</div><pre class="ms-step-pre">${escapeHtml(usr.slice(0, 600))}${usr.length > 600 ? "…" : ""}</pre></div>`;
+        }
+        detail.innerHTML = html || `<div class="ms-empty">No prompt content.</div>`;
+      } else if (step.type === "recipe") {
+        const params = step.params || {};
+        let html = `<div class="ms-step-kv"><span class="ms-k">model</span><span class="ms-v">${escapeHtml(step.model || step.recipe_id || "?")}</span></div>`;
+        const visual = (params.visual_prompt || "").trim();
+        if (visual) {
+          html += `<div class="ms-step-block"><div class="ms-step-label">Visual prompt</div><pre class="ms-step-pre">${escapeHtml(visual.slice(0, 600))}${visual.length > 600 ? "…" : ""}</pre></div>`;
+        }
+        const negative = (params.negative_prompt || "").trim();
+        if (negative) {
+          html += `<div class="ms-step-block"><div class="ms-step-label">Negative prompt</div><pre class="ms-step-pre">${escapeHtml(negative.slice(0, 400))}${negative.length > 400 ? "…" : ""}</pre></div>`;
+        }
+        // Surface other param keys compactly.
+        const otherKeys = Object.keys(params).filter(k => !["visual_prompt", "negative_prompt"].includes(k));
+        for (const k of otherKeys) {
+          const v = params[k];
+          if (typeof v === "string" && v.length > 80) continue;
+          html += `<div class="ms-step-kv"><span class="ms-k">${escapeHtml(k)}</span><span class="ms-v">${escapeHtml(String(v))}</span></div>`;
+        }
+        detail.innerHTML = html;
+      } else if (step.type === "process") {
+        detail.innerHTML = `<div class="ms-step-kv"><span class="ms-k">process_id</span><span class="ms-v">${escapeHtml(step.process_id || "?")}</span></div><button class="btn ms-step-link-btn" type="button">Open this process →</button>`;
+        const link = detail.querySelector(".ms-step-link-btn");
+        if (link) link.onclick = (e) => {
+          e.stopPropagation();
+          if (step.process_id) openProcessEditor(step.process_id);
+        };
+      } else if (step.type === "loop") {
+        detail.innerHTML = `<div class="ms-step-kv"><span class="ms-k">iterate_over</span><span class="ms-v">${escapeHtml(step.iterate_over || "?")}</span></div><div class="ms-step-block"><div class="ms-step-label">Loop body (${(step.body || []).length} sub-step${(step.body || []).length === 1 ? "" : "s"})</div></div>`;
+      } else {
+        detail.innerHTML = `<pre class="ms-step-pre">${escapeHtml(JSON.stringify(step, null, 2).slice(0, 600))}</pre>`;
+      }
+    }
+
+    row.querySelector(".ms-step-head").onclick = () => {
+      const expanded = detail.style.display !== "none";
+      if (expanded) {
+        detail.style.display = "none";
+        expandIcon.textContent = "▾";
+      } else {
+        if (!detail.innerHTML) buildDetail();
+        detail.style.display = "";
+        expandIcon.textContent = "▴";
+      }
+    };
+    return row;
   }
   function renderMapSidePanelEmpty(card) {
     const side = card.querySelector("#mapSide");
