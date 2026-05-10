@@ -2310,6 +2310,19 @@
   }
   .msg.user .body{ background:var(--surface-2) }
   .msg .text{ white-space:pre-wrap; word-wrap:break-word; line-height:1.6 }
+  /* Discuss answers — Claude responding to a question (rather than
+     producing a plan). Subtle gold-tinted left border so the user
+     visually distinguishes "the AI is talking to me" from "the AI
+     is generating something for me". */
+  .msg .discuss-answer{
+    border-left:2px solid var(--gold);
+    padding-left:10px;
+    margin-top:6px;
+  }
+  .msg .discuss-answer a{
+    color:var(--gold); text-decoration:underline;
+  }
+  .msg .discuss-answer a:hover{ color:var(--gold-light) }
   /* Single-image case keeps the original 240px max so legacy turns
      render unchanged. The .thumbs wrapper is only used when there's
      at least one image; layout naturally handles 1..N. */
@@ -5997,9 +6010,36 @@ promptflow whoami</code></pre>
     }
 
     // ── INTENT: design_process / update_process ────────────────
-    // The user asked Claude to DESIGN a new process or MODIFY an
-    // existing one. The server already persisted it. Render a process
-    // card; no execute / confirm step.
+    // ── INTENT: discuss ──────────────────────────────────────────
+    // The planner answered a question — no plan, no charge, just
+    // text. Render Claude's answer in the assist bubble and end the
+    // turn. The user can keep chatting normally; subsequent sends
+    // are still classified by the planner each turn.
+    if (planResp.intent === "discuss") {
+      clearStatus(assist);
+      const answer = String(planResp.answer || "").trim();
+      if (answer) {
+        const ans = document.createElement("div");
+        ans.className = "text discuss-answer";
+        // Linkify URLs in the answer so web-search citations are clickable.
+        // Simple http(s) match; not bulletproof but good enough for chat.
+        const escaped = escapeHtml(answer).replace(
+          /(https?:\/\/[^\s<>"]+)/g,
+          '<a href="$1" target="_blank" rel="noopener">$1</a>'
+        );
+        ans.innerHTML = escaped;
+        assist.body.appendChild(ans);
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "status";
+        empty.textContent = "(no answer)";
+        assist.body.appendChild(empty);
+      }
+      busy = false; updateSend();
+      return;
+    }
+
+    // ── INTENT: design_process / update_process ────────────────
     if ((planResp.intent === "design_process" || planResp.intent === "update_process")
         && planResp.process) {
       clearStatus(assist);
