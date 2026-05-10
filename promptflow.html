@@ -6408,27 +6408,75 @@ promptflow whoami</code></pre>
   function getSuggestions(text) {
     const trimmed = text.trim();
     if (!trimmed) return [];
+
+    // Suppress suggestions entirely while the user is mid-refinement
+    // or in the process editor. In those modes the input is free-form
+    // instruction text ("the process should use web search to make
+    // …"), not a command — surfacing command rows confuses things and
+    // visually crowds the chat. The user can still TYPE a literal
+    // command (a new "Generate process" / "Run my X" still escapes
+    // editor mode), but they don't need autocomplete help to do it.
+    if (typeof refineBoundProcessId !== "undefined" && refineBoundProcessId) return [];
+    if (typeof currentEditorProcessId !== "undefined" && currentEditorProcessId) return [];
+
     const lower = trimmed.toLowerCase();
 
+    // Suggestions only fire when the user is plausibly TYPING A COMMAND.
+    // Two acceptance criteria — either is sufficient:
+    //
+    //   1. The input starts with a known command verb. Whitelist of
+    //      verbs we have commands for: run, generate, adapt, evaluate,
+    //      fork, publish. This is the dominant case — a user typing
+    //      "Run my X" or "Generate process …" gets autocomplete on the
+    //      fly.
+    //
+    //   2. The input is short enough (≤ 30 chars) that the user is
+    //      plausibly still composing the start of a command, AND a
+    //      command key starts with the typed text (prefix match).
+    //      This catches partial typing like "Run m" or "Gen pro" early.
+    //
+    // What we DON'T do anymore: substring-match anywhere in long
+    // free-form prose. That's what was producing false positives like
+    // "the process should use web search …" matching the "Process …"
+    // command. Substring matches are inappropriate for free-form input.
+    const COMMAND_VERBS = /^(run|generate|adapt|evaluate|fork|publish)\b/i;
+    const looksLikeCommand = COMMAND_VERBS.test(trimmed);
+    const isShortInput = trimmed.length <= 30;
+    if (!looksLikeCommand && !isShortInput) return [];
+
     const out = [];
-    // Commands — prefix match preferred, contains match if user typed 3+ chars.
+    // Commands — prefix match only. We removed the substring-fallback
+    // that was firing on long prose. Even with verb-detected input,
+    // we still want PREFIX match on the command catalog so partial
+    // typing ranks highest.
     for (const cmd of COMMAND_CATALOG) {
       const k = cmd.key.toLowerCase();
       let score = 0;
       if (k.startsWith(lower)) score = 100 - (k.length - lower.length);    // shorter completions rank higher
-      else if (lower.length >= 3 && k.includes(lower)) score = 30;
+      else if (looksLikeCommand && lower.length >= 3 && k.startsWith(lower.split(" ")[0])) score = 25;
       if (score > 0) out.push({ ...cmd, type: "command", score });
     }
-    // User's own saved processes — surfaceable as "Run my …" /
-    // "Adapt my …" if their name contains the typed text. Only
-    // surface when the user has typed at least 2 chars and the
-    // process name overlaps meaningfully.
+    // User's own saved processes — only surface if the input
+    // explicitly looks like a command targeting a process. Either
+    //   - starts with "run", "adapt", "evaluate", "fork" → user is
+    //     directing a command at one of their processes
+    //   - or, short input AND prefix-matches the process name
+    // We removed the broader substring-include match because it
+    // false-fired on words like "video" / "music" / "image" appearing
+    // anywhere in mid-conversation refinement text.
     if (typeof processesCache !== "undefined" && Array.isArray(processesCache) && lower.length >= 2) {
+      const targetingVerb = /^(run|adapt|evaluate|fork)\b/i.test(trimmed);
       for (const p of processesCache) {
         if (!p.mine) continue;
         const pname = String(p.name || "").toLowerCase();
         if (!pname || pname.length < 2) continue;
-        if (pname.includes(lower) || (lower.length >= 4 && (lower.includes(pname.split(" ")[0]) || lower.startsWith("run my") || lower.startsWith("adapt my")))) {
+        let score = 0;
+        if (targetingVerb && pname.includes(lower.replace(/^(run|adapt|evaluate|fork)(\s+my)?\s*/i, ""))) {
+          score = 60;
+        } else if (isShortInput && pname.startsWith(lower)) {
+          score = 50;
+        }
+        if (score > 0) {
           out.push({
             type: "process",
             key: `Run my "${p.name}"`,
@@ -6436,7 +6484,7 @@ promptflow whoami</code></pre>
             icon: (typeof autoIconForProcess === "function" ? autoIconForProcess(p) : "⚙️"),
             phrase: `Run my "${p.name}" with `,
             tag: "PROCESS",
-            score: 50 + (pname.startsWith(lower) ? 30 : 0),
+            score,
           });
         }
       }
@@ -6659,6 +6707,12 @@ promptflow whoami</code></pre>
     if (!ME) { openAuth("signup"); return; }
     const userText = textInput.value.trim();
     if (!userText) return;
+
+    // The interpreter-commands suggestion panel (matches like
+    // "Run my X" while typing) shouldn't linger after the message
+    // is dispatched. Close it eagerly so the chat stream isn't
+    // crowded by a stale panel underneath the new turn.
+    closeSuggestions();
 
     // Editor mode — every chat message becomes a refinement to the
     // currently-open process. Falls through to the normal /plan flow
