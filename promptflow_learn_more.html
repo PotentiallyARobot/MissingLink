@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromptFlow™ — a Generative Operating System</title>
+<meta name="description" content="PromptFlow is a programming language for prompting neural networks, and an operating system whose own functions are written in it. Learn how System, Private, and Public PromptFlows compose into a generative OS.">
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg: #0a0a0b;
+  --bg-2: rgba(20,20,22,0.65);
+  --text: #f0f0f2;
+  --text-dim: rgba(195,200,210,0.85);
+  --text-muted: rgba(170,170,176,0.7);
+  --gold: #e8a917;
+  --gold-light: #f4c558;
+  --gold-deep: #a87209;
+  --border: rgba(255,255,255,0.06);
+  --border-strong: rgba(255,255,255,0.14);
+  --system-blue: rgba(180,200,240,0.95);
+  --system-blue-bg: rgba(110,130,200,0.1);
+  --system-blue-border: rgba(150,170,225,0.32);
+  --private-gold: var(--gold);
+  --public-purple: rgba(200,175,235,0.95);
+  --public-purple-bg: rgba(180,145,215,0.08);
+  --public-purple-border: rgba(190,160,220,0.28);
+  --font-body: 'DM Sans', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ambient background — constellation-style, matches the app's hero. */
+.lm-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 50% 40% at 50% 0%, rgba(232,169,23,0.05), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 80% 80%, rgba(180,145,215,0.04), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 20% 80%, rgba(110,130,200,0.04), transparent 60%);
+}
+.lm-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 70% at 50% 50%, transparent 40%, rgba(10,10,11,0.7) 100%);
+}
+
+.lm-wrap {
+  position: relative;
+  z-index: 2;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+
+/* ── Top nav (minimal) ─────────────────────────────────────────── */
+.lm-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
+.lm-nav-brand {
+  color: var(--gold);
+  font-weight: 600;
+  text-decoration: none;
+}
+.lm-nav-brand:hover { color: var(--gold-light); }
+.lm-nav-app {
+  color: var(--text-muted);
+  text-decoration: none;
+  border: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  border-radius: 999px;
+  transition: border-color .15s ease, color .15s ease;
+}
+.lm-nav-app:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ── Hero ──────────────────────────────────────────────────────── */
+.lm-hero {
+  padding: 96px 0 64px;
+  text-align: center;
+}
+.lm-wordmark {
+  font-family: var(--font-body);
+  font-size: 104px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  margin: 0 0 20px;
+  line-height: 1.0;
+  background: linear-gradient(180deg, #f4c558 0%, #e8a917 45%, #a87209 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 36px rgba(232,169,23,0.22));
+}
+.lm-wordmark sup {
+  font-size: 24px;
+  margin-left: 6px;
+  font-weight: 700;
+  vertical-align: super;
+  letter-spacing: 0;
+}
+.lm-tagline {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0 0 28px;
+}
+.lm-lede {
+  font-size: 22px;
+  line-height: 1.5;
+  color: var(--text);
+  font-weight: 400;
+  max-width: 740px;
+  margin: 0 auto 36px;
+  letter-spacing: -0.005em;
+}
+.lm-lede em {
+  font-style: normal;
+  background: linear-gradient(180deg, #f4c558, #e8a917);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-weight: 500;
+}
+.lm-cta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lm-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all .15s ease;
+  letter-spacing: 0.01em;
+}
+.lm-cta-primary {
+  background: var(--gold);
+  color: #0a0a0b;
+  border: 1px solid var(--gold);
+}
+.lm-cta-primary:hover {
+  background: var(--gold-light);
+  border-color: var(--gold-light);
+}
+.lm-cta-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+.lm-cta-secondary:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.lm-cta-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 16px;
+  letter-spacing: 0.04em;
+}
+.lm-cta-meta strong {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+/* ── Section common ────────────────────────────────────────────── */
+.lm-section {
+  padding: 72px 0;
+  border-top: 1px solid var(--border);
+}
+.lm-section-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.lm-section-title {
+  font-family: var(--font-body);
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 18px;
+  color: var(--text);
+}
+.lm-section-lede {
+  font-size: 17px;
+  color: var(--text-dim);
+  line-height: 1.55;
+  max-width: 720px;
+  margin: 0 0 40px;
+}
+
+.lm-prose {
+  max-width: 720px;
+}
+.lm-prose p {
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  margin: 0 0 18px;
+}
+.lm-prose p strong, .lm-prose strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.lm-prose code {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  background: rgba(232,169,23,0.08);
+  border: 1px solid rgba(232,169,23,0.18);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--gold-light);
+}
+
+/* ── Trio (System / Private / Public) ──────────────────────────── */
+.lm-trio {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 32px;
+}
+@media (max-width: 880px) {
+  .lm-trio { grid-template-columns: 1fr; }
+}
+.lm-pool {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px 22px;
+  position: relative;
+  overflow: hidden;
+}
+.lm-pool-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.lm-pool-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.lm-pool-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.lm-pool-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+.lm-pool-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.lm-pool-body p { margin: 0 0 10px; }
+.lm-pool-body p:last-child { margin-bottom: 0; }
+.lm-pool-examples {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  line-height: 1.65;
+}
+
+/* System pool — blue */
+.lm-pool-system {
+  border-color: var(--system-blue-border);
+  border-left: 3px solid var(--system-blue);
+}
+.lm-pool-system .lm-pool-icon {
+  background: var(--system-blue-bg);
+  border: 1px solid var(--system-blue-border);
+  color: var(--system-blue);
+}
+.lm-pool-system .lm-pool-name { color: var(--system-blue); }
+
+/* Private pool — gold */
+.lm-pool-private {
+  border-color: rgba(232,169,23,0.32);
+  border-left: 3px solid var(--gold);
+}
+.lm-pool-private .lm-pool-icon {
+  background: rgba(232,169,23,0.06);
+  border: 1px solid rgba(232,169,23,0.32);
+  color: var(--gold);
+}
+.lm-pool-private .lm-pool-name { color: var(--gold); }
+
+/* Public pool — purple */
+.lm-pool-public {
+  border-color: var(--public-purple-border);
+  border-left: 3px solid var(--public-purple);
+}
+.lm-pool-public .lm-pool-icon {
+  background: var(--public-purple-bg);
+  border: 1px solid var(--public-purple-border);
+  color: var(--public-purple);
+}
+.lm-pool-public .lm-pool-name { color: var(--public-purple); }
+
+/* ── Retrieval diagram (semantic SVG, no canvas magic) ─────────── */
+.lm-retrieval-diagram {
+  margin: 36px 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 24px;
+  overflow-x: auto;
+}
+.lm-retrieval-diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* ── File-format showcase ──────────────────────────────────────── */
+.lm-code-card {
+  background: rgba(15,15,18,0.85);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin: 28px 0;
+  overflow: hidden;
+}
+.lm-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(232,169,23,0.05);
+  border-bottom: 1px solid var(--border);
+}
+.lm-code-filename {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--gold);
+  font-weight: 500;
+}
+.lm-code-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.lm-code-body {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 18px 20px;
+  color: var(--text-dim);
+  white-space: pre;
+  overflow-x: auto;
+}
+.lm-code-key { color: var(--gold-light); }
+.lm-code-string { color: rgba(190,215,245,0.85); }
+.lm-code-num { color: rgba(200,175,235,0.95); }
+.lm-code-comment { color: var(--text-muted); font-style: italic; }
+
+/* ── Why-an-OS proof points ────────────────────────────────────── */
+.lm-proof-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin: 28px 0 8px;
+}
+@media (max-width: 760px) {
+  .lm-proof-grid { grid-template-columns: 1fr; }
+}
+.lm-proof {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+}
+.lm-proof-eq {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+.lm-proof-eq strong {
+  color: var(--gold);
+  font-weight: 600;
+}
+.lm-proof-eq .lm-proof-eq-mid {
+  color: rgba(122,122,130,0.7);
+  margin: 0 6px;
+}
+.lm-proof-body {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+/* Patent citation note — sits below the proof grid as a credential
+   anchor. Quiet monospace, matches the footer's voice. Reads as
+   "here's where this work is documented in the public record"
+   rather than as marketing chest-beating. */
+.lm-patent-note {
+  margin-top: 28px;
+  padding: 16px 20px;
+  background: rgba(15,15,18,0.55);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+.lm-patent-note a {
+  color: var(--gold);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(232,169,23,0.4);
+  transition: color .15s ease, border-color .15s ease;
+}
+.lm-patent-note a:hover {
+  color: var(--gold-light);
+  border-bottom-color: var(--gold-light);
+}
+
+/* ── Specimen-grade commercial section ────────────────────────── */
+.lm-commerce {
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 44px 36px;
+  margin: 48px 0 16px;
+  text-align: center;
+}
+.lm-commerce h2 {
+  font-size: 30px;
+  margin: 0 0 12px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.lm-commerce p {
+  color: var(--text-dim);
+  font-size: 16px;
+  max-width: 540px;
+  margin: 0 auto 22px;
+}
+.lm-commerce-options {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 22px;
+}
+.lm-tier {
+  background: rgba(15,15,18,0.65);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  min-width: 220px;
+  text-align: left;
+}
+.lm-tier-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.lm-tier-price {
+  font-family: var(--font-body);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.lm-tier-price-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.lm-tier-featured {
+  border-color: var(--gold);
+  background: rgba(232,169,23,0.04);
+}
+.lm-tier-featured .lm-tier-name { color: var(--gold); }
+
+/* ── Footer ────────────────────────────────────────────────────── */
+.lm-footer {
+  padding: 48px 0 36px;
+  margin-top: 48px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.8;
+  letter-spacing: 0.02em;
+}
+.lm-footer a {
+  color: var(--text-dim);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(255,255,255,0.2);
+}
+.lm-footer a:hover { color: var(--gold); border-color: var(--gold); }
+.lm-footer-mark {
+  color: var(--gold);
+  font-weight: 600;
+}
+.lm-footer-date {
+  margin-top: 8px;
+  opacity: 0.65;
+}
+
+/* ── Responsive shifts ─────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .lm-wrap { padding: 0 20px; }
+  .lm-wordmark { font-size: 64px; }
+  .lm-wordmark sup { font-size: 16px; }
+  .lm-lede { font-size: 18px; }
+  .lm-section { padding: 56px 0; }
+  .lm-section-title { font-size: 28px; }
+  .lm-hero { padding: 56px 0 40px; }
+  .lm-commerce { padding: 32px 22px; }
+}
+</style>
+</head>
+<body>
+
+<div class="lm-bg"></div>
+<div class="lm-vignette"></div>
+
+<div class="lm-wrap">
+
+  <!-- ── Top nav ──────────────────────────────────────────── -->
+  <nav class="lm-nav" aria-label="Site navigation">
+    <a href="https://missinglink.build/promptflow" class="lm-nav-brand">PromptFlow&trade;</a>
+    <a href="https://missinglink.build/promptflow" class="lm-nav-app">Open the app &rarr;</a>
+  </nav>
+
+  <!-- ── Hero ─────────────────────────────────────────────── -->
+  <header class="lm-hero">
+    <h1 class="lm-wordmark">PromptFlow<sup>&trade;</sup></h1>
+    <div class="lm-tagline">a Generative Operating System</div>
+    <p class="lm-lede">
+      PromptFlow&trade; is <em>a programming language for prompting neural networks</em> &mdash; and an operating system whose own functions are written in it.
+    </p>
+    <div class="lm-cta-row">
+      <a href="https://missinglink.build/promptflow" class="lm-cta lm-cta-primary">Open PromptFlow</a>
+      <a href="#what-it-is" class="lm-cta lm-cta-secondary">Learn how it works</a>
+    </div>
+    <div class="lm-cta-meta">
+      Available now at <strong>missinglink.build/promptflow</strong> &middot; free to start &middot; <strong>$20/mo</strong> subscription
+    </div>
+  </header>
+
+  <!-- ── What it is ──────────────────────────────────────── -->
+  <section class="lm-section" id="what-it-is">
+    <div class="lm-section-eyebrow">What is PromptFlow&trade;</div>
+    <h2 class="lm-section-title">A language, a file format, and the system that runs on them.</h2>
+    <div class="lm-prose">
+      <p>
+        PromptFlow&trade; is a <strong>programming language for prompting neural networks</strong>. A PromptFlow&trade; <em>process</em> is an executable program that describes a sequence of model invocations &mdash; its inputs, its parameters, the chain of steps that feed one model&rsquo;s output into the next, and the shape of the result.
+      </p>
+      <p>
+        Processes are stored as <code>.promptflow</code> files: <strong>electronic data files featuring programming data in the field of AI</strong>. A <code>.promptflow</code> bundle is portable, inspectable, and reproducible &mdash; the same file run twice against the same model produces the same plan.
+      </p>
+      <p>
+        The PromptFlow&trade; software platform is a complete system for authoring, executing, retrieving, and composing these processes. It runs on the web at <strong>missinglink.build/promptflow</strong>.
+      </p>
+    </div>
+
+    <!-- File format showcase: demonstrates IC 009 + IC 042 simultaneously. -->
+    <div class="lm-code-card">
+      <div class="lm-code-head">
+        <div class="lm-code-filename">looping-background-animation.promptflow</div>
+        <div class="lm-code-label">a PromptFlow&trade; file</div>
+      </div>
+      <div class="lm-code-body"><span class="lm-code-key">name</span>: <span class="lm-code-string">"Looping Background Animation Generator"</span>
+<span class="lm-code-key">input_kinds</span>: [<span class="lm-code-string">"text"</span>]
+<span class="lm-code-key">output_kind</span>: <span class="lm-code-string">"video"</span>
+
+<span class="lm-code-key">steps</span>:
+  - <span class="lm-code-comment"># Step 1 &mdash; generate a still background</span>
+    <span class="lm-code-key">recipe</span>: <span class="lm-code-string">"flux_pro_text_to_image"</span>
+    <span class="lm-code-key">parameters</span>:
+      <span class="lm-code-key">prompt</span>: <span class="lm-code-string">"{{user_input}}"</span>
+      <span class="lm-code-key">aspect_ratio</span>: <span class="lm-code-string">"16:9"</span>
+
+  - <span class="lm-code-comment"># Step 2 &mdash; animate it into a seamless loop</span>
+    <span class="lm-code-key">recipe</span>: <span class="lm-code-string">"kling_pro_image_motion"</span>
+    <span class="lm-code-key">parameters</span>:
+      <span class="lm-code-key">image_url</span>: <span class="lm-code-string">"{{step_1.output}}"</span>
+      <span class="lm-code-key">end_image_url</span>: <span class="lm-code-string">"{{step_1.output}}"</span>
+      <span class="lm-code-key">duration_s</span>: <span class="lm-code-num">5</span></div>
+    </div>
+  </section>
+
+  <!-- ── Three pools ─────────────────────────────────────── -->
+  <section class="lm-section" id="pools">
+    <div class="lm-section-eyebrow">The three pools</div>
+    <h2 class="lm-section-title">Every process is system, private, or public.</h2>
+    <p class="lm-section-lede">
+      A PromptFlow&trade; process always lives in one of three pools. The system pool holds the OS itself. The private pool holds your work. The public pool holds the shared graph of everyone else&rsquo;s. The planner retrieves across the system and public pools; private processes are accessed directly by their owner.
+    </p>
+
+    <div class="lm-trio">
+
+      <!-- System -->
+      <article class="lm-pool lm-pool-system">
+        <div class="lm-pool-head">
+          <div class="lm-pool-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="5" rx="1"/>
+              <rect x="3" y="10" width="18" height="5" rx="1"/>
+              <rect x="3" y="16" width="18" height="5" rx="1"/>
+              <line x1="6" y1="6.5" x2="6.01" y2="6.5"/>
+              <line x1="6" y1="12.5" x2="6.01" y2="12.5"/>
+              <line x1="6" y1="18.5" x2="6.01" y2="18.5"/>
+            </svg>
+          </div>
+          <div class="lm-pool-name">System</div>
+        </div>
+        <h3 class="lm-pool-title">The OS, written in itself.</h3>
+        <div class="lm-pool-body">
+          <p>System PromptFlow&trade; processes perform the essential functions of the operating system. The OS is built from inference: when a new neural network model releases, its system processes can be <strong>regenerated</strong> against the new model. The functions persist; their implementations adapt.</p>
+        </div>
+        <div class="lm-pool-examples">
+          adaptation &middot; optimization &middot; consolidation &middot; validation &middot; evaluation &middot; composition &middot; retrieval &middot; search
+        </div>
+      </article>
+
+      <!-- Private -->
+      <article class="lm-pool lm-pool-private">
+        <div class="lm-pool-head">
+          <div class="lm-pool-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="11" width="16" height="10" rx="2"/>
+              <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+            </svg>
+          </div>
+          <div class="lm-pool-name">Private</div>
+        </div>
+        <h3 class="lm-pool-title">Your processes, or theirs.</h3>
+        <div class="lm-pool-body">
+          <p>Private PromptFlow&trade; processes are owned. They belong to the user who created or forked them, and they remain invisible to everyone else until that user chooses to publish. Editing, monetization, deletion &mdash; the owner decides.</p>
+        </div>
+        <div class="lm-pool-examples">
+          drafts &middot; forks &middot; in-progress work &middot; monetized processes &middot; team-internal recipes
+        </div>
+      </article>
+
+      <!-- Public -->
+      <article class="lm-pool lm-pool-public">
+        <div class="lm-pool-head">
+          <div class="lm-pool-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="6" r="2.5"/>
+              <circle cx="18" cy="7" r="2.5"/>
+              <circle cx="12" cy="18" r="2.5"/>
+              <line x1="8" y1="7" x2="16" y2="7.5"/>
+              <line x1="7" y1="8" x2="11" y2="16"/>
+              <line x1="17" y1="9" x2="13" y2="16"/>
+            </svg>
+          </div>
+          <div class="lm-pool-name">Public</div>
+        </div>
+        <h3 class="lm-pool-title">A shared graph of many authors.</h3>
+        <div class="lm-pool-body">
+          <p>Public PromptFlow&trade; processes form a graph. Alice&rsquo;s storyboard generator composes Bob&rsquo;s music recipe, which forks Carol&rsquo;s tempo classifier. Authors weave through one another. Lineage, composition, and forks span the whole network.</p>
+        </div>
+        <div class="lm-pool-examples">
+          published processes &middot; forks &middot; composed pipelines &middot; community-authored recipes
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ── Retrieval ─────────────────────────────────────────── -->
+  <section class="lm-section" id="retrieval">
+    <div class="lm-section-eyebrow">Retrieval</div>
+    <h2 class="lm-section-title">The planner walks the system and the public graph.</h2>
+    <div class="lm-prose">
+      <p>
+        When a user describes what they want in natural language, the planner &mdash; itself a system process &mdash; searches the <strong>system pool</strong> and the <strong>public graph</strong> and either selects an existing process or composes a new one from the parts it finds. Retrieval is how PromptFlow&trade; resolves intent into a program.
+      </p>
+      <p>
+        <strong>Private processes are not part of retrieval.</strong> They&rsquo;re owned space, not searched namespace. A user invokes private processes directly &mdash; opening them from their workspace, running them by name, forking from them deliberately. The planner doesn&rsquo;t reach into anyone&rsquo;s private workspace; the user does.
+      </p>
+      <p>
+        This is the same distinction a conventional operating system draws between system paths that get searched (the kernel, shared libraries, the public package registry) and a user&rsquo;s home directory, which gets accessed explicitly. The boundary protects ownership while keeping the searched namespace coherent.
+      </p>
+    </div>
+
+    <!-- Semantic diagram. -->
+    <div class="lm-retrieval-diagram">
+      <svg viewBox="0 0 720 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="retrieval-diagram-title">
+        <title id="retrieval-diagram-title">A user request flows into the planner, which retrieves across the system pool and the public graph. Private processes are accessed directly by the user, not retrieved by the planner.</title>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="rgba(232,169,23,0.6)"/>
+          </marker>
+          <marker id="arrow-direct" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="rgba(232,169,23,0.85)"/>
+          </marker>
+        </defs>
+
+        <!-- User request -->
+        <rect x="20" y="130" width="120" height="60" rx="8" fill="rgba(232,169,23,0.06)" stroke="#e8a917" stroke-width="1.5"/>
+        <text x="80" y="158" text-anchor="middle" font-family="DM Sans, sans-serif" font-size="13" font-weight="600" fill="#f0f0f2">User</text>
+        <text x="80" y="176" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="rgba(170,170,176,0.8)">natural language</text>
+
+        <!-- Planner (center) -->
+        <circle cx="360" cy="160" r="48" fill="rgba(232,169,23,0.1)" stroke="#e8a917" stroke-width="2"/>
+        <text x="360" y="158" text-anchor="middle" font-family="DM Sans, sans-serif" font-size="14" font-weight="600" fill="#f0f0f2">Planner</text>
+        <text x="360" y="176" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="rgba(170,170,176,0.85)">retrieves</text>
+
+        <!-- User -> Planner (retrieval path) -->
+        <line x1="142" y1="160" x2="308" y2="160" stroke="rgba(232,169,23,0.55)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+        <!-- System (top right) -->
+        <rect x="540" y="40" width="160" height="56" rx="8" fill="rgba(110,130,200,0.1)" stroke="rgba(180,200,240,0.6)" stroke-width="1.5"/>
+        <text x="620" y="64" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.5" fill="rgba(180,200,240,0.95)" font-weight="600">SYSTEM</text>
+        <text x="620" y="82" text-anchor="middle" font-family="DM Sans, sans-serif" font-size="12" fill="#f0f0f2">the OS itself</text>
+
+        <!-- Public (middle right) -->
+        <rect x="540" y="132" width="160" height="56" rx="8" fill="rgba(180,145,215,0.08)" stroke="rgba(200,175,235,0.6)" stroke-width="1.5"/>
+        <text x="620" y="156" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.5" fill="rgba(200,175,235,0.95)" font-weight="600">PUBLIC</text>
+        <text x="620" y="174" text-anchor="middle" font-family="DM Sans, sans-serif" font-size="12" fill="#f0f0f2">shared graph</text>
+
+        <!-- Private (bottom right) -->
+        <rect x="540" y="224" width="160" height="56" rx="8" fill="rgba(232,169,23,0.06)" stroke="rgba(232,169,23,0.45)" stroke-width="1.5" stroke-dasharray="6 4"/>
+        <text x="620" y="248" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.5" fill="#e8a917" font-weight="600">PRIVATE</text>
+        <text x="620" y="266" text-anchor="middle" font-family="DM Sans, sans-serif" font-size="11" fill="rgba(170,170,176,0.8)">direct access only</text>
+
+        <!-- Planner -> System + Public (retrieved) -->
+        <line x1="408" y1="140" x2="540" y2="70" stroke="rgba(180,200,240,0.55)" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+        <line x1="408" y1="170" x2="540" y2="160" stroke="rgba(200,175,235,0.55)" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+
+        <!-- User -> Private (direct access, NOT through planner) -->
+        <path d="M 80 190 Q 80 260, 200 260 L 540 260" fill="none" stroke="rgba(232,169,23,0.7)" stroke-width="1.5" marker-end="url(#arrow-direct)"/>
+        <text x="320" y="252" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="rgba(232,169,23,0.85)" font-weight="500">direct invocation</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ── Why an OS ───────────────────────────────────────── -->
+  <section class="lm-section" id="why-os">
+    <div class="lm-section-eyebrow">Why &ldquo;Operating System&rdquo;</div>
+    <h2 class="lm-section-title">A specific claim, not a metaphor.</h2>
+    <p class="lm-section-lede">
+      An operating system, by the technical definition, abstracts a hardware substrate into addressable programs, manages their execution, mediates between them through shared structure, and exposes a way to invoke them. PromptFlow&trade; does the same with neural networks as the substrate.
+    </p>
+
+    <div class="lm-proof-grid">
+      <div class="lm-proof">
+        <div class="lm-proof-eq">processes <span class="lm-proof-eq-mid">=</span> <strong>programs</strong></div>
+        <div class="lm-proof-body">
+          A <code class="lm-pool-name" style="font-family:var(--font-mono);font-size:13px;color:var(--gold-light);background:rgba(232,169,23,0.08);padding:1px 6px;border-radius:4px;">.promptflow</code> file is an executable description of work to be done by one or more neural networks. Inputs, parameters, ordering, output shape. A program.
+        </div>
+      </div>
+      <div class="lm-proof">
+        <div class="lm-proof-eq">retrieval <span class="lm-proof-eq-mid">=</span> <strong>process lookup</strong></div>
+        <div class="lm-proof-body">
+          A natural-language request resolves to a specific process by searching the system pool and the public graph &mdash; the searched namespace. Same role as a path lookup in a filesystem-based OS, just with semantic matching across two scopes instead of path resolution.
+        </div>
+      </div>
+      <div class="lm-proof">
+        <div class="lm-proof-eq">system pool <span class="lm-proof-eq-mid">=</span> <strong>the kernel</strong></div>
+        <div class="lm-proof-body">
+          The functions every other process depends on &mdash; adaptation, validation, composition, search &mdash; live in the system pool. They are themselves PromptFlow&trade; processes, so the kernel is in the same language as everything that runs on it.
+        </div>
+      </div>
+      <div class="lm-proof">
+        <div class="lm-proof-eq">composition <span class="lm-proof-eq-mid">=</span> <strong>linking</strong></div>
+        <div class="lm-proof-body">
+          One process invokes another by name. The result is a graph of authors&rsquo; work, linked through a single shared namespace. Public processes can call public processes; private processes can call public ones; system primitives underlie all of it.
+        </div>
+      </div>
+      <div class="lm-proof">
+        <div class="lm-proof-eq">forking <span class="lm-proof-eq-mid">=</span> <strong>copy-on-write</strong></div>
+        <div class="lm-proof-body">
+          When a user refines a system or public process, the system creates a private fork. The original is preserved. The fork can diverge freely. Both records remain in the graph, related by lineage.
+        </div>
+      </div>
+      <div class="lm-proof">
+        <div class="lm-proof-eq">generative <span class="lm-proof-eq-mid">=</span> <strong>self-rebuilding</strong></div>
+        <div class="lm-proof-body">
+          The OS&rsquo;s own functions are written in the same language they operate on. When a new neural network model releases, those system processes can be regenerated against it. The kernel rewrites itself. That&rsquo;s what generative means here.
+        </div>
+      </div>
+    </div>
+    <div class="lm-patent-note">
+      The architecture described above is the subject of US patent application <a href="https://patents.google.com/patent/US20240403005A1" target="_blank" rel="noopener"><strong>US20240403005A1</strong></a>, filed 2023.
+    </div>
+  </section>
+
+  <!-- ── Specimen-grade commerce section ──────────────────────── -->
+  <section class="lm-commerce" id="get-started">
+    <h2>Start using PromptFlow&trade;</h2>
+    <p>
+      PromptFlow&trade; is online software-as-a-service. Sign in at <strong>missinglink.build/promptflow</strong>, write a <code style="font-family:var(--font-mono);font-size:14px;background:rgba(232,169,23,0.1);padding:2px 6px;border-radius:4px;color:var(--gold-light);">.promptflow</code> process, run it.
+    </p>
+    <div class="lm-commerce-options">
+      <div class="lm-tier">
+        <div class="lm-tier-name">Free</div>
+        <div class="lm-tier-price">100,000 tokens</div>
+        <div class="lm-tier-price-note">monthly allowance, no card</div>
+      </div>
+      <div class="lm-tier lm-tier-featured">
+        <div class="lm-tier-name">Subscribe</div>
+        <div class="lm-tier-price">$20<span style="font-size:14px;color:var(--text-muted);font-weight:400;"> / mo</span></div>
+        <div class="lm-tier-price-note">extended allowance &amp; priority</div>
+      </div>
+    </div>
+    <div style="margin-top: 32px;">
+      <a href="https://missinglink.build/promptflow" class="lm-cta lm-cta-primary">Open PromptFlow&trade;</a>
+    </div>
+  </section>
+
+  <!-- ── Footer (USPTO-relevant notices) ──────────────────── -->
+  <footer class="lm-footer">
+    <div>
+      <span class="lm-footer-mark">PromptFlow&trade;</span> is a trademark of Tyler Friddle.
+      The PromptFlow&trade; software-as-a-service platform is offered at <a href="https://missinglink.build/promptflow">missinglink.build/promptflow</a>.
+    </div>
+    <div style="margin-top:6px;">
+      Underlying architecture covered by US patent application <a href="https://patents.google.com/patent/US20240403005A1" target="_blank" rel="noopener">US20240403005A1</a> (2023, Tyler Friddle).
+    </div>
+    <div style="margin-top:6px;">
+      &copy; 2026 Tyler Friddle. All rights reserved.
+    </div>
+    <div class="lm-footer-date">
+      Page published <time datetime="2026-05-11">May 11, 2026</time> &middot;
+      <a href="https://missinglink.build/promptflow">missinglink.build/promptflow/learn-more</a>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>
