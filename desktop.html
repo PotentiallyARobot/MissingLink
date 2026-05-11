@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PromptFlow™ — Generative OS</title>
+<meta name="description" content="PromptFlow — A process-primitive programming language for AI. Create, Reuse, Adapt AI processes.">
+
+<style>
+/* ─────────────────────────────────────────────────────────────────────
+   PromptFlow Desktop — Generative OS shell
+   ─────────────────────────────────────────────────────────────────────
+   Layout:
+     - .desktop is the full-viewport stage
+     - .desktop-background is the fixed-position hero image behind everything
+     - .sidebar-folders runs down the left edge (5 folder icons)
+     - .topbar floats at the top-right (token counter, info, avatar)
+     - .canvas is the main content area (hero by default, swappable to
+       process list / chat list / etc. when a folder is clicked)
+     - .dock sits at the bottom — PromptFlow brand chip, primary nav icons,
+       agentic runtime status, and the dimmed coming-soon icons
+
+   Asset paths reference /promptflow/assets/<name>.png which is served
+   by the worker route added in promptflow_routes.ts. Run the upload
+   script (upload-promptflow-assets.sh) once before this page works.
+   ───────────────────────────────────────────────────────────────────── */
+:root{
+  --bg:#0a0a0b;
+  --surface:#141416;
+  --surface-2:#1c1c20;
+  --surface-3:#26262c;
+  --surface-glass:rgba(20,20,22,0.78);
+  --text:#f0f0f2;
+  --text-dim:#aaaab0;
+  --text-muted:#7a7a82;
+  --border:#2a2a30;
+  --border-glass:rgba(255,255,255,0.08);
+  --gold:#e8a917;
+  --gold-light:#f4c558;
+  --gold-dim:#3a2a10;
+  --red:#ff5c5c;
+  --green:#7ab47a;
+  --blue:#7fb6e0;
+
+  --font-display:"Inter", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --sidebar-w:120px;
+  --dock-h:88px;
+  --topbar-h:64px;
+}
+
+*{box-sizing:border-box}
+html,body{
+  margin:0;padding:0;
+  height:100%;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-display);
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;     /* desktop doesn't scroll; canvas inside does */
+}
+a{color:var(--gold);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font-family:inherit}
+
+/* ── Desktop stage ────────────────────────────────────────────── */
+.desktop{
+  position:relative;
+  width:100vw;
+  height:100vh;
+  overflow:hidden;
+}
+
+/* Fixed hero background, positioned to fill the stage. The image
+   already contains the constellation + wave; we just stretch it. */
+.desktop-background{
+  position:absolute;
+  inset:0;
+  background-image:url(/promptflow/assets/desktop-background.png);
+  background-size:cover;
+  background-position:center;
+  background-repeat:no-repeat;
+  /* Subtle dim so foreground content stays readable. */
+  opacity:0.55;
+  z-index:0;
+}
+
+/* Vignette over the background — keeps the edges dark so chrome
+   reads cleanly against pure black, while the middle keeps the
+   atmospheric image visible. */
+.desktop-vignette{
+  position:absolute;
+  inset:0;
+  background:radial-gradient(ellipse 80% 70% at 50% 50%, transparent 40%, rgba(10,10,11,0.85) 100%);
+  z-index:1;
+  pointer-events:none;
+}
+
+/* ── Top bar (token counter, info, avatar) ─────────────────────── */
+.topbar{
+  position:absolute;
+  top:24px;
+  right:32px;
+  z-index:20;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.topbar-token-chip{
+  background:var(--surface-glass);
+  border:1px solid var(--border-glass);
+  border-radius:999px;
+  padding:9px 18px;
+  font-family:var(--font-mono);
+  font-size:13px;
+  color:var(--text);
+  letter-spacing:0.02em;
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+}
+.topbar-icon{
+  width:44px;height:44px;
+  border-radius:999px;
+  background:var(--surface-glass);
+  border:1px solid var(--border-glass);
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  cursor:pointer;
+  transition:border-color .15s,transform .1s;
+}
+.topbar-icon:hover{
+  border-color:var(--gold);
+}
+.topbar-icon img{
+  width:24px;height:24px;
+}
+
+/* ── Sidebar folders ──────────────────────────────────────────── */
+.sidebar-folders{
+  position:absolute;
+  top:0;
+  left:0;
+  bottom:var(--dock-h);
+  width:var(--sidebar-w);
+  z-index:15;
+  padding:32px 0 24px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:20px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  /* Hide scrollbar but keep scrolling. */
+  scrollbar-width:none;
+}
+.sidebar-folders::-webkit-scrollbar{display:none}
+
+.sidebar-folder{
+  width:80px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:4px;
+  cursor:pointer;
+  user-select:none;
+  -webkit-user-select:none;
+  padding:6px 4px;
+  border-radius:8px;
+  transition:background .15s;
+}
+.sidebar-folder:hover{
+  background:rgba(232,169,23,0.06);
+}
+.sidebar-folder.active{
+  background:rgba(232,169,23,0.12);
+}
+.sidebar-folder img{
+  width:64px;height:64px;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+  transition:transform .12s;
+}
+.sidebar-folder:hover img{
+  transform:translateY(-2px);
+}
+.sidebar-folder .sf-label{
+  font-size:11px;
+  color:var(--text);
+  text-shadow:0 1px 2px rgba(0,0,0,0.8);
+  letter-spacing:0.02em;
+  margin-top:2px;
+}
+.sidebar-folder.coming-soon{
+  opacity:0.55;
+}
+.sidebar-folder.coming-soon .sf-label::after{
+  content:" · soon";
+  font-style:italic;
+  color:var(--text-muted);
+  font-size:9px;
+}
+
+/* ── Main canvas (between sidebar and dock) ──────────────────── */
+.canvas{
+  position:absolute;
+  top:0;
+  left:var(--sidebar-w);
+  right:0;
+  bottom:var(--dock-h);
+  z-index:5;
+  overflow-y:auto;
+  overflow-x:hidden;
+  /* Custom scrollbar */
+  scrollbar-width:thin;
+  scrollbar-color:var(--surface-3) transparent;
+}
+.canvas::-webkit-scrollbar{width:8px}
+.canvas::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+
+/* The hero view is the default canvas content. */
+.canvas-view{
+  display:none;
+  min-height:100%;
+  padding:48px 32px 32px;
+}
+.canvas-view.active{
+  display:block;
+}
+
+/* ── Hero view (the welcome screen) ─────────────────────────── */
+.hero{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  min-height:calc(100vh - var(--dock-h) - 96px);
+  gap:6px;
+}
+.hero-wordmark{
+  font-size:84px;
+  font-weight:700;
+  letter-spacing:-0.02em;
+  margin:0;
+  line-height:1.05;
+  position:relative;
+}
+.hero-wordmark .hw-prompt{
+  color:#ffffff;
+}
+.hero-wordmark .hw-flow{
+  color:var(--gold);
+}
+.hero-wordmark .hw-tm{
+  font-size:24px;
+  vertical-align:super;
+  margin-left:6px;
+  color:var(--gold);
+  font-weight:400;
+}
+.hero-category{
+  font-size:18px;
+  color:var(--text-dim);
+  font-weight:400;
+  letter-spacing:0.02em;
+  margin-top:4px;
+  margin-bottom:32px;
+}
+.hero-tagline{
+  font-size:22px;
+  color:var(--text);
+  font-weight:400;
+  letter-spacing:0;
+  margin:0 0 8px;
+}
+.hero-tagline .ht-noun{
+  color:var(--gold);
+  font-weight:500;
+}
+.hero-learn{
+  font-size:14px;
+  color:var(--gold);
+  cursor:pointer;
+  margin-bottom:40px;
+  background:none;border:none;
+  padding:4px 0;
+}
+.hero-learn:hover{
+  text-decoration:underline;
+}
+.hero-input-wrap{
+  width:100%;
+  max-width:780px;
+  position:relative;
+  margin-bottom:24px;
+}
+.hero-input{
+  width:100%;
+  background:var(--surface-glass);
+  border:1px solid var(--gold);
+  border-radius:999px;
+  padding:18px 72px 18px 56px;
+  font-size:16px;
+  color:var(--text);
+  font-family:inherit;
+  outline:none;
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+  box-shadow:0 4px 24px rgba(232,169,23,0.18), 0 1px 0 rgba(255,255,255,0.04) inset;
+  transition:border-color .15s,box-shadow .15s;
+}
+.hero-input:focus{
+  border-color:var(--gold-light);
+  box-shadow:0 4px 32px rgba(232,169,23,0.28), 0 1px 0 rgba(255,255,255,0.06) inset;
+}
+.hero-input::placeholder{
+  color:var(--text-muted);
+}
+.hero-input-paperclip{
+  position:absolute;
+  left:20px;top:50%;transform:translateY(-50%);
+  width:24px;height:24px;
+  color:var(--gold);
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+}
+.hero-input-paperclip svg{width:20px;height:20px;display:block}
+.hero-input-send{
+  position:absolute;
+  right:8px;top:50%;transform:translateY(-50%);
+  width:48px;height:48px;
+  border-radius:999px;
+  background:var(--gold);
+  border:none;
+  color:var(--bg);
+  font-size:20px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  transition:transform .1s,box-shadow .15s;
+}
+.hero-input-send:hover{
+  transform:translateY(-50%) scale(1.05);
+  box-shadow:0 4px 14px rgba(232,169,23,0.5);
+}
+.hero-input-send:disabled{
+  opacity:0.4;
+  cursor:not-allowed;
+  transform:translateY(-50%);
+}
+.hero-status{
+  font-size:13px;
+  color:var(--text-muted);
+  font-family:var(--font-mono);
+  margin-top:8px;
+  min-height:16px;
+}
+
+/* ── Folder-view list (chats / processes lists rendered inline) ── */
+.folder-view{
+  max-width:920px;
+  margin:0 auto;
+}
+.folder-view-head{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  padding-bottom:16px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:20px;
+}
+.folder-view-head h1{
+  font-size:22px;
+  font-weight:500;
+  margin:0;
+  color:var(--text);
+}
+.folder-view-head .fvh-count{
+  font-family:var(--font-mono);
+  font-size:12px;
+  color:var(--text-muted);
+}
+.folder-view-head .fvh-actions{
+  margin-left:auto;
+  display:flex;gap:8px;
+}
+.folder-view-head .fvh-actions button{
+  background:transparent;
+  border:1px solid var(--border);
+  color:var(--text-dim);
+  padding:7px 14px;
+  border-radius:6px;
+  font-size:12px;
+  cursor:pointer;
+}
+.folder-view-head .fvh-actions button:hover{
+  border-color:var(--gold);
+  color:var(--gold);
+}
+.folder-view-list{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.folder-view-empty{
+  padding:48px 24px;
+  text-align:center;
+  color:var(--text-muted);
+  font-family:var(--font-mono);
+  font-size:13px;
+  background:var(--surface);
+  border:1px dashed var(--border);
+  border-radius:10px;
+}
+.folder-view-empty strong{
+  color:var(--text);
+  display:block;
+  margin-bottom:6px;
+  font-family:var(--font-display);
+  font-size:15px;
+  font-weight:500;
+}
+.folder-view-empty .fve-hint{
+  margin-top:12px;
+  font-size:11px;
+  color:var(--text-muted);
+}
+
+/* Process row in a folder view */
+.fv-row{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  padding:14px 16px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:10px;
+  cursor:pointer;
+  transition:border-color .12s,background .12s;
+}
+.fv-row:hover{
+  border-color:var(--gold);
+  background:var(--surface-2);
+}
+.fv-row-icon{
+  width:36px;height:36px;
+  flex-shrink:0;
+  border-radius:6px;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;
+}
+.fv-row-body{
+  flex:1 1 auto;
+  min-width:0;
+}
+.fv-row-name{
+  font-size:14px;
+  font-weight:500;
+  color:var(--text);
+  margin-bottom:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.fv-row-meta{
+  font-family:var(--font-mono);
+  font-size:11px;
+  color:var(--text-muted);
+}
+.fv-row-actions{
+  display:flex;gap:6px;
+  flex-shrink:0;
+}
+.fv-row-action{
+  background:transparent;
+  border:1px solid transparent;
+  color:var(--text-muted);
+  font-size:13px;
+  padding:5px 9px;
+  border-radius:5px;
+  cursor:pointer;
+}
+.fv-row-action:hover{
+  border-color:var(--border);
+  color:var(--gold);
+  background:var(--surface-2);
+}
+
+/* Coming-soon empty state (Cron / Agents) */
+.coming-soon-pane{
+  max-width:560px;
+  margin:64px auto;
+  text-align:center;
+}
+.coming-soon-pane .cs-icon{
+  width:96px;height:96px;
+  margin:0 auto 18px;
+  opacity:0.7;
+}
+.coming-soon-pane h1{
+  font-size:24px;
+  margin:0 0 10px;
+  color:var(--text);
+  font-weight:500;
+}
+.coming-soon-pane .cs-pill{
+  display:inline-block;
+  font-family:var(--font-mono);
+  font-size:10px;
+  letter-spacing:0.1em;
+  padding:3px 10px;
+  border-radius:999px;
+  background:var(--gold-dim);
+  color:var(--gold);
+  margin-bottom:18px;
+  text-transform:uppercase;
+}
+.coming-soon-pane p{
+  color:var(--text-dim);
+  font-size:15px;
+  line-height:1.5;
+  margin:0 0 28px;
+}
+
+/* ── Bottom dock ──────────────────────────────────────────────── */
+.dock{
+  position:absolute;
+  bottom:16px;
+  left:16px;
+  right:16px;
+  height:calc(var(--dock-h) - 32px);
+  z-index:20;
+  background:var(--surface-glass);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  border:1px solid var(--border-glass);
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  padding:0 18px;
+  gap:16px;
+}
+.dock-brand{
+  display:flex;align-items:center;gap:10px;
+  font-family:var(--font-mono);
+  font-size:14px;
+  color:var(--text);
+  font-weight:500;
+  letter-spacing:0.01em;
+}
+.dock-brand .db-mark{
+  width:36px;height:36px;
+  border-radius:7px;
+  border:1.5px solid var(--gold);
+  background:transparent;
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;
+  font-weight:700;
+  color:var(--gold);
+  letter-spacing:-0.02em;
+}
+.dock-divider{
+  width:1px;height:32px;
+  background:var(--border);
+  margin:0 4px;
+}
+.dock-section{
+  display:flex;align-items:center;gap:4px;
+}
+.dock-icon{
+  width:44px;height:44px;
+  border-radius:9px;
+  border:1px solid transparent;
+  background:transparent;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  position:relative;
+  transition:background .12s,border-color .12s;
+}
+.dock-icon:hover{
+  background:var(--surface-3);
+  border-color:var(--border);
+}
+.dock-icon.active{
+  background:rgba(232,169,23,0.15);
+  border-color:rgba(232,169,23,0.4);
+}
+.dock-icon img{
+  width:28px;height:28px;
+  /* The UI icons are gold line-art on transparent — display as-is. */
+}
+.dock-icon .di-tooltip{
+  position:absolute;
+  bottom:calc(100% + 6px);
+  left:50%;transform:translateX(-50%);
+  background:var(--surface-3);
+  border:1px solid var(--border);
+  color:var(--text);
+  padding:4px 10px;
+  border-radius:5px;
+  font-family:var(--font-mono);
+  font-size:11px;
+  white-space:nowrap;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .15s;
+}
+.dock-icon:hover .di-tooltip{
+  opacity:1;
+}
+
+/* Right side of dock: runtime status + coming-soon */
+.dock-runtime{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  margin-left:8px;
+  font-family:var(--font-mono);
+}
+.dock-runtime-title{
+  font-size:11.5px;
+  color:var(--text);
+  letter-spacing:0.02em;
+}
+.dock-runtime-status{
+  display:flex;align-items:center;gap:5px;
+  font-size:10.5px;
+  color:var(--text-muted);
+  margin-top:2px;
+}
+.dock-runtime-status .drs-dot{
+  width:7px;height:7px;
+  border-radius:50%;
+  background:var(--green);
+}
+.dock-runtime-status.idle .drs-dot{
+  background:var(--text-muted);
+}
+
+.dock-coming-soon{
+  display:flex;align-items:center;gap:6px;
+  margin-left:auto;
+}
+.dock-coming-soon .dock-icon{
+  width:38px;height:38px;
+  opacity:0.45;
+  cursor:default;
+}
+.dock-coming-soon .dock-icon img{
+  width:22px;height:22px;
+}
+.dock-coming-soon .dock-icon .di-label{
+  position:absolute;
+  bottom:-14px;
+  left:50%;transform:translateX(-50%);
+  font-family:var(--font-mono);
+  font-size:8px;
+  color:var(--text-muted);
+  letter-spacing:0.05em;
+  text-transform:uppercase;
+}
+
+/* Modal — used for auth gate + info overlays */
+.modal-overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.7);
+  backdrop-filter:blur(4px);
+  -webkit-backdrop-filter:blur(4px);
+  z-index:100;
+  display:flex;align-items:center;justify-content:center;
+  padding:32px;
+}
+.modal-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:32px;
+  max-width:440px;
+  width:100%;
+  text-align:center;
+}
+.modal-card h2{
+  font-size:20px;
+  font-weight:500;
+  margin:0 0 8px;
+}
+.modal-card p{
+  color:var(--text-dim);
+  font-size:14px;
+  line-height:1.5;
+  margin:0 0 24px;
+}
+.modal-actions{
+  display:flex;flex-direction:column;gap:10px;
+}
+.modal-actions button,
+.modal-actions a{
+  width:100%;
+  padding:12px 18px;
+  border-radius:8px;
+  font-size:14px;
+  font-family:inherit;
+  cursor:pointer;
+  border:none;
+  transition:transform .1s;
+  text-align:center;
+  text-decoration:none;
+  display:block;
+}
+.modal-actions .ma-primary{
+  background:var(--gold);
+  color:var(--bg);
+  font-weight:600;
+}
+.modal-actions .ma-primary:hover{
+  transform:translateY(-1px);
+}
+.modal-actions .ma-secondary{
+  background:transparent;
+  border:1px solid var(--border);
+  color:var(--text);
+}
+.modal-actions .ma-secondary:hover{
+  border-color:var(--gold);
+  color:var(--gold);
+}
+
+/* ── Inline chat result (when input is submitted) ─────────────── */
+.chat-result{
+  max-width:780px;
+  margin:24px auto 0;
+  padding:18px 22px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:10px;
+  text-align:left;
+  font-size:14px;
+  line-height:1.55;
+  color:var(--text);
+}
+.chat-result .cr-tag{
+  display:inline-block;
+  font-family:var(--font-mono);
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:0.08em;
+  color:var(--gold);
+  margin-bottom:8px;
+}
+.chat-result.error{
+  border-color:rgba(255,92,92,0.4);
+  background:rgba(255,92,92,0.04);
+}
+.chat-result.error .cr-tag{ color:var(--red) }
+.chat-result-actions{
+  display:flex;gap:8px;
+  margin-top:14px;
+}
+.chat-result-actions button{
+  background:transparent;
+  border:1px solid var(--gold);
+  color:var(--gold);
+  padding:7px 14px;
+  border-radius:6px;
+  font-size:12px;
+  cursor:pointer;
+  font-family:inherit;
+}
+.chat-result-actions button:hover{
+  background:var(--gold);
+  color:var(--bg);
+}
+
+/* ── Responsive guardrails ────────────────────────────────────── */
+@media (max-width: 900px){
+  :root{
+    --sidebar-w:88px;
+    --dock-h:80px;
+  }
+  .sidebar-folder{width:64px}
+  .sidebar-folder img{width:48px;height:48px}
+  .sidebar-folder .sf-label{font-size:10px}
+  .hero-wordmark{font-size:56px}
+  .hero-category{font-size:15px}
+  .hero-tagline{font-size:17px}
+  .dock-coming-soon{display:none}
+}
+@media (max-width: 640px){
+  /* Mobile: stash sidebar off-screen, dock becomes a thin bar.
+     This is not a full mobile experience yet; mostly fail-safe. */
+  :root{ --sidebar-w:0px }
+  .sidebar-folders{display:none}
+  .hero-wordmark{font-size:42px}
+  .topbar{ top:12px; right:12px }
+  .topbar-token-chip{ padding:6px 12px; font-size:11px }
+  .dock-coming-soon{display:none}
+  .dock-runtime{display:none}
+}
+
+</style>
+</head>
+<body>
+
+<div class="desktop">
+
+  <!-- Fixed background image + vignette -->
+  <div class="desktop-background"></div>
+  <div class="desktop-vignette"></div>
+
+  <!-- Top bar (token counter + info + avatar) -->
+  <div class="topbar">
+    <div class="topbar-token-chip" id="topbarTokens">— tokens</div>
+    <button class="topbar-icon" id="topbarInfo" title="About PromptFlow">
+      <img src="/promptflow/assets/ui-info.png" alt="Info">
+    </button>
+    <button class="topbar-icon" id="topbarUser" title="Account">
+      <img src="/promptflow/assets/ui-user.png" alt="Account">
+    </button>
+  </div>
+
+  <!-- Left sidebar: folder icons -->
+  <nav class="sidebar-folders" id="sidebarFolders">
+    <button class="sidebar-folder" data-folder="system">
+      <img src="/promptflow/assets/sidebar-system.png" alt="">
+      <span class="sf-label">System</span>
+    </button>
+    <button class="sidebar-folder" data-folder="chats">
+      <img src="/promptflow/assets/sidebar-chats.png" alt="">
+      <span class="sf-label">Chats</span>
+    </button>
+    <button class="sidebar-folder" data-folder="processes">
+      <img src="/promptflow/assets/sidebar-processes.png" alt="">
+      <span class="sf-label">Processes</span>
+    </button>
+    <button class="sidebar-folder" data-folder="graph">
+      <img src="/promptflow/assets/sidebar-graph.png" alt="">
+      <span class="sf-label">Graph</span>
+    </button>
+    <button class="sidebar-folder coming-soon" data-folder="cron">
+      <img src="/promptflow/assets/sidebar-cron.png" alt="">
+      <span class="sf-label">Cron</span>
+    </button>
+    <button class="sidebar-folder coming-soon" data-folder="agents">
+      <img src="/promptflow/assets/sidebar-agents.png" alt="">
+      <span class="sf-label">Agents</span>
+    </button>
+  </nav>
+
+  <!-- Main canvas. The hero view is the default. Folder clicks
+       swap which .canvas-view has .active. -->
+  <main class="canvas" id="canvas">
+
+    <!-- HERO VIEW (default) -->
+    <div class="canvas-view active" id="viewHero">
+      <div class="hero">
+        <h1 class="hero-wordmark">
+          <span class="hw-prompt">Prompt</span><span class="hw-flow">Flow</span><span class="hw-tm">™</span>
+        </h1>
+        <div class="hero-category">Generative OS</div>
+
+        <p class="hero-tagline">
+          Create, Reuse, Adapt <span class="ht-noun">AI processes.</span>
+        </p>
+        <button class="hero-learn" id="heroLearn">Learn more →</button>
+
+        <div class="hero-input-wrap">
+          <span class="hero-input-paperclip" title="Attach an image (coming soon)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.83l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </span>
+          <input
+            class="hero-input"
+            id="heroInput"
+            type="text"
+            placeholder="What do you want to make?"
+            autocomplete="off"
+          >
+          <button class="hero-input-send" id="heroSend" title="Send">→</button>
+        </div>
+        <div class="hero-status" id="heroStatus"></div>
+
+        <!-- Chat result lands here once user hits send. Empty by default. -->
+        <div id="heroChatResult"></div>
+      </div>
+    </div>
+
+    <!-- CHATS VIEW -->
+    <div class="canvas-view" id="viewChats">
+      <div class="folder-view">
+        <div class="folder-view-head">
+          <h1>Chats</h1>
+          <span class="fvh-count" id="chatsCount"></span>
+          <div class="fvh-actions">
+            <button id="chatsNew">+ New conversation</button>
+          </div>
+        </div>
+        <div class="folder-view-list" id="chatsList">
+          <div class="folder-view-empty">Loading conversations…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROCESSES VIEW -->
+    <div class="canvas-view" id="viewProcesses">
+      <div class="folder-view">
+        <div class="folder-view-head">
+          <h1>Processes</h1>
+          <span class="fvh-count" id="processesCount"></span>
+          <div class="fvh-actions">
+            <button id="processesOpenApp">Open editor</button>
+          </div>
+        </div>
+        <div class="folder-view-list" id="processesList">
+          <div class="folder-view-empty">Loading processes…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SYSTEM VIEW (system processes only) -->
+    <div class="canvas-view" id="viewSystem">
+      <div class="folder-view">
+        <div class="folder-view-head">
+          <h1>System</h1>
+          <span class="fvh-count" id="systemCount"></span>
+        </div>
+        <div class="folder-view-list" id="systemList">
+          <div class="folder-view-empty">Loading system processes…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRAPH VIEW (placeholder — clicking the folder navigates to
+         the existing graph in the main app for now since rendering
+         Cytoscape inline doubles the page weight). -->
+    <div class="canvas-view" id="viewGraph">
+      <div class="folder-view">
+        <div class="folder-view-head">
+          <h1>Graph</h1>
+        </div>
+        <div class="folder-view-empty">
+          <strong>Process composition graph</strong>
+          The graph view renders in the main app workspace.
+          <div class="fve-hint">Opening in a moment…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CRON VIEW (coming soon) -->
+    <div class="canvas-view" id="viewCron">
+      <div class="coming-soon-pane">
+        <img class="cs-icon" src="/promptflow/assets/sidebar-cron.png" alt="">
+        <div class="cs-pill">Coming soon</div>
+        <h1>Cron</h1>
+        <p>
+          Schedule any process to run on a recurring cadence — daily, weekly,
+          or on a cron expression. Outputs are persisted, emailed, or piped
+          into another process automatically.
+        </p>
+        <p style="font-size:13px;color:var(--text-muted)">
+          We're building this. Your processes already work — soon they'll
+          work while you sleep.
+        </p>
+      </div>
+    </div>
+
+    <!-- AGENTS VIEW (coming soon) -->
+    <div class="canvas-view" id="viewAgents">
+      <div class="coming-soon-pane">
+        <img class="cs-icon" src="/promptflow/assets/sidebar-agents.png" alt="">
+        <div class="cs-pill">Coming soon</div>
+        <h1>Agents</h1>
+        <p>
+          Autonomous loops that orchestrate your processes against goals —
+          "watch this folder for new files, then run my Stock Footage
+          Adapter, then post to Drive." Agents combine cron, processes,
+          and tools into one autonomous unit.
+        </p>
+        <p style="font-size:13px;color:var(--text-muted)">
+          Agents are the natural next layer above processes. We're
+          building them with the same care we built process composition.
+        </p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Bottom dock -->
+  <div class="dock">
+    <div class="dock-brand">
+      <div class="db-mark">PF</div>
+      <span>PromptFlow</span>
+    </div>
+
+    <div class="dock-divider"></div>
+
+    <!-- Primary nav cluster -->
+    <div class="dock-section">
+      <button class="dock-icon active" id="dockHome" data-target="hero">
+        <img src="/promptflow/assets/ui-home.png" alt="Home">
+        <span class="di-tooltip">Home</span>
+      </button>
+      <button class="dock-icon" id="dockFiles" data-target="processes">
+        <img src="/promptflow/assets/ui-files.png" alt="Files">
+        <span class="di-tooltip">Processes</span>
+      </button>
+      <button class="dock-icon" id="dockTerminal">
+        <img src="/promptflow/assets/ui-terminal.png" alt="Terminal">
+        <span class="di-tooltip">Open in workspace</span>
+      </button>
+    </div>
+
+    <div class="dock-divider"></div>
+
+    <!-- Runtime status — shows real concurrent run count -->
+    <div class="dock-runtime" id="dockRuntime">
+      <div class="dock-runtime-title">Process Runtime</div>
+      <div class="dock-runtime-status idle" id="dockRuntimeStatus">
+        <span class="drs-dot"></span>
+        <span id="dockRuntimeText">idle</span>
+      </div>
+    </div>
+
+    <!-- Coming-soon icons cluster, right-aligned -->
+    <div class="dock-coming-soon">
+      <button class="dock-icon" id="dockAgents" title="Agents (coming soon)">
+        <img src="/promptflow/assets/dock-agents.png" alt="">
+        <span class="di-label">Agents</span>
+      </button>
+      <button class="dock-icon" id="dockGraph" title="Graph">
+        <img src="/promptflow/assets/dock-graph.png" alt="">
+        <span class="di-label">Graph</span>
+      </button>
+      <button class="dock-icon" id="dockCron" title="Cron (coming soon)">
+        <img src="/promptflow/assets/dock-cron.png" alt="">
+        <span class="di-label">Cron</span>
+      </button>
+      <button class="dock-icon" id="dockTools" title="Tools (coming soon)">
+        <img src="/promptflow/assets/dock-tools.png" alt="">
+        <span class="di-label">Tools</span>
+      </button>
+      <button class="dock-icon" id="dockMemory" title="Memory (coming soon)">
+        <img src="/promptflow/assets/dock-memory.png" alt="">
+        <span class="di-label">Memory</span>
+      </button>
+      <button class="dock-icon" id="dockAlerts" title="Alerts (coming soon)">
+        <img src="/promptflow/assets/dock-alerts.png" alt="">
+        <span class="di-label">Alerts</span>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+/* ─────────────────────────────────────────────────────────────────────
+   PromptFlow Desktop — runtime
+   ─────────────────────────────────────────────────────────────────────
+   Responsibilities:
+     - Auth check on load. Without a session, surface a sign-in modal
+       but allow browsing the public catalog of processes anonymously
+       (just not running anything).
+     - Folder navigation: each sidebar folder swaps which canvas-view
+       has .active. Heavy views (Graph, Editor) navigate to the
+       existing /promptflow.html app via URL params.
+     - Hero input → POST /api/promptflow/plan with text, render the
+       returned plan inline. For complex intents (design/update/multi-
+       step execute) we hand off to the existing app rather than
+       reimplementing the conversation thread here.
+     - Dock: pinned processes (future), runtime status (active runs),
+       coming-soon icons.
+   ───────────────────────────────────────────────────────────────────── */
+
+// ── State ────────────────────────────────────────────────────────
+let ME = null;                // user object from /auth/me, or null
+let processesCache = null;    // last /processes response
+let conversationsCache = null;
+let activeFolder = "hero";    // which view is currently visible
+
+// ── DOM helpers ──────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ── View routing ─────────────────────────────────────────────────
+function showView(name){
+  // name maps to the canvas-view id suffix. e.g. "hero" → #viewHero
+  const all = document.querySelectorAll(".canvas-view");
+  for (const v of all) v.classList.remove("active");
+  const map = {
+    hero: "viewHero",
+    chats: "viewChats",
+    processes: "viewProcesses",
+    system: "viewSystem",
+    graph: "viewGraph",
+    cron: "viewCron",
+    agents: "viewAgents",
+  };
+  const target = $(map[name] || "viewHero");
+  if (target) target.classList.add("active");
+  activeFolder = name;
+
+  // Sidebar highlight
+  for (const f of document.querySelectorAll(".sidebar-folder")) {
+    f.classList.toggle("active", f.dataset.folder === name);
+  }
+  // Dock highlight (Home active iff hero, Files active iff processes)
+  $("dockHome").classList.toggle("active", name === "hero");
+  $("dockFiles").classList.toggle("active", name === "processes");
+
+  // Scroll canvas to top when switching views
+  $("canvas").scrollTop = 0;
+
+  // Lazy-load view data on first reveal
+  if (name === "chats" && !conversationsCache) loadConversations();
+  if (name === "processes" && !processesCache) loadProcessesForView("processes");
+  if (name === "system" && !processesCache) loadProcessesForView("system");
+  if (name === "graph") {
+    // Graph rendering is heavy; punt to existing app
+    setTimeout(() => {
+      location.href = "/promptflow.html?view=graph";
+    }, 350);
+  }
+}
+
+// ── Auth + initial bootstrap ────────────────────────────────────
+async function bootstrap(){
+  try {
+    const r = await fetch("/auth/me");
+    const j = await r.json();
+    ME = j.logged_in ? j : null;
+  } catch { ME = null; }
+  paintAuthUI();
+  // Best-effort: pre-warm processes cache so dock + folders feel snappy
+  if (ME) {
+    loadProcessesForView("processes", { silent: true }).catch(()=>{});
+    refreshRuntimeStatus().catch(()=>{});
+    setInterval(() => refreshRuntimeStatus().catch(()=>{}), 8000);
+  }
+}
+
+function paintAuthUI(){
+  const chip = $("topbarTokens");
+  if (ME) {
+    chip.textContent = (ME.tokens != null ? Number(ME.tokens).toLocaleString() : "0") + " tokens";
+    chip.style.cursor = "pointer";
+    chip.onclick = () => { location.href = "/promptflow.html?openSubscribe=1"; };
+  } else {
+    chip.textContent = "Sign in";
+    chip.style.cursor = "pointer";
+    chip.onclick = openAuthModal;
+  }
+  $("topbarUser").onclick = ME
+    ? () => { location.href = "/promptflow.html?openProfile=1"; }
+    : openAuthModal;
+}
+
+function openAuthModal(){
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <h2>Sign in to PromptFlow</h2>
+      <p>Save your processes, run AI workflows, and earn from compositions of your work.</p>
+      <div class="modal-actions">
+        <a class="ma-primary" href="/auth/google?return=${encodeURIComponent(location.pathname + location.search)}">Continue with Google</a>
+        <a class="ma-secondary" href="/promptflow.html">Email / password</a>
+      </div>
+    </div>
+  `;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+// ── Hero input → /plan ───────────────────────────────────────────
+async function sendHero(){
+  const input = $("heroInput");
+  const text = (input.value || "").trim();
+  if (!text) return;
+  if (!ME) { openAuthModal(); return; }
+
+  const sendBtn = $("heroSend");
+  const statusEl = $("heroStatus");
+  const resultEl = $("heroChatResult");
+  sendBtn.disabled = true;
+  statusEl.textContent = "Planning…";
+  resultEl.innerHTML = "";
+
+  try {
+    const r = await fetch("/api/promptflow/plan", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.message || j.error || "Plan failed");
+
+    // Hand the conversation off to the existing app where the full
+    // chat + plan card UI lives. We pass the conversation_id so the
+    // user lands on the right turn. The plan has already been
+    // created server-side; the app will load it as part of the
+    // conversation thread.
+    if (j.conversation_id) {
+      statusEl.textContent = "Opening workspace…";
+      const target = "/promptflow.html?conversation=" + encodeURIComponent(j.conversation_id);
+      setTimeout(() => { location.href = target; }, 400);
+      return;
+    }
+
+    // No conversation id (shouldn't happen for the plan path, but
+    // defensively): render a minimal inline result with a link to the app.
+    renderInlineResult(j, text);
+  } catch (e) {
+    statusEl.textContent = "";
+    resultEl.innerHTML = `
+      <div class="chat-result error">
+        <div class="cr-tag">Error</div>
+        <div>${esc(e?.message || e)}</div>
+        <div class="chat-result-actions">
+          <button onclick="location.href='/promptflow.html'">Open full workspace</button>
+        </div>
+      </div>
+    `;
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+function renderInlineResult(planResp, originalText){
+  const resultEl = $("heroChatResult");
+  const intent = planResp.intent || "execute";
+  const rationale = planResp.plan?.rationale || planResp.plan?.answer || "";
+  resultEl.innerHTML = `
+    <div class="chat-result">
+      <div class="cr-tag">${esc(intent)}</div>
+      <div><strong>${esc(originalText)}</strong></div>
+      ${rationale ? `<div style="margin-top:8px;color:var(--text-dim)">${esc(rationale.slice(0, 600))}</div>` : ""}
+      <div class="chat-result-actions">
+        <button onclick="location.href='/promptflow.html'">Continue in workspace</button>
+      </div>
+    </div>
+  `;
+  $("heroStatus").textContent = "";
+}
+
+// ── Folder views: chats + processes lists ──────────────────────
+async function loadConversations(){
+  const list = $("chatsList");
+  list.innerHTML = `<div class="folder-view-empty">Loading conversations…</div>`;
+  if (!ME) {
+    list.innerHTML = `<div class="folder-view-empty"><strong>Sign in to see your chats.</strong>Your conversations are private to your account.</div>`;
+    return;
+  }
+  try {
+    const r = await fetch("/api/promptflow/conversations");
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "load failed");
+    conversationsCache = j.conversations || [];
+    $("chatsCount").textContent = `${conversationsCache.length} conversation${conversationsCache.length === 1 ? "" : "s"}`;
+    if (conversationsCache.length === 0) {
+      list.innerHTML = `<div class="folder-view-empty"><strong>No conversations yet.</strong>Type something into the hero input to start one.</div>`;
+      return;
+    }
+    list.innerHTML = "";
+    for (const c of conversationsCache) {
+      const row = document.createElement("div");
+      row.className = "fv-row";
+      const updated = c.updated_at ? new Date(c.updated_at * 1000).toLocaleDateString() : "";
+      row.innerHTML = `
+        <div class="fv-row-icon">💬</div>
+        <div class="fv-row-body">
+          <div class="fv-row-name">${esc(c.title || "Untitled conversation")}</div>
+          <div class="fv-row-meta">${esc(updated)} · ${c.turn_count || 0} turn${(c.turn_count === 1) ? "" : "s"}</div>
+        </div>
+        <div class="fv-row-actions">
+          <button class="fv-row-action" title="Open">↗</button>
+        </div>
+      `;
+      row.onclick = () => {
+        location.href = "/promptflow.html?conversation=" + encodeURIComponent(c.id);
+      };
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="folder-view-empty"><strong>Could not load conversations.</strong>${esc(e?.message || "Try again in a moment.")}</div>`;
+  }
+}
+
+async function loadProcessesForView(viewName, opts = {}){
+  const isSystem = viewName === "system";
+  const listEl = isSystem ? $("systemList") : $("processesList");
+  const countEl = isSystem ? $("systemCount") : $("processesCount");
+  if (!opts.silent) listEl.innerHTML = `<div class="folder-view-empty">Loading processes…</div>`;
+  if (!ME) {
+    if (!opts.silent) listEl.innerHTML = `<div class="folder-view-empty"><strong>Sign in to see your processes.</strong>Browse the public library after signing in.</div>`;
+    return;
+  }
+  try {
+    const r = await fetch("/api/promptflow/processes");
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "load failed");
+    processesCache = j.processes || [];
+    const filtered = isSystem
+      ? processesCache.filter(p => p.is_system)
+      : processesCache.filter(p => p.mine || (p.is_published && !p.is_system));
+    if (opts.silent) return;
+    countEl.textContent = `${filtered.length} ${isSystem ? "meta-process" : "process"}${filtered.length === 1 ? "" : "es"}`;
+    if (filtered.length === 0) {
+      listEl.innerHTML = isSystem
+        ? `<div class="folder-view-empty"><strong>No system processes loaded.</strong>System meta-processes (Generate / Evaluate / Adapt) seed automatically.</div>`
+        : `<div class="folder-view-empty"><strong>No processes yet.</strong>Type something into the hero input — "generate a process that ..." — to create your first one.</div>`;
+      return;
+    }
+    listEl.innerHTML = "";
+    for (const p of filtered) {
+      const row = document.createElement("div");
+      row.className = "fv-row";
+      const io = `${(p.input_kinds || ["text"]).join("+")} → ${p.output_kind || "video"}`;
+      const author = p.author_display_name && !p.mine ? ` · by ${p.author_display_name}` : "";
+      const runs = p.total_runs > 0 ? ` · ${p.total_runs} run${p.total_runs === 1 ? "" : "s"}` : "";
+      row.innerHTML = `
+        <div class="fv-row-icon">${esc(p.icon || autoIconFor(p))}</div>
+        <div class="fv-row-body">
+          <div class="fv-row-name">${esc(p.name)}</div>
+          <div class="fv-row-meta">${esc(io)}${esc(author)}${esc(runs)}</div>
+        </div>
+        <div class="fv-row-actions">
+          ${p.public_url ? `<button class="fv-row-action" data-public="${esc(p.public_url)}" title="Open live page">⇗</button>` : ""}
+          <button class="fv-row-action" data-edit="${esc(p.id)}" title="Open in editor">✎</button>
+        </div>
+      `;
+      row.onclick = (e) => {
+        const publicBtn = e.target.closest("[data-public]");
+        if (publicBtn) {
+          e.stopPropagation();
+          window.open(publicBtn.dataset.public, "_blank", "noopener");
+          return;
+        }
+        const editBtn = e.target.closest("[data-edit]");
+        if (editBtn) {
+          e.stopPropagation();
+          location.href = "/promptflow.html?editor=" + encodeURIComponent(editBtn.dataset.edit);
+          return;
+        }
+        // Click on the row body itself = open editor
+        location.href = "/promptflow.html?editor=" + encodeURIComponent(p.id);
+      };
+      listEl.appendChild(row);
+    }
+  } catch (e) {
+    if (!opts.silent) listEl.innerHTML = `<div class="folder-view-empty"><strong>Could not load processes.</strong>${esc(e?.message || "")}</div>`;
+  }
+}
+
+function autoIconFor(p){
+  // Fallback emoji for processes without a custom icon. Match the
+  // existing app's autoIconForProcess heuristic loosely — mostly
+  // based on output_kind.
+  const o = p.output_kind || "video";
+  if (o === "image") return "🎨";
+  if (o === "audio") return "🎵";
+  if (o === "video") return "🎬";
+  if (o === "text")  return "📝";
+  if (o === "multi") return "📦";
+  return "⚡";
+}
+
+// ── Runtime status (dock) ───────────────────────────────────────
+async function refreshRuntimeStatus(){
+  if (!ME) return;
+  // No dedicated "current running plans" endpoint; we approximate by
+  // fetching the user's recent plans and counting non-terminal ones.
+  // Cheap enough at ~8s intervals.
+  try {
+    const r = await fetch("/api/promptflow/plans?limit=20");
+    if (!r.ok) return;
+    const j = await r.json();
+    const active = (j.plans || []).filter(p =>
+      p.status === "running" || p.status === "pending" || p.status === "queued"
+    ).length;
+    const txt = $("dockRuntimeText");
+    const status = $("dockRuntimeStatus");
+    if (active > 0) {
+      txt.textContent = `${active} running`;
+      status.classList.remove("idle");
+    } else {
+      txt.textContent = "idle";
+      status.classList.add("idle");
+    }
+  } catch { /* silent */ }
+}
+
+// ── Event wiring ────────────────────────────────────────────────
+function wireEvents(){
+  // Sidebar folder clicks
+  for (const f of document.querySelectorAll(".sidebar-folder")) {
+    f.addEventListener("click", () => {
+      const which = f.dataset.folder;
+      // System folder = the same data as processes-view but filtered
+      showView(which === "system" ? "system" : which);
+    });
+  }
+
+  // Dock primary nav
+  $("dockHome").addEventListener("click", () => showView("hero"));
+  $("dockFiles").addEventListener("click", () => showView("processes"));
+  $("dockTerminal").addEventListener("click", () => {
+    location.href = "/promptflow.html";
+  });
+
+  // Dock coming-soon: clicking shows the corresponding empty-state
+  // view if there is one, otherwise a brief tooltip-only no-op.
+  $("dockAgents").addEventListener("click", () => showView("agents"));
+  $("dockCron").addEventListener("click", () => showView("cron"));
+  $("dockGraph").addEventListener("click", () => showView("graph"));
+  // Tools, Memory, Alerts: dim + non-navigating for now.
+  $("dockTools").addEventListener("click", (e) => e.preventDefault());
+  $("dockMemory").addEventListener("click", (e) => e.preventDefault());
+  $("dockAlerts").addEventListener("click", (e) => e.preventDefault());
+
+  // Hero input
+  $("heroSend").addEventListener("click", sendHero);
+  $("heroInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendHero();
+    }
+  });
+
+  // Learn more, info icon
+  $("heroLearn").addEventListener("click", () => {
+    location.href = "/promptflow.html?openLearn=1";
+  });
+  $("topbarInfo").addEventListener("click", () => {
+    location.href = "/promptflow.html?openLearn=1";
+  });
+
+  // "Open editor" CTA on processes view
+  $("processesOpenApp").addEventListener("click", () => {
+    location.href = "/promptflow.html";
+  });
+  $("chatsNew").addEventListener("click", () => {
+    // Start a fresh conversation in the main app
+    location.href = "/promptflow.html?newConversation=1";
+  });
+}
+
+// ── Boot ────────────────────────────────────────────────────────
+wireEvents();
+bootstrap();
+
+// Allow deep-linking into a folder via ?folder=processes etc.
+const usp = new URLSearchParams(location.search);
+const initial = usp.get("folder");
+if (initial && ["chats","processes","system","graph","cron","agents"].includes(initial)) {
+  showView(initial);
+}
+
+</script>
+</body>
+</html>
