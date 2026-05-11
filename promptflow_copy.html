@@ -3814,7 +3814,7 @@
    inside a smaller container now.
    ═════════════════════════════════════════════════════════════════════ */
 :root{
-  --d-sidebar-w: 104px;
+  --d-sidebar-w: 120px;
   --d-dock-h: 72px;
   --d-topbar-h: 64px;
   --d-gold: #e8a917;
@@ -3874,7 +3874,7 @@ body {
 }
 .d-sidebar::-webkit-scrollbar { display: none; }
 .d-folder {
-  width: 72px;
+  width: 88px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3904,6 +3904,17 @@ body {
   text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.6);
   letter-spacing: 0.015em;
   margin-top: 4px;
+  /* Constrain the label to the folder's width so longer words like
+     "Processes" can't overflow centered (which is what was causing
+     the left letter to clip — overflow extended into the sidebar's
+     edge clip area). White-space: nowrap forces it on one line;
+     overflow ellipsis gives a graceful fallback if a word were
+     somehow too long even at the wider folder size. */
+  max-width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .d-folder.coming-soon { opacity: 0.55; }
 .d-folder.coming-soon .d-label::after {
@@ -4090,15 +4101,20 @@ body {
   bottom: var(--d-dock-h);
   z-index: 10;
   overflow: auto;
-  /* Push content below the topbar so it doesn't sit under it. */
-  padding-top: 16px;
+  /* Reserve space for the topbar at the top so the chat thread,
+     plan cards, and any other canvas content don't render
+     underneath the search pill / tokens / account elements.
+     The topbar sits at top:24px and is ~44px tall (32px buttons
+     plus 6px vertical padding), so 80px of top padding gives a
+     12px gutter below the topbar before content begins. */
+  padding-top: 80px;
 }
 
-/* The old page-shell + chat-wrap need to fit inside the canvas. Constrain
-   their height so the composer stays visible and the stream scrolls. */
+/* Page-shell height accounts for the new padding so it doesn't get
+   pushed below the dock. */
 .page-shell {
   min-height: auto !important;
-  height: calc(100vh - var(--d-dock-h) - 16px) !important;
+  height: calc(100vh - var(--d-dock-h) - 80px) !important;
 }
 .chat-wrap {
   height: 100%;
@@ -4268,7 +4284,7 @@ body {
      tracking gives the compressed-but-balanced quality without
      crowding. */
   font-family: var(--font-body);
-  font-size: 104px;
+  font-size: 120px;
   font-weight: 700;
   letter-spacing: -0.04em;
   margin: 0;
@@ -4567,7 +4583,11 @@ body {
   position: fixed;
   left: var(--d-sidebar-w);
   right: 0;
-  top: 0;
+  /* Top inset matches the canvas content area — folder view starts
+     below the topbar so its own header (Back button, title, search)
+     doesn't collide with the search pill / token chip / account
+     elements floating in the topbar. */
+  top: 80px;
   bottom: var(--d-dock-h);
   z-index: 15;
   background: rgba(10,10,11,0.92);
@@ -6323,6 +6343,8 @@ promptflow whoami</code></pre>
         for (const c of page) if (!seen.has(c.id)) conversationsCache.push(c);
         convoHasMore = !!j.has_more;
         convoCursor = j.next_before ?? convoCursor;
+        // Expose for the desktop folder view.
+        window.conversationsCache = conversationsCache;
       }
     } catch { /* network — leave list as-is, user can retry by scrolling */ }
     finally {
@@ -6488,10 +6510,6 @@ promptflow whoami</code></pre>
   async function loadConversation(cid) {
     if (busy) return;
     if (loadingConvoId === cid) return;     // already loading this one — ignore double-clicks
-
-    // Mark the row as loading so paintConversationList can show its
-    // inline spinner. Also surface a centered loading state in the
-    // main stream so the user doesn't think nothing is happening.
     loadingConvoId = cid;
     paintConversationList();
     showStreamLoadingOverlay("Loading conversation…");
@@ -9960,7 +9978,10 @@ promptflow whoami</code></pre>
       const j = await r.json();
       if (!j.ok) { list.innerHTML = ""; return; }
       processesCache = j.processes || [];
-    } catch { processesCache = []; }
+      // Expose for the desktop folder view, which reads this rather
+      // than re-fetching. Set every time so updates propagate.
+      window.processesCache = processesCache;
+    } catch { processesCache = []; window.processesCache = []; }
     paintProcessList();
   }
 
@@ -13962,6 +13983,18 @@ new process. Compare its output to the current one before replacing.
     fileInput.files = dt.files;
     fileInput.dispatchEvent(new Event("change"));
   });
+
+  // ── Expose internals for the desktop chrome ──
+  // The desktop folder view (separate function dDesktopInit, runs on
+  // DOMContentLoaded after this IIFE finishes) needs to call into the
+  // existing app to actually load a conversation or open a process
+  // editor. Those functions are scoped to this IIFE; promoting them
+  // to window is the least-invasive way to give the folder view
+  // access without restructuring the app.
+  window.loadConversation = loadConversation;
+  window.openProcessEditor = openProcessEditor;
+  window.goHome = (typeof goHome === "function") ? goHome : null;
+  window.paintAuthUI = (typeof paintAuthUI === "function") ? paintAuthUI : null;
 })();
 
 // ════════════════════════════════════════════════════════════════════
@@ -14340,47 +14373,93 @@ function dDesktopInit(){
     return { chats: "Chats", processes: "Processes", system: "System processes" }[kind] || "Folder";
   }
 
+  // Map process/conversation records to the folder-view item shape.
+  function dMapProcess(p, kind) {
+    return {
+      id: p.id,
+      name: p.name || "Untitled process",
+      meta: (p.output_kind || (kind === "system" ? "system" : "process")),
+      kind: kind === "system" ? "system" : "process",
+      icon: dProcessIcon(p),
+      raw: p,
+    };
+  }
+  function dMapConversation(c) {
+    return {
+      id: c.id,
+      name: c.title || "Untitled conversation",
+      meta: (c.turn_count || 0) + (c.turn_count === 1 ? " turn" : " turns"),
+      kind: "conversation",
+      icon: dConversationIcon(),
+      raw: c,
+    };
+  }
+
+  // Fetch with a hard timeout so a hung network doesn't park the UI
+  // on "Loading…" forever. 10s is generous enough for slow connections
+  // but short enough that the user gets a real failure message
+  // before they go make coffee.
+  async function dFetchJson(url, ms) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms || 10000);
+    try {
+      const r = await fetch(url, { signal: ctl.signal, headers: { "accept": "application/json" } });
+      const text = await r.text();
+      // Guard against HTML responses (404 page returning DOCTYPE) so
+      // we surface a useful error instead of "Unexpected token '<'".
+      if (text.trim().startsWith("<")) {
+        throw new Error("Server returned HTML, not JSON. The API route may be misconfigured.");
+      }
+      return JSON.parse(text);
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
   async function dLoadFolderItems(kind) {
+    // ── Step 1: paint from the existing app's in-memory cache if it's
+    // already populated. The original app loads processes and the
+    // first page of conversations at boot, so for repeat folder opens
+    // (and even the first open after boot) we usually have the data
+    // already. Painting from cache is instant; no "Loading…" stare.
+    let cached = null;
+    if (kind === "chats" && Array.isArray(window.conversationsCache) && window.conversationsCache.length > 0) {
+      cached = window.conversationsCache.map(dMapConversation);
+    } else if (kind === "processes" && Array.isArray(window.processesCache) && window.processesCache.length > 0) {
+      cached = window.processesCache.filter(p => !p.is_system).map(p => dMapProcess(p, "process"));
+    } else if (kind === "system" && Array.isArray(window.processesCache) && window.processesCache.length > 0) {
+      cached = window.processesCache.filter(p => p.is_system).map(p => dMapProcess(p, "system"));
+    }
+    if (cached) {
+      _dFolderItems[kind] = cached;
+      dRenderFolderItems(cached, "");
+      // Skip the background refresh — the existing app already polls
+      // / refreshes on its own schedule. Re-fetching here would just
+      // duplicate work and could overwrite a fresher view.
+      return;
+    }
+
+    // ── Step 2: cache miss — fetch with a timeout and an HTML-guard.
     let items = [];
     try {
       if (kind === "chats") {
-        const r = await fetch("/api/promptflow/conversations");
-        const j = await r.json();
-        items = (j.conversations || j.items || []).map(c => ({
-          id: c.id,
-          name: c.title || "Untitled conversation",
-          meta: (c.turn_count || 0) + (c.turn_count === 1 ? " turn" : " turns"),
-          kind: "conversation",
-          icon: dConversationIcon(),
-          raw: c,
-        }));
+        const j = await dFetchJson("/api/promptflow/conversations");
+        items = (j.conversations || j.items || []).map(dMapConversation);
       } else if (kind === "processes") {
-        const r = await fetch("/api/promptflow/processes");
-        const j = await r.json();
-        // Filter for user-owned and public; exclude system processes
-        // (those go in the System folder).
-        items = (j.processes || []).filter(p => !p.is_system).map(p => ({
-          id: p.id,
-          name: p.name || "Untitled process",
-          meta: (p.output_kind || "process"),
-          kind: "process",
-          icon: dProcessIcon(p),
-          raw: p,
-        }));
+        const j = await dFetchJson("/api/promptflow/processes");
+        items = (j.processes || []).filter(p => !p.is_system).map(p => dMapProcess(p, "process"));
       } else if (kind === "system") {
-        const r = await fetch("/api/promptflow/processes");
-        const j = await r.json();
-        items = (j.processes || []).filter(p => p.is_system).map(p => ({
-          id: p.id,
-          name: p.name || "Untitled process",
-          meta: (p.output_kind || "system"),
-          kind: "system",
-          icon: dProcessIcon(p),
-          raw: p,
-        }));
+        const j = await dFetchJson("/api/promptflow/processes");
+        items = (j.processes || []).filter(p => p.is_system).map(p => dMapProcess(p, "system"));
       }
     } catch (e) {
-      D("dFvBody").innerHTML = '<div class="d-fv-empty"><strong>Could not load.</strong>' + dEsc(e?.message || "Try again.") + '</div>';
+      const isAbort = e?.name === "AbortError";
+      const msg = isAbort
+        ? "Timed out after 10 seconds. Check your connection or try again."
+        : (e?.message || "Try again.");
+      D("dFvBody").innerHTML =
+        '<div class="d-fv-empty"><strong>Could not load.</strong>' + dEsc(msg) +
+        '<div class="d-fv-empty-hint">If this keeps happening, the /api/promptflow route may not be reaching the backend.</div></div>';
       return;
     }
     _dFolderItems[kind] = items;
