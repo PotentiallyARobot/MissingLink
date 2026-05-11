@@ -9723,7 +9723,10 @@ promptflow whoami</code></pre>
         return;
       }
       listEl.innerHTML = "";
-      for (const s of j.suggestions) listEl.appendChild(renderSuggestionCard(processId, s));
+      // Belt-and-suspenders cap. Server now returns at most 3 but
+      // we slice here too so any stale client cache or future server
+      // change can't accidentally flood the panel.
+      for (const s of j.suggestions.slice(0, 3)) listEl.appendChild(renderSuggestionCard(processId, s));
     } catch (e) {
       listEl.innerHTML = `<div class="cs-empty">Could not load suggestions.</div>`;
     }
@@ -9752,7 +9755,10 @@ promptflow whoami</code></pre>
         ? `Cached ideas · ${Math.round((j.cache_age_sec || 0) / 60)}m old · click ↻ for fresh ones`
         : `Fresh ideas`;
       listEl.appendChild(meta);
-      for (const c of j.compositions) {
+      // Cap at 3. Server now returns at most 3 but the cache may
+      // contain older payloads with up to 6 entries — slice here to
+      // make the cap visible immediately without forcing a refresh.
+      for (const c of j.compositions.slice(0, 3)) {
         listEl.appendChild(renderCompositionCard(c));
       }
     } catch (e) {
