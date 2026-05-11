@@ -409,6 +409,34 @@
     margin-top:6px; font-family:var(--font-mono); font-size:10px;
     color:var(--text-muted); letter-spacing:.05em;
   }
+  /* "Live at /handle/slug" link — sits under the meta line. The
+     three-part row is the label, the link itself (gold so it reads
+     as actionable), and a small copy button that gives quick
+     copy-to-clipboard for sharing the URL elsewhere. */
+  .editor-head .editor-live-url{
+    margin-top:8px;
+    display:inline-flex; align-items:center; gap:8px;
+    font-family:var(--font-mono); font-size:10.5px;
+    padding:3px 9px 3px 8px;
+    background:var(--surface); border:1px solid var(--gold-dim);
+    border-radius:5px;
+    max-width:fit-content;
+  }
+  .editor-head .editor-live-url .elu-label{
+    color:var(--text-muted); text-transform:uppercase;
+    letter-spacing:.1em; font-size:9px;
+  }
+  .editor-head .editor-live-url .elu-link{
+    color:var(--gold); text-decoration:none; font-weight:500;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    max-width:340px;
+  }
+  .editor-head .editor-live-url .elu-link:hover{ text-decoration:underline }
+  .editor-head .editor-live-url .elu-copy{
+    background:transparent; border:none; color:var(--text-muted);
+    cursor:pointer; padding:0 2px; font-size:11px; line-height:1;
+  }
+  .editor-head .editor-live-url .elu-copy:hover{ color:var(--gold) }
   .editor-actions{
     display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0;
   }
@@ -987,15 +1015,25 @@
   .graph-node-fo{ overflow:visible }
   .graph-node{
     box-sizing:border-box;
+    position:relative;
     width:100%; height:100%;
     background:var(--surface-2); border:1px solid var(--border);
-    border-radius:7px; padding:9px 11px;
+    border-radius:7px; padding:9px 11px 9px 14px;
     display:grid; grid-template-columns:28px 1fr; gap:9px;
     align-items:flex-start;
     cursor:pointer;
     transition:all .15s ease-out;
     overflow:hidden;
     box-shadow:0 1px 0 rgba(0,0,0,0.4);
+  }
+  /* The left stripe is a 3px vertical bar in the category color. It's
+     the primary at-a-glance ownership signal — works at any zoom and
+     in any layout. Pure positioned div so it doesn't affect the grid. */
+  .graph-node .gn-stripe{
+    position:absolute;
+    left:0; top:0; bottom:0; width:3px;
+    background:var(--gn-stripe-color, transparent);
+    transition:background .15s ease-out;
   }
   .graph-node:hover{
     border-color:var(--gold);
@@ -1018,13 +1056,85 @@
     border-color:rgba(212,175,55,0.45);
     background:linear-gradient(180deg, var(--surface-3), var(--surface-2));
   }
+
+  /* ── Ownership categories ──
+     Four mutually exclusive classes set via JS on each node. Each
+     paints the left stripe + tints the background slightly + tunes
+     the icon outline. Together they make ownership readable at a
+     glance without overwhelming the card. */
+  .graph-node.gn-cat-mine{
+    --gn-stripe-color: #e8a917;       /* gold — yours */
+    background:linear-gradient(90deg, rgba(232,169,23,0.06), var(--surface-2) 18%);
+  }
+  .graph-node.gn-cat-mine:hover{
+    background:linear-gradient(90deg, rgba(232,169,23,0.1), var(--surface-3) 18%);
+  }
+  .graph-node.gn-cat-system{
+    --gn-stripe-color: #7fc3d9;       /* cool cyan — system / infrastructure */
+    background:linear-gradient(90deg, rgba(127,195,217,0.07), var(--surface-2) 18%);
+  }
+  .graph-node.gn-cat-system:hover{
+    background:linear-gradient(90deg, rgba(127,195,217,0.12), var(--surface-3) 18%);
+    border-color:rgba(127,195,217,0.45);
+  }
+  .graph-node.gn-cat-fork{
+    --gn-stripe-color: #b78fd4;       /* purple — forked content */
+    background:linear-gradient(90deg, rgba(183,143,212,0.06), var(--surface-2) 18%);
+  }
+  .graph-node.gn-cat-fork:hover{
+    background:linear-gradient(90deg, rgba(183,143,212,0.1), var(--surface-3) 18%);
+    border-color:rgba(183,143,212,0.4);
+  }
+  .graph-node.gn-cat-public{
+    --gn-stripe-color: #7a8694;       /* slate — someone else's published */
+    /* No tint by default — public nodes are the "neutral" baseline. */
+  }
+  .graph-node.gn-cat-public:hover{
+    background:var(--surface-3);
+  }
+
   .graph-node .gn-icon{
+    position:relative;
     width:28px; height:28px; border-radius:5px;
     display:flex; align-items:center; justify-content:center;
     background:var(--surface-3); border:1px solid var(--border);
     font-size:16px; line-height:1; flex-shrink:0;
   }
+  /* Icon outline picks up the category color subtly. */
+  .graph-node.gn-cat-mine .gn-icon{
+    border-color:rgba(232,169,23,0.35);
+    background:rgba(232,169,23,0.08);
+  }
+  .graph-node.gn-cat-system .gn-icon{
+    border-color:rgba(127,195,217,0.45);
+    background:rgba(127,195,217,0.1);
+  }
+  .graph-node.gn-cat-fork .gn-icon{
+    border-color:rgba(183,143,212,0.4);
+    background:rgba(183,143,212,0.08);
+  }
+  /* gn-parent's icon highlight stays gold for hub status regardless
+     of category — composition hubs are special. */
   .graph-node.gn-parent .gn-icon{ border-color:var(--gold); background:var(--gold-dim) }
+
+  /* Corner badge for system (★) and fork (↳) — sits on the icon's
+     top-right so it's visible even when the card is dense. The badge
+     uses the category color and a small chip outline to read as a
+     deliberate label rather than decoration. */
+  .graph-node .gn-cat-badge{
+    position:absolute;
+    top:-4px; right:-5px;
+    width:13px; height:13px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; line-height:1;
+    border-radius:50%;
+    background:var(--surface);
+    border:1.5px solid var(--gn-stripe-color, var(--border));
+    color:var(--gn-stripe-color, var(--text-dim));
+    box-shadow:0 1px 2px rgba(0,0,0,0.6);
+    pointer-events:none;
+  }
+
   .graph-node .gn-body{
     min-width:0;
     display:flex; flex-direction:column; gap:2px;
@@ -1047,7 +1157,7 @@
   }
   .graph-node .gn-pill.free{ background:var(--surface-3); color:var(--text-muted); border:1px solid var(--border) }
   .graph-node .gn-pill.paid{ background:var(--gold); color:var(--black); font-weight:700 }
-  .graph-node .gn-pill.sys{  background:var(--surface-3); color:var(--text-muted); border:1px solid var(--border); text-transform:uppercase }
+  .graph-node .gn-pill.sys{  background:rgba(127,195,217,0.15); color:#9dd2e3; border:1px solid rgba(127,195,217,0.4); text-transform:uppercase; font-weight:600 }
   .graph-node .gn-meta{
     font-family:var(--font-mono); font-size:9.5px;
     color:var(--text-muted); letter-spacing:.02em;
@@ -1404,15 +1514,23 @@
     margin-left:auto; padding-left:10px;
     font-family:var(--font-mono); font-size:9px; color:var(--text-muted);
   }
-  .map-legend .ml-item{ display:inline-flex; align-items:center; gap:4px; line-height:1 }
+  .map-legend .ml-item{ display:inline-flex; align-items:center; gap:5px; line-height:1 }
+  /* Mini node-card stripe — mirrors the actual graph-node stripe so
+     the legend reads as a true key. 3px wide vertical bar in the
+     category color. */
+  .map-legend .ml-stripe{
+    display:inline-block; width:3px; height:12px; border-radius:1px;
+  }
+  .map-legend .ml-mine     { background:#e8a917 }
+  .map-legend .ml-system   { background:#7fc3d9 }
+  .map-legend .ml-fork     { background:#b78fd4 }
+  .map-legend .ml-public   { background:#7a8694 }
+  /* Recipe / user nodes use the original dot shape since they're
+     a different node TYPE, not an ownership category. */
   .map-legend .ml-dot{
-    display:inline-block; width:10px; height:10px; border-radius:50%;
+    display:inline-block; width:9px; height:9px; border-radius:50%;
     border:1px solid;
   }
-  .map-legend .ml-mine     { background:#3a2a10; border-color:#e8a917 }
-  .map-legend .ml-system   { background:#1f1f24; border-color:#a0a0a8 }
-  .map-legend .ml-published{ background:#2a1a3a; border-color:#b87dd9 }
-  .map-legend .ml-fork     { background:#1c2a1c; border-color:#7ab47a }
   .map-legend .ml-recipe   { background:#23234a; border-color:#5a8fd1; transform:rotate(45deg); border-radius:0 }
   .map-legend .ml-user     { background:#2a2a30; border-color:#9a9a9f; border-radius:50% }
   .map-legend .ml-edge{
@@ -1420,9 +1538,16 @@
   }
   .map-legend .ml-edge-comp  { background:#e8a917 }
   .map-legend .ml-edge-recipe{ background:#5a8fd1; border-top:1px dotted #5a8fd1; height:0 }
-  .map-legend .ml-edge-fork  { background:transparent; border-top:1px dashed #7ab47a; height:0 }
+  .map-legend .ml-edge-fork  { background:transparent; border-top:1px dashed #b78fd4; height:0 }
   .map-legend .ml-edge-chal  { background:#ff5c5c }
   .map-legend .ml-sep{ width:1px; background:var(--border); height:14px }
+  /* Section label inside the legend — "OWNERSHIP", "EDGES" — gives
+     the legend information hierarchy without taking up much space. */
+  .map-legend .ml-cat-label{
+    text-transform:uppercase; letter-spacing:.08em; font-size:8px;
+    color:var(--text-muted); opacity:.7;
+    padding-right:2px;
+  }
 
   /* Challenge picker */
   .challenge-modal{ max-width:560px }
@@ -9402,6 +9527,39 @@ promptflow whoami</code></pre>
       monetizeNote +
       runsNote +
       (p.is_system ? " · system (read-only)" : "");
+
+    // Public-runnable URL — a short discreet link under the meta
+    // line. Visible for any non-system process that has resolved
+    // a public_url (the editor's /process/get response includes it
+    // for mine processes and for others' published ones). The
+    // anchor opens in a new tab so the user doesn't lose their
+    // editor state. We show the path (not the full origin) since
+    // the editor is itself loaded from missinglink.build, so the
+    // origin is obvious from context.
+    if (p.public_url && !p.is_system) {
+      const liveRow = document.createElement("div");
+      liveRow.className = "editor-live-url";
+      liveRow.innerHTML = `
+        <span class="elu-label">live at</span>
+        <a class="elu-link" target="_blank" rel="noopener"></a>
+        <button class="elu-copy" type="button" title="Copy URL">⎘</button>
+      `;
+      const a = liveRow.querySelector(".elu-link");
+      a.href = p.public_url;
+      a.textContent = p.public_url;
+      const copyBtn = liveRow.querySelector(".elu-copy");
+      copyBtn.onclick = async (e) => {
+        e.preventDefault();
+        try {
+          const full = location.origin + p.public_url;
+          await navigator.clipboard.writeText(full);
+          const orig = copyBtn.textContent;
+          copyBtn.textContent = "✓";
+          setTimeout(() => { copyBtn.textContent = orig; }, 1000);
+        } catch { /* ignore */ }
+      };
+      headLeft.appendChild(liveRow);
+    }
     const actionsR = document.createElement("div");
     actionsR.className = "editor-actions";
     if (p.python_text) {
@@ -10320,9 +10478,19 @@ new process. Compare its output to the current one before replacing.
     const requirementsTxt = (p.requirements_txt && p.requirements_txt.trim())
       ? p.requirements_txt
       : `# Python dependencies for this process\nfal-client>=0.6.0\nanthropic>=0.40.0\n`;
+    // frontend.html — public-runnable page template. Owner-edited
+    // override wins; otherwise the rendered default shared template.
+    // The server populates both fields in /process/get; if neither
+    // is set (process pre-dates Slice 1) show a stub explaining the
+    // feature and how to use it.
+    const frontendHtml = (p.frontend_html_override && p.frontend_html_override.trim())
+      ? p.frontend_html_override
+      : (p.frontend_html_default
+          || `<!-- frontend.html — this process's public-runnable page.\n\nThis file controls what visitors see at ${p.public_url || "/promptflow/<handle>/<slug>"}.\nLeave this file empty to use the default shared template.\nEdit it to customize. The string __PF_PROCESS_JSON__ is replaced at render\ntime with the process descriptor JSON; preserve that token if you want\nthe input form, timeline, and output area to keep working.\n-->\n`);
 
     return [
       { path: "process.py",         content: processPy,                          language: "python" },
+      { path: "frontend.html",      content: frontendHtml,                       language: "markup" },
       { path: "utility.md",         content: utilityMd,                          language: "markdown" },
       { path: "discoverability.md", content: discoverabilityMd,                  language: "markdown" },
       { path: "stats.md",           content: statsMd,                            language: "markdown" },
@@ -10374,13 +10542,18 @@ new process. Compare its output to the current one before replacing.
     const genMetaBtn = card.querySelector(".cv-gen-meta-btn");
     const downloadBtn = card.querySelector(".cv-download-btn");
     const statusEl = card.querySelector(".cv-status");
-    // The three metadata files an owner can edit directly via the
-    // bundle view. Everything else in the bundle (process.py,
+    // The four metadata/frontend files an owner can edit directly via
+    // the bundle view. Everything else in the bundle (process.py,
     // manifest.json, original.py, __main__.py, prompts/*.txt,
     // spirit.md, stats.md) is synthesized — edit via .py mode or
     // through real run completion (stats.md).
+    //
+    // frontend.html is the per-process override of the public-runnable
+    // page template. Saving empty content clears the override and
+    // restores the default shared template; saving any non-empty
+    // string makes that the verbatim page served at the public URL.
     const EDITABLE_BUNDLE_FILES = new Set([
-      "utility.md", "discoverability.md", "requirements.txt",
+      "utility.md", "discoverability.md", "requirements.txt", "frontend.html",
     ]);
     let mode = "py";
     let activeFile = "process.py";
@@ -10604,6 +10777,11 @@ new process. Compare its output to the current one before replacing.
         "utility.md":         "utility_md",
         "discoverability.md": "discoverability_md",
         "requirements.txt":   "requirements_txt",
+        // frontend.html maps to frontend_html_override locally — the
+        // /process/get response keeps the override and the default
+        // template in separate fields, and buildPromptflowFiles
+        // reads p.frontend_html_override to decide what to show.
+        "frontend.html":      "frontend_html_override",
       };
       const localField = fieldByFile[activeFile];
       const current = p[localField] || "";
@@ -10966,15 +11144,14 @@ new process. Compare its output to the current one before replacing.
     const legend = document.createElement("div");
     legend.className = "map-legend";
     legend.innerHTML = `
-      <span class="ml-item"><span class="ml-dot ml-mine"></span>yours</span>
-      <span class="ml-item"><span class="ml-dot ml-system"></span>system</span>
-      <span class="ml-item"><span class="ml-dot ml-published"></span>published</span>
-      <span class="ml-item"><span class="ml-dot ml-fork"></span>fork</span>
-      <span class="ml-item"><span class="ml-dot ml-recipe"></span>recipe</span>
-      <span class="ml-item"><span class="ml-dot ml-user"></span>user</span>
+      <span class="ml-cat-label">Ownership</span>
+      <span class="ml-item" title="Processes you created"><span class="ml-stripe ml-mine"></span>yours</span>
+      <span class="ml-item" title="System / meta-processes — Generate, Evaluate, Adapt"><span class="ml-stripe ml-system"></span>system ★</span>
+      <span class="ml-item" title="Public processes you forked into your workspace"><span class="ml-stripe ml-fork"></span>fork ↳</span>
+      <span class="ml-item" title="Published by another author — visible in public scope"><span class="ml-stripe ml-public"></span>public</span>
       <span class="ml-sep"></span>
+      <span class="ml-cat-label">Edges</span>
       <span class="ml-item"><span class="ml-edge ml-edge-comp"></span>composes</span>
-      <span class="ml-item"><span class="ml-edge ml-edge-recipe"></span>uses recipe</span>
       <span class="ml-item"><span class="ml-edge ml-edge-fork"></span>forked from</span>
       <span class="ml-item"><span class="ml-edge ml-edge-chal"></span>challenges</span>
     `;
@@ -11277,6 +11454,38 @@ new process. Compare its output to the current one before replacing.
       const inK = (meta.input_kinds || ["text"]).join("+");
       const outK = meta.output_kind || "video";
 
+      // Ownership category — drives the left-stripe color, the icon
+      // tint, and (for system/fork) a small corner badge. These three
+      // categories are the user's primary mental model:
+      //   • mine   — the user created it (and didn't fork — that's
+      //              a separate category below). Gold accent. The
+      //              warm "this is yours" treatment.
+      //   • system — admin-curated meta-processes (Generate / Evaluate
+      //              / Adapt). Cyan accent + ★ badge. Reads as
+      //              official infrastructure.
+      //   • fork   — the user forked this from someone else. Purple
+      //              accent + ↳ badge. Conveys "derived from" without
+      //              hiding the fact that the user owns the fork now.
+      //   • public — visible in public-scope only; someone else's
+      //              published process. Neutral slate accent.
+      // mine takes priority when the user owns AND it's a fork
+      // (forks are owned by the forker), but is_fork wins for the
+      // VISUAL treatment because the relationship to the source is
+      // the more meaningful signal.
+      let category;
+      let categoryBadge = "";
+      if (meta.is_system) {
+        category = "system";
+        categoryBadge = `<span class="gn-cat-badge" title="System process — curated by PromptFlow">★</span>`;
+      } else if (meta.is_fork) {
+        category = "fork";
+        categoryBadge = `<span class="gn-cat-badge" title="Forked from another author">↳</span>`;
+      } else if (meta.mine) {
+        category = "mine";
+      } else {
+        category = "public";
+      }
+
       const pricePill = meta.is_system
         ? `<span class="gn-pill sys">SYS</span>`
         : meta.is_monetized
@@ -11285,9 +11494,10 @@ new process. Compare its output to the current one before replacing.
 
       const xhtml = document.createElement("div");
       xhtml.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-      xhtml.className = "graph-node" + (isParent ? " gn-parent" : "");
+      xhtml.className = "graph-node gn-cat-" + category + (isParent ? " gn-parent" : "");
       xhtml.innerHTML = `
-        <div class="gn-icon">${escapeHtml(iconStr)}</div>
+        <div class="gn-stripe"></div>
+        <div class="gn-icon">${escapeHtml(iconStr)}${categoryBadge}</div>
         <div class="gn-body">
           <div class="gn-name-row">
             <div class="gn-name">${escapeHtml(node.label || "(unnamed)")}</div>
