@@ -4114,13 +4114,31 @@ body {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding-top: 8vh;
-  padding-bottom: 48px;
+  padding-top: 6vh;
+  padding-bottom: 24px;
+  /* Smooth fade-out when a conversation starts. The existing app
+     hides #empty with display:none; we layer an opacity transition
+     on top via the .d-fading class (set by the MutationObserver
+     wired in the desktop JS). Once the transition completes, the
+     parent display:none kicks in and the hero is gone. */
+  transition: opacity .35s ease, transform .35s ease;
+}
+.d-hero.d-fading {
+  opacity: 0;
+  transform: translateY(-12px);
+  pointer-events: none;
 }
 .d-hero-wordmark {
-  font-size: 64px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
+  /* Match the wordmark the user actually liked — monospace, slightly
+     blocky, with the tight tracking that reads as "code-native" and
+     "premium" at the same time. The previous .brand-h1 style was the
+     one they kept calling out as their preferred look. We keep the
+     three-stop gold gradient on top so the type still reads as
+     polished metal rather than flat gold. */
+  font-family: var(--font-mono);
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: -1.2px;
   margin: 0;
   line-height: 1.0;
   background: linear-gradient(180deg, #f4c558 0%, #e8a917 45%, #a87209 100%);
@@ -4131,10 +4149,11 @@ body {
   filter: drop-shadow(0 0 24px rgba(232,169,23,0.18));
 }
 .d-hero-wordmark sup {
-  font-size: 18px;
-  margin-left: 10px;
-  font-weight: 400;
+  font-size: 16px;
+  margin-left: 4px;
+  font-weight: 700;
   vertical-align: super;
+  letter-spacing: 0;
   background: linear-gradient(180deg, #f4c558 0%, #c08c0e 100%);
   -webkit-background-clip: text;
   background-clip: text;
@@ -4142,19 +4161,22 @@ body {
   -webkit-text-fill-color: transparent;
 }
 .d-hero-category {
-  font-size: 14px;
+  font-size: 13px;
   color: rgba(170,170,176,0.7);
   font-weight: 400;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  margin-top: 12px;
-  margin-bottom: 48px;
+  margin-top: 10px;
+  /* Tightened from 48px → 36px so the identity block (wordmark +
+     category) feels cohesive without dead space below. */
+  margin-bottom: 36px;
+  font-family: var(--font-mono);
 }
 .d-hero-tagline {
   font-size: 19px;
   color: #f0f0f2;
   font-weight: 400;
-  margin: 0 0 10px;
+  margin: 0 0 6px;
 }
 .d-hero-tagline .d-noun {
   background: linear-gradient(180deg, #f4c558 0%, #e8a917 100%);
@@ -4168,11 +4190,13 @@ body {
   font-size: 13px;
   color: var(--d-gold);
   cursor: pointer;
-  margin-top: 12px;
+  /* Tightened from 12px → 4px so "Learn more →" sits close to the
+     tagline as a continuation, not as a separate section. */
+  margin-top: 4px;
   background: none; border: none;
-  padding: 4px 0;
+  padding: 2px 0;
   letter-spacing: 0.01em;
-  opacity: 0.9;
+  opacity: 0.85;
 }
 .d-hero-learn:hover { opacity: 1; text-decoration: underline; }
 
@@ -13752,6 +13776,38 @@ new process. Compare its output to the current one before replacing.
   }
   pollRuntime();
   setInterval(pollRuntime, 8000);
+
+  // ── Hero fade-out when a chat begins ──
+  // The existing app sets #empty's display:none the moment a turn
+  // renders. That makes the wordmark disappear instantly, which feels
+  // abrupt. We watch #empty's inline style for that change and apply
+  // a fade class first; once the .35s opacity transition completes,
+  // we let display:none take over naturally on the next render cycle.
+  //
+  // We also watch the reverse — when display goes back to "" (block)
+  // because the user went home — and remove the fade class so the
+  // hero re-appears with the same animation in reverse.
+  const _emptyEl = document.getElementById("empty");
+  const _heroEl = document.querySelector(".d-hero");
+  if (_emptyEl && _heroEl) {
+    const obs = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.attributeName === "style") {
+          const isHidden = _emptyEl.style.display === "none";
+          if (isHidden) {
+            // The app wants to hide #empty. Intercept: re-show it
+            // momentarily but mark the hero as fading. After the
+            // transition, let display:none happen naturally.
+            _heroEl.classList.add("d-fading");
+          } else {
+            // Showing again — peel off the fade.
+            _heroEl.classList.remove("d-fading");
+          }
+        }
+      }
+    });
+    obs.observe(_emptyEl, { attributes: true, attributeFilter: ["style"] });
+  }
 })();
 
 </script>
