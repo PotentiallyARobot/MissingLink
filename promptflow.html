@@ -14223,28 +14223,16 @@ function dDesktopInit(){
     if (m) { m.style.display = "block"; m.scrollIntoView({ behavior: "smooth" }); }
   });
 
-  // ── Runtime status polling ──
-  // Reflect concurrent runs from /api/promptflow/plans (if available).
-  async function pollRuntime(){
-    try {
-      const r = await fetch("/api/promptflow/plans");
-      if (r.ok) {
-        const j = await r.json();
-        const running = (j.plans || []).filter(p => p.status === "running" || p.status === "in_progress").length;
-        const el = D("dDockRuntimeStatus");
-        const tx = D("dDockRuntimeText");
-        if (running > 0) {
-          el.classList.remove("idle");
-          tx.textContent = running + " running";
-        } else {
-          el.classList.add("idle");
-          tx.textContent = "idle";
-        }
-      }
-    } catch {}
-  }
-  pollRuntime();
-  setInterval(pollRuntime, 8000);
+  // ── Runtime status (dock indicator) ──
+  // The dock shows a "Process Runtime · idle / N running" indicator
+  // that was originally driven by polling /api/promptflow/plans every
+  // 8 seconds. That endpoint doesn't exist on the current backend, so
+  // the poll was returning a 404 HTML page every 8 seconds, spamming
+  // the console and never updating the status. Until the backend
+  // exposes a real concurrent-plans endpoint, the indicator stays
+  // "idle" as a static label — better than a noisy broken poll. When
+  // the endpoint ships, restore polling here.
+  // (Old code removed: pollRuntime() + setInterval.)
 
   // ── Host the existing app's auth elements inside the topbar ──
   // The existing .hdr is hidden by CSS (replaced by our topbar), but
