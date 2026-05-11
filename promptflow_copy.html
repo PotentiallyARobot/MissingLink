@@ -4131,17 +4131,21 @@ body {
   pointer-events: none;
 }
 .d-hero-wordmark {
-  /* DM Sans — clean modern geometric sans-serif, same family Stripe,
-     Vercel, and most premium SaaS use for wordmarks. Reads as
-     "polished software brand," not "vintage code editor." Pushed up
-     to 104px and weight 700 with aggressive negative tracking so
-     the letterforms feel intentional and architectural at this size.
-     The tight tracking is what gives Vercel/Linear/Stripe wordmarks
-     their distinctive "compressed but balanced" quality. */
-  font-family: var(--font-body);
+  /* Space Mono — the user's confirmed pick from the side-by-side
+     audition. Retro-tech monospace, slab-ish letterforms, gives
+     PromptFlow a "code-native, polished" character that matches the
+     "Generative OS" framing better than a generic geometric sans.
+     Loaded explicitly via Google Fonts (already imported at top of
+     <style>) rather than going through --font-display which has
+     fallback ambiguity. Pushed to 104px so it dominates the homepage
+     as the user requested ("slightly bigger"). Negative tracking is
+     gentler than a sans-serif's would be since Space Mono's
+     letterforms are already monospaced-spaced; -0.04em is enough
+     to compress without crowding. */
+  font-family: 'Space Mono', ui-monospace, monospace;
   font-size: 104px;
   font-weight: 700;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.04em;
   margin: 0;
   line-height: 1.0;
   background: linear-gradient(180deg, #f4c558 0%, #e8a917 45%, #a87209 100%);
@@ -4418,9 +4422,276 @@ body {
 .d-sp-action-danger { color: #ff5c5c; }
 .d-sp-action-danger:hover { background: rgba(255,92,92,0.08); }
 
+
+/* ── Folder view (Finder-style) ──────────────────────────────────
+   Takes over the .desktop-canvas area when a sidebar folder is
+   activated. Hides the existing chat/empty state and renders the
+   folder's items as a grid of cards. Each card supports hover
+   actions and right-click context menu. */
+.d-folder-view {
+  display: none;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: rgba(10,10,11,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.d-folder-view.active { display: flex; }
+
+/* When folder view is active, hide the existing app's chat-wrap so
+   the folder takes the full canvas. We restore it on folder close. */
+body.d-folder-mode .chat-wrap { display: none !important; }
+body.d-folder-mode #sidebar { display: none !important; }
+body.d-folder-mode #sidebarBackdrop { display: none !important; }
+/* Also force-hide the existing app's slide-in sidebar at all times
+   since the desktop folders replace it. */
+body.d-desktop-mode #sidebar { display: none !important; }
+
+.d-fv-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 24px 32px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.d-fv-back {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: rgba(240,240,242,0.85);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.d-fv-back:hover {
+  border-color: rgba(232,169,23,0.4);
+  background: rgba(232,169,23,0.06);
+}
+.d-fv-back svg { width: 14px; height: 14px; }
+.d-fv-title {
+  flex: 1 1 auto;
+  font-size: 22px;
+  font-weight: 600;
+  color: #f0f0f2;
+  font-family: var(--font-display, system-ui), sans-serif;
+  letter-spacing: -0.01em;
+}
+.d-fv-count {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: rgba(170,170,176,0.7);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.d-fv-search {
+  flex-shrink: 0;
+  width: 200px;
+  background: rgba(20,20,22,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: #f0f0f2;
+  outline: none;
+}
+.d-fv-search::placeholder { color: rgba(122,122,130,0.7); }
+.d-fv-search:focus { border-color: rgba(232,169,23,0.4); }
+
+.d-fv-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 24px 32px 40px;
+}
+.d-fv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.d-fv-item {
+  background: rgba(28,28,32,0.65);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 18px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  transition: border-color .15s ease, background .15s ease, transform .1s ease;
+  min-height: 140px;
+}
+.d-fv-item:hover {
+  border-color: rgba(232,169,23,0.32);
+  background: rgba(36,36,42,0.75);
+  transform: translateY(-1px);
+}
+.d-fv-item.selected {
+  border-color: rgba(232,169,23,0.55);
+  background: rgba(232,169,23,0.06);
+}
+.d-fv-item-icon {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  flex-shrink: 0;
+}
+.d-fv-item-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4));
+}
+.d-fv-item-name {
+  font-size: 13px;
+  color: #f0f0f2;
+  font-weight: 500;
+  line-height: 1.35;
+  /* Two-line clamp so long names don't blow out the card. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.d-fv-item-meta {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: rgba(122,122,130,0.85);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Hover action button (three-dot menu) on each item card */
+.d-fv-item-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.d-fv-item:hover .d-fv-item-actions { opacity: 1; }
+.d-fv-item-menu-btn {
+  background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  color: rgba(240,240,242,0.85);
+  width: 26px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+.d-fv-item-menu-btn:hover {
+  background: rgba(0,0,0,0.75);
+  border-color: rgba(232,169,23,0.4);
+  color: var(--d-gold);
+}
+
+/* Context menu — appears on right-click or three-dot click */
+.d-fv-context {
+  position: fixed;
+  z-index: 250;
+  background: rgba(20,20,22,0.96);
+  border: 1px solid rgba(232,169,23,0.18);
+  border-radius: 10px;
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  padding: 6px;
+  min-width: 160px;
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  animation: dFvCtxIn .12s ease-out;
+}
+.d-fv-context.active { display: flex; }
+@keyframes dFvCtxIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.d-fv-ctx-item {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: #f0f0f2;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background .1s ease;
+}
+.d-fv-ctx-item:hover {
+  background: rgba(232,169,23,0.1);
+}
+.d-fv-ctx-item.danger { color: #ff8888; }
+.d-fv-ctx-item.danger:hover { background: rgba(255,92,92,0.1); }
+.d-fv-ctx-icon {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+}
+.d-fv-ctx-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+  margin: 4px 2px;
+}
+
+.d-fv-empty {
+  padding: 64px 24px;
+  text-align: center;
+  color: rgba(170,170,176,0.7);
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+.d-fv-empty strong {
+  display: block;
+  color: #f0f0f2;
+  font-family: var(--font-display, system-ui), sans-serif;
+  font-size: 16px;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.d-fv-empty .d-fv-empty-hint {
+  margin-top: 12px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.d-fv-loading {
+  padding: 64px 24px;
+  text-align: center;
+  color: rgba(170,170,176,0.7);
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+}
+
 </style>
 </head>
-<body>
+<body class="d-desktop-mode">
 
 <!-- ════════════════════════════════════════════════════════════════
      Desktop UI chrome — wraps the original app in a sidebar + dock
@@ -13558,28 +13829,16 @@ new process. Compare its output to the current one before replacing.
   const dEsc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
   // ── Sidebar folders ──
-  // Map each folder to the existing app's deep-link action so clicking
-  // matches what the same icon does in the existing app menus.
+  // Each folder takes over the canvas with a grid of items, like
+  // double-clicking a folder in macOS Finder. The old behavior (open
+  // a slide-in sidebar) has been retired — the folder view IS the
+  // browse experience now.
   document.querySelectorAll(".d-folder").forEach(btn => {
     btn.addEventListener("click", () => {
       const k = btn.dataset.folder;
-      if (k === "system") {
-        // Show system processes filter — fall back to opening processes
-        // sidebar if no dedicated handler exists.
-        if (typeof window.openProcessLibrary === "function") window.openProcessLibrary("system");
-        else if (typeof window.openProcessList === "function") window.openProcessList("system");
-      } else if (k === "chats") {
-        if (typeof window.openConversationSidebar === "function") window.openConversationSidebar();
-        else { const sb = document.getElementById("sidebarToggle"); if (sb) sb.click(); }
-      } else if (k === "processes") {
-        if (typeof window.openProcessLibrary === "function") window.openProcessLibrary("mine");
-        else if (typeof window.openProcessList === "function") window.openProcessList();
-      } else if (k === "graph") {
-        if (typeof window.openGraphView === "function") window.openGraphView();
-      } else if (k === "cron" || k === "agents") {
-        // Coming-soon: no-op
-      }
       document.querySelectorAll(".d-folder").forEach(b => b.classList.toggle("active", b === btn));
+      if (k === "cron" || k === "agents") return; // coming soon
+      dOpenFolderView(k);
     });
   });
 
@@ -13841,10 +14100,335 @@ new process. Compare its output to the current one before replacing.
     });
     obs.observe(_emptyEl, { attributes: true, attributeFilter: ["style"] });
   }
+
+
+  // ════════════════════════════════════════════════════════════════
+  // Folder view runtime
+  // ════════════════════════════════════════════════════════════════
+
+  // Currently-open folder name (matches data-folder values: system,
+  // chats, processes, graph). null means folder view is closed.
+  let _dFolderActive = null;
+  // Cached items per folder. We refetch on every open so deletions
+  // and new items propagate naturally; cache is just to avoid jank
+  // between renders.
+  const _dFolderItems = { chats: null, processes: null, system: null };
+
+  function dOpenFolderView(kind) {
+    // Graph is a special case — the existing app's graph view is
+    // a different rendering surface entirely; defer to it.
+    if (kind === "graph") {
+      if (typeof window.openGraphView === "function") {
+        window.openGraphView();
+      }
+      return;
+    }
+    _dFolderActive = kind;
+    document.body.classList.add("d-folder-mode");
+    D("dFolderView").classList.add("active");
+    D("dFvTitle").textContent = dFolderLabel(kind);
+    D("dFvCount").textContent = "";
+    D("dFvSearch").value = "";
+    D("dFvBody").innerHTML = '<div class="d-fv-loading">Loading…</div>';
+    dLoadFolderItems(kind);
+  }
+
+  function dCloseFolderView() {
+    _dFolderActive = null;
+    document.body.classList.remove("d-folder-mode");
+    D("dFolderView").classList.remove("active");
+    dHideContextMenu();
+    document.querySelectorAll(".d-folder").forEach(b => b.classList.remove("active"));
+  }
+
+  function dFolderLabel(kind) {
+    return { chats: "Chats", processes: "Processes", system: "System processes" }[kind] || "Folder";
+  }
+
+  async function dLoadFolderItems(kind) {
+    let items = [];
+    try {
+      if (kind === "chats") {
+        const r = await fetch("/api/promptflow/conversations");
+        const j = await r.json();
+        items = (j.conversations || j.items || []).map(c => ({
+          id: c.id,
+          name: c.title || "Untitled conversation",
+          meta: (c.turn_count || 0) + (c.turn_count === 1 ? " turn" : " turns"),
+          kind: "conversation",
+          icon: dConversationIcon(),
+          raw: c,
+        }));
+      } else if (kind === "processes") {
+        const r = await fetch("/api/promptflow/processes");
+        const j = await r.json();
+        // Filter for user-owned and public; exclude system processes
+        // (those go in the System folder).
+        items = (j.processes || []).filter(p => !p.is_system).map(p => ({
+          id: p.id,
+          name: p.name || "Untitled process",
+          meta: (p.output_kind || "process"),
+          kind: "process",
+          icon: dProcessIcon(p),
+          raw: p,
+        }));
+      } else if (kind === "system") {
+        const r = await fetch("/api/promptflow/processes");
+        const j = await r.json();
+        items = (j.processes || []).filter(p => p.is_system).map(p => ({
+          id: p.id,
+          name: p.name || "Untitled process",
+          meta: (p.output_kind || "system"),
+          kind: "system",
+          icon: dProcessIcon(p),
+          raw: p,
+        }));
+      }
+    } catch (e) {
+      D("dFvBody").innerHTML = '<div class="d-fv-empty"><strong>Could not load.</strong>' + dEsc(e?.message || "Try again.") + '</div>';
+      return;
+    }
+    _dFolderItems[kind] = items;
+    dRenderFolderItems(items, "");
+  }
+
+  function dRenderFolderItems(items, filter) {
+    const body = D("dFvBody");
+    const f = (filter || "").trim().toLowerCase();
+    const shown = !f ? items : items.filter(it => (it.name || "").toLowerCase().includes(f));
+    D("dFvCount").textContent = shown.length + (shown.length === 1 ? " item" : " items");
+    if (shown.length === 0) {
+      body.innerHTML = !f
+        ? '<div class="d-fv-empty"><strong>Empty.</strong>No items in this folder yet.<div class="d-fv-empty-hint">Start a conversation or save a process to fill it.</div></div>'
+        : '<div class="d-fv-empty"><strong>No matches.</strong>Nothing matches “' + dEsc(filter) + '”.</div>';
+      return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "d-fv-grid";
+    shown.forEach((it, idx) => {
+      const card = document.createElement("div");
+      card.className = "d-fv-item";
+      card.tabIndex = 0;
+      card.innerHTML =
+        '<div class="d-fv-item-actions">' +
+          '<button class="d-fv-item-menu-btn" type="button" title="Actions" aria-label="Actions">⋯</button>' +
+        '</div>' +
+        '<div class="d-fv-item-icon">' + it.icon + '</div>' +
+        '<div class="d-fv-item-name">' + dEsc(it.name) + '</div>' +
+        '<div class="d-fv-item-meta">' + dEsc(it.meta) + '</div>';
+      // Double-click and Enter open. Single-click selects but doesn't
+      // open — matches Finder semantics. (Adjust to single-click open
+      // later if it feels too cautious in practice.)
+      card.addEventListener("dblclick", () => dFolderItemOpen(it));
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); dFolderItemOpen(it); }
+      });
+      card.addEventListener("click", () => {
+        grid.querySelectorAll(".d-fv-item.selected").forEach(c => c.classList.remove("selected"));
+        card.classList.add("selected");
+      });
+      // Right-click context menu
+      card.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        dShowContextMenu(it, e.clientX, e.clientY);
+      });
+      // Three-dot button context menu
+      const menuBtn = card.querySelector(".d-fv-item-menu-btn");
+      menuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const r = menuBtn.getBoundingClientRect();
+        dShowContextMenu(it, r.right, r.bottom);
+      });
+      grid.appendChild(card);
+    });
+    body.innerHTML = "";
+    body.appendChild(grid);
+  }
+
+  // Conversation/process icon SVG strings. Inline so we don't need
+  // additional image assets. Folder-themed: gold strokes on dark.
+  function dConversationIcon() {
+    return '<svg viewBox="0 0 64 64" fill="none" stroke="#e8a917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><path d="M12 16h40v28H28l-10 8v-8h-6z"/><line x1="22" y1="26" x2="42" y2="26"/><line x1="22" y1="34" x2="36" y2="34"/></svg>';
+  }
+  function dProcessIcon(p) {
+    // Different glyph per output kind to give visual variety in the grid.
+    const kind = (p && p.output_kind) || "text";
+    if (kind === "video") {
+      return '<svg viewBox="0 0 64 64" fill="none" stroke="#e8a917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><rect x="10" y="14" width="44" height="32" rx="3"/><polygon points="26,22 42,30 26,38" fill="#e8a917"/></svg>';
+    }
+    if (kind === "audio") {
+      return '<svg viewBox="0 0 64 64" fill="none" stroke="#e8a917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><path d="M22 40V20l16-4v24"/><circle cx="20" cy="42" r="4"/><circle cx="36" cy="40" r="4"/></svg>';
+    }
+    if (kind === "image") {
+      return '<svg viewBox="0 0 64 64" fill="none" stroke="#e8a917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><rect x="10" y="14" width="44" height="36" rx="3"/><circle cx="22" cy="26" r="3" fill="#e8a917"/><polyline points="14,46 26,34 36,42 50,28"/></svg>';
+    }
+    if (kind === "json" || kind === "data") {
+      return '<svg viewBox="0 0 64 64" fill="none" stroke="#e8a917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><path d="M22 14c-6 0-6 6-6 9s0 7-6 7c6 0 6 4 6 7s0 9 6 9"/><path d="M42 14c6 0 6 6 6 9s0 7 6 7c-6 0-6 4-6 7s0 9-6 9"/></svg>';
+    }
+    // text / default — document glyph
+    return '<svg viewBox="0 0 64 64" fill="none" stroke="#e8a917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%"><path d="M18 10h22l10 10v34H18z"/><line x1="24" y1="28" x2="44" y2="28"/><line x1="24" y1="36" x2="44" y2="36"/><line x1="24" y1="44" x2="36" y2="44"/></svg>';
+  }
+
+  // ── Open / Edit / Remove handlers ──
+  function dFolderItemOpen(it) {
+    if (it.kind === "conversation") {
+      // Conversation: load it in the chat area. Close folder view so
+      // the chat is visible.
+      dCloseFolderView();
+      if (typeof window.loadConversation === "function") {
+        window.loadConversation(it.id);
+      }
+    } else if (it.kind === "process" || it.kind === "system") {
+      // Process: open in editor. Editor lives inside the existing
+      // app's chat-wrap, so close folder view first.
+      dCloseFolderView();
+      if (typeof window.openProcessEditor === "function") {
+        window.openProcessEditor(it.id);
+      }
+    }
+  }
+
+  function dFolderItemEdit(it) {
+    // Edit means "open in editor" for processes. For conversations,
+    // there's no edit; we treat Edit on a chat as Rename — but no
+    // rename endpoint exists yet, so we surface a one-time message.
+    if (it.kind === "process" || it.kind === "system") {
+      dFolderItemOpen(it);
+    } else if (it.kind === "conversation") {
+      alert("Renaming conversations isn't supported yet. Coming soon.");
+    }
+  }
+
+  async function dFolderItemRemove(it) {
+    if (!confirm('Remove "' + (it.name || "this item") + '"? This cannot be undone.')) return;
+    if (it.kind === "process" || it.kind === "system") {
+      try {
+        const r = await fetch("/api/promptflow/process/delete", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: it.id }),
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || j.message || "Delete failed");
+        // Refresh the folder view to reflect the deletion.
+        if (_dFolderActive) dLoadFolderItems(_dFolderActive);
+      } catch (e) {
+        alert("Could not remove: " + (e?.message || e));
+      }
+    } else if (it.kind === "conversation") {
+      alert("Removing conversations isn't supported by the backend yet. Coming soon.");
+    }
+  }
+
+  // ── Context menu ──
+  function dShowContextMenu(it, x, y) {
+    const menu = D("dFvContext");
+    const isProcess = (it.kind === "process" || it.kind === "system");
+    menu.innerHTML =
+      '<button class="d-fv-ctx-item" data-action="open">' +
+        '<span class="d-fv-ctx-icon">↗</span><span>Open</span>' +
+      '</button>' +
+      (isProcess ? '<button class="d-fv-ctx-item" data-action="edit">' +
+        '<span class="d-fv-ctx-icon">✎</span><span>Edit</span>' +
+      '</button>' : '') +
+      '<div class="d-fv-ctx-divider"></div>' +
+      '<button class="d-fv-ctx-item danger" data-action="remove">' +
+        '<span class="d-fv-ctx-icon">✕</span><span>Remove</span>' +
+      '</button>';
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.classList.add("active");
+    // Clamp to viewport
+    requestAnimationFrame(() => {
+      const r = menu.getBoundingClientRect();
+      if (r.right > window.innerWidth - 8) {
+        menu.style.left = (window.innerWidth - r.width - 8) + "px";
+      }
+      if (r.bottom > window.innerHeight - 8) {
+        menu.style.top = (y - r.height) + "px";
+      }
+    });
+    menu.querySelectorAll(".d-fv-ctx-item").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.action;
+        dHideContextMenu();
+        if (act === "open") dFolderItemOpen(it);
+        else if (act === "edit") dFolderItemEdit(it);
+        else if (act === "remove") dFolderItemRemove(it);
+      });
+    });
+  }
+
+  function dHideContextMenu() {
+    const menu = D("dFvContext");
+    if (menu) menu.classList.remove("active");
+  }
+
+  // Dismiss context menu on outside-click / escape
+  document.addEventListener("click", (e) => {
+    const menu = D("dFvContext");
+    if (menu && menu.classList.contains("active") && !menu.contains(e.target)) {
+      dHideContextMenu();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const menu = D("dFvContext");
+      if (menu && menu.classList.contains("active")) { dHideContextMenu(); return; }
+      if (_dFolderActive) { dCloseFolderView(); }
+    }
+  });
+
+  // Folder view back button + search
+  if (D("dFvBack")) D("dFvBack").addEventListener("click", dCloseFolderView);
+  if (D("dFvSearch")) D("dFvSearch").addEventListener("input", (e) => {
+    if (_dFolderActive && _dFolderItems[_dFolderActive]) {
+      dRenderFolderItems(_dFolderItems[_dFolderActive], e.target.value);
+    }
+  });
+
+  // Re-route the Files dock icon to open the Processes folder
+  // (since the old "open processes library" sidebar is now gone).
+  const _dDockFilesBtn = D("dDockFiles");
+  if (_dDockFilesBtn) {
+    // Replace the existing handler by cloning the element first.
+    const fresh = _dDockFilesBtn.cloneNode(true);
+    _dDockFilesBtn.parentNode.replaceChild(fresh, _dDockFilesBtn);
+    fresh.addEventListener("click", () => {
+      document.querySelectorAll(".d-folder").forEach(b => b.classList.toggle("active", b.dataset.folder === "processes"));
+      dOpenFolderView("processes");
+    });
+  }
+
 })();
 
 </script>
 
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     Folder view — takes over the canvas when a sidebar folder is
+     clicked. Renders the folder's items as a Finder-style grid.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-folder-view" id="dFolderView">
+  <div class="d-fv-head">
+    <button class="d-fv-back" id="dFvBack" type="button" title="Back to desktop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+      <span>Back</span>
+    </button>
+    <div class="d-fv-title" id="dFvTitle">Folder</div>
+    <div class="d-fv-count" id="dFvCount"></div>
+    <input class="d-fv-search" id="dFvSearch" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="d-fv-body" id="dFvBody">
+    <!-- Items render here. -->
+  </div>
+</div>
+
+<!-- Right-click / three-dot context menu (single shared element,
+     repositioned per-click rather than per-item to keep DOM light). -->
+<div class="d-fv-context" id="dFvContext"></div>
 
 </div> <!-- /.desktop-canvas -->
 
