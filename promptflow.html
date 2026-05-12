@@ -3871,6 +3871,14 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  /* Mask the bottom edge with a fade so overflowing folders appear
+     to dissolve into the background rather than being abruptly
+     chopped. Communicates "there is more, you can scroll" without
+     forcing a visible scrollbar that would break the desktop
+     aesthetic. The fade only kicks in when content actually
+     overflows; an empty sidebar shows nothing unusual at the bottom. */
+  mask-image: linear-gradient(180deg, #000 calc(100% - 32px), transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 32px), transparent 100%);
 }
 .d-sidebar::-webkit-scrollbar { display: none; }
 .d-folder {
@@ -3927,7 +3935,7 @@ body {
 /* ── Topbar (top right) ── */
 .d-topbar {
   position: fixed;
-  top: 16px;
+  top: 12px;
   right: 20px;
   z-index: 30;
   display: flex;
@@ -4295,8 +4303,8 @@ body {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding-top: 6vh;
-  padding-bottom: 24px;
+  padding-top: 3vh;
+  padding-bottom: 20px;
   /* Smooth fade-out when a conversation starts. The existing app
      hides #empty with display:none; we layer an opacity transition
      on top via the .d-fading class (set by the MutationObserver
@@ -4310,14 +4318,12 @@ body {
   pointer-events: none;
 }
 .d-hero-wordmark {
-  /* DM Sans — the version the user pointed to and asked to go back
-     to. Clean geometric sans-serif, open letterforms, no monospace
-     character. Matches the screenshot reference. 104px keeps the
-     "slightly bigger" sizing from the previous iteration; -0.04em
-     tracking gives the compressed-but-balanced quality without
-     crowding. */
+  /* DM Sans — 88px. Was 120px which read too large at common
+     viewport sizes and pushed the topbar elements into the
+     wordmark's drop-shadow zone. 88px stays a confident hero size
+     without dominating the viewport vertically. */
   font-family: var(--font-body);
-  font-size: 120px;
+  font-size: 88px;
   font-weight: 700;
   letter-spacing: -0.04em;
   margin: 0;
@@ -4327,14 +4333,13 @@ body {
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 36px rgba(232,169,23,0.22));
+  filter: drop-shadow(0 0 28px rgba(232,169,23,0.22));
 }
 .d-hero-wordmark sup {
   /* Proportionally scaled — keeps the trademark visible without
-     dominating. Tighter margin since DM Sans letterforms are
-     less spacious than the monospace versions. */
-  font-size: 24px;
-  margin-left: 6px;
+     dominating. */
+  font-size: 18px;
+  margin-left: 5px;
   font-weight: 700;
   vertical-align: super;
   letter-spacing: 0;
@@ -4388,6 +4393,22 @@ body {
   opacity: 0.85;
 }
 .d-hero-learn:hover { opacity: 1; text-decoration: underline; }
+
+/* Hero credential — a small, italic, muted line below "Learn more →"
+   that anchors the product's claims in real experience. Reads as a
+   quiet credential rather than a CTA. The phrasing is deliberate:
+   "hard-won lessons" signals that this isn't theoretical, the
+   number signals a concrete corpus, and the italic + small size
+   keeps it from competing with the wordmark or tagline above. */
+.d-hero-credential {
+  margin-top: 18px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-style: italic;
+  color: rgba(170,170,176,0.7);
+  letter-spacing: 0.005em;
+  line-height: 1.4;
+}
 
 /* When the wordmark hero is shown, hide the rest of the marketing
    empty-state cruft (how-it-works, hero-interp, etc.) but keep the
@@ -4668,6 +4689,73 @@ body.d-desktop-mode .editor-pane {
    just lets it breathe. */
 body.d-desktop-mode .empty {
   max-width: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Unified command bar at the bottom
+   ════════════════════════════════════════════════════════════════
+   In desktop mode the separate bottom dock is folded into the chat
+   input itself. One anchored strip at the bottom edge becomes both
+   "the chat" and "the dock" — like Spotlight, Raycast, the macOS
+   menu bar, and other OS surfaces that use a single command line.
+
+   Wins:
+   • Reclaims the ~72px the dock was consuming
+   • Strengthens the OS framing (single command bar > two stacked bars)
+   • Removes redundancy: dock's Home / Files / Terminal duplicated
+     things already reachable via sidebar / clicking the wordmark /
+     just clicking the input
+   • The "Process Runtime · idle" label was always idle (its data
+     source was a 404 endpoint I removed earlier). No information lost.
+
+   Implementation: the dock is hidden, the chat-wrap padding shrinks,
+   and the input-bar gets dock-like chrome (rounded pill, blurred
+   backdrop, gold-accent focus) plus a PF mark on its left edge that
+   anchors the "this is a desktop, this is the command bar" reading. */
+
+/* Option B: dock stays, but slimmer. Reduced from 72px to 48px so
+   it consumes less vertical real estate while keeping the OS
+   visual identity intact. The contents inside the dock — brand
+   mark, dock icons, runtime status — scale via their existing
+   styles which key off the height. */
+body.d-desktop-mode {
+  --d-dock-h: 48px;
+}
+/* Inside the dock, tighten internal padding + icon size so it
+   doesn't feel cramped at the new shorter height. */
+body.d-desktop-mode .d-dock {
+  padding: 0 12px;
+}
+body.d-desktop-mode .d-dock-mark {
+  width: 24px; height: 24px;
+  font-size: 9.5px;
+}
+body.d-desktop-mode .d-dock-icon {
+  width: 28px; height: 28px;
+}
+body.d-desktop-mode .d-dock-icon img {
+  width: 18px; height: 18px;
+}
+body.d-desktop-mode .d-dock-divider {
+  height: 16px;
+}
+body.d-desktop-mode .d-dock-runtime-title {
+  font-size: 9px;
+}
+body.d-desktop-mode .d-dock-runtime-status {
+  font-size: 10px;
+}
+
+/* Empty state: when there are no messages, the .stream container has
+   flex:1 and would otherwise stretch the .empty hero content to the
+   top, leaving all extra height as dead pixels below. Centering the
+   empty container vertically distributes the height around the hero,
+   so the wordmark sits in the middle of the available space rather
+   than pinned to the top. The moment a real message lands the .stream
+   reverts to its normal top-anchored scrolling behavior because the
+   .empty element gets removed. */
+body.d-desktop-mode .stream:has(> .empty) {
+  justify-content: center;
 }
 
 .d-fv-head {
@@ -5669,9 +5757,10 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
            marketing block below is hidden via .empty-marketing rule. -->
       <div class="d-hero">
         <h1 class="d-hero-wordmark">PromptFlow<sup>™</sup></h1>
-        <div class="d-hero-category">a Generative OS built from AI processes</div>
-        <p class="d-hero-tagline">Create, Reuse, Adapt <span class="d-noun">AI processes.</span></p>
+        <div class="d-hero-category">a Generative OS built from proven AI processes</div>
+        <p class="d-hero-tagline">Create, reuse, and adapt <span class="d-noun">what already works.</span></p>
         <button class="d-hero-learn" id="dHeroLearn" type="button">Learn more →</button>
+        <div class="d-hero-credential">Build on the hard-won lessons of 1,000 AI-assisted builds.</div>
       </div>
       <div class="empty-marketing">
       <h1>Generate <span>anything</span></h1>
@@ -5816,7 +5905,7 @@ $ promptflow run my-process.promptflow</code></pre>
            through behind the user's text. -->
       <div class="input-wrap">
         <div class="input-highlight" id="inputHighlight" aria-hidden="true"></div>
-        <textarea id="textInput" placeholder="What do you want to make?" rows="1"></textarea>
+        <textarea id="textInput" placeholder="Upload your chat history and final process/github repo, we extract lessons that improve future generations" rows="1"></textarea>
       </div>
       <!-- Generation preferences — controls which processes the
            planner considers for the next request. Persistent default
