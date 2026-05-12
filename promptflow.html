@@ -3106,25 +3106,34 @@
     z-index: 3;
   }
 
-  /* Compact icon button used for Discard / Save / Done. */
+  /* Compact icon button used for Discard / Save / Done.
+     !important on the structural props so leftover .btn styles
+     from earlier iterations can't make these look like text buttons
+     again — defensive against stale CSS in older deploys. */
   .d-editor-icon-btn {
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    display: inline-flex;
+    width: 26px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
     align-items: center;
     justify-content: center;
     background: rgba(20,20,22,0.85);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px !important;
     color: rgba(220,220,225,0.85);
     cursor: pointer;
+    font-size: 0 !important;          /* prevents any text leak */
+    text-transform: none !important;
+    letter-spacing: 0 !important;
     transition: background .12s ease, border-color .12s ease, color .12s ease;
   }
   .d-editor-icon-btn:hover {
     background: rgba(20,20,22,0.95);
     color: #f0f0f2;
   }
+  /* Hide any text node that might be inside — only the SVG should
+     show. Defends against any code path that adds text via innerHTML. */
+  .d-editor-icon-btn > svg { display: block; }
   /* Discard: red accent on hover, signals destructive */
   .d-editor-discard:hover {
     border-color: rgba(255,92,92,0.55);
@@ -3132,36 +3141,22 @@
   }
   /* Commit: gold accent — primary save action */
   .d-editor-commit {
-    background: rgba(232,169,23,0.95);
-    border-color: rgba(232,169,23,0.95);
-    color: #0a0a0b;
+    background: rgba(232,169,23,0.95) !important;
+    border-color: rgba(232,169,23,0.95) !important;
+    color: #0a0a0b !important;
   }
   .d-editor-commit:hover {
-    background: #f4c558;
-    border-color: #f4c558;
+    background: #f4c558 !important;
+    border-color: #f4c558 !important;
   }
   /* Done: subtle gold border on hover */
   .d-editor-done:hover {
     border-color: rgba(232,169,23,0.5);
     color: var(--gold);
   }
-  .editor-commit-btn:disabled{
-    opacity:0.6; cursor:wait;
-  }
-  /* Discard button — red-tinted ghost, deemphasized so the user sees
-     Save first. Asks for confirm() before deleting. */
-  .editor-discard-btn{
-    background:transparent !important;
-    border:1px solid var(--red) !important;
-    color:var(--red) !important;
-    font-size:11px !important;
-    padding:6px 12px !important;
-    text-transform:none !important;
-    letter-spacing:.3px !important;
-  }
-  .editor-discard-btn:hover{
-    background:rgba(220, 50, 47, 0.1) !important;
-  }
+  /* Old .editor-commit-btn / .editor-discard-btn / .editor-done-btn
+     rules removed — the buttons now use .d-editor-icon-btn variants
+     defined below. */
   /* Draft banner — appears at the top of the editor pane when
      viewing a process that hasn't been committed yet. Gold-tinted
      so it's visible but not alarming; gives the user clear context
@@ -4295,6 +4290,17 @@ body {
   color: var(--d-gold);
   font-family: ui-monospace, monospace;
   background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: background .12s ease, border-color .12s ease;
+}
+.d-dock-mark:hover {
+  background: rgba(232,169,23,0.08);
+  border-color: rgba(232,169,23,0.95);
+}
+.d-dock-mark.active {
+  background: rgba(232,169,23,0.14);
+  border-color: var(--d-gold);
 }
 .d-dock-divider {
   width: 1px; height: 22px;
@@ -4455,6 +4461,122 @@ body {
 [data-tooltip-position="below"]:hover::before,
 [data-tooltip-position="below"]:hover::after {
   transform: translateX(-50%) translateY(0);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   PF Start menu
+   ════════════════════════════════════════════════════════════════
+   Windows-Start-style menu anchored above the PF brand mark in the
+   dock. Three items: Display, Settings, About. Each has an icon
+   on the left, label, and a hint sub-line.
+   ════════════════════════════════════════════════════════════════ */
+.d-pf-menu { position: fixed; inset: 0; z-index: 240; }
+.d-pf-menu[hidden] { display: none; }
+.d-pf-menu-backdrop {
+  position: absolute; inset: 0;
+  background: transparent;
+}
+.d-pf-menu-panel {
+  position: absolute;
+  /* Anchored to dock's left edge, just above the dock chrome. */
+  left: 16px;
+  bottom: calc(var(--d-dock-h) + 12px);
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  background: rgba(20,20,22,0.96);
+  border: 1px solid rgba(232,169,23,0.22);
+  border-radius: 10px;
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6),
+              0 0 0 1px rgba(0,0,0,0.4);
+  overflow: hidden;
+  animation: dPfMenuIn .14s ease-out;
+}
+@keyframes dPfMenuIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.d-pf-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: linear-gradient(180deg, rgba(232,169,23,0.06), transparent);
+}
+.d-pf-menu-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(232,169,23,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  color: var(--d-gold);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.d-pf-menu-title {
+  font-family: var(--font-body, system-ui);
+  font-size: 13px;
+  font-weight: 600;
+  color: #f0f0f2;
+  letter-spacing: -0.005em;
+}
+.d-pf-menu-sub {
+  font-size: 10.5px;
+  color: rgba(170,170,176,0.7);
+  font-style: italic;
+  letter-spacing: 0.01em;
+  margin-top: 1px;
+}
+.d-pf-menu-items {
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.d-pf-menu-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  padding: 9px 11px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background .1s ease;
+  color: inherit;
+}
+.d-pf-menu-item:hover {
+  background: rgba(232,169,23,0.08);
+}
+.d-pf-menu-item:focus-visible {
+  outline: 1px solid rgba(232,169,23,0.4);
+  outline-offset: -1px;
+}
+.d-pf-menu-icon {
+  grid-row: 1 / 3;
+  color: var(--d-gold);
+  opacity: 0.85;
+}
+.d-pf-menu-item-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #f0f0f2;
+  letter-spacing: 0.005em;
+}
+.d-pf-menu-item-hint {
+  font-size: 10.5px;
+  color: rgba(170,170,176,0.7);
+  margin-top: 1px;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -5385,6 +5507,255 @@ body {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   Agents monitor modal
+   ════════════════════════════════════════════════════════════════ */
+.d-agents-panel {
+  max-width: 720px;
+  width: 720px;
+}
+.d-agents-head-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.d-agents-refresh {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  color: rgba(170,170,176,0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color .15s ease, color .15s ease;
+}
+.d-agents-refresh:hover {
+  border-color: rgba(232,169,23,0.4);
+  color: var(--d-gold);
+}
+.d-agents-refresh.spinning svg {
+  animation: dAgentsSpin .8s linear infinite;
+}
+@keyframes dAgentsSpin {
+  from { transform: rotate(0); }
+  to   { transform: rotate(360deg); }
+}
+
+.d-agents-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin: 16px 28px 8px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.d-agents-summary-stat {
+  background: rgba(15,15,18,0.85);
+  padding: 12px;
+  text-align: center;
+}
+.d-agents-summary-num {
+  font-family: ui-monospace, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: #f0f0f2;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.d-agents-summary-stat.has-running .d-agents-summary-num { color: #7ab47a; }
+.d-agents-summary-stat.has-paused .d-agents-summary-num { color: rgba(232,200,140,0.95); }
+.d-agents-summary-stat.has-errored .d-agents-summary-num { color: #ff8585; }
+.d-agents-summary-label {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(170,170,176,0.85);
+}
+
+.d-agents-list {
+  padding: 12px 28px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.d-agents-list::-webkit-scrollbar { width: 8px; }
+.d-agents-list::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+}
+
+/* Empty state — when no agents are running OR backend isn't wired. */
+.d-agents-empty {
+  padding: 30px 20px;
+  text-align: center;
+  color: rgba(170,170,176,0.7);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.d-agents-empty-title {
+  font-size: 14px;
+  color: rgba(220,220,225,0.9);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.d-agents-empty-sub {
+  font-size: 12px;
+  color: rgba(170,170,176,0.7);
+  max-width: 460px;
+  margin: 0 auto;
+}
+
+/* Individual agent row. Status dot on the left, name + meta in
+   the middle, runtime + controls on the right. */
+.d-agent-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  transition: border-color .12s ease;
+}
+.d-agent-row:hover {
+  border-color: rgba(232,169,23,0.18);
+}
+.d-agent-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #7ab47a;
+  box-shadow: 0 0 8px rgba(122,180,122,0.5);
+  position: relative;
+  justify-self: center;
+}
+.d-agent-row[data-status="running"] .d-agent-dot {
+  background: #7ab47a;
+  box-shadow: 0 0 8px rgba(122,180,122,0.5);
+  animation: dAgentPulse 2s ease-in-out infinite;
+}
+.d-agent-row[data-status="paused"] .d-agent-dot {
+  background: rgba(232,200,140,0.95);
+  box-shadow: none;
+  animation: none;
+}
+.d-agent-row[data-status="errored"] .d-agent-dot {
+  background: #ff5c5c;
+  box-shadow: 0 0 8px rgba(255,92,92,0.6);
+  animation: none;
+}
+.d-agent-row[data-status="stopped"] .d-agent-dot {
+  background: rgba(122,122,130,0.7);
+  box-shadow: none;
+  animation: none;
+}
+@keyframes dAgentPulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%     { opacity: 0.7; transform: scale(0.92); }
+}
+
+.d-agent-info { min-width: 0; }
+.d-agent-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f0f0f2;
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.d-agent-status-label {
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(122,180,122,0.12);
+  color: rgba(150,200,150,0.95);
+  border: 1px solid rgba(122,180,122,0.3);
+}
+.d-agent-row[data-status="paused"] .d-agent-status-label {
+  background: rgba(232,200,140,0.12);
+  color: rgba(232,200,140,0.95);
+  border-color: rgba(232,200,140,0.3);
+}
+.d-agent-row[data-status="errored"] .d-agent-status-label {
+  background: rgba(255,92,92,0.12);
+  color: rgba(255,130,130,0.95);
+  border-color: rgba(255,92,92,0.3);
+}
+.d-agent-row[data-status="stopped"] .d-agent-status-label {
+  background: rgba(122,122,130,0.12);
+  color: rgba(170,170,176,0.85);
+  border-color: rgba(122,122,130,0.3);
+}
+.d-agent-current {
+  font-size: 11.5px;
+  color: rgba(170,170,176,0.85);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.d-agent-uptime {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(220,220,225,0.85);
+  text-align: right;
+  white-space: nowrap;
+}
+.d-agent-uptime-label {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(170,170,176,0.7);
+  margin-top: 2px;
+}
+
+.d-agent-controls {
+  display: flex;
+  gap: 4px;
+}
+.d-agent-ctrl-btn {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  color: rgba(170,170,176,0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color .12s ease, color .12s ease;
+}
+.d-agent-ctrl-btn:hover {
+  border-color: rgba(232,169,23,0.4);
+  color: var(--d-gold);
+}
+.d-agent-ctrl-btn.danger:hover {
+  border-color: rgba(255,92,92,0.5);
+  color: #ff8585;
+}
+
+.d-agents-foot-note {
+  flex: 1 1 auto;
+  font-size: 11.5px;
+  font-family: ui-monospace, monospace;
+  color: rgba(170,170,176,0.7);
+  display: flex;
+  align-items: center;
+}
+
+/* ════════════════════════════════════════════════════════════════
    Cron Trigger modal — form elements
    ════════════════════════════════════════════════════════════════ */
 .d-cron-panel {
@@ -5446,7 +5817,7 @@ body {
   font-weight: 500;
   color: rgba(170,170,176,0.85);
   background: transparent;
-  transition: background .12s ease, color .12s ease;
+  /* No transition — segmented controls should feel instant on click. */
   white-space: nowrap;
 }
 .d-cron-freq-opt:hover span {
@@ -5502,6 +5873,41 @@ body {
 }
 .d-cron-detail-select:focus { border-color: rgba(232,169,23,0.5); }
 .d-cron-detail-select option { background: #1a1a1c; color: #f0f0f2; }
+
+/* Quick-pick minute buttons. Common values (:00 :15 :30 :45) as
+   instant-click segmented buttons — no dropdown to traverse. The
+   small select alongside handles arbitrary minutes for edge cases. */
+.d-cron-minute-quick {
+  display: inline-flex;
+  gap: 4px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 5px;
+  padding: 2px;
+}
+.d-cron-mq {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(170,170,176,0.85);
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.d-cron-mq:hover { color: #f0f0f2; }
+.d-cron-mq.active {
+  background: rgba(232,169,23,0.18);
+  color: var(--d-gold);
+}
+.d-cron-detail-select-sm {
+  font-size: 11.5px;
+  padding: 3px 6px;
+  width: auto;
+  max-width: 90px;
+}
 
 /* Custom cron input — only shown in custom mode. */
 .d-cron-custom-input {
@@ -6527,6 +6933,357 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
   font-size: 11px;
   opacity: 0.7;
 }
+/* ════════════════════════════════════════════════════════════════
+   Mobile hamburger button — hidden on desktop, shown via the
+   mobile media query at the bottom of this stylesheet.
+   ════════════════════════════════════════════════════════════════ */
+.d-mobile-menu-btn {
+  display: none;          /* visible only via @media (max-width: 768px) */
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 90;
+  width: 36px;
+  height: 36px;
+  background: rgba(20,20,22,0.85);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: rgba(220,220,225,0.9);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.d-mobile-menu-btn:active {
+  background: rgba(232,169,23,0.12);
+  border-color: rgba(232,169,23,0.4);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MOBILE OVERRIDES
+   ════════════════════════════════════════════════════════════════
+   Activates below 768px. Strips down the desktop chrome so the app
+   works on phones without breaking desktop. The body keeps its
+   .d-desktop-mode class for all viewports — we just override the
+   visual rules that don't make sense on small screens.
+   ════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── Sidebar folders ─────────────────────────────────────────
+     Hidden by default on mobile (eats too much horizontal space).
+     Slides in from the left when the hamburger button is tapped
+     (see #dMobileMenuBtn wiring). */
+  body.d-desktop-mode .d-sidebar {
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    width: 220px;
+    z-index: 80;
+    background: rgba(12,12,14,0.98);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255,255,255,0.06);
+    padding-top: 56px;     /* leave room for close button at top */
+  }
+  body.d-desktop-mode .d-sidebar.d-sidebar-mobile-open {
+    transform: translateX(0);
+  }
+  body.d-desktop-mode .d-folder { width: 100%; padding: 8px 16px; flex-direction: row; gap: 12px; }
+  body.d-desktop-mode .d-folder img { width: 28px; height: 28px; }
+  body.d-desktop-mode .d-folder .d-label { font-size: 13px; margin: 0; max-width: none; }
+
+  /* Hamburger toggle — only visible on mobile. */
+  .d-mobile-menu-btn {
+    display: flex !important;
+  }
+
+  /* Mobile sidebar backdrop (tap to close). */
+  .d-sidebar-backdrop {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(2px);
+    z-index: 70;
+  }
+  .d-sidebar-backdrop.d-show { display: block; }
+
+  /* ── Topbar ──────────────────────────────────────────────────
+     Tighter sizing; SIGN IN / SIGN UP shrink to fit. */
+  body.d-desktop-mode .d-topbar {
+    top: 10px;
+    right: 10px;
+    gap: 4px;
+  }
+  body.d-desktop-mode .d-topbar-search {
+    width: 32px;
+    height: 32px;
+  }
+  body.d-desktop-mode #signinBtn,
+  body.d-desktop-mode #signupBtn {
+    font-size: 11px !important;
+    padding: 6px 10px !important;
+    letter-spacing: 0.04em !important;
+  }
+  body.d-desktop-mode #tokenPill {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+  }
+
+  /* ── Hero ───────────────────────────────────────────────────
+     Wordmark + tagline shrink so the hero doesn't dominate the
+     viewport on phones. */
+  body.d-desktop-mode .d-hero-wordmark {
+    font-size: 48px;
+  }
+  body.d-desktop-mode .d-hero-wordmark sup {
+    font-size: 12px;
+    margin-left: 3px;
+  }
+  body.d-desktop-mode .d-hero-tagline {
+    font-size: 13px;
+    margin-top: 12px;
+    padding: 0 12px;
+  }
+  body.d-desktop-mode .d-hero-category {
+    font-size: 13px;
+    margin: 10px 12px 6px;
+    padding: 0 8px;
+  }
+  body.d-desktop-mode .d-hero-learn {
+    font-size: 14px;
+    margin-top: 10px;
+  }
+  body.d-desktop-mode .d-hero-credential {
+    font-size: 11.5px;
+    padding: 0 16px;
+    margin-top: 12px;
+  }
+  body.d-desktop-mode .d-hero {
+    padding-top: 2vh;
+    padding-bottom: 14px;
+  }
+
+  /* ── Content area ────────────────────────────────────────────
+     Loses the desktop padding; full-width on mobile. */
+  body.d-desktop-mode .chat-wrap {
+    max-width: none !important;
+    padding: 0 12px !important;
+  }
+  body.d-desktop-mode .editor-pane {
+    max-width: none !important;
+    padding: 0 12px !important;
+  }
+  /* The canvas no longer offsets for a sidebar on mobile (sidebar
+     is full-width slide-in panel, not a fixed strip). */
+  body.d-desktop-mode .canvas,
+  body.d-desktop-mode .page-shell {
+    padding-left: 0 !important;
+  }
+
+  /* ── Bottom dock ─────────────────────────────────────────────
+     Compresses to fit. Hides Terminal + Cron + Agent + Files (those
+     are reachable via the PF menu on mobile). Just PF mark, Home,
+     Process Runtime status, and System gear remain in the dock. */
+  body.d-desktop-mode .d-dock {
+    padding: 0 8px;
+    height: 44px;
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+  }
+  body.d-desktop-mode .d-dock-mark {
+    width: 26px; height: 26px;
+    font-size: 9px;
+  }
+  body.d-desktop-mode .d-dock-icon {
+    width: 30px; height: 30px;
+  }
+  body.d-desktop-mode .d-dock-icon img {
+    width: 16px; height: 16px;
+  }
+  /* Hide non-essential dock icons on mobile — reachable via PF menu */
+  body.d-desktop-mode #dDockFiles,
+  body.d-desktop-mode #dDockTerminal,
+  body.d-desktop-mode #dDockCron,
+  body.d-desktop-mode #dDockAgents {
+    display: none;
+  }
+  body.d-desktop-mode .d-dock-runtime {
+    margin-left: auto;
+    padding: 3px 6px;
+    gap: 5px;
+  }
+  body.d-desktop-mode .d-dock-runtime-label {
+    /* Drop the long "PROCESS RUNTIME" label on phones — too long. */
+    display: none;
+  }
+  body.d-desktop-mode .d-dock-runtime-status {
+    font-size: 10px;
+  }
+  body.d-desktop-mode .d-dock-divider {
+    margin: 0 4px;
+  }
+
+  /* ── Chat input bar ──────────────────────────────────────────
+     Edge-to-edge on mobile, tighter padding so the textarea has
+     room to breathe. */
+  body.d-desktop-mode .input-bar {
+    margin: 0;
+    padding: 8px 8px 8px 12px;
+    gap: 6px;
+  }
+  body.d-desktop-mode .input-bar textarea {
+    font-size: 14px;
+    padding: 6px 0;
+  }
+  body.d-desktop-mode .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+  /* "Interpreter" label — leave visible but smaller. */
+  body.d-desktop-mode .d-input-mode-label {
+    font-size: 9px;
+    left: 12px;
+  }
+
+  /* ── Modals — full-screen on mobile ──────────────────────────
+     Centered cards don't work on phones. Take over the whole
+     screen, scroll internally, header sticky at top. */
+  .d-modal-panel,
+  .d-cron-panel,
+  .d-agents-panel,
+  .d-ma-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    left: 0 !important;
+    top: 0 !important;
+    transform: none !important;
+    border-radius: 0 !important;
+    border: none !important;
+  }
+  .d-ma-head {
+    padding: 16px 16px 12px;
+  }
+  .d-ma-title {
+    font-size: 19px;
+  }
+  .d-ma-section {
+    padding: 18px 16px;
+  }
+  .d-ma-status {
+    margin: 12px 16px 0;
+  }
+  .d-ma-footer {
+    padding: 14px 16px 16px;
+  }
+  /* Two-column key rows collapse to one column on mobile (already
+     handled by an existing 560px breakpoint, but reinforce). */
+  .d-ma-key-row,
+  .d-ma-activity {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+  /* Cron schedule controls reflow */
+  .d-cron-freq {
+    flex-wrap: wrap;
+  }
+  .d-cron-freq-opt span {
+    padding: 8px 6px;
+    font-size: 11.5px;
+  }
+  .d-cron-detail-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .d-agents-summary {
+    margin: 12px 16px 8px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .d-agents-list {
+    padding: 12px 16px;
+  }
+  .d-agent-row {
+    grid-template-columns: 18px 1fr;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  /* Uptime + controls drop to a second row on mobile so the agent
+     name has room. */
+  .d-agent-row > div:nth-child(3),
+  .d-agent-row > div:nth-child(4) {
+    grid-column: 1 / -1;
+    margin-left: 28px;
+  }
+  .d-agent-row > div:nth-child(3) {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+  }
+  .d-agent-uptime-label {
+    margin: 0;
+  }
+
+  /* ── PF Start menu — also full-width on mobile ───────────────
+     Slides up from bottom instead of popping above the dock. */
+  .d-pf-menu-panel {
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: none !important;
+    bottom: calc(var(--d-dock-h) + 16px) !important;
+  }
+
+  /* ── Runtime instance popover — narrower on mobile ───────────── */
+  .d-runtime-pop-panel {
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    transform: none !important;
+  }
+
+  /* ── Pyodide terminal — full-screen on mobile ─────────────── */
+  .d-term-window {
+    width: 100% !important;
+    height: 100vh !important;
+    max-width: 100% !important;
+    max-height: 100vh !important;
+    left: 0 !important;
+    top: 0 !important;
+    transform: none !important;
+    border-radius: 0 !important;
+  }
+  .d-term-body {
+    font-size: 12px;
+    padding: 10px 12px;
+  }
+
+  /* ── Folder view (when a sidebar folder is tapped) ────────── */
+  body.d-desktop-mode .d-folder-view {
+    padding: 12px;
+  }
+  body.d-desktop-mode .d-fv-head {
+    padding: 14px 12px 12px;
+  }
+  body.d-desktop-mode .d-fv-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 12px;
+  }
+}
+
+/* ── Extra-small phones (≤ 380px): one more nudge down ──────── */
+@media (max-width: 380px) {
+  body.d-desktop-mode .d-hero-wordmark { font-size: 40px; }
+  body.d-desktop-mode .d-dock-runtime-status { display: none; }
+  body.d-desktop-mode #signinBtn,
+  body.d-desktop-mode #signupBtn {
+    font-size: 10px !important;
+    padding: 5px 8px !important;
+  }
+  .d-agents-summary { grid-template-columns: 1fr 1fr; }
+}
 
 </style>
 </head>
@@ -6538,6 +7295,20 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
      ════════════════════════════════════════════════════════════════ -->
 <div class="desktop-bg"></div>
 <div class="desktop-vignette"></div>
+
+<!-- Mobile hamburger button — top-left, hidden on desktop. Toggles
+     the sidebar slide-in on mobile. -->
+<button class="d-mobile-menu-btn" id="dMobileMenuBtn" type="button"
+        aria-label="Open menu">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="3" y1="6" x2="21" y2="6"/>
+    <line x1="3" y1="12" x2="21" y2="12"/>
+    <line x1="3" y1="18" x2="21" y2="18"/>
+  </svg>
+</button>
+<!-- Backdrop behind the sidebar when it slides open on mobile. Tap
+     to dismiss. -->
+<div class="d-sidebar-backdrop" id="dSidebarBackdrop"></div>
 
 <!-- Topbar (top right) -->
 <div class="d-topbar">
@@ -6882,7 +7653,7 @@ $ promptflow run my-process.promptflow</code></pre>
            through behind the user's text. -->
       <div class="input-wrap">
         <div class="input-highlight" id="inputHighlight" aria-hidden="true"></div>
-        <textarea id="textInput" placeholder="Upload my chat history and final process — extract the lessons" rows="1"></textarea>
+        <textarea id="textInput" placeholder="Upload your chat history and final process/github repo, we extract lessons that improve future generations" rows="1"></textarea>
       </div>
       <!-- Generation preferences — controls which processes the
            planner considers for the next request. Persistent default
@@ -15887,6 +16658,109 @@ function dDesktopInit(){
     document.querySelectorAll(".d-dock-section .d-dock-icon").forEach(b => b.classList.remove("active"));
     if (id) D(id).classList.add("active");
   }
+
+  // ── PF Start menu ──
+  // Click PF mark in the dock → opens a small Windows-Start-style
+  // menu with Display, Settings, About. Each item routes to an
+  // existing surface (settings → Model & API access modal; about →
+  // Learn More page; display → placeholder until a dedicated
+  // display-settings panel ships).
+  function dPfMenuOpen() {
+    D("dPfMenu").hidden = false;
+    const m = D("dDockMark");
+    if (m) { m.classList.add("active"); m.setAttribute("aria-expanded", "true"); }
+  }
+  function dPfMenuClose() {
+    D("dPfMenu").hidden = true;
+    const m = D("dDockMark");
+    if (m) { m.classList.remove("active"); m.setAttribute("aria-expanded", "false"); }
+  }
+  function dPfMenuToggle() {
+    if (D("dPfMenu").hidden) dPfMenuOpen(); else dPfMenuClose();
+  }
+  if (D("dDockMark")) D("dDockMark").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dPfMenuToggle();
+  });
+  // Click outside the menu panel closes it. Listener is added once
+  // per init; cheap given DOMContentLoaded gating.
+  document.addEventListener("click", (e) => {
+    if (D("dPfMenu") && D("dPfMenu").hidden) return;
+    if (e.target.closest(".d-pf-menu-panel")) return;
+    if (e.target.closest("#dDockMark")) return;
+    dPfMenuClose();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && D("dPfMenu") && !D("dPfMenu").hidden) {
+      dPfMenuClose();
+    }
+  });
+  // Item handlers — route to existing surfaces.
+  if (D("dPfMenuDisplay")) D("dPfMenuDisplay").addEventListener("click", () => {
+    dPfMenuClose();
+    // Display settings don't have their own surface yet; route to the
+    // model-access modal which holds the closest related controls.
+    // When a real display panel ships, swap this for that opener.
+    if (typeof dMaOpen === "function") dMaOpen();
+  });
+  if (D("dPfMenuSettings")) D("dPfMenuSettings").addEventListener("click", () => {
+    dPfMenuClose();
+    if (typeof dMaOpen === "function") dMaOpen();
+  });
+  if (D("dPfMenuAbout")) D("dPfMenuAbout").addEventListener("click", () => {
+    dPfMenuClose();
+    // About → open the Learn More page (same destination as the hero
+    // Learn More button).
+    const btn = document.getElementById("learnMoreBtn");
+    if (btn) btn.click();
+    else window.open("/promptflow/learn_more.html", "_blank");
+  });
+
+  // ── Mobile sidebar (hamburger toggle) ──
+  // On viewports <= 768px, the sidebar is hidden by default and
+  // slides in from the left when the hamburger is tapped. On desktop
+  // the hamburger button isn't visible so this code is inert.
+  function dMobileSidebarOpen() {
+    const s = D("dSidebar");
+    const b = D("dSidebarBackdrop");
+    if (s) s.classList.add("d-sidebar-mobile-open");
+    if (b) b.classList.add("d-show");
+  }
+  function dMobileSidebarClose() {
+    const s = D("dSidebar");
+    const b = D("dSidebarBackdrop");
+    if (s) s.classList.remove("d-sidebar-mobile-open");
+    if (b) b.classList.remove("d-show");
+  }
+  if (D("dMobileMenuBtn")) D("dMobileMenuBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const s = D("dSidebar");
+    if (s && s.classList.contains("d-sidebar-mobile-open")) {
+      dMobileSidebarClose();
+    } else {
+      dMobileSidebarOpen();
+    }
+  });
+  if (D("dSidebarBackdrop")) D("dSidebarBackdrop").addEventListener("click", dMobileSidebarClose);
+  // Close mobile sidebar when a folder is tapped (so the user can
+  // see what they navigated to). Only fires on mobile.
+  document.querySelectorAll(".d-folder").forEach(folder => {
+    folder.addEventListener("click", () => {
+      if (window.matchMedia("(max-width: 768px)").matches) {
+        dMobileSidebarClose();
+      }
+    });
+  });
+  // Escape closes mobile sidebar
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const s = D("dSidebar");
+      if (s && s.classList.contains("d-sidebar-mobile-open")) {
+        dMobileSidebarClose();
+      }
+    }
+  });
+
   if (D("dDockHome")) D("dDockHome").addEventListener("click", () => {
     dActivateDock("dDockHome");
     // Close any overlay surface that might be sitting on top of the
@@ -16021,7 +16895,19 @@ function dDesktopInit(){
     return {
       access_mode: "tokens",  // safe default: existing users keep token behavior
       keys: { anthropic: "", openai: "", google: "" },
-      models: { chat: "", adapt: "", search: "", learn: "" },
+      // Sensible defaults so a fresh user gets a working setup
+      // without having to pick anything. Generate defaults to Opus
+      // because it's the safest model for code/process generation;
+      // Chat defaults to Sonnet for cost/latency balance; Search to
+      // Haiku since retrieval doesn't need the smartest model; Learn
+      // and Adapt to Sonnet as middle-ground.
+      models: {
+        generate: "anthropic:claude-opus-4-7",
+        chat:     "anthropic:claude-sonnet-4-6",
+        adapt:    "anthropic:claude-sonnet-4-6",
+        search:   "anthropic:claude-haiku-4-5",
+        learn:    "anthropic:claude-sonnet-4-6",
+      },
     };
   }
 
@@ -16038,6 +16924,7 @@ function dDesktopInit(){
     if (D("dMaKeyOpenai")) D("dMaKeyOpenai").value = s.keys.openai || "";
     if (D("dMaKeyGoogle")) D("dMaKeyGoogle").value = s.keys.google || "";
     // Models
+    if (D("dMaModelGenerate")) D("dMaModelGenerate").value = s.models.generate || "";
     if (D("dMaModelChat")) D("dMaModelChat").value = s.models.chat || "";
     if (D("dMaModelAdapt")) D("dMaModelAdapt").value = s.models.adapt || "";
     if (D("dMaModelSearch")) D("dMaModelSearch").value = s.models.search || "";
@@ -16055,10 +16942,11 @@ function dDesktopInit(){
         google:    (D("dMaKeyGoogle")    && D("dMaKeyGoogle").value    || "").trim(),
       },
       models: {
-        chat:   (D("dMaModelChat")   && D("dMaModelChat").value)   || "",
-        adapt:  (D("dMaModelAdapt")  && D("dMaModelAdapt").value)  || "",
-        search: (D("dMaModelSearch") && D("dMaModelSearch").value) || "",
-        learn:  (D("dMaModelLearn")  && D("dMaModelLearn").value)  || "",
+        generate: (D("dMaModelGenerate") && D("dMaModelGenerate").value) || "",
+        chat:     (D("dMaModelChat")     && D("dMaModelChat").value)     || "",
+        adapt:    (D("dMaModelAdapt")    && D("dMaModelAdapt").value)    || "",
+        search:   (D("dMaModelSearch")   && D("dMaModelSearch").value)   || "",
+        learn:    (D("dMaModelLearn")    && D("dMaModelLearn").value)    || "",
       },
     };
   }
@@ -16092,14 +16980,90 @@ function dDesktopInit(){
     D("dModelAccessModal").hidden = true;
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // Live settings — readable from anywhere in the app
+  // ════════════════════════════════════════════════════════════════
+  // window.pfSettings is updated every time the user changes a field
+  // in the modal AND on initial page load from localStorage. Any code
+  // making a model call should consult this for routing:
+  //
+  //   const model = window.pfSettings?.models?.generate || "anthropic:claude-opus-4-7";
+  //   const key = window.pfSettings?.keys?.anthropic;
+  //
+  // Backend code can also receive these via the X-PF-Settings header
+  // attached to every fetch (see installSettingsFetchHeader below).
+  // ════════════════════════════════════════════════════════════════
+  function dMaPublishSettings(settings) {
+    window.pfSettings = settings;
+    // Dispatch a DOM event so any other code that wants to react
+    // (re-render a "Using: Claude Opus 4.7" badge somewhere) can.
+    window.dispatchEvent(new CustomEvent("pf-settings-changed", { detail: settings }));
+  }
+
+  // Read settings → publish on first call (page load).
+  dMaPublishSettings(dMaLoadSettings());
+
+  // Auto-save: every change to any settings field persists immediately
+  // (to localStorage + window.pfSettings). The Save button still
+  // exists for explicit server-side persistence, but the user no
+  // longer has to click it to make their choice take effect locally.
+  function dMaAutoSave() {
+    const settings = dMaReadFromForm();
+    try {
+      localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify(settings));
+    } catch {}
+    dMaPublishSettings(settings);
+  }
+
+  // Install a one-time fetch wrapper that attaches the user's
+  // settings as a request header on every /api/promptflow/* call.
+  // The Worker can read this header and route the request to the
+  // user's preferred model + use their BYOK keys if applicable.
+  // No-op if already installed (idempotent against re-init).
+  (function installSettingsFetchHeader() {
+    if (window.__pfFetchInstalled) return;
+    window.__pfFetchInstalled = true;
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      try {
+        const url = typeof input === "string" ? input : (input && input.url) || "";
+        // Only attach to our own API; never leak to third-party hosts.
+        if (url.indexOf("/api/promptflow/") !== -1 && window.pfSettings) {
+          init = init || {};
+          init.headers = new Headers(init.headers || {});
+          // Encode as a single compact JSON header; backend parses on
+          // its side. Keys are sent only when access_mode is "byok"
+          // and stripped to a presence-bit otherwise.
+          const s = window.pfSettings;
+          const wire = {
+            access_mode: s.access_mode,
+            models: s.models,
+            // Don't send actual key material in a header that may be
+            // logged. Send a presence map; backend uses its own key
+            // store when access_mode = tokens, or the user submits
+            // keys via a separate authenticated endpoint when BYOK.
+            keys_present: {
+              anthropic: !!(s.keys && s.keys.anthropic),
+              openai:    !!(s.keys && s.keys.openai),
+              google:    !!(s.keys && s.keys.google),
+            },
+          };
+          init.headers.set("X-PF-Settings", JSON.stringify(wire));
+        }
+      } catch {}
+      return origFetch(input, init);
+    };
+  })();
+
   async function dMaSave() {
     const settings = dMaReadFromForm();
     const saveBtn = D("dMaSave");
     if (saveBtn) saveBtn.disabled = true;
-    // Always write to localStorage first so the user's input is never
-    // lost regardless of server status.
+    // Always write to localStorage first + publish to window so the
+    // user's input is never lost regardless of server status.
     try {
       localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify(settings));
+      dMaPublishSettings(settings);
     } catch (e) {
       dMaSetStatus("Couldn't save to local storage: " + (e && e.message || e), "err");
       if (saveBtn) saveBtn.disabled = false;
@@ -16116,7 +17080,7 @@ function dDesktopInit(){
       });
       if (r.status === 404) {
         dMaSetStatus(
-          "Saved locally. Server sync pending — the /me/settings endpoint isn't deployed yet. Your choices will sync on the next reload after it ships.",
+          "Saved locally and applied to this session. Server sync pending — the /me/settings endpoint isn't deployed yet, so settings won't persist across browsers until it ships.",
           "warn"
         );
       } else if (r.ok) {
@@ -16127,13 +17091,13 @@ function dDesktopInit(){
         dMaSetStatus(
           "Saved locally. Server returned " + r.status +
           (text ? ": " + text.slice(0, 120) : "") +
-          ". Your settings persist in this browser; reload after backend fix to retry.",
+          ". Settings apply to this session; cross-browser sync depends on backend.",
           "warn"
         );
       }
     } catch (e) {
       dMaSetStatus(
-        "Saved locally. Couldn't reach the server (" + (e && e.message || "network error") + "). Settings persist in this browser.",
+        "Saved locally. Couldn't reach the server (" + (e && e.message || "network error") + "). Settings apply to this session.",
         "warn"
       );
     } finally {
@@ -16151,8 +17115,21 @@ function dDesktopInit(){
   if (D("dMaBackdrop")) D("dMaBackdrop").addEventListener("click", dMaClose);
   if (D("dMaSave")) D("dMaSave").addEventListener("click", dMaSave);
   // Toggle access mode → update visual dimming of keys section
-  if (D("dMaModeByok")) D("dMaModeByok").addEventListener("change", dMaUpdateKeySection);
-  if (D("dMaModeTokens")) D("dMaModeTokens").addEventListener("change", dMaUpdateKeySection);
+  if (D("dMaModeByok")) D("dMaModeByok").addEventListener("change", () => { dMaUpdateKeySection(); dMaAutoSave(); });
+  if (D("dMaModeTokens")) D("dMaModeTokens").addEventListener("change", () => { dMaUpdateKeySection(); dMaAutoSave(); });
+  // Auto-save on every field change. The user's selection applies
+  // immediately to the current session (window.pfSettings + the
+  // fetch header). They can still click Save for server-side persist.
+  ["dMaKeyAnthropic","dMaKeyOpenai","dMaKeyGoogle",
+   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn"]
+    .forEach(id => {
+      const el = D(id);
+      if (!el) return;
+      el.addEventListener("change", dMaAutoSave);
+      // Key inputs also save on blur (text fields don't fire change
+      // until blur, so this is the natural moment to capture).
+      if (el.tagName === "INPUT") el.addEventListener("blur", dMaAutoSave);
+    });
   // Show/hide buttons on key inputs
   document.querySelectorAll(".d-ma-key-toggle").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -16181,6 +17158,163 @@ function dDesktopInit(){
     e.stopPropagation();
     dCronOpen();
   });
+
+  // ════════════════════════════════════════════════════════════════
+  // Agents monitor modal
+  // ════════════════════════════════════════════════════════════════
+  // Real UI for monitoring long-running agents. Fetches every 3s
+  // from /api/promptflow/agents/list. Currently 404s → empty state
+  // with explanation. When backend ships, the same UI starts working.
+  // ════════════════════════════════════════════════════════════════
+  let _agentsRefreshTimer = null;
+  let _agentsLastFetch = null;
+
+  function dAgentsOpen() {
+    D("dAgentsModal").hidden = false;
+    dAgentsRefresh();
+    // Auto-refresh every 3s while modal is open
+    if (_agentsRefreshTimer) clearInterval(_agentsRefreshTimer);
+    _agentsRefreshTimer = setInterval(dAgentsRefresh, 3000);
+  }
+  function dAgentsClose() {
+    D("dAgentsModal").hidden = true;
+    if (_agentsRefreshTimer) { clearInterval(_agentsRefreshTimer); _agentsRefreshTimer = null; }
+  }
+
+  function dAgentsRenderEmpty(kind, message) {
+    const list = D("dAgentsList");
+    if (!list) return;
+    list.innerHTML =
+      '<div class="d-agents-empty">' +
+        '<div class="d-agents-empty-title">' +
+          (kind === "no-agents" ? "No agents are running yet"
+           : kind === "backend-pending" ? "Agents backend not deployed yet"
+           : "Couldn't reach the agents service") +
+        '</div>' +
+        '<div class="d-agents-empty-sub">' + (message || "") + '</div>' +
+      '</div>';
+    // Reset summary numbers
+    ["dAgentsCountRunning","dAgentsCountPaused","dAgentsCountErrored","dAgentsCountTotal"].forEach(id => {
+      if (D(id)) D(id).textContent = "0";
+    });
+  }
+
+  function dAgentsFormatUptime(seconds) {
+    if (seconds == null || isNaN(seconds)) return "—";
+    const s = Math.floor(seconds);
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m " + (s % 60) + "s";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + "h " + (m % 60) + "m";
+    const d = Math.floor(h / 24);
+    return d + "d " + (h % 24) + "h";
+  }
+
+  function dAgentsRenderList(agents) {
+    const list = D("dAgentsList");
+    if (!list) return;
+    if (!agents || agents.length === 0) {
+      dAgentsRenderEmpty("no-agents",
+        "Once you start an agent (a process that runs continuously, watching for input and acting on its own) it will appear here. Create one from any process's editor → Run options → 'Run as agent'.");
+      return;
+    }
+    let counts = { running: 0, paused: 0, errored: 0 };
+    let html = "";
+    for (const a of agents) {
+      const status = a.status || "stopped";
+      if (counts[status] != null) counts[status]++;
+      const name = (a.name || "Untitled agent").replace(/</g,"&lt;");
+      const current = (a.current_action || "—").replace(/</g,"&lt;");
+      const uptime = dAgentsFormatUptime(a.uptime_seconds);
+      html += '<div class="d-agent-row" data-status="' + status + '" data-id="' + (a.id || "") + '">' +
+        '<span class="d-agent-dot"></span>' +
+        '<div class="d-agent-info">' +
+          '<div class="d-agent-name">' + name +
+            '<span class="d-agent-status-label">' + status + '</span>' +
+          '</div>' +
+          '<div class="d-agent-current">' + current + '</div>' +
+        '</div>' +
+        '<div>' +
+          '<div class="d-agent-uptime">' + uptime + '</div>' +
+          '<div class="d-agent-uptime-label">uptime</div>' +
+        '</div>' +
+        '<div class="d-agent-controls">' +
+          (status === "running"
+            ? '<button class="d-agent-ctrl-btn" data-action="pause" data-tooltip="Pause"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>'
+            : '<button class="d-agent-ctrl-btn" data-action="resume" data-tooltip="Resume"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg></button>') +
+          '<button class="d-agent-ctrl-btn" data-action="logs" data-tooltip="View logs"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>' +
+          '<button class="d-agent-ctrl-btn danger" data-action="stop" data-tooltip="Stop"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>' +
+        '</div>' +
+      '</div>';
+    }
+    list.innerHTML = html;
+    // Update summary counts
+    if (D("dAgentsCountRunning")) D("dAgentsCountRunning").textContent = counts.running;
+    if (D("dAgentsCountPaused")) D("dAgentsCountPaused").textContent = counts.paused;
+    if (D("dAgentsCountErrored")) D("dAgentsCountErrored").textContent = counts.errored;
+    if (D("dAgentsCountTotal")) D("dAgentsCountTotal").textContent = agents.length;
+    // Color-code the summary tiles based on counts
+    document.querySelectorAll(".d-agents-summary-stat").forEach(el => {
+      el.classList.remove("has-running","has-paused","has-errored");
+    });
+    const tiles = document.querySelectorAll(".d-agents-summary-stat");
+    if (tiles[0] && counts.running > 0) tiles[0].classList.add("has-running");
+    if (tiles[1] && counts.paused > 0)  tiles[1].classList.add("has-paused");
+    if (tiles[2] && counts.errored > 0) tiles[2].classList.add("has-errored");
+
+    // Wire per-row controls
+    list.querySelectorAll(".d-agent-ctrl-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const row = btn.closest(".d-agent-row");
+        const id = row && row.dataset.id;
+        const action = btn.dataset.action;
+        if (!id || !action) return;
+        try {
+          await fetch("/api/promptflow/agents/" + encodeURIComponent(id) + "/" + action, {
+            method: "POST"
+          });
+          dAgentsRefresh();
+        } catch {}
+      });
+    });
+  }
+
+  async function dAgentsRefresh() {
+    const refreshBtn = D("dAgentsRefresh");
+    if (refreshBtn) refreshBtn.classList.add("spinning");
+    try {
+      const r = await fetch("/api/promptflow/agents/list");
+      if (r.status === 404) {
+        dAgentsRenderEmpty("backend-pending",
+          "The /api/promptflow/agents endpoint hasn't shipped yet. This modal is the UI it will populate — agents will appear here once the backend route is deployed.");
+        _agentsLastFetch = "404";
+      } else if (r.ok) {
+        const data = await r.json();
+        dAgentsRenderList(data.agents || []);
+        _agentsLastFetch = "ok";
+      } else {
+        dAgentsRenderEmpty("error",
+          "Server returned " + r.status + ". Will retry automatically.");
+        _agentsLastFetch = "err";
+      }
+    } catch (e) {
+      dAgentsRenderEmpty("error",
+        "Network error: " + (e && e.message || "couldn't reach the server"));
+      _agentsLastFetch = "err";
+    } finally {
+      if (refreshBtn) refreshBtn.classList.remove("spinning");
+    }
+  }
+
+  if (D("dDockAgents")) D("dDockAgents").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dAgentsOpen();
+  });
+  if (D("dAgentsClose")) D("dAgentsClose").addEventListener("click", dAgentsClose);
+  if (D("dAgentsDone")) D("dAgentsDone").addEventListener("click", dAgentsClose);
+  if (D("dAgentsBackdrop")) D("dAgentsBackdrop").addEventListener("click", dAgentsClose);
+  if (D("dAgentsRefresh")) D("dAgentsRefresh").addEventListener("click", dAgentsRefresh);
 
   // ════════════════════════════════════════════════════════════════
   // Cron modal logic
@@ -16231,6 +17365,8 @@ function dDesktopInit(){
     if (D("dCronMinuteOfDay")) D("dCronMinuteOfDay").value = "0";
     if (D("dCronDow")) D("dCronDow").value = "1";
     if (D("dCronDom")) D("dCronDom").value = "1";
+    // Sync quick-pick minute buttons with the current value.
+    dCronSyncMinuteQuick();
     dCronUpdateVisibleRows();
     dCronUpdatePreview();
     dCronSetStatus("", "");
@@ -16443,8 +17579,28 @@ function dDesktopInit(){
   ["dCronMinute","dCronHour","dCronMinuteOfDay","dCronDow","dCronDom","dCronCustom"].forEach(id => {
     const el = D(id);
     if (!el) return;
-    el.addEventListener("change", dCronUpdatePreview);
+    el.addEventListener("change", () => {
+      dCronUpdatePreview();
+      if (id === "dCronMinute") dCronSyncMinuteQuick();
+    });
     if (id === "dCronCustom") el.addEventListener("input", dCronUpdatePreview);
+  });
+
+  // Quick-pick minute buttons. Clicking one sets dCronMinute's value
+  // instantly (no dropdown to traverse) and updates the preview.
+  function dCronSyncMinuteQuick() {
+    const cur = (D("dCronMinute") && D("dCronMinute").value) || "0";
+    document.querySelectorAll(".d-cron-mq").forEach(b => {
+      b.classList.toggle("active", b.dataset.minute === cur);
+    });
+  }
+  document.querySelectorAll(".d-cron-mq").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const m = btn.dataset.minute;
+      if (D("dCronMinute")) D("dCronMinute").value = m;
+      dCronSyncMinuteQuick();
+      dCronUpdatePreview();
+    });
   });
   if (D("dSpBackdrop")) D("dSpBackdrop").addEventListener("click", dCloseSystem);
   // System actions: click the existing-app hidden originals so the
@@ -17546,10 +18702,11 @@ function dDesktopInit(){
     // area: generate something new, run something they have, adapt
     // an existing process, upload a finished build.
     const placeholders = [
-      { command: "Upload",         rest: " my chat history and final process — extract the lessons" },
+      { command: "Upload",         rest: " your chat history and final process/github repo, we extract lessons that improve future generations" },
       { command: "Generate",       rest: " a process that makes a YouTube video" },
       { command: "Run my process", rest: " with this week's sales numbers"     },
-      { command: "Adapt",          rest: " this prompt for Claude Sonnet 4.6"  },
+      { command: "Adapt",          rest: " my process for 'script generator' to build process for building a 'storyboard'"  },
+      { command: "Evaluate",       rest: " my process '...' on similar processes from the Process Graph" },
       { command: "Generate",       rest: " a storyboard for a 30-second product demo" },
       { command: "Compose",        rest: " a process that summarizes my Slack and emails me a daily digest" },
       { command: "Find",           rest: " a public process that converts a podcast into a blog post" },
@@ -17898,7 +19055,9 @@ if (document.readyState === "loading") {
      ════════════════════════════════════════════════════════════════ -->
 <div class="d-dock" id="dDock">
   <div class="d-dock-brand">
-    <div class="d-dock-mark">PF</div>
+    <button class="d-dock-mark" id="dDockMark" type="button"
+            data-tooltip="PromptFlow menu" aria-haspopup="menu"
+            aria-expanded="false">PF</button>
   </div>
   <div class="d-dock-divider"></div>
   <div class="d-dock-section">
@@ -17935,11 +19094,60 @@ if (document.readyState === "loading") {
             data-tooltip="Schedule a process">
       <img src="promptflow_icons_transparent/05_cron_folder_clock.png" alt="Cron">
     </button>
+    <!-- Agent monitor — opens the Agents modal. Inline SVG (robot
+         glyph) so it doesn't depend on an asset that might not exist
+         yet. Matches the dock-icon size used by other entries. -->
+    <button class="d-dock-icon" id="dDockAgents"
+            data-tooltip="Agents — running processes">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(232,169,23,0.85)">
+        <rect x="4" y="7" width="16" height="13" rx="2"/>
+        <circle cx="9" cy="13" r="1.2" fill="currentColor"/>
+        <circle cx="15" cy="13" r="1.2" fill="currentColor"/>
+        <line x1="12" y1="3" x2="12" y2="7"/>
+        <circle cx="12" cy="2.5" r="1" fill="currentColor"/>
+        <line x1="9" y1="17" x2="15" y2="17"/>
+      </svg>
+    </button>
     <button class="d-dock-icon" id="dDockSystem" data-tooltip="System">
       <img src="promptflow_icons_transparent/12_settings.png" alt="System">
     </button>
   </div>
 </div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     PF Start menu — Windows-style popup anchored above the dock's
+     PF brand mark. Click PF → opens. Click elsewhere → closes.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-pf-menu" id="dPfMenu" hidden>
+  <div class="d-pf-menu-backdrop" id="dPfMenuBackdrop"></div>
+  <div class="d-pf-menu-panel" role="menu" aria-label="PromptFlow menu">
+    <div class="d-pf-menu-head">
+      <div class="d-pf-menu-mark">PF</div>
+      <div>
+        <div class="d-pf-menu-title">PromptFlow</div>
+        <div class="d-pf-menu-sub">Generative OS</div>
+      </div>
+    </div>
+    <div class="d-pf-menu-items">
+      <button class="d-pf-menu-item" id="dPfMenuDisplay" role="menuitem" type="button">
+        <svg class="d-pf-menu-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span class="d-pf-menu-item-label">Display</span>
+        <span class="d-pf-menu-item-hint">Theme, layout, density</span>
+      </button>
+      <button class="d-pf-menu-item" id="dPfMenuSettings" role="menuitem" type="button">
+        <svg class="d-pf-menu-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="d-pf-menu-item-label">Settings</span>
+        <span class="d-pf-menu-item-hint">Models, API keys, account</span>
+      </button>
+      <button class="d-pf-menu-item" id="dPfMenuAbout" role="menuitem" type="button">
+        <svg class="d-pf-menu-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span class="d-pf-menu-item-label">About</span>
+        <span class="d-pf-menu-item-hint">Patent, trademark, version</span>
+      </button>
+    </div>
+  </div>
+</div>
+
 
 <!-- ════════════════════════════════════════════════════════════════
      Runtime instance picker
@@ -18201,6 +19409,29 @@ if (document.readyState === "loading") {
 
       <div class="d-ma-activity">
         <div class="d-ma-activity-info">
+          <div class="d-ma-activity-name">Generate</div>
+          <div class="d-ma-activity-desc">Building new processes from a prompt. The primary action — "Generate a process that…" Opus is the safe default; Sonnet is faster and cheaper.</div>
+        </div>
+        <select class="d-ma-activity-select" id="dMaModelGenerate">
+          <option value="">Select a model…</option>
+          <optgroup label="Anthropic">
+            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          </optgroup>
+          <optgroup label="OpenAI">
+            <option value="openai:gpt-4o">GPT-4o</option>
+            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
+          </optgroup>
+          <optgroup label="Google">
+            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="d-ma-activity">
+        <div class="d-ma-activity-info">
           <div class="d-ma-activity-name">Chat</div>
           <div class="d-ma-activity-desc">Conversational responses, planning, the default reasoning model.</div>
         </div>
@@ -18308,6 +19539,77 @@ if (document.readyState === "loading") {
      doesn't exist yet — that surfaces a clean error state rather
      than pretending the save worked.
      ════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════════════════════════════
+     Agents Monitor modal
+     ════════════════════════════════════════════════════════════════
+     Real UI for monitoring long-running agents (processes that run
+     continuously, maintain state, take actions on their own).
+     Distinct from cron triggers (which fire one-shot on a schedule)
+     and processes (which run once when invoked).
+
+     Each agent row shows: name, status dot, uptime, what it's
+     currently doing, and controls (pause, resume, stop, logs).
+
+     Fetches from /api/promptflow/agents/list every 3 seconds while
+     open. Currently 404s → modal shows an empty-state explanation.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-modal" id="dAgentsModal" hidden>
+  <div class="d-modal-backdrop" id="dAgentsBackdrop"></div>
+  <div class="d-modal-panel d-agents-panel">
+    <div class="d-ma-head">
+      <div>
+        <div class="d-ma-eyebrow">Agents</div>
+        <h2 class="d-ma-title">Running agents</h2>
+      </div>
+      <div class="d-agents-head-tools">
+        <button class="d-agents-refresh" id="dAgentsRefresh" type="button"
+                data-tooltip="Refresh now">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+        </button>
+        <button class="d-ma-close" id="dAgentsClose" type="button" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="d-ma-status" id="dAgentsStatus"></div>
+
+    <!-- Summary bar — shows aggregate counts at a glance. -->
+    <div class="d-agents-summary" id="dAgentsSummary">
+      <div class="d-agents-summary-stat">
+        <div class="d-agents-summary-num" id="dAgentsCountRunning">0</div>
+        <div class="d-agents-summary-label">Running</div>
+      </div>
+      <div class="d-agents-summary-stat">
+        <div class="d-agents-summary-num" id="dAgentsCountPaused">0</div>
+        <div class="d-agents-summary-label">Paused</div>
+      </div>
+      <div class="d-agents-summary-stat">
+        <div class="d-agents-summary-num" id="dAgentsCountErrored">0</div>
+        <div class="d-agents-summary-label">Errored</div>
+      </div>
+      <div class="d-agents-summary-stat">
+        <div class="d-agents-summary-num" id="dAgentsCountTotal">0</div>
+        <div class="d-agents-summary-label">Total</div>
+      </div>
+    </div>
+
+    <!-- Agent list — populated by JS from /agents/list endpoint. -->
+    <div class="d-agents-list" id="dAgentsList">
+      <!-- empty state rendered here while loading or when no agents -->
+    </div>
+
+    <div class="d-ma-footer">
+      <span class="d-agents-foot-note" id="dAgentsAutoRefresh">Auto-refreshing every 3s</span>
+      <button class="d-ma-btn d-ma-btn-secondary" id="dAgentsDone" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <div class="d-modal" id="dCronModal" hidden>
   <div class="d-modal-backdrop" id="dCronBackdrop"></div>
   <div class="d-modal-panel d-cron-panel">
@@ -18365,14 +19667,22 @@ if (document.readyState === "loading") {
              the frequencies that need it. JS toggles visibility via
              data-show attributes. -->
         <div class="d-cron-detail">
-          <!-- Minute selector — used by hourly to pick "at minute N
-               past every hour." -->
+          <!-- Minute selector — common values as quick-pick buttons,
+               full range tucked into a small "other" dropdown for
+               anything that doesn't match :00 :15 :30 :45. Way faster
+               than scrolling through 60 entries in a native select. -->
           <div class="d-cron-detail-row" data-show="hourly">
             <span class="d-cron-detail-label">at</span>
-            <select class="d-cron-detail-select" id="dCronMinute" aria-label="Minute">
+            <div class="d-cron-minute-quick" role="radiogroup" aria-label="Minute">
+              <button type="button" class="d-cron-mq" data-minute="0">:00</button>
+              <button type="button" class="d-cron-mq" data-minute="15">:15</button>
+              <button type="button" class="d-cron-mq" data-minute="30">:30</button>
+              <button type="button" class="d-cron-mq" data-minute="45">:45</button>
+            </div>
+            <select class="d-cron-detail-select d-cron-detail-select-sm" id="dCronMinute" aria-label="Custom minute" title="Pick any other minute">
               <!-- populated by JS: 0–59 -->
             </select>
-            <span class="d-cron-detail-suffix">minutes past the hour</span>
+            <span class="d-cron-detail-suffix">past the hour</span>
           </div>
 
           <!-- Time-of-day for daily / weekly / monthly -->
