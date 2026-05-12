@@ -3159,6 +3159,31 @@
     transition:border-color .15s;
   }
   .input-bar:focus-within{ border-color:var(--gold) }
+  /* Make input-bar the positioning context for the absolute-positioned
+     "Interpreter" label that sits as its first child. */
+  .input-bar { position: relative; }
+
+  /* Small "Interpreter" label sitting just above the chat input's
+     top-left corner. Absolutely positioned so it overlays the
+     surrounding chrome rather than occupying layout space — the
+     input bar's geometry is unaffected. Gold tint matches the
+     command-prefix highlight color so the label reads as part of
+     the same color system as the colored command words inside
+     the input. */
+  .d-input-mode-label {
+    position: absolute;
+    left: 14px;
+    bottom: 100%;
+    margin-bottom: 4px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    opacity: 0.7;
+    user-select: none;
+    pointer-events: none;
+    z-index: 2;
+  }
   /* Wrapper that anchors the textarea + its highlight overlay so they
      share the same position. The overlay sits behind the textarea
      and renders <mark> tags over recognized command portions; the
@@ -3263,7 +3288,35 @@
     border-radius:2px; padding:1px 4px; font-family:var(--font-mono);
     font-size:9px; margin:0 2px; color:var(--text-dim);
   }
-  .input-bar textarea::placeholder{ color:var(--text-muted) }
+  .input-bar textarea::placeholder{
+    color:var(--text-muted);
+    transition: opacity .22s ease;
+  }
+  /* When the styled-placeholder overlay is visible, the textarea's
+     native placeholder must be invisible so they don't double-stack.
+     The native placeholder stays in the DOM for screen readers. */
+  .input-bar textarea.has-styled-placeholder::placeholder {
+    color: transparent;
+  }
+  /* Styled placeholder rendered in the inputHighlight overlay.
+     Command prefix gets the gold tint (same family as the live
+     command-prefix coloring), rest of the example reads in muted
+     gray (same color as the native placeholder). */
+  .input-highlight .placeholder-cmd {
+    color: var(--gold);
+    opacity: 0.85;
+    transition: opacity .22s ease;
+  }
+  .input-highlight .placeholder-rest {
+    color: var(--text-muted);
+    transition: opacity .22s ease;
+  }
+  /* Fade-out class is toggled briefly during the cycle to crossfade
+     between two placeholders. Triggered by the rotator JS. */
+  .input-highlight.placeholder-fading .placeholder-cmd,
+  .input-highlight.placeholder-fading .placeholder-rest {
+    opacity: 0;
+  }
   .icon-btn{
     flex-shrink:0; width:32px; height:32px; border-radius:6px;
     background:var(--surface-2); border:1px solid var(--border);
@@ -4235,14 +4288,31 @@ body {
 }
 .d-dock-icon img { width: 22px; height: 22px; }
 .d-dock-runtime {
-  display: flex; flex-direction: column; justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   margin-left: 8px;
   font-family: ui-monospace, monospace;
-  opacity: 0.85;
   flex-shrink: 0;
   white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: background .15s ease, border-color .15s ease;
 }
-.d-dock-runtime-title {
+.d-dock-runtime:hover {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+}
+.d-dock-runtime.active {
+  background: rgba(232,169,23,0.06);
+  border-color: rgba(232,169,23,0.32);
+}
+.d-dock-runtime-label {
   font-size: 10.5px;
   color: rgba(170,170,176,0.9);
   letter-spacing: 0.04em;
@@ -4250,10 +4320,11 @@ body {
   font-weight: 500;
 }
 .d-dock-runtime-status {
-  display: flex; align-items: center; gap: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: #f0f0f2;
-  margin-top: 3px;
 }
 .d-dock-runtime-status .d-drs-dot {
   width: 6px; height: 6px;
@@ -4261,9 +4332,327 @@ body {
   background: #7ab47a;
   box-shadow: 0 0 6px rgba(122,180,122,0.6);
 }
+.d-dock-runtime-status.ready .d-drs-dot {
+  background: #7ab47a;
+  box-shadow: 0 0 6px rgba(122,180,122,0.6);
+}
 .d-dock-runtime-status.idle .d-drs-dot {
   background: rgba(122,122,130,0.9);
   box-shadow: none;
+}
+.d-dock-runtime-instance {
+  font-size: 10.5px;
+  color: var(--d-gold);
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  padding: 2px 7px;
+  background: rgba(232,169,23,0.08);
+  border: 1px solid rgba(232,169,23,0.28);
+  border-radius: 4px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Custom tooltips
+   ════════════════════════════════════════════════════════════════
+   Replaces the browser-default title-attribute tooltip (a black box
+   with white text — looks terrible). Elements with [data-tooltip]
+   render a styled tooltip on hover that matches the app's chrome.
+
+   The element's native title attribute should be removed when
+   migrating; if both are present the browser will still show its
+   default tooltip on slow-hover, defeating the point. */
+[data-tooltip] {
+  position: relative;
+}
+[data-tooltip]::before,
+[data-tooltip]::after {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s ease, transform .15s ease;
+  z-index: 1000;
+}
+[data-tooltip]::before {
+  content: attr(data-tooltip);
+  white-space: nowrap;
+  font-family: var(--font-body, system-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  color: rgba(240,240,242,0.95);
+  background: rgba(20,20,22,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 6px;
+  padding: 6px 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+[data-tooltip]::after {
+  content: "";
+  width: 0; height: 0;
+  border: 4px solid transparent;
+  border-top-color: rgba(20,20,22,0.95);
+  bottom: calc(100% + 4px);
+  margin-top: -1px;
+}
+[data-tooltip]:hover::before,
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::before,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  transition-delay: .35s;
+}
+/* Variant: tooltip below the element (for top-row icons where above
+   would be clipped by the viewport edge). */
+[data-tooltip-position="below"]::before,
+[data-tooltip-position="below"]::after {
+  top: calc(100% + 8px);
+  bottom: auto;
+  transform: translateX(-50%) translateY(-4px);
+}
+[data-tooltip-position="below"]::after {
+  border: 4px solid transparent;
+  border-bottom-color: rgba(20,20,22,0.95);
+  border-top-color: transparent;
+  top: calc(100% + 4px);
+}
+[data-tooltip-position="below"]:hover::before,
+[data-tooltip-position="below"]:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Runtime instance picker popover
+   ════════════════════════════════════════════════════════════════ */
+.d-runtime-pop { position: fixed; inset: 0; z-index: 240; }
+.d-runtime-pop[hidden] { display: none; }
+.d-runtime-pop-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.3);
+}
+.d-runtime-pop-panel {
+  position: absolute;
+  /* Anchored to the dock — runtime is mid-left, so pop above and
+     slightly to the right of where the click happened. */
+  left: 50%;
+  bottom: calc(var(--d-dock-h) + 16px);
+  transform: translateX(-50%);
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: rgba(20,20,22,0.96);
+  border: 1px solid rgba(232,169,23,0.18);
+  border-radius: 12px;
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+.d-rtp-head {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.d-rtp-title {
+  font-family: var(--font-body, system-ui);
+  font-size: 13px;
+  font-weight: 600;
+  color: #f0f0f2;
+  margin-bottom: 4px;
+}
+.d-rtp-sub {
+  font-size: 11.5px;
+  color: rgba(170,170,176,0.85);
+  line-height: 1.4;
+}
+.d-rtp-options {
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.d-rtp-option {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.d-rtp-option:hover:not(.disabled) {
+  background: rgba(232,169,23,0.06);
+}
+.d-rtp-option.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.d-rtp-option:has(input:checked) {
+  background: rgba(232,169,23,0.1);
+}
+.d-rtp-option input[type="radio"] {
+  accent-color: var(--d-gold);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: inherit;
+}
+.d-rtp-option-body { min-width: 0; }
+.d-rtp-option-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f0f0f2;
+  letter-spacing: 0.02em;
+}
+.d-rtp-option-meta {
+  font-size: 10.5px;
+  color: rgba(170,170,176,0.85);
+  margin-top: 2px;
+}
+.d-rtp-pill {
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  color: rgba(170,170,176,0.8);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.d-rtp-pill-ok {
+  background: rgba(122,180,122,0.1);
+  color: rgba(150,200,150,0.95);
+  border-color: rgba(122,180,122,0.3);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Pyodide Terminal modal
+   ════════════════════════════════════════════════════════════════ */
+.d-term-modal { position: fixed; inset: 0; z-index: 250; }
+.d-term-modal[hidden] { display: none; }
+.d-term-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.d-term-window {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 780px;
+  max-width: calc(100vw - 40px);
+  height: 560px;
+  max-height: calc(100vh - 80px);
+  background: #0a0a0c;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 32px 80px rgba(0,0,0,0.7);
+}
+.d-term-titlebar {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #1c1c20, #16161a);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+  position: relative;
+}
+.d-term-tb-lights {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.d-term-light {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.d-term-light.red    { background: #ff5f56; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.3); }
+.d-term-light.yellow { background: #ffbd2e; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.3); }
+.d-term-light.green  { background: #27c93f; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.3); }
+.d-term-tb-title {
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-body, system-ui);
+  font-size: 12px;
+  color: rgba(200,200,205,0.7);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.d-term-close {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: rgba(170,170,176,0.7);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: color .15s ease, background .15s ease;
+}
+.d-term-close:hover {
+  color: #f0f0f2;
+  background: rgba(255,255,255,0.06);
+}
+.d-term-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 18px;
+  cursor: text;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #d4d4d8;
+  background: #0a0a0c;
+}
+.d-term-body::-webkit-scrollbar { width: 10px; }
+.d-term-body::-webkit-scrollbar-track { background: transparent; }
+.d-term-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 5px; }
+.d-term-output {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+.d-term-output .term-banner { color: var(--d-gold); }
+.d-term-output .term-prompt { color: #7ab47a; }
+.d-term-output .term-cmd { color: #f0f0f2; }
+.d-term-output .term-out { color: #d4d4d8; }
+.d-term-output .term-err { color: #ff8585; }
+.d-term-output .term-sys { color: rgba(170,170,176,0.7); font-style: italic; }
+.d-term-input-line {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.d-term-prompt {
+  color: #7ab47a;
+  flex-shrink: 0;
+}
+.d-term-input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: #f0f0f2;
+  padding: 0;
+  caret-color: var(--d-gold);
 }
 .d-dock-coming-soon {
   display: flex; align-items: center; gap: 2px;
@@ -4621,6 +5010,450 @@ body {
 .d-sp-action-danger { color: #ff5c5c; }
 .d-sp-action-danger:hover { background: rgba(255,92,92,0.08); }
 
+/* ════════════════════════════════════════════════════════════════
+   Model & API access modal
+   ════════════════════════════════════════════════════════════════ */
+.d-modal { position: fixed; inset: 0; z-index: 220; }
+.d-modal[hidden] { display: none; }
+.d-modal-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.d-modal-panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  max-width: 640px;
+  max-height: calc(100vh - 80px);
+  background: rgba(20,20,22,0.97);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.d-ma-panel {
+  padding: 0;
+}
+.d-ma-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 24px 28px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+  background: rgba(20,20,22,0.97);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.d-ma-eyebrow {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(170,170,176,0.7);
+  margin-bottom: 6px;
+}
+.d-ma-title {
+  font-family: var(--font-body, system-ui);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: #f0f0f2;
+  margin: 0;
+}
+.d-ma-close {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  color: rgba(170,170,176,0.9);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color .15s ease, color .15s ease;
+}
+.d-ma-close:hover {
+  border-color: rgba(232,169,23,0.4);
+  color: var(--d-gold);
+}
+
+/* Status banner — communicates "saved locally, awaiting server sync"
+   etc. Hidden when empty. */
+.d-ma-status {
+  margin: 0 28px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-top: 16px;
+  display: none;
+  line-height: 1.5;
+}
+.d-ma-status.show { display: block; }
+.d-ma-status.info {
+  background: rgba(180,210,255,0.06);
+  border: 1px solid rgba(180,210,255,0.18);
+  color: rgba(190,215,245,0.95);
+}
+.d-ma-status.ok {
+  background: rgba(122,180,122,0.08);
+  border: 1px solid rgba(122,180,122,0.25);
+  color: rgba(150,200,150,0.95);
+}
+.d-ma-status.warn {
+  background: rgba(232,169,23,0.06);
+  border: 1px solid rgba(232,169,23,0.22);
+  color: rgba(232,200,120,0.95);
+}
+.d-ma-status.err {
+  background: rgba(255,92,92,0.06);
+  border: 1px solid rgba(255,92,92,0.25);
+  color: rgba(255,130,130,0.95);
+}
+
+.d-ma-section {
+  padding: 24px 28px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.d-ma-section:last-of-type {
+  border-bottom: none;
+}
+.d-ma-section-head {
+  margin-bottom: 18px;
+}
+.d-ma-section-head h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f0f2;
+  letter-spacing: -0.005em;
+}
+.d-ma-section-head p {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(170,170,176,0.85);
+  line-height: 1.5;
+}
+
+/* Access mode (BYOK vs Tokens) */
+.d-ma-mode-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .d-ma-mode-options { grid-template-columns: 1fr; }
+}
+.d-ma-mode-option {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.d-ma-mode-option:hover {
+  border-color: rgba(232,169,23,0.32);
+}
+.d-ma-mode-option input[type="radio"] {
+  flex-shrink: 0;
+  margin: 2px 0 0;
+  accent-color: var(--d-gold);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+.d-ma-mode-option:has(input:checked) {
+  background: rgba(232,169,23,0.06);
+  border-color: rgba(232,169,23,0.55);
+}
+.d-ma-mode-body { flex: 1 1 auto; min-width: 0; }
+.d-ma-mode-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f0f0f2;
+  margin-bottom: 4px;
+}
+.d-ma-mode-desc {
+  font-size: 11.5px;
+  color: rgba(170,170,176,0.85);
+  line-height: 1.5;
+}
+
+/* API key rows */
+.d-ma-key-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.d-ma-key-row:last-child { margin-bottom: 0; }
+@media (max-width: 560px) {
+  .d-ma-key-row { grid-template-columns: 1fr; gap: 6px; }
+}
+.d-ma-key-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: default;
+}
+.d-ma-key-provider {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f0f0f2;
+}
+.d-ma-key-hint {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: rgba(170,170,176,0.7);
+}
+.d-ma-key-input-wrap {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.d-ma-key-input {
+  flex: 1 1 auto;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  color: #f0f0f2;
+  outline: none;
+  transition: border-color .15s ease;
+  min-width: 0;
+}
+.d-ma-key-input:focus { border-color: rgba(232,169,23,0.5); }
+.d-ma-key-input::placeholder { color: rgba(122,122,130,0.6); }
+.d-ma-key-toggle {
+  flex-shrink: 0;
+  width: 32px;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  color: rgba(170,170,176,0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color .15s ease, color .15s ease;
+}
+.d-ma-key-toggle:hover {
+  border-color: rgba(232,169,23,0.32);
+  color: var(--d-gold);
+}
+
+/* Activity / model assignment rows */
+.d-ma-activity {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.d-ma-activity:last-child { border-bottom: none; }
+@media (max-width: 560px) {
+  .d-ma-activity { grid-template-columns: 1fr; gap: 8px; }
+}
+.d-ma-activity-info { min-width: 0; }
+.d-ma-activity-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f0f0f2;
+  margin-bottom: 2px;
+}
+.d-ma-activity-desc {
+  font-size: 11.5px;
+  color: rgba(170,170,176,0.85);
+  line-height: 1.45;
+}
+.d-ma-activity-select {
+  width: 100%;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: #f0f0f2;
+  outline: none;
+  cursor: pointer;
+  transition: border-color .15s ease;
+}
+.d-ma-activity-select:focus { border-color: rgba(232,169,23,0.5); }
+.d-ma-activity-select option { background: #1a1a1c; color: #f0f0f2; }
+
+/* Footer / actions */
+.d-ma-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 20px 28px 24px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  background: rgba(20,20,22,0.97);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.d-ma-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s ease;
+  border: 1px solid transparent;
+}
+.d-ma-btn-secondary {
+  background: transparent;
+  border-color: rgba(255,255,255,0.12);
+  color: rgba(240,240,242,0.85);
+}
+.d-ma-btn-secondary:hover {
+  border-color: rgba(255,255,255,0.2);
+  color: #f0f0f2;
+}
+.d-ma-btn-primary {
+  background: var(--d-gold);
+  color: #0a0a0b;
+  border-color: var(--d-gold);
+}
+.d-ma-btn-primary:hover {
+  background: #f4c558;
+  border-color: #f4c558;
+}
+.d-ma-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* When tokens mode is selected, dim the API keys section to signal
+   they're not in use (but keep them editable for users who want to
+   pre-configure before switching modes). */
+.d-ma-panel.tokens-mode #dMaKeysSection {
+  opacity: 0.55;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Cron Trigger modal — form elements
+   ════════════════════════════════════════════════════════════════ */
+.d-cron-panel {
+  max-width: 560px;
+}
+.d-cron-input {
+  width: 100%;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13.5px;
+  color: #f0f0f2;
+  outline: none;
+  transition: border-color .15s ease;
+}
+.d-cron-input:focus { border-color: rgba(232,169,23,0.5); }
+.d-cron-input::placeholder { color: rgba(122,122,130,0.6); }
+
+.d-cron-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.d-cron-preset {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.d-cron-preset:hover {
+  border-color: rgba(232,169,23,0.32);
+}
+.d-cron-preset:has(input:checked) {
+  background: rgba(232,169,23,0.06);
+  border-color: rgba(232,169,23,0.55);
+}
+.d-cron-preset input[type="radio"] {
+  accent-color: var(--d-gold);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  margin: 0;
+}
+.d-cron-preset-name {
+  font-size: 13px;
+  color: #f0f0f2;
+  font-weight: 500;
+}
+.d-cron-preset-cron {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: rgba(170,170,176,0.7);
+  letter-spacing: 0.02em;
+}
+.d-cron-custom-input {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  background: rgba(15,15,18,0.85);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 5px;
+  padding: 5px 9px;
+  color: var(--d-gold);
+  outline: none;
+  width: 130px;
+  text-align: right;
+  transition: border-color .15s ease, opacity .15s ease;
+}
+.d-cron-custom-input:focus { border-color: rgba(232,169,23,0.5); }
+.d-cron-custom-input:disabled { opacity: 0.4; }
+
+.d-cron-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(15,15,18,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(220,220,225,0.95);
+  transition: border-color .15s ease;
+}
+.d-cron-checkbox:hover { border-color: rgba(232,169,23,0.28); }
+.d-cron-checkbox input[type="checkbox"] {
+  accent-color: var(--d-gold);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  margin: 0;
+}
+
 
 /* ── Folder view (Finder-style) ──────────────────────────────────
    Takes over the .desktop-canvas area when a sidebar folder is
@@ -4739,11 +5572,19 @@ body.d-desktop-mode .d-dock-icon img {
 body.d-desktop-mode .d-dock-divider {
   height: 16px;
 }
-body.d-desktop-mode .d-dock-runtime-title {
+body.d-desktop-mode .d-dock-runtime-label {
   font-size: 9px;
 }
 body.d-desktop-mode .d-dock-runtime-status {
   font-size: 10px;
+}
+body.d-desktop-mode .d-dock-runtime-instance {
+  font-size: 9.5px;
+  padding: 1px 6px;
+}
+body.d-desktop-mode .d-dock-runtime {
+  padding: 4px 8px;
+  gap: 8px;
 }
 
 /* Empty state: when there are no messages, the .stream container has
@@ -5617,7 +6458,7 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
   </button>
   <button class="d-folder" data-folder="graph">
     <img src="promptflow_icons_transparent/04_graph_folder_neo4j_style_nodes.png" alt="">
-    <span class="d-label">Graph</span>
+    <span class="d-label">Explore</span>
   </button>
   <button class="d-folder coming-soon" data-folder="cron">
     <img src="promptflow_icons_transparent/05_cron_folder_clock.png" alt="">
@@ -5894,6 +6735,11 @@ $ promptflow run my-process.promptflow</code></pre>
     <div id="cmdSuggest" class="cmd-suggest" style="display:none" role="listbox"></div>
 
     <div class="input-bar">
+      <!-- "Interpreter" label — absolutely positioned overlay
+           sitting just above the input bar's top-left edge.
+           Doesn't affect the layout of the bar's children since
+           it's pulled out of normal flow with position:absolute. -->
+      <span class="d-input-mode-label" aria-hidden="true">Interpreter</span>
       <input type="file" id="fileInput" accept="image/*,video/*,audio/*" multiple hidden>
       <button class="icon-btn" id="attachBtn" title="Attach image, video, audio (or none — text-only is fine)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -5905,7 +6751,7 @@ $ promptflow run my-process.promptflow</code></pre>
            through behind the user's text. -->
       <div class="input-wrap">
         <div class="input-highlight" id="inputHighlight" aria-hidden="true"></div>
-        <textarea id="textInput" placeholder="Upload your chat history and final process/github repo, we extract lessons that improve future generations" rows="1"></textarea>
+        <textarea id="textInput" placeholder="Generate a process that makes a YouTube video" rows="1"></textarea>
       </div>
       <!-- Generation preferences — controls which processes the
            planner considers for the next request. Persistent default
@@ -14909,6 +15755,19 @@ function dDesktopInit(){
   }
   if (D("dDockHome")) D("dDockHome").addEventListener("click", () => {
     dActivateDock("dDockHome");
+    // Close any overlay surface that might be sitting on top of the
+    // home screen before we navigate "home." Without these, clicking
+    // Home while in the System folder, the Explore (pubgraph) view,
+    // a search overlay, or the settings panel would do nothing
+    // visible to the user — goHome() runs underneath, but the
+    // overlay stays in place.
+    if (typeof dCloseFolderView === "function") dCloseFolderView();
+    if (typeof dClosePubgraph === "function") dClosePubgraph();
+    if (typeof dCloseSearch === "function" && _dSearchOpen) dCloseSearch();
+    if (typeof dCloseSystem === "function" && _dSysOpen) dCloseSystem();
+    // Clear active state on every sidebar folder — none is the
+    // "current" view when we're back at home.
+    document.querySelectorAll(".d-folder").forEach(b => b.classList.remove("active"));
     if (typeof window.goHome === "function") window.goHome();
     else {
       const brand = document.getElementById("brandHome");
@@ -14923,9 +15782,52 @@ function dDesktopInit(){
   });
   if (D("dDockTerminal")) D("dDockTerminal").addEventListener("click", () => {
     dActivateDock("dDockTerminal");
-    const ti = document.getElementById("textInput");
-    if (ti) ti.focus();
+    dTermOpen();
   });
+
+  // ── Runtime instance popover ──
+  // Clickable Process Runtime button in dock opens a popover with
+  // GPU/CPU instance picker. CPU is the only live option; GPU tiers
+  // are disabled placeholders showing what's coming.
+  if (D("dDockRuntime")) D("dDockRuntime").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dRuntimeToggle();
+  });
+  if (D("dRuntimePopBackdrop")) D("dRuntimePopBackdrop").addEventListener("click", dRuntimeClose);
+  // Read instance changes (only CPU works for now, but track it
+  // for when GPU tiers come online).
+  document.querySelectorAll('input[name="rtInstance"]').forEach(r => {
+    r.addEventListener("change", () => {
+      if (!r.checked) return;
+      const labelEl = D("dDockRuntimeInstance");
+      if (labelEl) labelEl.textContent = r.value.toUpperCase();
+      try { localStorage.setItem("pf_runtime_instance", r.value); } catch {}
+    });
+  });
+  // Restore last selected instance (always falls back to CPU)
+  try {
+    const saved = localStorage.getItem("pf_runtime_instance") || "cpu";
+    const radio = document.querySelector(`input[name="rtInstance"][value="${saved}"]`);
+    if (radio && !radio.disabled) {
+      radio.checked = true;
+      const labelEl = D("dDockRuntimeInstance");
+      if (labelEl) labelEl.textContent = saved.toUpperCase();
+    }
+  } catch {}
+
+  function dRuntimeToggle() {
+    const pop = D("dRuntimePop");
+    if (!pop) return;
+    if (pop.hidden) dRuntimeOpen(); else dRuntimeClose();
+  }
+  function dRuntimeOpen() {
+    D("dRuntimePop").hidden = false;
+    D("dDockRuntime").classList.add("active");
+  }
+  function dRuntimeClose() {
+    D("dRuntimePop").hidden = true;
+    D("dDockRuntime").classList.remove("active");
+  }
 
   // ── System popover ──
   let _dSysOpen = false;
@@ -14945,10 +15847,336 @@ function dDesktopInit(){
     D("dSystemPopover").hidden = true;
     _dSysOpen = false;
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // Model & API access modal
+  // ════════════════════════════════════════════════════════════════
+  // Settings UI for BYOK + per-activity model assignment.
+  // Persistence: localStorage.pf_user_settings (JSON blob). Saves
+  // also try a POST to /api/promptflow/me/settings — that endpoint
+  // doesn't exist yet, so the form surfaces a clear status banner
+  // showing "Saved locally · server sync pending" rather than
+  // pretending the save completed.
+  //
+  // The full schema:
+  //   {
+  //     access_mode: "byok" | "tokens",
+  //     keys: { anthropic, openai, google },   // strings or "" if unset
+  //     models: { chat, adapt, search, learn } // each "provider:model"
+  //   }
+  // ════════════════════════════════════════════════════════════════
+  const PF_SETTINGS_KEY = "pf_user_settings";
+
+  function dMaLoadSettings() {
+    try {
+      const raw = localStorage.getItem(PF_SETTINGS_KEY);
+      if (!raw) return dMaDefaultSettings();
+      const parsed = JSON.parse(raw);
+      // Merge with defaults so missing fields get sensible values.
+      const def = dMaDefaultSettings();
+      return {
+        access_mode: parsed.access_mode || def.access_mode,
+        keys: { ...def.keys, ...(parsed.keys || {}) },
+        models: { ...def.models, ...(parsed.models || {}) },
+      };
+    } catch {
+      return dMaDefaultSettings();
+    }
+  }
+  function dMaDefaultSettings() {
+    return {
+      access_mode: "tokens",  // safe default: existing users keep token behavior
+      keys: { anthropic: "", openai: "", google: "" },
+      models: { chat: "", adapt: "", search: "", learn: "" },
+    };
+  }
+
+  function dMaApplyToForm(s) {
+    // Access mode radios
+    const byok = D("dMaModeByok");
+    const tokens = D("dMaModeTokens");
+    if (byok && tokens) {
+      byok.checked = s.access_mode === "byok";
+      tokens.checked = s.access_mode === "tokens";
+    }
+    // API keys
+    if (D("dMaKeyAnthropic")) D("dMaKeyAnthropic").value = s.keys.anthropic || "";
+    if (D("dMaKeyOpenai")) D("dMaKeyOpenai").value = s.keys.openai || "";
+    if (D("dMaKeyGoogle")) D("dMaKeyGoogle").value = s.keys.google || "";
+    // Models
+    if (D("dMaModelChat")) D("dMaModelChat").value = s.models.chat || "";
+    if (D("dMaModelAdapt")) D("dMaModelAdapt").value = s.models.adapt || "";
+    if (D("dMaModelSearch")) D("dMaModelSearch").value = s.models.search || "";
+    if (D("dMaModelLearn")) D("dMaModelLearn").value = s.models.learn || "";
+    // Dim keys section when in tokens mode
+    dMaUpdateKeySection();
+  }
+
+  function dMaReadFromForm() {
+    return {
+      access_mode: D("dMaModeByok") && D("dMaModeByok").checked ? "byok" : "tokens",
+      keys: {
+        anthropic: (D("dMaKeyAnthropic") && D("dMaKeyAnthropic").value || "").trim(),
+        openai:    (D("dMaKeyOpenai")    && D("dMaKeyOpenai").value    || "").trim(),
+        google:    (D("dMaKeyGoogle")    && D("dMaKeyGoogle").value    || "").trim(),
+      },
+      models: {
+        chat:   (D("dMaModelChat")   && D("dMaModelChat").value)   || "",
+        adapt:  (D("dMaModelAdapt")  && D("dMaModelAdapt").value)  || "",
+        search: (D("dMaModelSearch") && D("dMaModelSearch").value) || "",
+        learn:  (D("dMaModelLearn")  && D("dMaModelLearn").value)  || "",
+      },
+    };
+  }
+
+  function dMaUpdateKeySection() {
+    const panel = document.querySelector(".d-ma-panel");
+    if (!panel) return;
+    const tokensMode = D("dMaModeTokens") && D("dMaModeTokens").checked;
+    panel.classList.toggle("tokens-mode", !!tokensMode);
+  }
+
+  function dMaSetStatus(text, kind) {
+    const el = D("dMaStatus");
+    if (!el) return;
+    if (!text) {
+      el.className = "d-ma-status";
+      el.textContent = "";
+      return;
+    }
+    el.className = "d-ma-status show " + (kind || "info");
+    el.textContent = text;
+  }
+
+  function dMaOpen() {
+    const s = dMaLoadSettings();
+    dMaApplyToForm(s);
+    dMaSetStatus("", "");
+    D("dModelAccessModal").hidden = false;
+  }
+  function dMaClose() {
+    D("dModelAccessModal").hidden = true;
+  }
+
+  async function dMaSave() {
+    const settings = dMaReadFromForm();
+    const saveBtn = D("dMaSave");
+    if (saveBtn) saveBtn.disabled = true;
+    // Always write to localStorage first so the user's input is never
+    // lost regardless of server status.
+    try {
+      localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify(settings));
+    } catch (e) {
+      dMaSetStatus("Couldn't save to local storage: " + (e && e.message || e), "err");
+      if (saveBtn) saveBtn.disabled = false;
+      return;
+    }
+    // Best-effort POST to the backend route. Currently expected to
+    // 404 since the endpoint isn't wired yet. We surface that clearly
+    // rather than pretending the save was complete.
+    try {
+      const r = await fetch("/api/promptflow/me/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (r.status === 404) {
+        dMaSetStatus(
+          "Saved locally. Server sync pending — the /me/settings endpoint isn't deployed yet. Your choices will sync on the next reload after it ships.",
+          "warn"
+        );
+      } else if (r.ok) {
+        dMaSetStatus("Saved.", "ok");
+        setTimeout(() => { dMaClose(); }, 800);
+      } else {
+        const text = await r.text().catch(() => "");
+        dMaSetStatus(
+          "Saved locally. Server returned " + r.status +
+          (text ? ": " + text.slice(0, 120) : "") +
+          ". Your settings persist in this browser; reload after backend fix to retry.",
+          "warn"
+        );
+      }
+    } catch (e) {
+      dMaSetStatus(
+        "Saved locally. Couldn't reach the server (" + (e && e.message || "network error") + "). Settings persist in this browser.",
+        "warn"
+      );
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  }
+
+  // Wire the open/close + form interactions.
+  if (D("dSpModelAccess")) D("dSpModelAccess").addEventListener("click", () => {
+    dCloseSystem();
+    dMaOpen();
+  });
+  if (D("dMaClose")) D("dMaClose").addEventListener("click", dMaClose);
+  if (D("dMaCancel")) D("dMaCancel").addEventListener("click", dMaClose);
+  if (D("dMaBackdrop")) D("dMaBackdrop").addEventListener("click", dMaClose);
+  if (D("dMaSave")) D("dMaSave").addEventListener("click", dMaSave);
+  // Toggle access mode → update visual dimming of keys section
+  if (D("dMaModeByok")) D("dMaModeByok").addEventListener("change", dMaUpdateKeySection);
+  if (D("dMaModeTokens")) D("dMaModeTokens").addEventListener("change", dMaUpdateKeySection);
+  // Show/hide buttons on key inputs
+  document.querySelectorAll(".d-ma-key-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = document.getElementById(btn.dataset.target);
+      if (!target) return;
+      target.type = target.type === "password" ? "text" : "password";
+    });
+  });
+  // Close on Escape when modal is open
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !D("dModelAccessModal").hidden) {
+      e.preventDefault();
+      e.stopPropagation();
+      dMaClose();
+    }
+  });
   if (D("dDockSystem")) D("dDockSystem").addEventListener("click", (e) => {
     e.stopPropagation();
     if (_dSysOpen) dCloseSystem(); else dOpenSystem();
   });
+  // Cron icon → opens the real Create Cron Trigger modal. The
+  // backend route doesn't exist yet, so submission surfaces a
+  // clean error state in the modal rather than pretending success.
+  // The UI is the same one users will see when the backend ships.
+  if (D("dDockCron")) D("dDockCron").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dCronOpen();
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // Cron modal logic
+  // ════════════════════════════════════════════════════════════════
+  function dCronOpen() {
+    // Populate process picker from the user's cached private processes.
+    const sel = D("dCronProcess");
+    if (sel) {
+      const procs = (window.processesCache && window.processesCache.length)
+        ? window.processesCache.filter(p => !p.is_system && p.created_by_user_id === (window.ME && window.ME.id))
+        : [];
+      const sysProcs = (window.processesCache && window.processesCache.length)
+        ? window.processesCache.filter(p => p.is_system)
+        : [];
+      let html = '<option value="">Select a process…</option>';
+      if (procs.length) {
+        html += '<optgroup label="My processes">';
+        for (const p of procs) {
+          html += '<option value="' + p.id + '">' + (p.name || "Untitled") + '</option>';
+        }
+        html += '</optgroup>';
+      }
+      if (sysProcs.length) {
+        html += '<optgroup label="System">';
+        for (const p of sysProcs) {
+          html += '<option value="' + p.id + '">' + (p.name || "Untitled") + '</option>';
+        }
+        html += '</optgroup>';
+      }
+      if (!procs.length && !sysProcs.length) {
+        html += '<option disabled>No processes available yet</option>';
+      }
+      sel.innerHTML = html;
+    }
+    // Reset form state
+    if (D("dCronName")) D("dCronName").value = "";
+    if (D("dCronCustom")) {
+      D("dCronCustom").value = "";
+      D("dCronCustom").disabled = true;
+    }
+    if (D("dCronEmail")) D("dCronEmail").checked = false;
+    // Reset to "hourly" preset
+    const presets = document.getElementsByName("cronSchedule");
+    for (const r of presets) r.checked = (r.value === "hourly");
+    dCronSetStatus("", "");
+    D("dCronModal").hidden = false;
+  }
+  function dCronClose() {
+    D("dCronModal").hidden = true;
+  }
+  function dCronSetStatus(text, kind) {
+    const el = D("dCronStatus");
+    if (!el) return;
+    if (!text) { el.className = "d-ma-status"; el.textContent = ""; return; }
+    el.className = "d-ma-status show " + (kind || "info");
+    el.textContent = text;
+  }
+  function dCronReadSchedule() {
+    const presets = document.getElementsByName("cronSchedule");
+    let chosen = "hourly";
+    for (const r of presets) if (r.checked) chosen = r.value;
+    const map = {
+      hourly: "0 * * * *",
+      daily:  "0 9 * * *",
+      weekly: "0 9 * * 1",
+    };
+    if (chosen === "custom") {
+      const v = (D("dCronCustom") && D("dCronCustom").value || "").trim();
+      return v;
+    }
+    return map[chosen] || "0 * * * *";
+  }
+  async function dCronSubmit() {
+    const name = (D("dCronName") && D("dCronName").value || "").trim();
+    const processId = D("dCronProcess") && D("dCronProcess").value;
+    const cron = dCronReadSchedule();
+    const email = !!(D("dCronEmail") && D("dCronEmail").checked);
+
+    if (!name) { dCronSetStatus("Give the trigger a name first.", "err"); return; }
+    if (!processId) { dCronSetStatus("Pick a process to run.", "err"); return; }
+    if (!cron) { dCronSetStatus("Enter a cron expression or pick a preset.", "err"); return; }
+
+    const btn = D("dCronSubmit");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch("/api/promptflow/cron/triggers/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, process_id: processId, cron, email_summary: email }),
+      });
+      if (r.status === 404) {
+        dCronSetStatus(
+          "The cron backend isn't deployed yet — your trigger wasn't saved. The form will work as-is once /api/promptflow/cron/triggers/create ships.",
+          "warn"
+        );
+      } else if (r.ok) {
+        dCronSetStatus("Trigger created. It will fire next at the scheduled time.", "ok");
+        setTimeout(dCronClose, 1000);
+      } else {
+        const txt = await r.text().catch(() => "");
+        dCronSetStatus("Server returned " + r.status + (txt ? ": " + txt.slice(0, 120) : ""), "err");
+      }
+    } catch (e) {
+      dCronSetStatus("Network error: " + (e && e.message || "couldn't reach the server"), "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+  if (D("dCronClose")) D("dCronClose").addEventListener("click", dCronClose);
+  if (D("dCronCancel")) D("dCronCancel").addEventListener("click", dCronClose);
+  if (D("dCronBackdrop")) D("dCronBackdrop").addEventListener("click", dCronClose);
+  if (D("dCronSubmit")) D("dCronSubmit").addEventListener("click", dCronSubmit);
+  // Enable/disable the custom cron input based on which preset is chosen.
+  document.getElementsByName("cronSchedule").forEach
+    ? document.getElementsByName("cronSchedule").forEach(r => {
+        r.addEventListener("change", () => {
+          const custom = D("dCronCustom");
+          if (!custom) return;
+          custom.disabled = !(r.value === "custom" && r.checked);
+          if (!custom.disabled) custom.focus();
+        });
+      })
+    : Array.from(document.getElementsByName("cronSchedule")).forEach(r => {
+        r.addEventListener("change", () => {
+          const custom = D("dCronCustom");
+          if (!custom) return;
+          custom.disabled = !(r.value === "custom" && r.checked);
+          if (!custom.disabled) custom.focus();
+        });
+      });
   if (D("dSpBackdrop")) D("dSpBackdrop").addEventListener("click", dCloseSystem);
   // System actions: click the existing-app hidden originals so the
   // same modals open.
@@ -15989,6 +17217,333 @@ function dDesktopInit(){
     D("dPgSearch").addEventListener("keydown", dPgOnSearchEnter);
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // Chat input placeholder rotator
+  // ════════════════════════════════════════════════════════════════
+  // The chat input is the primary action surface. PromptFlow has
+  // two distinct primary jobs:
+  //   1. Generate things (the original product) — "Generate a video,
+  //      a story, an image, an app…"
+  //   2. Contribute distillations (the flywheel) — "Upload your
+  //      chat history and final process, we extract lessons."
+  //
+  // Showing only one placeholder narrows users' mental model of
+  // what they can do here. Rotating between the two communicates
+  // both purposes without crowding the UI.
+  //
+  // Behavior:
+  //   • Only rotates when the textarea is empty AND unfocused
+  //   • Rotates every 5 seconds with a subtle opacity fade
+  //   • Freezes the moment the user focuses or types — never
+  //     swaps placeholder text under an active user
+  //   • Resumes if they blur the input while still empty
+  //
+  // The rotation is purely cosmetic (placeholder attribute changes);
+  // no backend interaction, no behavioral side effect.
+  // ════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════
+  // Chat input placeholder rotator (with command-prefix coloring)
+  // ════════════════════════════════════════════════════════════════
+  // The placeholder cycles through several example inputs to teach
+  // users what they can do here. Each example contains a leading
+  // command prefix ("Generate", "Upload", "Run my process", etc.)
+  // which is rendered in a tinted color matching the existing
+  // command-highlight palette — same visual language as the live
+  // highlighting that fires when the user actually types one.
+  //
+  // The textarea's native placeholder attribute can't render styled
+  // HTML, so we use the existing #inputHighlight overlay (a div
+  // positioned behind the transparent textarea) to draw the styled
+  // version. The native placeholder still gets set as a fallback
+  // for accessibility / screen readers / browsers without JS.
+  //
+  // Behavior:
+  //   • Only renders when the textarea is empty AND unfocused
+  //   • Rotates every 5 seconds with a subtle opacity fade
+  //   • Freezes the moment the user focuses or types
+  //   • Yields control of the overlay to the existing live-typing
+  //     command highlighter as soon as content is present
+  // ════════════════════════════════════════════════════════════════
+  (function setupPlaceholderRotator() {
+    const ti = document.getElementById("textInput");
+    const overlay = document.getElementById("inputHighlight");
+    if (!ti || !overlay) return;
+
+    // Placeholder cycle. Each entry: { command, rest }
+    //   - "command" renders in gold (matches .cmd-pref color)
+    //   - "rest" renders in muted gray (matches placeholder color)
+    // The cycle deliberately mixes generative actions, contribution
+    // actions, and reuse actions so users see the full surface
+    // area: generate something new, run something they have, adapt
+    // an existing process, upload a finished build.
+    const placeholders = [
+      { command: "Generate",       rest: " a process that makes a YouTube video" },
+      { command: "Run my process", rest: " with this week's sales numbers"     },
+      { command: "Adapt",          rest: " this prompt for Claude Sonnet 4.6"  },
+      { command: "Upload",         rest: " my chat history and final process — extract the lessons" },
+      { command: "Generate",       rest: " a storyboard for a 30-second product demo" },
+      { command: "Compose",        rest: " a process that summarizes my Slack and emails me a daily digest" },
+      { command: "Find",           rest: " a public process that converts a podcast into a blog post" },
+    ];
+    let idx = 0;
+    let paused = false;
+
+    // Escape user-supplied text for HTML insertion. We control the
+    // placeholders, but routing through escape is cheap insurance.
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderOverlay() {
+      if (paused || ti.value.length > 0) {
+        // Defer to the existing typed-content highlighter — clear
+        // our placeholder rendering. The native textarea placeholder
+        // takes over (which is invisible since color: transparent
+        // is set via .has-styled-placeholder, but the native fallback
+        // is still in the DOM for accessibility).
+        overlay.innerHTML = "";
+        ti.classList.remove("has-styled-placeholder");
+        return;
+      }
+      const p = placeholders[idx];
+      overlay.innerHTML =
+        '<span class="placeholder-cmd">' + esc(p.command) + '</span>' +
+        '<span class="placeholder-rest">' + esc(p.rest) + '</span>';
+      ti.classList.add("has-styled-placeholder");
+    }
+
+    function applyNext() {
+      if (paused) return;
+      if (ti.value.length > 0) return;
+      idx = (idx + 1) % placeholders.length;
+      // Fade out → swap → fade in
+      overlay.classList.add("placeholder-fading");
+      setTimeout(() => {
+        renderOverlay();
+        // Update native placeholder too so it's there for SR fallback
+        ti.placeholder = placeholders[idx].command + placeholders[idx].rest;
+        overlay.classList.remove("placeholder-fading");
+      }, 220);
+    }
+
+    // Initial render of the first placeholder
+    ti.placeholder = placeholders[0].command + placeholders[0].rest;
+    renderOverlay();
+    setInterval(applyNext, 5000);
+
+    // Pause / resume + clear overlay coordination
+    ti.addEventListener("focus", () => {
+      paused = true;
+      renderOverlay();  // immediately clear styled placeholder
+    });
+    ti.addEventListener("blur", () => {
+      if (ti.value.length === 0) {
+        paused = false;
+        renderOverlay();  // re-show styled placeholder
+      }
+    });
+    ti.addEventListener("input", () => {
+      paused = ti.value.length > 0;
+      // When typing starts, hand the overlay back to the existing
+      // typed-content highlighter. When the user clears the input
+      // (deletes everything), restore the styled placeholder.
+      if (ti.value.length === 0 && document.activeElement !== ti) {
+        renderOverlay();
+      } else if (ti.value.length === 0) {
+        // Empty but focused — keep placeholder hidden so focus
+        // state is unambiguous.
+        overlay.innerHTML = "";
+        ti.classList.remove("has-styled-placeholder");
+      }
+    });
+  })();
+
+  // ════════════════════════════════════════════════════════════════
+  // Pyodide Terminal
+  // ════════════════════════════════════════════════════════════════
+  // Real Python REPL running entirely in the browser via Pyodide
+  // (a CPython interpreter compiled to WebAssembly). The terminal:
+  //   • Boots lazily on first open — Pyodide is ~10 MB and we don't
+  //     want to pay that cost upfront
+  //   • Reuses the cached interpreter on subsequent opens within
+  //     the same session
+  //   • Shows an ASCII art PromptFlow banner + venv-style prompt
+  //   • Supports command history (up/down arrows)
+  //   • Submits each line to pyodide.runPythonAsync and displays
+  //     stdout, stderr, and the expression value
+  //
+  // Limitations (be honest):
+  //   • No filesystem access to your machine (Pyodide runs in browser)
+  //   • Network calls work via Pyodide's pyodide.http
+  //   • Multi-line input is not supported (one line at a time)
+  //   • No tab completion (would need readline integration)
+  // ════════════════════════════════════════════════════════════════
+  let _pyodide = null;
+  let _pyodideLoading = false;
+  let _termHistory = [];
+  let _termHistoryIdx = -1;
+
+  const TERM_BANNER = [
+    "  ____                            _   _____ _",
+    " |  _ \\ _ __ ___  _ __ ___  _ __ | |_|  ___| | _____      __",
+    " | |_) | '__/ _ \\| '_ ` _ \\| '_ \\| __| |_  | |/ _ \\ \\ /\\ / /",
+    " |  __/| | | (_) | | | | | | |_) | |_|  _| | | (_) \\ V  V /",
+    " |_|   |_|  \\___/|_| |_| |_| .__/ \\__|_|   |_|\\___/ \\_/\\_/",
+    "                           |_|",
+  ].join("\n");
+
+  function dTermAppend(html) {
+    const out = D("dTermOutput");
+    if (!out) return;
+    out.insertAdjacentHTML("beforeend", html);
+    const body = D("dTermBody");
+    if (body) body.scrollTop = body.scrollHeight;
+  }
+  function dTermEsc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function dTermInitialBanner() {
+    const out = D("dTermOutput");
+    if (!out) return;
+    out.innerHTML = "";
+    dTermAppend('<span class="term-banner">' + dTermEsc(TERM_BANNER) + '</span>\n');
+    dTermAppend('<span class="term-sys">Python interpreter — Pyodide (WebAssembly). Runs in your browser, no server.</span>\n');
+    dTermAppend('<span class="term-sys">Try: import sys; sys.version</span>\n\n');
+  }
+
+  async function dTermBootPyodide() {
+    if (_pyodide) return _pyodide;
+    if (_pyodideLoading) {
+      // Already loading — wait for it
+      while (_pyodideLoading) await new Promise(r => setTimeout(r, 100));
+      return _pyodide;
+    }
+    _pyodideLoading = true;
+    dTermAppend('<span class="term-sys">Loading Pyodide (~10 MB, one-time)…</span>\n');
+    // Inject the Pyodide loader script from the CDN if not already there.
+    if (!window.loadPyodide) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error("Failed to load Pyodide loader script"));
+        document.head.appendChild(s);
+      });
+    }
+    try {
+      _pyodide = await window.loadPyodide({
+        indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/",
+        stdout: (text) => dTermAppend('<span class="term-out">' + dTermEsc(text) + '</span>'),
+        stderr: (text) => dTermAppend('<span class="term-err">' + dTermEsc(text) + '</span>'),
+      });
+      // Activate a venv-style identity so the prompt feels real.
+      await _pyodide.runPythonAsync(`
+import sys
+sys.ps1 = '(promptflow) $ '
+sys.ps2 = '... '
+      `);
+      dTermAppend('<span class="term-sys">Ready. Python ' + _pyodide.runPython("import sys; sys.version.split()[0]") + ' in browser.</span>\n\n');
+    } catch (err) {
+      dTermAppend('<span class="term-err">Failed to start Pyodide: ' + dTermEsc(err && err.message || err) + '</span>\n');
+      _pyodideLoading = false;
+      throw err;
+    }
+    _pyodideLoading = false;
+    return _pyodide;
+  }
+
+  async function dTermRun(cmd) {
+    if (!cmd.trim()) {
+      dTermAppend('<span class="term-prompt">(promptflow) $ </span>\n');
+      return;
+    }
+    // Echo the prompt + command into the output stream so they
+    // become part of the scrollback.
+    dTermAppend('<span class="term-prompt">(promptflow) $ </span><span class="term-cmd">' + dTermEsc(cmd) + '</span>\n');
+    // Boot Pyodide if not yet ready
+    try {
+      if (!_pyodide) await dTermBootPyodide();
+    } catch {
+      return; // boot already surfaced the error
+    }
+    try {
+      const result = await _pyodide.runPythonAsync(cmd);
+      if (result !== undefined && result !== null) {
+        dTermAppend('<span class="term-out">' + dTermEsc(String(result)) + '</span>\n');
+      }
+    } catch (err) {
+      dTermAppend('<span class="term-err">' + dTermEsc(err && err.message || err) + '</span>\n');
+    }
+  }
+
+  function dTermOpen() {
+    D("dTermModal").hidden = false;
+    if (!D("dTermOutput").textContent.trim()) {
+      dTermInitialBanner();
+    }
+    // Focus the input
+    setTimeout(() => { const i = D("dTermInput"); if (i) i.focus(); }, 50);
+  }
+  function dTermClose() {
+    D("dTermModal").hidden = true;
+  }
+
+  // Wire terminal handlers
+  if (D("dTermClose")) D("dTermClose").addEventListener("click", dTermClose);
+  if (D("dTermBackdrop")) D("dTermBackdrop").addEventListener("click", dTermClose);
+  // Click anywhere in the body → focus input
+  if (D("dTermBody")) D("dTermBody").addEventListener("click", () => {
+    const i = D("dTermInput");
+    if (i) i.focus();
+  });
+  // Input: Enter runs, Up/Down navigates history
+  if (D("dTermInput")) D("dTermInput").addEventListener("keydown", async (e) => {
+    const input = e.target;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const cmd = input.value;
+      input.value = "";
+      if (cmd.trim()) {
+        _termHistory.push(cmd);
+        _termHistoryIdx = _termHistory.length;
+      }
+      await dTermRun(cmd);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (_termHistory.length === 0) return;
+      _termHistoryIdx = Math.max(0, _termHistoryIdx - 1);
+      input.value = _termHistory[_termHistoryIdx] || "";
+      // Move cursor to end
+      setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (_termHistory.length === 0) return;
+      _termHistoryIdx = Math.min(_termHistory.length, _termHistoryIdx + 1);
+      input.value = _termHistory[_termHistoryIdx] || "";
+    } else if (e.key === "l" && (e.ctrlKey || e.metaKey)) {
+      // Ctrl/Cmd+L clears the screen — standard terminal behavior
+      e.preventDefault();
+      dTermInitialBanner();
+    }
+  });
+  // Escape closes the terminal
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !D("dTermModal").hidden) {
+      // Only close if input isn't busy; otherwise let users keep typing
+      if (document.activeElement === D("dTermInput") && D("dTermInput").value) return;
+      dTermClose();
+    }
+  });
+
 }
 
 // Boot dDesktopInit when the DOM is ready. The desktop chrome runtime
@@ -16078,24 +17633,26 @@ if (document.readyState === "loading") {
   </div>
   <div class="d-dock-divider"></div>
   <div class="d-dock-section">
-    <button class="d-dock-icon active" id="dDockHome" title="Home">
+    <button class="d-dock-icon active" id="dDockHome" data-tooltip="Home">
       <img src="promptflow_icons_transparent/09_home.png" alt="Home">
     </button>
-    <button class="d-dock-icon" id="dDockFiles" title="Processes">
+    <button class="d-dock-icon" id="dDockFiles" data-tooltip="Processes">
       <img src="promptflow_icons_transparent/10_files_folder.png" alt="Files">
     </button>
-    <button class="d-dock-icon" id="dDockTerminal" title="Terminal (opens chat input)">
+    <button class="d-dock-icon" id="dDockTerminal" data-tooltip="Open terminal">
       <img src="promptflow_icons_transparent/11_terminal.png" alt="Terminal">
     </button>
   </div>
   <div class="d-dock-divider"></div>
-  <div class="d-dock-runtime" id="dDockRuntime">
-    <div class="d-dock-runtime-title">Process Runtime</div>
-    <div class="d-dock-runtime-status idle" id="dDockRuntimeStatus">
+  <button class="d-dock-runtime" id="dDockRuntime" type="button"
+          data-tooltip="Compute instance — click to change">
+    <span class="d-dock-runtime-label">Process Runtime</span>
+    <span class="d-dock-runtime-status ready" id="dDockRuntimeStatus">
       <span class="d-drs-dot"></span>
-      <span id="dDockRuntimeText">idle</span>
-    </div>
-  </div>
+      <span id="dDockRuntimeText">Ready</span>
+    </span>
+    <span class="d-dock-runtime-instance" id="dDockRuntimeInstance">CPU</span>
+  </button>
   <!-- The coming-soon icon cluster (Agents/Graph/Cron/Tools/Memory/
        Alerts) was removed. Five of six were placeholders; the one
        working subsystem (Graph) already has its own sidebar folder.
@@ -16104,9 +17661,106 @@ if (document.readyState === "loading") {
        actually ship, individual icons can be re-introduced here with
        real wiring. -->
   <div class="d-dock-system">
-    <button class="d-dock-icon" id="dDockSystem" title="System">
+    <!-- Cron icon — opens the Create Cron Trigger modal. -->
+    <button class="d-dock-icon" id="dDockCron"
+            data-tooltip="Schedule a process">
+      <img src="promptflow_icons_transparent/05_cron_folder_clock.png" alt="Cron">
+    </button>
+    <button class="d-dock-icon" id="dDockSystem" data-tooltip="System">
       <img src="promptflow_icons_transparent/12_settings.png" alt="System">
     </button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Runtime instance picker
+     ════════════════════════════════════════════════════════════════
+     Small popover anchored above the Process Runtime button in the
+     dock. Lets users see which compute instance their processes will
+     run on. CPU is the default and only currently-available option.
+     GPU tiers (G4 / L4 / H100 / A100) are scaffolded but disabled —
+     they show what's coming without misrepresenting availability.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-runtime-pop" id="dRuntimePop" hidden>
+  <div class="d-runtime-pop-backdrop" id="dRuntimePopBackdrop"></div>
+  <div class="d-runtime-pop-panel" role="dialog" aria-label="Compute instance">
+    <div class="d-rtp-head">
+      <div class="d-rtp-title">Compute instance</div>
+      <div class="d-rtp-sub">Choose where this session's processes execute. Free CPU is enabled now; GPU tiers are coming soon.</div>
+    </div>
+    <div class="d-rtp-options">
+      <label class="d-rtp-option">
+        <input type="radio" name="rtInstance" value="cpu" checked>
+        <div class="d-rtp-option-body">
+          <div class="d-rtp-option-name">CPU</div>
+          <div class="d-rtp-option-meta">Default · text + light vision · free</div>
+        </div>
+        <span class="d-rtp-pill d-rtp-pill-ok">Available</span>
+      </label>
+      <label class="d-rtp-option disabled">
+        <input type="radio" name="rtInstance" value="g4" disabled>
+        <div class="d-rtp-option-body">
+          <div class="d-rtp-option-name">G4</div>
+          <div class="d-rtp-option-meta">Entry GPU · NVIDIA T4 · 16 GB</div>
+        </div>
+        <span class="d-rtp-pill">Soon</span>
+      </label>
+      <label class="d-rtp-option disabled">
+        <input type="radio" name="rtInstance" value="l4" disabled>
+        <div class="d-rtp-option-body">
+          <div class="d-rtp-option-name">L4</div>
+          <div class="d-rtp-option-meta">Inference GPU · NVIDIA L4 · 24 GB</div>
+        </div>
+        <span class="d-rtp-pill">Soon</span>
+      </label>
+      <label class="d-rtp-option disabled">
+        <input type="radio" name="rtInstance" value="a100" disabled>
+        <div class="d-rtp-option-body">
+          <div class="d-rtp-option-name">A100</div>
+          <div class="d-rtp-option-meta">Training GPU · NVIDIA A100 · 40 GB</div>
+        </div>
+        <span class="d-rtp-pill">Soon</span>
+      </label>
+      <label class="d-rtp-option disabled">
+        <input type="radio" name="rtInstance" value="h100" disabled>
+        <div class="d-rtp-option-body">
+          <div class="d-rtp-option-name">H100</div>
+          <div class="d-rtp-option-meta">Top-tier GPU · NVIDIA H100 · 80 GB</div>
+        </div>
+        <span class="d-rtp-pill">Soon</span>
+      </label>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Pyodide Terminal modal
+     ════════════════════════════════════════════════════════════════
+     Real Python REPL running entirely in the browser via Pyodide
+     (WebAssembly). Loads ~10 MB lazily on first open. Subsequent
+     opens reuse the cached interpreter.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-term-modal" id="dTermModal" hidden>
+  <div class="d-term-backdrop" id="dTermBackdrop"></div>
+  <div class="d-term-window">
+    <div class="d-term-titlebar">
+      <div class="d-term-tb-lights">
+        <span class="d-term-light red"></span>
+        <span class="d-term-light yellow"></span>
+        <span class="d-term-light green"></span>
+      </div>
+      <div class="d-term-tb-title">promptflow — python</div>
+      <button class="d-term-close" id="dTermClose" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="d-term-body" id="dTermBody">
+      <pre class="d-term-output" id="dTermOutput"></pre>
+      <div class="d-term-input-line">
+        <span class="d-term-prompt" id="dTermPrompt">(promptflow) $ </span>
+        <input type="text" class="d-term-input" id="dTermInput"
+               autocomplete="off" autocorrect="off" autocapitalize="off"
+               spellcheck="false">
+      </div>
+    </div>
   </div>
 </div>
 
@@ -16150,9 +17804,322 @@ if (document.readyState === "loading") {
     <div class="d-sp-actions">
       <button class="d-sp-action" id="dSpPrefs">Learned preferences</button>
       <button class="d-sp-action" id="dSpSettings">Settings</button>
+      <button class="d-sp-action" id="dSpModelAccess">Model &amp; API access</button>
       <button class="d-sp-action" id="dSpSecrets">Secrets</button>
       <button class="d-sp-action sp-action-danger" id="dSpSignOut" hidden>Sign out</button>
       <button class="d-sp-action sp-action-primary" id="dSpSignIn">Sign in</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Model & API access settings modal
+     ════════════════════════════════════════════════════════════════
+     Lets logged-in users configure two related things:
+       1. Access mode — BYOK (use your own provider keys, no tokens
+          charged) vs Tokens (PromptFlow pays the providers, charges
+          your allowance).
+       2. Per-activity model assignment — pick which model handles
+          chat, adapt, search, and learn. Each activity can use any
+          model from a connected provider.
+
+     Tier 1 implementation:
+       - Form is real; saves to localStorage.pf_user_settings
+       - Best-effort POST to /api/promptflow/me/settings (which
+         doesn't exist yet; surfaces a clean 404 status to the user)
+       - Status banner shows "Saved locally · server sync pending"
+         until the backend route ships.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-modal d-model-access-modal" id="dModelAccessModal" hidden>
+  <div class="d-modal-backdrop" id="dMaBackdrop"></div>
+  <div class="d-modal-panel d-ma-panel">
+    <div class="d-ma-head">
+      <div>
+        <div class="d-ma-eyebrow">Settings</div>
+        <h2 class="d-ma-title">Model &amp; API access</h2>
+      </div>
+      <button class="d-ma-close" id="dMaClose" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="d-ma-status" id="dMaStatus"></div>
+
+    <!-- ── Access mode ── -->
+    <section class="d-ma-section">
+      <div class="d-ma-section-head">
+        <h3>Access mode</h3>
+        <p>Choose how PromptFlow accesses model providers when running your processes.</p>
+      </div>
+      <div class="d-ma-mode-options">
+        <label class="d-ma-mode-option">
+          <input type="radio" name="accessMode" value="byok" id="dMaModeByok">
+          <div class="d-ma-mode-body">
+            <div class="d-ma-mode-name">Bring your own keys</div>
+            <div class="d-ma-mode-desc">
+              Use your own provider API keys. No PromptFlow tokens charged for model calls. You pay providers directly at their published rates.
+            </div>
+          </div>
+        </label>
+        <label class="d-ma-mode-option">
+          <input type="radio" name="accessMode" value="tokens" id="dMaModeTokens">
+          <div class="d-ma-mode-body">
+            <div class="d-ma-mode-name">Use PromptFlow tokens</div>
+            <div class="d-ma-mode-desc">
+              PromptFlow uses its provider keys and charges your token allowance for each model call. Simpler to start, no setup required.
+            </div>
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── API keys ── -->
+    <section class="d-ma-section" id="dMaKeysSection">
+      <div class="d-ma-section-head">
+        <h3>API keys</h3>
+        <p>Paste keys for the providers you want to use. Keys are encrypted at rest and never logged. You can leave any field blank — PromptFlow will only use the providers you've configured.</p>
+      </div>
+
+      <div class="d-ma-key-row">
+        <label class="d-ma-key-label" for="dMaKeyAnthropic">
+          <span class="d-ma-key-provider">Anthropic</span>
+          <span class="d-ma-key-hint">claude.ai/settings/keys</span>
+        </label>
+        <div class="d-ma-key-input-wrap">
+          <input type="password" class="d-ma-key-input" id="dMaKeyAnthropic"
+                 placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+          <button type="button" class="d-ma-key-toggle" data-target="dMaKeyAnthropic" title="Show / hide">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="d-ma-key-row">
+        <label class="d-ma-key-label" for="dMaKeyOpenai">
+          <span class="d-ma-key-provider">OpenAI</span>
+          <span class="d-ma-key-hint">platform.openai.com/api-keys</span>
+        </label>
+        <div class="d-ma-key-input-wrap">
+          <input type="password" class="d-ma-key-input" id="dMaKeyOpenai"
+                 placeholder="sk-…" autocomplete="off" spellcheck="false">
+          <button type="button" class="d-ma-key-toggle" data-target="dMaKeyOpenai" title="Show / hide">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="d-ma-key-row">
+        <label class="d-ma-key-label" for="dMaKeyGoogle">
+          <span class="d-ma-key-provider">Google</span>
+          <span class="d-ma-key-hint">aistudio.google.com/app/apikey</span>
+        </label>
+        <div class="d-ma-key-input-wrap">
+          <input type="password" class="d-ma-key-input" id="dMaKeyGoogle"
+                 placeholder="AIza…" autocomplete="off" spellcheck="false">
+          <button type="button" class="d-ma-key-toggle" data-target="dMaKeyGoogle" title="Show / hide">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Model assignment per activity ── -->
+    <section class="d-ma-section">
+      <div class="d-ma-section-head">
+        <h3>Model assignment</h3>
+        <p>PromptFlow uses different system activities for different jobs. Assign a model to each — the runtime will use the assigned model whenever it performs that kind of work.</p>
+      </div>
+
+      <div class="d-ma-activity">
+        <div class="d-ma-activity-info">
+          <div class="d-ma-activity-name">Chat</div>
+          <div class="d-ma-activity-desc">Conversational responses, planning, the default reasoning model.</div>
+        </div>
+        <select class="d-ma-activity-select" id="dMaModelChat">
+          <option value="">Select a model…</option>
+          <optgroup label="Anthropic">
+            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          </optgroup>
+          <optgroup label="OpenAI">
+            <option value="openai:gpt-4o">GPT-4o</option>
+            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
+          </optgroup>
+          <optgroup label="Google">
+            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="d-ma-activity">
+        <div class="d-ma-activity-info">
+          <div class="d-ma-activity-name">Adapt</div>
+          <div class="d-ma-activity-desc">Re-tuning processes for new models, prompt revisions, system regeneration.</div>
+        </div>
+        <select class="d-ma-activity-select" id="dMaModelAdapt">
+          <option value="">Select a model…</option>
+          <optgroup label="Anthropic">
+            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          </optgroup>
+          <optgroup label="OpenAI">
+            <option value="openai:gpt-4o">GPT-4o</option>
+            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
+          </optgroup>
+          <optgroup label="Google">
+            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="d-ma-activity">
+        <div class="d-ma-activity-info">
+          <div class="d-ma-activity-name">Search</div>
+          <div class="d-ma-activity-desc">Retrieval over the system + public graph, natural-language query resolution.</div>
+        </div>
+        <select class="d-ma-activity-select" id="dMaModelSearch">
+          <option value="">Select a model…</option>
+          <optgroup label="Anthropic">
+            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          </optgroup>
+          <optgroup label="OpenAI">
+            <option value="openai:gpt-4o">GPT-4o</option>
+            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
+          </optgroup>
+          <optgroup label="Google">
+            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="d-ma-activity">
+        <div class="d-ma-activity-info">
+          <div class="d-ma-activity-name">Learn</div>
+          <div class="d-ma-activity-desc">Lessons extraction from contributed builds (the walking-accumulation distillation).</div>
+        </div>
+        <select class="d-ma-activity-select" id="dMaModelLearn">
+          <option value="">Select a model…</option>
+          <optgroup label="Anthropic">
+            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          </optgroup>
+          <optgroup label="OpenAI">
+            <option value="openai:gpt-4o">GPT-4o</option>
+            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
+          </optgroup>
+          <optgroup label="Google">
+            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </optgroup>
+        </select>
+      </div>
+    </section>
+
+    <div class="d-ma-footer">
+      <button class="d-ma-btn d-ma-btn-secondary" id="dMaCancel" type="button">Cancel</button>
+      <button class="d-ma-btn d-ma-btn-primary" id="dMaSave" type="button">Save settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     Cron Trigger modal
+     ════════════════════════════════════════════════════════════════
+     Real UI for scheduling a .promptflow process to run on a
+     recurring interval. The form is fully functional client-side;
+     submit POSTs to /api/promptflow/cron/triggers/create which
+     doesn't exist yet — that surfaces a clean error state rather
+     than pretending the save worked.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="d-modal" id="dCronModal" hidden>
+  <div class="d-modal-backdrop" id="dCronBackdrop"></div>
+  <div class="d-modal-panel d-cron-panel">
+    <div class="d-ma-head">
+      <div>
+        <div class="d-ma-eyebrow">Cron</div>
+        <h2 class="d-ma-title">Schedule a process</h2>
+      </div>
+      <button class="d-ma-close" id="dCronClose" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="d-ma-status" id="dCronStatus"></div>
+
+    <section class="d-ma-section">
+      <div class="d-ma-section-head">
+        <h3>Trigger name</h3>
+        <p>A short label so you can find this trigger later.</p>
+      </div>
+      <input type="text" class="d-cron-input" id="dCronName"
+             placeholder="Daily Slack digest" autocomplete="off">
+    </section>
+
+    <section class="d-ma-section">
+      <div class="d-ma-section-head">
+        <h3>Process to run</h3>
+        <p>Pick any of your private processes or a public one. The trigger runs it with no input — bake any parameters into the process itself.</p>
+      </div>
+      <select class="d-ma-activity-select" id="dCronProcess">
+        <option value="">Select a process…</option>
+        <optgroup label="My processes">
+          <option disabled>Loading your private library…</option>
+        </optgroup>
+      </select>
+    </section>
+
+    <section class="d-ma-section">
+      <div class="d-ma-section-head">
+        <h3>Schedule</h3>
+        <p>Choose a preset or enter a cron expression for custom timing.</p>
+      </div>
+      <div class="d-cron-schedule">
+        <label class="d-cron-preset">
+          <input type="radio" name="cronSchedule" value="hourly" checked>
+          <span class="d-cron-preset-name">Every hour</span>
+          <span class="d-cron-preset-cron">0 * * * *</span>
+        </label>
+        <label class="d-cron-preset">
+          <input type="radio" name="cronSchedule" value="daily">
+          <span class="d-cron-preset-name">Every day at 9 AM</span>
+          <span class="d-cron-preset-cron">0 9 * * *</span>
+        </label>
+        <label class="d-cron-preset">
+          <input type="radio" name="cronSchedule" value="weekly">
+          <span class="d-cron-preset-name">Every Monday at 9 AM</span>
+          <span class="d-cron-preset-cron">0 9 * * 1</span>
+        </label>
+        <label class="d-cron-preset">
+          <input type="radio" name="cronSchedule" value="custom">
+          <span class="d-cron-preset-name">Custom</span>
+          <input type="text" class="d-cron-custom-input" id="dCronCustom"
+                 placeholder="0 */6 * * *" disabled>
+        </label>
+      </div>
+    </section>
+
+    <section class="d-ma-section">
+      <div class="d-ma-section-head">
+        <h3>Output delivery</h3>
+        <p>Where should the result go? It always lands in your workspace; optionally email a summary.</p>
+      </div>
+      <label class="d-cron-checkbox">
+        <input type="checkbox" id="dCronEmail">
+        <span>Email me a summary when each run completes</span>
+      </label>
+    </section>
+
+    <div class="d-ma-footer">
+      <button class="d-ma-btn d-ma-btn-secondary" id="dCronCancel" type="button">Cancel</button>
+      <button class="d-ma-btn d-ma-btn-primary" id="dCronSubmit" type="button">Create trigger</button>
     </div>
   </div>
 </div>
