@@ -4693,141 +4693,45 @@ function renderStartupOverlay(){
         ? serverAge
         : clientElapsed;
 
-    // Stage-anchored progress. Each stage we receive from Modal maps to a
-    // target percent on the bar. As soon as the server reports a new stage,
-    // the bar jumps forward to that stage's anchor — so the user sees a
-    // clear "we just made progress" moment for every stage transition.
-    // Between transitions the bar still advances smoothly with elapsed time
-    // toward the next anchor (capped 5% short of it so a slow stage doesn't
-    // visibly "complete" before the server says it has).
-    //
-    // Anchor values reflect roughly how much wall-time each stage takes on
-    // a typical L4 cold boot (90-120s total), but the exact numbers don't
-    // matter much — what matters is that they're monotonic and the user
-    // sees the bar lurch forward whenever a new stage arrives.
-    const STAGE_ANCHORS = {
-        // ── Qwen worker stages ──
-        booting:              5,
-        loading_transformer:  18,
-        loading_text_encoder: 35,
-        building_pipeline:    50,
-        loading_loras:        60,
-        moving_to_gpu:        70,
-        registering:          80,
-        compiling:            88,
-        finalizing:           95,
-        warming_up:           92,   // legacy — kept for backward compat
-        ready:                100,
-        // ── Illustrious worker stages ──
-        // First cold boot dominated by the Civitai download (~6.5 GB).
-        // We give it the bulk of the bar (5 → 70) and special-case it
-        // below to use real percent (startup_progress/100). On cached
-        // boots (volume already populated) the download stage is skipped
-        // entirely — we go straight to loading_pipeline.
-        downloading_checkpoint: 70,
-        loading_pipeline:       85,
-        // moving_to_gpu reused from Qwen — same meaning, ~90% bar
-        // position for both pipelines, so no separate anchor needed.
-    };
-    const INTRA_STAGE_DRIFT_S = 12;
-
-    // Order matters here for the "next anchor" lookup below. Both worker
-    // classes share moving_to_gpu / finalizing / ready as their tail
-    // stages — Illustrious skips the Qwen-specific compile path.
-    const STAGE_ORDER = ['booting',
-                         // Qwen-only intermediates
-                         'loading_transformer', 'loading_text_encoder',
-                         'building_pipeline', 'loading_loras',
-                         // Illustrious-only intermediates
-                         'downloading_checkpoint', 'loading_pipeline',
-                         // Shared tail
-                         'moving_to_gpu',
-                         'registering', 'compiling',
-                         'finalizing', 'ready'];
-    // Track when we last entered the current stage so intra-stage drift is
-    // measured from the stage transition, not from overlay open.
+    // Track stage transitions so the label code below can tell the current
+    // server-reported stage from a stale leftover one. The bar position
+    // itself is purely time-driven (see below), not stage-driven, so a
+    // missed or late stage hint can never make the bar stall.
     if (_startupCurrentStage !== stage) {
         _startupCurrentStage = stage;
         _startupCurrentStageEnteredAt = Date.now();
     }
-    const stageElapsed = (Date.now() - _startupCurrentStageEnteredAt) / 1000;
-
-    // Compute the stage cap — the max percent we're allowed to display given
-    // the current stage. This is the stage's anchor plus some intra-stage
-    // drift toward the next anchor (so a slow stage doesn't glue the bar
-    // exactly at its anchor for the full duration).
-    //
-    // Stage info is only trusted when (a) its age is reasonable AND (b) it's
-    // not logically contradictory with the running state. The contradiction
-    // case worth calling out: state='warming' with startup_stage='ready' is
-    // impossible for the current cycle — the GPU can't be warming and ready
-    // at the same time. That combination means the stage value is left over
-    // from a previous cycle that completed, while a fresh warmup_at has
-    // restarted the warming state without any new heartbeat landing yet.
-    // Trusting the leftover 'ready' would label the overlay "GPU ready"
-    // mid-warmup, which is the bug we're fixing.
+    // Stage info is only trusted for the label when (a) its age is
+    // reasonable AND (b) it's not logically contradictory with the
+    // running state. The contradiction case worth calling out:
+    // state='warming' with startup_stage='ready' is impossible for the
+    // current cycle — that combination means the stage value is left
+    // over from a previous cycle that completed, while a fresh
+    // warmup_at has restarted the warming state without any new
+    // heartbeat landing yet. Trusting the leftover 'ready' would label
+    // the overlay "GPU ready" mid-warmup.
     const stageContradictsState = (stage === 'ready' && _gs.state !== 'ready');
     const stageIsFresh = stage && serverAge > 0 && serverAge < 60 && !stageContradictsState;
-    let stageCap;
-    if (stageIsFresh && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
-        // Real-percent path. Civitai download reports 0..100 directly,
-        // so we map it onto the 5..70 portion of the bar that this
-        // stage owns. No time-ramp — the bar moves at exactly the
-        // download speed, which is the most honest signal we can give.
-        const dlPct = Math.max(0, Math.min(100, _gs.startup_progress));
-        const lo = STAGE_ANCHORS.booting;            // 5
-        const hi = STAGE_ANCHORS.downloading_checkpoint;  // 70
-        stageCap = lo + (hi - lo) * (dlPct / 100);
-    } else if (stageIsFresh && STAGE_ANCHORS[stage] !== undefined) {
-        const basePct = STAGE_ANCHORS[stage];
-        const stageIdx = STAGE_ORDER.indexOf(stage);
-        const nextAnchor = (stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1)
-            ? STAGE_ANCHORS[STAGE_ORDER[stageIdx + 1]]
-            : 95;
-        const driftTarget = Math.max(basePct, nextAnchor - 5);
-        const driftFraction = Math.min(1, stageElapsed / INTRA_STAGE_DRIFT_S);
-        stageCap = basePct + (driftTarget - basePct) * driftFraction;
-    } else {
-        // No fresh stage info — cap at the booting anchor so the bar can
-        // still reach the early single-digit territory but doesn't run
-        // away on a hunch.
-        stageCap = STAGE_ANCHORS.booting;
-    }
 
-    // Two-phase progress to give the user a calm, steady signal:
-    //   Phase 1 (0–20s): the bar climbs smoothly from 0% to 10% regardless
-    //   of what the stage info says. This gives a guaranteed "the bar is
-    //   moving" cue at the start of every warming cycle, and prevents the
-    //   old behaviour where a late-stage hint (e.g. warming_up=92%) would
-    //   snap the bar to 90% on the very first paint.
-    //   Phase 2 (20s+): the bar advances at a fixed rate (1%/s) toward the
-    //   stage cap, so progress is always steady — never jumping by 70+ %
-    //   when a new stage message arrives. The cap means we still reflect
-    //   the actual GPU state: we never paint past where the stage data
-    //   says we are.
-    const INITIAL_RAMP_MS = 20000;          // 20 seconds
-    const INITIAL_RAMP_TARGET_PCT = 10;     // ramp end position
-    const POST_RAMP_RATE_PCT_PER_S = 1.0;   // % per second after ramp
+    // Steady time-based progress. A typical cold boot takes ~90s, so the
+    // bar advances linearly from 0% to 95% over that window — about
+    // 1.06%/s, smooth and predictable. No stage caps, no two-phase ramp,
+    // no real-percent overrides: the bar is a pacing aid, not a literal
+    // readout of GPU subsystem state. Stage *text* still updates from
+    // server hints below, so the user sees what's actually happening;
+    // the bar just stops stuttering when those hints lag or jump.
+    //
+    // If the GPU becomes ready before 90s the overlay closes early
+    // (bar resolves below 95%). If the boot overruns the bar parks at
+    // 95% until ready — never crosses the finish line on its own,
+    // never reverses (ratchet below).
+    const EXPECTED_BOOT_MS = 90000;          // 90s — typical cold boot
+    const BAR_MAX_PCT = 95;                  // park here if boot overruns
     const cycleElapsedMs = Date.now() - _startupFirstSeen;
-
-    let candidatePct;
-    if (cycleElapsedMs < INITIAL_RAMP_MS) {
-        // Phase 1: linear 0 → 10% over 20s. Stage info is intentionally
-        // ignored here so the bar always starts at the far left, even if
-        // the server is already reporting a late stage from a previous
-        // warming cycle that hadn't been cleared yet.
-        candidatePct = (cycleElapsedMs / INITIAL_RAMP_MS) * INITIAL_RAMP_TARGET_PCT;
-    } else {
-        // Phase 2: continue advancing at a fixed rate from the ramp's
-        // ending point, capped by where the stage data says we actually
-        // are. As newer (later) stages arrive the cap rises and the bar
-        // keeps climbing smoothly — no jumps.
-        const postRampS = (cycleElapsedMs - INITIAL_RAMP_MS) / 1000;
-        const linearAdvance = INITIAL_RAMP_TARGET_PCT + postRampS * POST_RAMP_RATE_PCT_PER_S;
-        candidatePct = Math.min(linearAdvance, stageCap);
-        // Floor: once Phase 1 has happened we never drop below 10%.
-        if (candidatePct < INITIAL_RAMP_TARGET_PCT) candidatePct = INITIAL_RAMP_TARGET_PCT;
-    }
+    const candidatePct = Math.min(
+        BAR_MAX_PCT,
+        (cycleElapsedMs / EXPECTED_BOOT_MS) * BAR_MAX_PCT
+    );
 
     // Apply ratchet: the displayed pct can never decrease this cycle.
     _startupMaxPct = Math.max(_startupMaxPct, candidatePct);
@@ -4856,9 +4760,10 @@ function renderStartupOverlay(){
     } else if (stageIsFresh && stage === 'registering' && _gs.startup_total > 0) {
         stageText = `Registering · ${_gs.startup_progress}/${_gs.startup_total}`;
     } else if (stageIsFresh && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
-        // Real percent for the Civitai download. Reads
-        // 'Downloading model · 47%' so the user sees the bar's
-        // movement is tied to actual bytes coming down.
+        // Real percent for the Civitai download in the *label* — reads
+        // 'Downloading model · 47%'. The bar itself is time-based (see
+        // above), so the label is where the user sees actual byte
+        // progress.
         stageText = `Downloading model · ${_gs.startup_progress}%`;
     } else if (stageIsFresh && stage && stageLabels[stage]) {
         stageText = stageLabels[stage];
