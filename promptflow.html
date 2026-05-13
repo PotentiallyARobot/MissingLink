@@ -10390,21 +10390,21 @@ promptflow whoami</code></pre>
     // Open the contribution modal pre-populated with whatever they
     // dropped; they'll add the other half (chat or zip) inside the
     // modal.
+    //
+    // The contribution modal's open/setZip/setChat functions live in
+    // a different scope (dDesktopInit) — published on window.pfContribution
+    // so this handler can reach them. If the bundle hasn't loaded yet
+    // (which shouldn't happen since dDesktopInit runs on DOMContentLoaded
+    // and this handler can only fire after the user interacts), the
+    // attach falls through to the standard media path.
     const zipFile = files.find(f => /\.zip$/i.test(f.name));
     const chatFile = files.find(f =>
       /\.(md|markdown|json|txt)$/i.test(f.name) && f.size > 200
     );
-    if (zipFile || chatFile) {
-      dContribOpen();
-      if (zipFile) {
-        _contribZip = zipFile;
-        dContribRenderPicked("zip", zipFile);
-      }
-      if (chatFile) {
-        _contribChat = chatFile;
-        dContribRenderPicked("chat", chatFile);
-      }
-      dContribUpdateActionButton();
+    if ((zipFile || chatFile) && window.pfContribution && typeof window.pfContribution.open === "function") {
+      window.pfContribution.open();
+      if (zipFile) window.pfContribution.setZip(zipFile);
+      if (chatFile) window.pfContribution.setChat(chatFile);
       fileInput.value = "";
       return;
     }
@@ -18121,21 +18121,25 @@ function dDesktopInit(){
   dContribBindDrop("zip");
   dContribBindDrop("chat");
 
-  // Open the contribution modal when the user attaches a .zip via the
-  // main chat input (the placeholder promises "Upload your chat history
-  // and final process/github repo" — this is where that lives).
-  if (D("attachBtn")) {
-    const origAttach = D("attachBtn");
-    origAttach.addEventListener("click", (e) => {
-      // The original click handler opens the standard file picker for
-      // media. We add a small intercept: if the user holds Shift, or
-      // there's a hint they want to contribute (e.g. textarea has
-      // "upload" / "contribute" keyword), open the contribution modal
-      // instead. Otherwise let the normal media picker run.
-      // Simpler: just always show a small chooser. For now the modal
-      // is accessible via the PF menu too.
-    }, { capture: false });
-  }
+  // ── Expose contribution API to the outer IIFE ──
+  // The chat-input file picker (fileInput.onchange) lives in a
+  // different scope (the IIFE that wraps the original app code) and
+  // can't see these locals directly. Publishing a small surface on
+  // window lets the IIFE route .zip and chat-shaped uploads here
+  // without leaking the full implementation.
+  window.pfContribution = {
+    open: dContribOpen,
+    setZip: (file) => {
+      _contribZip = file;
+      dContribRenderPicked("zip", file);
+      dContribUpdateActionButton();
+    },
+    setChat: (file) => {
+      _contribChat = file;
+      dContribRenderPicked("chat", file);
+      dContribUpdateActionButton();
+    },
+  };
 
   // ════════════════════════════════════════════════════════════════
   // Agents monitor modal
