@@ -4583,6 +4583,11 @@ let _startupMaxPct = 0;
 // not from the overlay opening.
 let _startupCurrentStage = null;
 let _startupCurrentStageEnteredAt = 0;
+// When we first saw positive evidence a real boot is happening (fresh
+// stage heartbeat OR state=warming with stale ready). The bar's timer
+// runs off this, NOT off _startupFirstSeen — otherwise the bar would
+// advance to 95% while the GPU just sleeps idle and Modal is silent.
+let _bootStartedAt = null;
 
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
@@ -4614,6 +4619,7 @@ function renderStartupOverlay(){
         _startupMaxPct = 0;
         _startupCurrentStage = null;
         _startupCurrentStageEnteredAt = 0;
+        _bootStartedAt = null;
         return;
     }
     // Trust the server. With the precedence fix in /api/studio/status
@@ -4628,6 +4634,7 @@ function renderStartupOverlay(){
         _startupMaxPct = 0;
         _startupCurrentStage = null;
         _startupCurrentStageEnteredAt = 0;
+        _bootStartedAt = null;
         return;
     }
     // Overlay show rule: only fire when the GPU is CONFIRMED OFF.
@@ -4664,6 +4671,7 @@ function renderStartupOverlay(){
         _startupMaxPct = 0;            // reset ratchet for next cycle
         _startupCurrentStage = null;
         _startupCurrentStageEnteredAt = 0;
+        _bootStartedAt = null;
         return;
     }
 
@@ -4721,13 +4729,28 @@ function renderStartupOverlay(){
     // server hints below, so the user sees what's actually happening;
     // the bar just stops stuttering when those hints lag or jump.
     //
+    // CRUCIALLY, the timer is anchored to when a real boot started —
+    // NOT when the overlay opened. When the overlay opens because state
+    // is 'cold' or 'sleeping' (GPU is off, no Modal container starting),
+    // no boot is actually in flight — nothing for the bar to track —
+    // so it holds at 0%. The timer engages only when we have positive
+    // evidence of an active boot: a fresh stage heartbeat (server got
+    // a stage update within the last 60s) OR state='warming' with stale
+    // ready (server saw warmup_at bumped, container is spinning up).
+    //
     // If the GPU becomes ready before 90s the overlay closes early
     // (bar resolves below 95%). If the boot overruns the bar parks at
     // 95% until ready — never crosses the finish line on its own,
     // never reverses (ratchet below).
+    const bootActive = stageIsFresh || isWarmingForReal;
+    if (bootActive && _bootStartedAt === null) {
+        _bootStartedAt = Date.now();
+    }
     const EXPECTED_BOOT_MS = 90000;          // 90s — typical cold boot
     const BAR_MAX_PCT = 95;                  // park here if boot overruns
-    const cycleElapsedMs = Date.now() - _startupFirstSeen;
+    const cycleElapsedMs = _bootStartedAt !== null
+        ? (Date.now() - _bootStartedAt)
+        : 0;
     const candidatePct = Math.min(
         BAR_MAX_PCT,
         (cycleElapsedMs / EXPECTED_BOOT_MS) * BAR_MAX_PCT
