@@ -6634,6 +6634,36 @@ body.d-desktop-mode .stream {
 .pcr-card:hover .pcr-card-action {
   color: rgba(232,200,140,1);
 }
+/* Picked state — the card the user clicked. Stays clickable/visible
+   but gains a gold ring and "Generating…" status replaces the
+   action line. Subtle pulse signals work in progress. */
+.pcr-card-picked {
+  border-color: rgba(232,169,23,0.7) !important;
+  box-shadow: 0 0 0 1px rgba(232,169,23,0.4), 0 0 16px rgba(232,169,23,0.15);
+  cursor: default;
+  pointer-events: none;
+}
+.pcr-card-picked .pcr-card-action {
+  color: rgba(232,200,140,1);
+  font-weight: 500;
+  animation: pcr-card-pulse 1.6s ease-in-out infinite;
+}
+@keyframes pcr-card-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+/* Disabled state — siblings of the picked card. Faded out, no
+   hover, no click. Content stays legible so the user can see what
+   they passed over. */
+.pcr-card-disabled {
+  opacity: 0.35;
+  cursor: default !important;
+  pointer-events: none;
+  filter: saturate(0.6);
+}
+.pcr-card-disabled:hover .pcr-card-action {
+  color: rgba(232,169,23,0.78);
+}
 .d-contrib-error {
   font-size: 12.5px;
   color: #ff8585;
@@ -15537,6 +15567,26 @@ promptflow whoami</code></pre>
         '<div class="pcr-card-action">Generate this →</div>';
       card.onclick = () => {
         if (busy) return;
+        // Lock the entire recommendation panel — once the user
+        // commits to one path, the others shouldn't keep inviting
+        // a competing click. They stay visible (the user can see
+        // what they didn't pick) but become unclickable and faded.
+        // The picked card gets a "picked" class showing it's the
+        // active one with a "Generating…" status line.
+        const panel = card.closest(".process-card-recs");
+        if (panel) {
+          const allCards = panel.querySelectorAll(".pcr-card");
+          allCards.forEach(c => {
+            if (c === card) {
+              c.classList.add("pcr-card-picked");
+              const action = c.querySelector(".pcr-card-action");
+              if (action) action.textContent = "Generating…";
+            } else {
+              c.classList.add("pcr-card-disabled");
+              c.disabled = true;
+            }
+          });
+        }
         // Mark this process as the source for the next generation —
         // chainSource path on the backend uses this to scaffold
         // composition or adaptation. The kind drives whether the
@@ -22533,20 +22583,44 @@ function dDesktopInit(){
     // first page of conversations at boot, so for repeat folder opens
     // (and even the first open after boot) we usually have the data
     // already. Painting from cache is instant; no "Loading…" stare.
+    //
+    // A populated cache means the app-wide refreshProcesses (which
+    // runs at boot + after every successful design_process) has
+    // already returned. Even an EMPTY array is a valid cached
+    // result — it just means the user genuinely has no processes
+    // yet. We render "No items" instead of "Loading…" in that case.
     let cached = null;
-    if (kind === "chats" && Array.isArray(window.conversationsCache) && window.conversationsCache.length > 0) {
+    if (kind === "chats" && Array.isArray(window.conversationsCache)) {
       cached = window.conversationsCache.map(dMapConversation);
-    } else if (kind === "processes" && Array.isArray(window.processesCache) && window.processesCache.length > 0) {
+    } else if (kind === "processes" && Array.isArray(window.processesCache)) {
       cached = window.processesCache.filter(p => !p.is_system).map(p => dMapProcess(p, "process"));
-    } else if (kind === "system" && Array.isArray(window.processesCache) && window.processesCache.length > 0) {
+    } else if (kind === "system" && Array.isArray(window.processesCache)) {
       cached = window.processesCache.filter(p => p.is_system).map(p => dMapProcess(p, "system"));
     }
     if (cached) {
       _dFolderItems[kind] = cached;
       dRenderFolderItems(cached, "");
-      // Skip the background refresh — the existing app already polls
-      // / refreshes on its own schedule. Re-fetching here would just
-      // duplicate work and could overwrite a fresher view.
+      // If the cache is empty but the app might just be early in
+      // its first refresh, kick off a background fetch to fill it
+      // in. The view stays in "No items" until the fetch returns.
+      if (cached.length === 0) {
+        (async () => {
+          try {
+            if (kind === "processes" || kind === "system") {
+              const j = await dFetchJson("/api/promptflow/processes", 15000);
+              const all = j.processes || [];
+              window.processesCache = all;
+              const filtered = kind === "system"
+                ? all.filter(p => p.is_system).map(p => dMapProcess(p, "system"))
+                : all.filter(p => !p.is_system).map(p => dMapProcess(p, "process"));
+              if (_dFolderActive === kind) {
+                _dFolderItems[kind] = filtered;
+                dRenderFolderItems(filtered, D("dFvSearch").value || "");
+              }
+            }
+          } catch { /* leave the empty view */ }
+        })();
+      }
       return;
     }
 
