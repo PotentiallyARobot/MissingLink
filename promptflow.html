@@ -3064,6 +3064,43 @@
     font-size:11px; color:var(--gold); opacity:0.95;
   }
 
+  /* Live-at link row — shows the process's public-runnable URL on
+     every generated process card. Sits between the primary actions
+     (Edit/Run) and the chain row (Compose/Adapt). Discreet styling
+     (small mono font, muted color until hover) so it reads as
+     metadata, not a primary action — but the URL is selectable and
+     copyable, and the copy button is one tap. */
+  .process-card-live{
+    margin-top:8px;
+    display:flex; align-items:center; flex-wrap:wrap; gap:6px;
+    font-family:var(--font-mono); font-size:10.5px;
+    color:var(--text-muted); letter-spacing:.02em;
+  }
+  .pcl-label{ color:var(--text-muted); }
+  .pcl-link{
+    color:var(--gold); text-decoration:none;
+    border-bottom:1px dotted rgba(232,169,23,0.3);
+    padding-bottom:1px;
+  }
+  .pcl-link:hover{
+    border-bottom-color:var(--gold); border-bottom-style:solid;
+  }
+  .pcl-copy{
+    background:transparent; border:1px solid var(--border);
+    color:var(--text-muted); cursor:pointer;
+    width:22px; height:22px; line-height:1; padding:0;
+    border-radius:4px; font-size:11px;
+    transition:border-color .12s, color .12s;
+  }
+  .pcl-copy:hover{ border-color:var(--gold); color:var(--gold); }
+  .pcl-draft{
+    margin-left:6px; padding:1px 7px; border-radius:10px;
+    background:rgba(232,169,23,0.10); color:rgba(232,200,140,0.85);
+    border:1px solid rgba(232,169,23,0.25);
+    font-family:var(--font-mono); font-size:9.5px;
+    letter-spacing:.04em; text-transform:uppercase;
+  }
+
   /* Back-to-source navigation link. Appears at the TOP of a process
      card when it was generated via Compose/Adapt — the chain
      breadcrumb pointing back to where this card came from. Visually
@@ -11547,7 +11584,19 @@ promptflow whoami</code></pre>
     // Append user turn — refinements / text-only don't include a thumbnail.
     addUserMsg(userText, userImg, userImgName, extraThumbs);
     const assist = addAssistMsg();
-    setStatus(assist, isRefinement ? "Refining plan…" : "Planning…");
+    // When chaining off an existing process via Compose/Adapt, surface
+    // the source in the initial status so the user immediately sees
+    // "this is being built FROM something" — reinforces the gameplay
+    // loop AND gives the impression that the planner is starting from
+    // a known scaffold (which the backend is, in fact, doing).
+    const initialStatus = isRefinement
+      ? "Refining plan…"
+      : (pendingParentProcess && pendingParentProcess.name
+          ? (pendingParentProcess.kind === "adapt"
+              ? `Adapting from "${pendingParentProcess.name}"…`
+              : `Composing from "${pendingParentProcess.name}"…`)
+          : "Planning…");
+    setStatus(assist, initialStatus);
 
     // Capture-and-clear the chain-navigation parent — strictly one
     // shot. Anything that goes wrong (abort, error, intent mismatch)
@@ -11626,6 +11675,19 @@ promptflow whoami</code></pre>
       fd.append(`image_${i + 2}`, entry.file);     // image_2, image_3, ...
     });
     if (currentConversationId) fd.append("conversation_id", currentConversationId);
+
+    // Chain-navigation source. When the user clicked ✦ Compose or
+    // ✱ Adapt to start this generation, generationParent carries
+    // the source process. Passing the id + kind explicitly lets the
+    // backend hydrate the source from D1 and use it as scaffolding
+    // for the new design — for "compose", the source MUST appear as
+    // a step in the new process (royalty cascade); for "adapt", the
+    // source's structure becomes the starting template. Much easier
+    // than designing from a blank slate.
+    if (generationParent && generationParent.id) {
+      fd.append("source_process_id", generationParent.id);
+      fd.append("source_kind", generationParent.kind || "compose");
+    }
 
     // Generation preferences — pass the active allowlist if set. The
     // override layer wins over the persistent default when both
@@ -13159,7 +13221,44 @@ promptflow whoami</code></pre>
     actions.appendChild(runBtn);
     assist.body.appendChild(actions);
 
-    // ── Chain navigation row — the gameplay loop ────────────────
+    // Live-at link — the process's public-runnable frontend. Surfaces
+    // the per-process URL at every step of the chain so the gameplay
+    // is visibly grounded in real shareable pages. Renders only when
+    // the backend returned a public_url for this process (non-system,
+    // owner handle resolved, slug present). Opens in a new tab so
+    // the chat thread stays intact.
+    //
+    // Note for drafts (is_draft=true): the URL is owner-only until the
+    // user commits the draft. We still show the link because clicking
+    // it as the owner works — and clicking copy + sharing gives a
+    // dead URL UNTIL committed, which is a fine, surface-level signal
+    // that "this is shareable but you need to save it first".
+    if (proc.public_url) {
+      const liveRow = document.createElement("div");
+      liveRow.className = "process-card-live";
+      const isDraftHint = proc.is_draft
+        ? `<span class="pcl-draft" title="Drafts are only visible to you until committed">draft · owner-only</span>`
+        : "";
+      liveRow.innerHTML =
+        `<span class="pcl-label">live at</span> ` +
+        `<a class="pcl-link" target="_blank" rel="noopener"></a> ` +
+        `<button class="pcl-copy" type="button" title="Copy URL">⎘</button>` +
+        (isDraftHint ? ` ${isDraftHint}` : "");
+      const a = liveRow.querySelector(".pcl-link");
+      a.href = proc.public_url;
+      a.textContent = proc.public_url;
+      const copyBtn = liveRow.querySelector(".pcl-copy");
+      copyBtn.onclick = async (e) => {
+        e.preventDefault();
+        try {
+          await navigator.clipboard.writeText(location.origin + proc.public_url);
+          const orig = copyBtn.textContent;
+          copyBtn.textContent = "✓";
+          setTimeout(() => { copyBtn.textContent = orig; }, 1000);
+        } catch { /* ignore */ }
+      };
+      assist.body.appendChild(liveRow);
+    }
     //
     // Every generated process becomes a launching pad for the next
     // generation. Two clicks chain through the graph:
@@ -14689,12 +14788,37 @@ promptflow whoami</code></pre>
     return card;
   }
 
-  // Click handler for "Generate this" — closes the editor, drops the
-  // user back into chat with the design_prompt pre-filled, sends it
-  // through the regular send() path so the planner's design_process
-  // intent handles it. The user sees the same process-card flow as
-  // typing "Generate a process that ..." themselves.
+  // Click handler for "Generate this" — drops the user back into chat
+  // with the design_prompt pre-filled, sends it through the regular
+  // send() path so the planner's design_process intent handles it.
+  // The user sees the same process-card flow as typing "Generate a
+  // process that ..." themselves.
+  //
+  // Crucially, the SOURCE process (the seed the compositions panel
+  // was rendered for) is preserved as the chain-navigation parent
+  // BEFORE the editor closes. closeProcessEditor() clears
+  // currentEditorProcess, so we capture it first. Two payoffs:
+  //
+  //   1. The resulting card renders an "↑ Back to <source>" link, so
+  //      the user can return to the seed they composed/adapted from.
+  //   2. The planner has an anchor process to lean on (referenced by
+  //      name in the design_prompt + visible in the user's catalog),
+  //      so it can compose the new process AROUND the source rather
+  //      than designing one from scratch.
   function generateCompositionFromPitch(c) {
+    // Capture source first — must run BEFORE closeProcessEditor()
+    // wipes currentEditorProcess. The chain-nav signal is one-shot
+    // and consumed at the top of send().
+    if (currentEditorProcess) {
+      // Kind defaults to "compose" — the compositions panel proposes
+      // processes that USE the seed as a step. If the panel later
+      // grows an Adapt mode, set kind="adapt" on those entries.
+      pendingParentProcess = {
+        id: currentEditorProcess.id,
+        name: currentEditorProcess.name,
+        kind: "compose",
+      };
+    }
     if (typeof closeProcessEditor === "function") {
       closeProcessEditor();
     }
