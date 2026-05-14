@@ -4385,17 +4385,17 @@ body {
   /* Reserve space for the topbar at the top so the chat thread,
      plan cards, and any other canvas content don't render
      underneath the search pill / tokens / account elements.
-     The topbar sits at top:24px and is ~44px tall (32px buttons
-     plus 6px vertical padding), so 80px of top padding gives a
-     12px gutter below the topbar before content begins. */
-  padding-top: 56px;
+     The topbar sits at top:24px and is ~44px tall, ending at
+     viewport y≈68px. 72px of reservation puts content 4px below
+     the topbar's bottom edge — tight, but not overlapping. */
+  padding-top: 72px;
 }
 
 /* Page-shell height accounts for the new padding so it doesn't get
    pushed below the dock. */
 .page-shell {
   min-height: auto !important;
-  height: calc(100vh - var(--d-dock-h) - 56px) !important;
+  height: calc(100vh - var(--d-dock-h) - 72px) !important;
 }
 .chat-wrap {
   height: 100%;
@@ -4403,6 +4403,15 @@ body {
 .stream {
   /* Stream now scrolls inside the canvas area. */
   max-height: 100%;
+}
+/* Tighter top padding in desktop mode — the 32px default leaves a
+   wide gap below the topbar that makes the chat feel like it floats
+   in the middle of the screen with a fresh conversation. 8px gives
+   a clean gutter without the empty band. Same logic for bottom. */
+body.d-desktop-mode .stream {
+  padding-top: 8px;
+  padding-bottom: 12px;
+  gap: 14px;
 }
 
 /* Sidebar (conversation history) — overlay-style instead of taking
@@ -5834,6 +5843,59 @@ body {
   padding-top: 6px;
   border-top: 1px solid rgba(255,255,255,0.06);
 }
+/* Multi-action variant — four buttons + a status span. Wraps cleanly
+   on narrow viewports; the status span pushes the buttons to the
+   right when there's room. */
+.d-contrib-block-actions-multi {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.d-contrib-block-actions-multi .d-contrib-block-status {
+  min-width: 60px;
+}
+/* Discard reads as destructive. Red border on hover so it's clearly
+   distinct from the other secondary buttons. */
+.d-contrib-action-discard {
+  color: rgba(220,150,150,0.85) !important;
+  border-color: rgba(220,140,140,0.22) !important;
+}
+.d-contrib-action-discard:hover {
+  border-color: rgba(255,120,120,0.55) !important;
+  color: rgba(255,180,180,0.95) !important;
+  background: rgba(255,90,90,0.06) !important;
+}
+/* Share-with-everyone reads as celebratory — gentle blue-purple tint
+   (same family as the propose-system tile) so it signals "this goes
+   to the commons" without competing with the primary action. */
+.d-contrib-action-share {
+  color: rgba(190,205,240,0.95) !important;
+  border-color: rgba(170,190,230,0.28) !important;
+}
+.d-contrib-action-share:hover {
+  border-color: rgba(180,200,240,0.6) !important;
+  background: rgba(150,170,220,0.08) !important;
+}
+/* Confirmed pill — replaces the result block once the user has
+   made their decision. Quiet success state that lets the chat
+   keep flowing without burning vertical space on a finished step. */
+.d-contrib-confirmed {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  background: rgba(120, 180, 130, 0.06);
+  border: 1px solid rgba(140, 200, 150, 0.20);
+  border-radius: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: rgba(180, 220, 190, 0.95);
+  letter-spacing: 0.01em;
+}
+.d-contrib-confirmed-icon {
+  color: rgba(150, 220, 160, 0.95);
+  font-weight: 700;
+  font-size: 13px;
+}
 .d-contrib-block-status {
   font-size: 11.5px;
   color: rgba(170,170,176,0.85);
@@ -6058,6 +6120,10 @@ body {
   flex-direction: column;
   gap: 10px;
 }
+/* HTML's hidden attribute is supposed to display:none, but the
+   class-level display:flex above wins on specificity, so all panels
+   stacked vertically. Explicit override fixes the tab switcher. */
+.d-contrib-tabpanel[hidden] { display: none; }
 .d-contrib-tab-desc {
   font-size: 11.5px;
   color: rgba(170,170,176,0.75);
@@ -7490,6 +7556,28 @@ body.d-desktop-mode .stream:has(> .empty:not([style*="none"]) > .d-hero:not(.d-f
   color: rgba(170,170,176,0.7);
   font-family: ui-monospace, monospace;
   font-size: 12.5px;
+}
+
+/* Helper copy that sits below the propose tile when the system
+   folder is empty — usually because the public read returned no
+   rows or the viewer is anonymous. Quiet, mono, centered. */
+.d-fv-system-helper {
+  margin: 24px auto 0;
+  padding: 16px 20px;
+  max-width: 480px;
+  text-align: center;
+  font-family: ui-monospace, monospace;
+}
+.d-fv-system-helper-title {
+  color: rgba(170,170,176,0.7);
+  font-size: 12.5px;
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
+}
+.d-fv-system-helper-sub {
+  color: rgba(170,170,176,0.5);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 
@@ -11782,6 +11870,14 @@ promptflow whoami</code></pre>
     if (busy) return;
     if (!ME) { openAuth("signup"); return; }
     const userText = textInput.value.trim();
+
+    // Dismiss the command-suggestions panel the instant Enter is
+    // pressed. This used to fire later in the function — after the
+    // empty-text guard and before the body of /plan — which meant
+    // submissions that branched early (contribution flow, refine
+    // mode, etc.) left the panel hanging open above the chat. Doing
+    // it up front guarantees every send path tears it down.
+    closeSuggestions();
 
     // ── Verb dispatcher (when zip is staged) ─────────────────────
     // The user has attached a zip. Read the leading verb from their
@@ -18273,7 +18369,13 @@ new process. Compare its output to the current one before replacing.
   });
 
   refreshMe().then(() => {
-    if (ME) { refreshConversations(); refreshProcesses(); }
+    // Always refresh processes — the endpoint returns a public
+    // subset (system + published) for anonymous viewers, which is
+    // exactly what we need to render the System folder on first
+    // paint regardless of auth state. Conversations stay auth-gated
+    // since they're per-user.
+    refreshProcesses();
+    if (ME) { refreshConversations(); }
   });
 
   // Drag-drop any media file onto the page.
@@ -19249,63 +19351,202 @@ function dDesktopInit(){
     }
 
     // ── Footer actions ──────────────────────────────────────────
+    // Four-way decision the user makes at the end of an extraction:
+    //
+    //   1. Persist (private)  — save lessons + spirit + reference
+    //                           process to the user's workspace.
+    //                           They retrieve into THIS user's
+    //                           future generations only.
+    //   2. Share publicly     — same as persist, plus marks lessons
+    //                           public so they retrieve into every
+    //                           user's future generations. The
+    //                           contribution flywheel hinges on this.
+    //   3. Generate a process — persist + immediately route to the
+    //                           design_process planner with the
+    //                           lessons + files as context, so the
+    //                           extraction becomes a runnable build
+    //                           in one motion.
+    //   4. Discard            — don't save. Useful when the user
+    //                           uploaded the wrong build or the
+    //                           lessons came back weak.
+    //
+    // All four collapse the result block into a small status pill
+    // after success so the chat keeps flowing.
     const actions = document.createElement("div");
-    actions.className = "d-contrib-block-actions";
+    actions.className = "d-contrib-block-actions d-contrib-block-actions-multi";
     const statusEl = document.createElement("span");
     statusEl.className = "d-contrib-block-status";
     actions.appendChild(statusEl);
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "d-ma-btn d-ma-btn-primary";
-    saveBtn.type = "button";
-    saveBtn.textContent = "Save edits";
-    saveBtn.addEventListener("click", async () => {
-      saveBtn.disabled = true;
-      const orig = saveBtn.textContent;
-      saveBtn.textContent = "Saving…";
-      statusEl.textContent = "";
+
+    // Local helper: persist edits + lessons. Returns true on success
+    // so the public-share / generate flows can chain on top.
+    const doPersist = async (visibility = "private") => {
+      const procId = state.result.resulting_process_id;
+      if (!procId) {
+        statusEl.textContent = "No process id — can't save.";
+        statusEl.className = "d-contrib-block-status err";
+        return false;
+      }
+      // Update the reference-process row
+      await fetch("/api/promptflow/process/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: procId,
+          spirit_md: state.result.spirit_md || "",
+          utility_md: state.result.components_outline || "",
+          discoverability_md: state.result.reproduction_guide || "",
+        }),
+      });
+      // Save lessons with the chosen visibility. The backend currently
+      // accepts an optional `visibility` field — older deployments
+      // ignore it and treat all lessons as private, which is the safe
+      // default.
+      const lessons = (state.result.lessons || []).filter(l => l.lesson_text && l.lesson_text.trim());
+      const r2 = await fetch("/api/promptflow/lessons/save", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ process_id: procId, lessons, visibility }),
+      });
+      if (r2.ok) return true;
+      if (r2.status === 404) {
+        statusEl.textContent = "Saved process. Lessons endpoint pending.";
+        statusEl.className = "d-contrib-block-status warn";
+        return true; // process saved; lessons retry later
+      }
+      statusEl.textContent = "Save failed (" + r2.status + ").";
+      statusEl.className = "d-contrib-block-status err";
+      return false;
+    };
+
+    // Local helper: lock the row of buttons during async work and
+    // restore on completion. Returns a function that un-locks.
+    const lockButtons = (label) => {
+      const all = actions.querySelectorAll("button");
+      all.forEach(b => { b.disabled = true; });
+      statusEl.textContent = label;
+      statusEl.className = "d-contrib-block-status";
+      return () => { all.forEach(b => { b.disabled = false; }); };
+    };
+
+    // Collapse the result block into a tiny success pill so the
+    // chat thread keeps flowing — same pattern as the
+    // asset-persistence prompt's confirmed state.
+    const collapseToConfirmation = (msg) => {
+      container.innerHTML = "";
+      const pill = document.createElement("div");
+      pill.className = "d-contrib-confirmed";
+      pill.innerHTML = '<span class="d-contrib-confirmed-icon">✓</span> ' + dContribEsc(msg);
+      container.appendChild(pill);
+    };
+
+    // 4. Discard (left-most, destructive secondary)
+    const discardBtn = document.createElement("button");
+    discardBtn.className = "d-ma-btn d-ma-btn-secondary d-contrib-action-discard";
+    discardBtn.type = "button";
+    discardBtn.textContent = "Discard";
+    discardBtn.title = "Throw away these lessons — don't persist to your workspace";
+    discardBtn.addEventListener("click", async () => {
+      if (!confirm("Discard these lessons? They won't be saved to your workspace.")) return;
+      const unlock = lockButtons("Discarding…");
       try {
         const procId = state.result.resulting_process_id;
-        if (!procId) {
-          statusEl.textContent = "No process id — can't save.";
-          return;
+        if (procId) {
+          // Best-effort delete of the reference process the
+          // extractor wrote. If the route doesn't exist or fails,
+          // we still collapse the UI — the row will sweep with
+          // the upload on its normal 24h boundary.
+          try {
+            await fetch("/api/promptflow/process/delete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: procId }),
+            });
+          } catch { /* non-fatal */ }
         }
-        // Update the reference-process row
-        await fetch("/api/promptflow/process/update", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            id: procId,
-            spirit_md: state.result.spirit_md || "",
-            utility_md: state.result.components_outline || "",
-            discoverability_md: state.result.reproduction_guide || "",
-          }),
-        });
-        // Save lessons
-        const lessons = (state.result.lessons || []).filter(l => l.lesson_text && l.lesson_text.trim());
-        const r2 = await fetch("/api/promptflow/lessons/save", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ process_id: procId, lessons }),
-        });
-        if (r2.ok) {
-          statusEl.textContent = "Saved.";
-          statusEl.className = "d-contrib-block-status ok";
-        } else if (r2.status === 404) {
-          statusEl.textContent = "Saved process. Lessons endpoint pending.";
-          statusEl.className = "d-contrib-block-status warn";
-        } else {
-          statusEl.textContent = "Lessons save failed (" + r2.status + ").";
-          statusEl.className = "d-contrib-block-status err";
-        }
-      } catch (e) {
-        statusEl.textContent = "Save error: " + (e && e.message || "unknown");
-        statusEl.className = "d-contrib-block-status err";
+        collapseToConfirmation("Discarded.");
       } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = orig;
+        unlock();
       }
     });
-    actions.appendChild(saveBtn);
+    actions.appendChild(discardBtn);
+
+    // 1. Persist (private) — middle-left
+    const persistBtn = document.createElement("button");
+    persistBtn.className = "d-ma-btn d-ma-btn-secondary";
+    persistBtn.type = "button";
+    persistBtn.textContent = "Keep private";
+    persistBtn.title = "Save these lessons to your workspace. They'll retrieve into your future generations only.";
+    persistBtn.addEventListener("click", async () => {
+      const unlock = lockButtons("Saving…");
+      try {
+        const ok = await doPersist("private");
+        if (ok) collapseToConfirmation("Kept private. " + ((state.result.lessons || []).length) + " lessons saved to your workspace.");
+      } finally {
+        unlock();
+      }
+    });
+    actions.appendChild(persistBtn);
+
+    // 2. Share publicly — middle-right
+    const shareBtn = document.createElement("button");
+    shareBtn.className = "d-ma-btn d-ma-btn-secondary d-contrib-action-share";
+    shareBtn.type = "button";
+    shareBtn.textContent = "Share with everyone";
+    shareBtn.title = "Save and mark lessons public so they retrieve into every PromptFlow user's future generations.";
+    shareBtn.addEventListener("click", async () => {
+      const unlock = lockButtons("Publishing…");
+      try {
+        const ok = await doPersist("public");
+        if (ok) collapseToConfirmation("Shared. " + ((state.result.lessons || []).length) + " lessons available to every builder.");
+      } finally {
+        unlock();
+      }
+    });
+    actions.appendChild(shareBtn);
+
+    // 3. Generate a process with this knowledge — rightmost, primary
+    const generateBtn = document.createElement("button");
+    generateBtn.className = "d-ma-btn d-ma-btn-primary";
+    generateBtn.type = "button";
+    generateBtn.textContent = "Generate a process with this →";
+    generateBtn.title = "Save the lessons, then ask the planner to design a runnable process informed by what we just learned + your uploaded files.";
+    generateBtn.addEventListener("click", async () => {
+      const unlock = lockButtons("Designing process…");
+      try {
+        // Persist first so the planner's retrieval sees these
+        // lessons. Default to private — the user can re-share later.
+        const ok = await doPersist("private");
+        if (!ok) return;
+        // Stash the process_id + a prompt to send through the
+        // planner. We use the existing chat input + send() so the
+        // generation routes through the same path as a typed
+        // "Generate a process that…" request.
+        const procName = state.result.process_name || "this build";
+        const prompt = "Generate a runnable process informed by the lessons just learned from \""
+          + procName + "\". Use the source files as assets and apply the patterns from the lessons.";
+        const ti = document.getElementById("textInput");
+        if (ti) {
+          ti.value = prompt;
+          ti.dispatchEvent(new Event("input"));
+        }
+        collapseToConfirmation("Lessons saved. Designing process…");
+        // Trigger the chat send so generation kicks off in the
+        // same thread, right below the confirmation pill.
+        setTimeout(() => {
+          if (typeof window.send === "function") window.send();
+          else {
+            // Fallback: dispatch an Enter keypress on the input.
+            const ev = new KeyboardEvent("keydown", { key: "Enter" });
+            ti && ti.dispatchEvent(ev);
+          }
+        }, 100);
+      } finally {
+        unlock();
+      }
+    });
+    actions.appendChild(generateBtn);
+
     container.appendChild(actions);
 
     function switchTab(id) {
@@ -19391,10 +19632,42 @@ function dDesktopInit(){
     const uploadData = await uploadResp.json();
     const uploadId = uploadData.upload_id;
 
-    renderStatus("Distilling lessons…",
-      chatFile
-        ? "Reading your chat (" + (uploadData.file_count || 0) + " files captured). Usually 30-60 seconds."
-        : "Reading your files (" + (uploadData.file_count || 0) + " captured). Usually 30-60 seconds.");
+    // Rotate through sub-stages while /upload/extract is in flight.
+    // Extraction takes ~30-60s, so a single static "Distilling…" line
+    // makes the UI feel stuck. The stages run on a 2s cadence; each
+    // pair is (label, sub) and the timer advances index until we
+    // either run out (sticks on the last one) or the request returns
+    // and stopDistillStages() clears the timer. Stages are advisory —
+    // we don't actually know which phase the backend is in, but they
+    // map roughly to the real work: read → inspect → identify → ...
+    const distillStages = [
+      ["Reading source files…",        "Decompressing and indexing " + (uploadData.file_count || 0) + " " + ((uploadData.file_count === 1) ? "file" : "files") + "."],
+      ["Inspecting code structure…",   "Mapping how the pieces connect."],
+      ["Identifying patterns…",        "Finding what's reusable across builds."],
+      ["Surfacing pitfalls…",          "What went wrong, what to avoid next time."],
+      ["Writing the postmortem…",      "Twelve-section format. The durable record."],
+      ["Indexing for retrieval…",      "Future generations will see these lessons."],
+      ["Building the reference process…", "Linking artifacts → process node."],
+      ["Almost done…",                 "Final write-back to the graph."],
+    ];
+    let distillIdx = 0;
+    renderStatus(distillStages[0][0], distillStages[0][1]);
+    let distillTimer = setInterval(() => {
+      distillIdx++;
+      if (distillIdx >= distillStages.length) {
+        // Stick on the last stage rather than looping — looping
+        // would imply we don't know what we're doing. The last
+        // stage's copy ("Almost done…") gracefully covers any
+        // extra wait time.
+        clearInterval(distillTimer);
+        distillTimer = null;
+        return;
+      }
+      renderStatus(distillStages[distillIdx][0], distillStages[distillIdx][1]);
+    }, 2000);
+    const stopDistillStages = () => {
+      if (distillTimer) { clearInterval(distillTimer); distillTimer = null; }
+    };
 
     let extractResp;
     try {
@@ -19404,9 +19677,11 @@ function dDesktopInit(){
         body: JSON.stringify({ upload_id: uploadId, debug: false }),
       });
     } catch (e) {
+      stopDistillStages();
       renderError("Extraction request failed: " + (e && e.message || "network error"));
       return null;
     }
+    stopDistillStages();
     const extractData = await extractResp.json().catch(() => ({}));
     if (!extractResp.ok || !extractData.ok) {
       renderError(extractData && extractData.error
@@ -20395,10 +20670,33 @@ function dDesktopInit(){
       grid.appendChild(propCard);
     }
 
-    if (shown.length === 0 && !showNewTile) {
+    if (shown.length === 0 && !showNewTile && !showProposeTile) {
       body.innerHTML = !f
         ? '<div class="d-fv-empty"><strong>Empty.</strong>No items in this folder yet.</div>'
         : '<div class="d-fv-empty"><strong>No matches.</strong>Nothing matches “' + dEsc(filter) + '”.</div>';
+      return;
+    }
+    // If we have ZERO real items but a propose / new tile, render
+    // the grid (containing just that tile) without falling back to
+    // the empty-state copy. The propose tile is the affordance —
+    // showing "Empty. No items yet." next to it makes the page read
+    // as broken, when in fact this is the system folder's blank
+    // state and the propose tile invites action.
+    if (shown.length === 0 && (showNewTile || showProposeTile)) {
+      body.innerHTML = "";
+      body.appendChild(grid);
+      // When the system folder is genuinely empty (the public read
+      // returned no rows yet, or auth is anonymous and the public
+      // read isn't wired), add a soft helper line under the tile
+      // so the user knows what's going on.
+      if (showProposeTile && _dFolderActive === "system") {
+        const helper = document.createElement("div");
+        helper.className = "d-fv-system-helper";
+        helper.innerHTML =
+          '<div class="d-fv-system-helper-title">Loading system processes…</div>' +
+          '<div class="d-fv-system-helper-sub">If they stay empty, sign in to see the protected set. You can still propose a new one above.</div>';
+        body.appendChild(helper);
+      }
       return;
     }
 
@@ -22039,12 +22337,12 @@ if (document.readyState === "loading") {
       <div class="d-ma-activity">
         <div class="d-ma-activity-info">
           <div class="d-ma-activity-name">Learn</div>
-          <div class="d-ma-activity-desc">Lessons extraction from contributed builds (the walking-accumulation distillation).</div>
+          <div class="d-ma-activity-desc">Lesson extraction from contributed builds. Defaults to Opus because extraction quality compounds — every future generation retrieves these lessons. Override server-wide via the <code>ANTHROPIC_EXTRACTION_MODEL</code> env var, or per-account here.</div>
         </div>
         <select class="d-ma-activity-select" id="dMaModelLearn">
-          <option value="">Select a model…</option>
+          <option value="">Use deployment default (Opus 4.7)</option>
           <optgroup label="Anthropic">
-            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7 (recommended)</option>
             <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
             <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
           </optgroup>
