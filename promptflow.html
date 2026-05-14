@@ -5950,6 +5950,109 @@ body.d-desktop-mode .stream {
   font-weight: 500;
 }
 
+/* ── Streaming discuss answer ──────────────────────────────────
+   Three rendered surfaces inside one assist bubble:
+   - .d-discuss-thinking: Claude's reasoning trace, mono + dimmed
+   - .d-discuss-tools: web_search tool rows as they're invoked
+   - .d-discuss-answer: the final user-facing text, prose
+   All three fill progressively as the SSE stream arrives. */
+.d-discuss-thinking {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: rgba(20,20,22,0.55);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-left: 2px solid rgba(170,170,180,0.25);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(170,170,180,0.78);
+  line-height: 1.55;
+}
+.d-discuss-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(150,150,160,0.85);
+  margin-bottom: 6px;
+}
+.d-discuss-thinking-spinner {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(170,170,180,0.25);
+  border-top-color: rgba(170,170,180,0.85);
+  animation: d-discuss-spin 0.85s linear infinite;
+}
+@keyframes d-discuss-spin { to { transform: rotate(360deg); } }
+.d-discuss-thinking-label {
+  font-weight: 500;
+}
+.d-discuss-thinking-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  color: rgba(180,180,186,0.78);
+}
+.d-discuss-thinking-body::-webkit-scrollbar { width: 4px; }
+.d-discuss-thinking-body::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+}
+
+.d-discuss-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.d-discuss-tools:empty {
+  display: none;
+}
+.d-discuss-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(232,169,23,0.04);
+  border: 1px solid rgba(232,169,23,0.15);
+  border-radius: 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(220,200,160,0.9);
+}
+.d-discuss-tool-row-result {
+  background: rgba(150,200,150,0.04);
+  border-color: rgba(150,200,150,0.18);
+  color: rgba(180,210,190,0.88);
+}
+.d-discuss-tool-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.d-discuss-tool-label {
+  font-weight: 500;
+}
+.d-discuss-tool-query {
+  color: rgba(240,220,180,1);
+  font-weight: 400;
+}
+
+.d-discuss-answer {
+  font-family: var(--font-body);
+  font-size: 14.5px;
+  color: rgba(240,240,242,0.96);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.d-discuss-answer:empty {
+  display: none;
+}
+
 /* ── Public process view ──────────────────────────────────────
    Overlays the desktop canvas when the URL is a public-process
    route (hash or pretty). Renders the process metadata + a Run
@@ -12376,6 +12479,58 @@ promptflow whoami</code></pre>
     // it up front guarantees every send path tears it down.
     closeSuggestions();
 
+    // ── Discuss-intent fast path ─────────────────────────────────
+    //
+    // Question-like text routes directly to the streaming Opus 4.7
+    // + web_search endpoint, bypassing the planner. The frontend
+    // renders thinking, search invocations, and the answer
+    // progressively as they stream. Detected via simple heuristics:
+    //   - Starts with a question word (what/who/where/when/why/how/...)
+    //   - Or ends with a "?" mark
+    //   - Or starts with "?" or "help:" or "explain"
+    //
+    // We skip this path when:
+    //   - A zip is staged (contribution / generate-with-zip flow)
+    //   - An image/video/audio is attached (planner needs to decide
+    //     intent based on the media)
+    //   - User is in editor / refine-bound mode (chat refines the
+    //     pinned process, not arbitrary discussion)
+    //   - The text starts with a clear action verb that's NOT also
+    //     a question ("generate", "run", "build", etc.)
+    const isDiscussLike = (() => {
+      if (!userText) return false;
+      const lower = userText.toLowerCase();
+      // Hard-block: leading action verb wants the planner.
+      if (/^\s*(generate|design|build|make|create|run|adapt|compose|fork|search|update|extract|distill|learn|upload|contribute|capture)\b/i.test(userText)) return false;
+      // Hard-allow: explicit question or help markers.
+      if (/^\s*\?/.test(userText)) return true;
+      if (/^\s*help\b/i.test(userText)) return true;
+      if (/^\s*explain\b/i.test(userText)) return true;
+      // Question word at start.
+      if (/^\s*(what|who|whose|where|when|why|how|which|whom|is|are|was|were|can|could|should|would|will|do|does|did|has|have|had|am)\b/i.test(userText)) return true;
+      // Trailing question mark.
+      if (/\?\s*$/.test(userText)) return true;
+      // "tell me / show me / find me" style asks for information
+      if (/^\s*(tell|show|find|give|list|name|describe)\s+me\b/i.test(userText)) return true;
+      return false;
+    })();
+    const hasStagedMedia =
+      (typeof primaryImage !== "undefined" && primaryImage)
+      || (typeof primaryVideo !== "undefined" && primaryVideo)
+      || (typeof primaryAudio !== "undefined" && primaryAudio)
+      || (typeof pendingContrib !== "undefined" && pendingContrib && pendingContrib.zip);
+    const shouldStreamDiscuss =
+      isDiscussLike
+      && !hasStagedMedia
+      && !window._forceRunProcessId
+      && !pendingParentProcess
+      && !refineBoundProcessId
+      && !currentEditorProcessId;
+    if (shouldStreamDiscuss) {
+      await streamDiscussAnswer(userText);
+      return;
+    }
+
     // ── Verb dispatcher (when zip is staged) ─────────────────────
     // The user has attached a zip. Read the leading verb from their
     // text to disambiguate what they want:
@@ -13516,6 +13671,219 @@ promptflow whoami</code></pre>
     stream.scrollTop = stream.scrollHeight;
     return { el, body: el.querySelector(".body") };
   }
+
+  // ── Streaming discuss answer ────────────────────────────────────
+  //
+  // Posts the user's text to /api/promptflow/discuss/stream and
+  // renders the Anthropic SSE stream progressively in an assist
+  // bubble. Three kinds of content blocks arrive interleaved:
+  //   - thinking_delta: Claude's reasoning trace. Rendered in a
+  //     dimmed, mono "thinking" box above the answer.
+  //   - server_tool_use (web_search): rendered as a search status
+  //     row showing the query.
+  //   - text_delta: the user-facing answer text.
+  //
+  // We append deltas to the right surface as they arrive so the
+  // user sees thinking → searches → answer build up in real time.
+  async function streamDiscussAnswer(userText) {
+    busy = true; updateSend();
+    // User bubble. No image/media for discuss path.
+    addUserMsg(userText, null, null, []);
+    const assist = addAssistMsg();
+    const body = assist.body;
+
+    // Mount three surfaces inside the assist bubble. They're
+    // appended in render order (thinking, search rows, answer)
+    // but the assist body height grows as each fills.
+    const thinkingWrap = document.createElement("div");
+    thinkingWrap.className = "d-discuss-thinking";
+    thinkingWrap.style.display = "none";
+    thinkingWrap.innerHTML =
+      '<div class="d-discuss-thinking-head">' +
+        '<span class="d-discuss-thinking-spinner"></span>' +
+        '<span class="d-discuss-thinking-label">Thinking…</span>' +
+      '</div>' +
+      '<div class="d-discuss-thinking-body"></div>';
+    body.appendChild(thinkingWrap);
+    const thinkingBody = thinkingWrap.querySelector(".d-discuss-thinking-body");
+    const thinkingLabel = thinkingWrap.querySelector(".d-discuss-thinking-label");
+    const thinkingSpinner = thinkingWrap.querySelector(".d-discuss-thinking-spinner");
+
+    const toolsWrap = document.createElement("div");
+    toolsWrap.className = "d-discuss-tools";
+    body.appendChild(toolsWrap);
+
+    const answerEl = document.createElement("div");
+    answerEl.className = "d-discuss-answer";
+    body.appendChild(answerEl);
+
+    // Reset textInput / send state — we're committed.
+    textInput.value = ""; textInput.style.height = "auto";
+    updateSend();
+
+    let r;
+    try {
+      r = await fetch("/api/promptflow/discuss/stream", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text: userText,
+          conversation_id: currentConversationId || null,
+        }),
+      });
+    } catch (e) {
+      setError(assist, "Network error: " + (e?.message || e));
+      busy = false; updateSend();
+      return;
+    }
+    if (!r.ok || !r.body) {
+      // Sniff for JSON error vs HTML page.
+      const errText = await r.text().catch(() => "");
+      if (errText.trim().startsWith("{")) {
+        try {
+          const j = JSON.parse(errText);
+          setError(assist, j.message || j.error || ("Discuss failed (" + r.status + ")"));
+        } catch {
+          setError(assist, "Discuss failed (" + r.status + ")");
+        }
+      } else if (r.status === 404) {
+        setError(assist, "The /discuss/stream endpoint isn't reachable. Worker routing may not be deployed.");
+      } else if (r.status === 401) {
+        setError(assist, "Please sign in to continue.");
+        openAuth("signin");
+      } else {
+        setError(assist, "Discuss failed (HTTP " + r.status + ")");
+      }
+      busy = false; updateSend();
+      return;
+    }
+
+    // ── SSE reader ──────────────────────────────────────────────
+    // Anthropic sends framed SSE events: "event: <type>\ndata: <json>\n\n".
+    // We don't care about the event-type line — the data line carries
+    // the typed payload. Parse line-by-line, dispatch by payload.type.
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    // Maps content_block index → kind ("text" | "thinking" | "tool_use" |
+    // "web_search_tool_result"). Set when content_block_start fires;
+    // used by content_block_delta to route the delta to the right surface.
+    const blockKinds = new Map();
+    // Maps content_block index → tool-row DOM element so we can update
+    // it when the query JSON is fully assembled.
+    const toolRows = new Map();
+    // Maps content_block index → partial input_json string for tool_use
+    // blocks. Assembled across input_json_delta events.
+    const toolInputs = new Map();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Process complete SSE frames (terminated by blank line).
+        let frameEnd;
+        while ((frameEnd = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, frameEnd);
+          buffer = buffer.slice(frameEnd + 2);
+          // Pull the data: line(s).
+          const lines = frame.split("\n");
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue;
+            const dataStr = line.slice(5).trim();
+            if (!dataStr) continue;
+            let evt;
+            try { evt = JSON.parse(dataStr); } catch { continue; }
+            handleSSE(evt);
+          }
+        }
+      }
+    } catch (e) {
+      // Stream broke mid-response. Surface what we have plus a note.
+      if (answerEl.textContent || thinkingBody.textContent) {
+        // Partial answer is fine — leave it, but stop the spinner.
+      } else {
+        setError(assist, "Stream interrupted: " + (e?.message || e));
+      }
+    } finally {
+      // Finalize the thinking spinner so it doesn't keep spinning.
+      thinkingSpinner.style.display = "none";
+      thinkingLabel.textContent = thinkingBody.textContent ? "Reasoning" : "";
+      // Hide the thinking wrap entirely if nothing arrived.
+      if (!thinkingBody.textContent.trim()) thinkingWrap.style.display = "none";
+      busy = false; updateSend();
+    }
+
+    function handleSSE(evt) {
+      const t = evt.type;
+      if (t === "content_block_start") {
+        const idx = evt.index;
+        const blk = evt.content_block || {};
+        blockKinds.set(idx, blk.type);
+        if (blk.type === "thinking") {
+          thinkingWrap.style.display = "";
+        } else if (blk.type === "server_tool_use" && blk.name === "web_search") {
+          // Tool invocation begins. We'll fill in the query as
+          // input_json_delta events arrive. Create the row now so
+          // it appears in order with other tool rows.
+          const row = document.createElement("div");
+          row.className = "d-discuss-tool-row";
+          row.innerHTML =
+            '<span class="d-discuss-tool-icon">🔍</span>' +
+            '<span class="d-discuss-tool-label">Searching: </span>' +
+            '<span class="d-discuss-tool-query"></span>';
+          toolsWrap.appendChild(row);
+          toolRows.set(idx, row);
+          toolInputs.set(idx, "");
+        } else if (blk.type === "web_search_tool_result") {
+          // Result returned. Add a brief confirmation row.
+          const row = document.createElement("div");
+          row.className = "d-discuss-tool-row d-discuss-tool-row-result";
+          let resultCount = 0;
+          if (Array.isArray(blk.content)) resultCount = blk.content.length;
+          row.innerHTML =
+            '<span class="d-discuss-tool-icon">📄</span>' +
+            '<span class="d-discuss-tool-label">Found ' +
+              (resultCount > 0 ? resultCount + ' source' + (resultCount === 1 ? '' : 's') : 'results') +
+            '</span>';
+          toolsWrap.appendChild(row);
+        }
+      } else if (t === "content_block_delta") {
+        const idx = evt.index;
+        const kind = blockKinds.get(idx);
+        const delta = evt.delta || {};
+        if (delta.type === "thinking_delta" && kind === "thinking") {
+          thinkingBody.textContent += (delta.thinking || "");
+          stream.scrollTop = stream.scrollHeight;
+        } else if (delta.type === "text_delta" && kind === "text") {
+          answerEl.textContent += (delta.text || "");
+          stream.scrollTop = stream.scrollHeight;
+        } else if (delta.type === "input_json_delta" && kind === "server_tool_use") {
+          const partial = (toolInputs.get(idx) || "") + (delta.partial_json || "");
+          toolInputs.set(idx, partial);
+          // Try to extract the query if the JSON is far enough along.
+          // Anthropic emits the query field in chunks; we attempt a
+          // partial parse to surface it as it grows.
+          const m = /"query"\s*:\s*"([^"]*)/.exec(partial);
+          if (m) {
+            const row = toolRows.get(idx);
+            if (row) {
+              const q = row.querySelector(".d-discuss-tool-query");
+              if (q) q.textContent = m[1];
+            }
+          }
+        }
+      } else if (t === "message_stop") {
+        // Stream ended naturally.
+      } else if (t === "error" || (evt.error)) {
+        const msg = evt.error?.message || evt.message || "Stream error";
+        if (!answerEl.textContent) {
+          setError(assist, msg);
+        }
+      }
+    }
+  }
+
   function setStatus(assist, label) {
     let s = assist.body.querySelector(".status");
     if (!s) {
