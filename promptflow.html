@@ -13791,7 +13791,7 @@ promptflow whoami</code></pre>
 
     const groups = [
       { id: "mine",      label: "Yours" },
-      { id: "system",    label: "System" },
+      { id: "system",    label: "System (Protected)" },
       { id: "published", label: "Published by others" },
     ];
     for (const g of groups) {
@@ -19592,22 +19592,29 @@ function dDesktopInit(){
   setTimeout(dHostAuthElements, 200);
   setTimeout(dHostAuthElements, 1000);
 
-  // ── Replace the dock System icon with a proxy to the existing
-  //     account menu trigger ──
-  // The dock System gear had its own popover from an earlier iteration
-  // (dSystemPopover) that duplicated the existing app's account menu.
-  // Now that we've hosted #accountMenu in the topbar, the dock System
-  // gear should just open that menu and the standalone popover is dead
-  // weight. We clone the button to remove any existing click handlers
-  // before binding the new behavior so the old popover doesn't pop.
+  // ── Bottom-right dock System gear — opens Model & API access ──
+  // The dock System gear is the user's primary entry point to LLM
+  // configuration: which model runs each system activity (Generate /
+  // Chat / Adapt / Search / Learn) and whether to pay with PromptFlow
+  // tokens or bring-your-own provider API keys. That surface is the
+  // `dModelAccessModal` opened by dMaOpen(); the gear should land
+  // straight there.
+  //
+  // Previously this re-bound the gear to open the topbar account
+  // dropdown — wrong destination for the model-config use case.
+  // We clone the button to drop any earlier click handlers (the
+  // original dSystemPopover binding from before this iteration)
+  // and then attach the new direct dMaOpen invocation.
   const _dDockSystemOld = document.getElementById("dDockSystem");
   if (_dDockSystemOld) {
     const fresh = _dDockSystemOld.cloneNode(true);
     _dDockSystemOld.parentNode.replaceChild(fresh, _dDockSystemOld);
+    fresh.title = "Model & API access — assign LLMs to system activities, paste keys, choose token billing";
     fresh.addEventListener("click", (e) => {
       e.stopPropagation();
-      const trigger = document.getElementById("accountMenuBtn");
-      if (trigger) trigger.click();
+      if (typeof dMaOpen === "function") {
+        dMaOpen();
+      }
     });
   }
   // Also hide the stale dSystemPopover element entirely — it's
@@ -19721,7 +19728,15 @@ function dDesktopInit(){
   }
 
   function dFolderLabel(kind) {
-    return { chats: "Chats", processes: "Processes", system: "System processes" }[kind] || "Folder";
+    return {
+      chats: "Chats",
+      processes: "Processes",
+      // System processes are admin-curated infrastructure
+      // (the planner, search, adapt, etc.). The "(Protected)"
+      // suffix signals that they're not user-editable in the
+      // normal editor flow — viewable but not destructible.
+      system: "System processes (Protected)",
+    }[kind] || "Folder";
   }
 
   // Map process/conversation records to the folder-view item shape.
@@ -21398,8 +21413,8 @@ if (document.readyState === "loading") {
     <!-- ── Model assignment per activity ── -->
     <section class="d-ma-section">
       <div class="d-ma-section-head">
-        <h3>Model assignment</h3>
-        <p>PromptFlow uses different system activities for different jobs. Assign a model to each — the runtime will use the assigned model whenever it performs that kind of work.</p>
+        <h3>System process model assignment</h3>
+        <p>PromptFlow's protected system processes do different jobs. Pick the LLM for each, and which billing path it should use. Per-process toggles override the global access-mode choice above when you want a mix.</p>
       </div>
 
       <div class="d-ma-activity">
