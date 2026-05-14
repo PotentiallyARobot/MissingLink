@@ -1961,6 +1961,41 @@
     width:18px; height:18px; border-width:2px;
   }
 
+  /* Full-screen loader — covers the entire viewport while a process
+     is being fetched (clicking into the editor or graph view).
+     Heavier presence than .stream-loading because the destination is
+     a full mode switch, not just a content swap inside the stream.
+     Backdrop blur + dark wash kill any partial-render flash while
+     /process/get is in flight. z-index sits above modals (which top
+     out around 500) but stays under top-of-stack interactive surfaces. */
+  .full-screen-loader{
+    position:fixed; inset:0;
+    z-index:9999;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px;
+    background:rgba(9,9,11,0.78);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    color:var(--text-muted);
+    font-family:var(--font-mono); font-size:11px;
+    letter-spacing:.06em; text-transform:uppercase;
+    /* Fade in fast so the click feels responsive but isn't jarring.
+       Removed by hideFullScreenLoader(); transition handled by JS
+       removing the .show class first (see implementation). */
+    opacity:0;
+    transition:opacity .12s ease;
+    pointer-events:auto;
+  }
+  .full-screen-loader.show{ opacity:1; }
+  .full-screen-loader .spinner{
+    width:34px; height:34px; border-width:3px;
+    border-color:rgba(232,169,23,0.18);
+    border-top-color:var(--gold);
+  }
+  .full-screen-loader-label{
+    color:var(--text-dim);
+  }
+
   /* ──────────────────────────────────────────────────────
      Hamburger button + sidebar backdrop. Hidden by default;
      shown only at narrow viewports. The hamburger sits at
@@ -9682,6 +9717,44 @@ promptflow whoami</code></pre>
     if (el) el.remove();
   }
 
+  // Full-screen loader — covers the entire viewport while a heavy
+  // navigation is in flight (clicking into a process loads its full
+  // definition + Python + metadata via /process/get, which can take
+  // several seconds on cold cache). The overlay blocks pointer events
+  // so a user can't double-click and queue a second navigation while
+  // the first is still resolving.
+  //
+  // Two-frame fade-in: append the element without .show, force a
+  // layout read, then add .show so the opacity transition runs.
+  // Without the layout read browsers can batch the class addition
+  // with the element creation and skip the transition entirely.
+  function showFullScreenLoader(label) {
+    let el = document.getElementById("fullScreenLoader");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "fullScreenLoader";
+      el.className = "full-screen-loader";
+      el.innerHTML = `<div class="spinner"></div><div class="full-screen-loader-label"></div>`;
+      document.body.appendChild(el);
+      // Force a reflow so the .show class triggers the fade-in.
+      void el.offsetHeight;
+    }
+    el.querySelector(".full-screen-loader-label").textContent = label || "Loading…";
+    el.classList.add("show");
+  }
+  function hideFullScreenLoader() {
+    const el = document.getElementById("fullScreenLoader");
+    if (!el) return;
+    // Fade out then remove. The .12s matches the CSS transition.
+    el.classList.remove("show");
+    setTimeout(() => {
+      // Re-check existence — another caller might have re-shown it
+      // in the meantime.
+      const cur = document.getElementById("fullScreenLoader");
+      if (cur && !cur.classList.contains("show")) cur.remove();
+    }, 140);
+  }
+
   // Read-only render of one historical turn — user message + assistant
   // result (video, error, or pending stub). Re-uses the bubble/plan/
   // cost components for visual consistency, but skips the editable
@@ -13875,6 +13948,12 @@ promptflow whoami</code></pre>
   async function openProcessEditor(pid) {
     if (busy) return;
     if (currentEditorProcessId === pid) return;
+    // Full-screen loader covers the click → render gap. /process/get
+    // can take a few seconds on cold cache + the editor render
+    // (paintEditor) is non-trivial; without this the click feels
+    // unresponsive. The finally block guarantees the loader is
+    // dismissed on every exit path.
+    showFullScreenLoader("Loading process…");
     try {
       const r = await fetch("/api/promptflow/process/get", {
         method: "POST",
@@ -13905,7 +13984,11 @@ promptflow whoami</code></pre>
       paintEditor();
       updateComposerHint();
       updateSend();
-    } catch (e) { alert("Network error: " + (e?.message || e)); }
+    } catch (e) {
+      alert("Network error: " + (e?.message || e));
+    } finally {
+      hideFullScreenLoader();
+    }
   }
 
   function closeProcessEditor() {
@@ -14291,8 +14374,18 @@ promptflow whoami</code></pre>
   // Outward compositions: load the server's "what could you build
   // with this" recommendations. Cached per (process_id, user_id) for
   // 24h server-side; refresh=true forces a regenerate.
+  //
+  // Guarantee: the panel is NEVER empty. If the server returns zero
+  // compositions (cold catalog, Claude call failed, prompt produced
+  // unfilterable output, or a network error) we fall back to a
+  // contextual set generated client-side from the current editor
+  // process. Better to show three sensible adaptation ideas than the
+  // discouraging "couldn't think of any" empty state.
   async function loadCompositionsInto(processId, listEl, refresh) {
     listEl.innerHTML = `<div class="cs-loading"><div class="spinner"></div><span>${refresh ? "Brainstorming fresh ideas…" : "Imagining compositions…"}</span></div>`;
+    let compositions = [];
+    let cached = false;
+    let cacheAgeSec = 0;
     try {
       const r = await fetch("/api/promptflow/process/compositions", {
         method: "POST",
@@ -14300,26 +14393,92 @@ promptflow whoami</code></pre>
         body: JSON.stringify({ id: processId, refresh: !!refresh }),
       });
       const j = await r.json();
-      if (!j.ok || !Array.isArray(j.compositions) || j.compositions.length === 0) {
-        listEl.innerHTML = `<div class="cs-empty">Couldn't think of compositions for this one yet — try refreshing, or publish a few more processes to widen the catalog.</div>`;
-        return;
-      }
-      listEl.innerHTML = "";
-      const meta = document.createElement("div");
-      meta.className = "cs-meta";
-      meta.textContent = j.cached
-        ? `Cached ideas · ${Math.round((j.cache_age_sec || 0) / 60)}m old · click ↻ for fresh ones`
-        : `Fresh ideas`;
-      listEl.appendChild(meta);
-      // Cap at 3. Server now returns at most 3 but the cache may
-      // contain older payloads with up to 6 entries — slice here to
-      // make the cap visible immediately without forcing a refresh.
-      for (const c of j.compositions.slice(0, 3)) {
-        listEl.appendChild(renderCompositionCard(c));
+      if (j.ok && Array.isArray(j.compositions)) {
+        compositions = j.compositions;
+        cached = !!j.cached;
+        cacheAgeSec = j.cache_age_sec || 0;
       }
     } catch (e) {
-      listEl.innerHTML = `<div class="cs-empty">Could not load compositions.</div>`;
+      // Swallow — we'll render fallbacks below regardless of why
+      // the server didn't produce results.
     }
+    // Always-on fallback: top up with client-side adaptation ideas
+    // until we have at least 3 cards. The user explicitly does NOT
+    // want this panel ever to show nothing. Fallbacks read as new
+    // *adaptations*, not as restatements of the seed (no "variants").
+    if (compositions.length < 3) {
+      const seed = (currentEditorProcess && currentEditorProcess.id === processId)
+        ? currentEditorProcess
+        : (processesCache || []).find(p => p.id === processId) || null;
+      const fillers = buildFallbackCompositions(seed)
+        .filter(fb =>
+          // Skip any filler whose name collides with what the server
+          // already returned, so we don't show duplicates.
+          !compositions.some(c => (c.name || "").toLowerCase() === fb.name.toLowerCase())
+        );
+      for (const fb of fillers) {
+        if (compositions.length >= 3) break;
+        compositions.push(fb);
+      }
+    }
+    listEl.innerHTML = "";
+    const meta = document.createElement("div");
+    meta.className = "cs-meta";
+    meta.textContent = cached
+      ? `Cached ideas · ${Math.round(cacheAgeSec / 60)}m old · click ↻ for fresh ones`
+      : `Fresh ideas`;
+    listEl.appendChild(meta);
+    // Cap at 3. Server now returns at most 3 but the cache may
+    // contain older payloads with up to 6 entries — slice here to
+    // make the cap visible immediately without forcing a refresh.
+    for (const c of compositions.slice(0, 3)) {
+      listEl.appendChild(renderCompositionCard(c));
+    }
+  }
+
+  // Generate adaptation-style composition ideas client-side. Used to
+  // top up the panel when the server returns fewer than 3 cards. Each
+  // entry shares the shape of a real server-side composition
+  // (name, pitch, uses_existing, design_prompt) so renderCompositionCard
+  // and generateCompositionFromPitch handle them identically.
+  //
+  // Principles:
+  // - Reference the seed by name so it doesn't feel like a generic
+  //   placeholder.
+  // - Propose a NEW process that USES the seed, not a variant of it.
+  // - design_prompt reads like a user typing into the chat input —
+  //   it has to route correctly through the planner's design_process
+  //   intent classifier.
+  function buildFallbackCompositions(seed) {
+    const name = (seed && seed.name) ? seed.name : "this process";
+    const outputKind = (seed && seed.output_kind) || "output";
+    const safeQuotedName = `"${name}"`;
+    return [
+      {
+        name: `${name} — with retrieval`,
+        pitch: `Wrap ${name} in a retrieval step so it runs against fresh, grounded context instead of relying on model priors alone. Useful when the input benefits from real-world data.`,
+        uses_existing: [],
+        design_prompt: `Generate a process that first runs a relevant web or process search, then feeds the top results into ${safeQuotedName} as additional context for its main step.`,
+      },
+      {
+        name: `${name} — quality-checked`,
+        pitch: `Add an automated quality check after ${name}. A Claude evaluation step scores the ${outputKind} against your criteria and re-runs once if it falls below the bar.`,
+        uses_existing: [],
+        design_prompt: `Generate a process that runs ${safeQuotedName}, then evaluates the resulting ${outputKind} against quality criteria using a Claude step, and re-runs ${safeQuotedName} once if the score is below threshold.`,
+      },
+      {
+        name: `${name} — adapted for a new audience`,
+        pitch: `An adaptation of ${name} retuned for a different audience or medium. Same skeleton, new prompts and parameters — useful for taking a working flow into adjacent use cases.`,
+        uses_existing: [],
+        design_prompt: `Generate a process adapted from ${safeQuotedName} for a different audience or output format (e.g. shorter for social, longer for documentation, formal vs. casual). Reuse the structural steps, retune the prompts.`,
+      },
+      {
+        name: `${name} — batched`,
+        pitch: `Run ${name} across a list of inputs in one go and assemble the ${outputKind}s into a single deliverable. Good for catalog work, A/B tests, or batch content production.`,
+        uses_existing: [],
+        design_prompt: `Generate a process that takes an array of inputs, loops over them running ${safeQuotedName} on each, and assembles the resulting ${outputKind}s into a single bundled deliverable.`,
+      },
+    ];
   }
 
   // One composition card. Outward-looking — name, pitch, the existing
@@ -16874,7 +17033,7 @@ new process. Compare its output to the current one before replacing.
         graphNavStack.push({ kind: "library" });
       }
     }
-    showStreamLoadingOverlay("Loading graph…");
+    showFullScreenLoader("Loading process…");
     try {
       const r = await fetch("/api/promptflow/process/get", {
         method: "POST",
@@ -16898,7 +17057,7 @@ new process. Compare its output to the current one before replacing.
     } catch (e) {
       alert("Network error: " + (e?.message || e));
     } finally {
-      hideStreamLoadingOverlay();
+      hideFullScreenLoader();
     }
   }
 
