@@ -9648,6 +9648,32 @@ promptflow whoami</code></pre>
   let ME = null;                  // null when logged out, else user object
   let attachedFiles = [];        // [{ file, kind, dataUrl }] — kind ∈ "image" | "video" | "audio"
   let busy = false;               // in-flight generation flag
+
+  // Watchdog: if busy stays true for longer than 60 seconds with no
+  // explicit reset, auto-recover. This handles the edge case where
+  // some code path sets busy=true and forgets to reset it on error
+  // (e.g. a brand-new feature with a bug, a network hang that never
+  // surfaces, an exception during a non-async setup step). Without
+  // this, the next Enter press silently no-ops at the `if (busy)
+  // return` guard in send(), and the user can't recover without
+  // reloading the page. We trade off "stuck busy" for "watchdog
+  // false-positive" — 60s is well past any normal /plan + /execute
+  // round trip, so a real in-flight call won't be killed by mistake.
+  let _busyWatchdog = null;
+  function setBusyState(newVal) {
+    busy = newVal;
+    if (_busyWatchdog) { clearTimeout(_busyWatchdog); _busyWatchdog = null; }
+    if (newVal) {
+      _busyWatchdog = setTimeout(() => {
+        if (busy) {
+          // eslint-disable-next-line no-console
+          console.warn("[PromptFlow] busy=true for >60s — auto-resetting so Enter works again.");
+          busy = false;
+          if (typeof updateSend === "function") updateSend();
+        }
+      }, 60_000);
+    }
+  }
   // Stop-generation infrastructure. While `busy` is true, the send
   // button morphs into either a Stop button (when the run is
   // cancellable) or a "running" indicator (when it isn't — i.e. the
@@ -12379,7 +12405,26 @@ promptflow whoami</code></pre>
     // open, is closed implicitly because send() resets the composer.
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      if (busy) {
+        // Visible-to-the-developer hint when Enter is silently
+        // swallowed. The watchdog will auto-recover after 60s, but
+        // sometimes you want to know WHY nothing happened.
+        // eslint-disable-next-line no-console
+        console.log("[PromptFlow] send blocked: busy=true (waiting on previous in-flight call). Press Escape to force-reset.");
+      }
       send();
+    }
+    // Escape force-resets the busy state. Manual recovery for the
+    // case where something stuck — no waiting on the 60s watchdog.
+    if (e.key === "Escape" && busy) {
+      e.preventDefault();
+      // eslint-disable-next-line no-console
+      console.log("[PromptFlow] Escape pressed — force-resetting busy state.");
+      busy = false;
+      if (currentAbortController) {
+        try { currentAbortController.abort(); } catch {}
+      }
+      updateSend();
     }
   });
   // Click outside the dropdown closes it.
