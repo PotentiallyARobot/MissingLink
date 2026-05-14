@@ -13694,202 +13694,207 @@ promptflow whoami</code></pre>
   //
   // We append deltas to the right surface as they arrive so the
   // user sees thinking → searches → answer build up in real time.
+  //
+  // The entire function body is wrapped in a top-level try/finally
+  // so `busy` is GUARANTEED to reset no matter where things go
+  // sideways — without that guarantee, a mid-stream throw would
+  // leave busy=true forever and silently swallow every subsequent
+  // Enter keypress at the `if (busy) return` guard in send().
   async function streamDiscussAnswer(userText) {
     busy = true; updateSend();
-    // User bubble. No image/media for discuss path.
-    addUserMsg(userText, null, null, []);
-    const assist = addAssistMsg();
-    const body = assist.body;
-
-    // Mount three surfaces inside the assist bubble. They're
-    // appended in render order (thinking, search rows, answer)
-    // but the assist body height grows as each fills.
-    const thinkingWrap = document.createElement("div");
-    thinkingWrap.className = "d-discuss-thinking";
-    thinkingWrap.style.display = "none";
-    thinkingWrap.innerHTML =
-      '<div class="d-discuss-thinking-head">' +
-        '<span class="d-discuss-thinking-spinner"></span>' +
-        '<span class="d-discuss-thinking-label">Thinking…</span>' +
-      '</div>' +
-      '<div class="d-discuss-thinking-body"></div>';
-    body.appendChild(thinkingWrap);
-    const thinkingBody = thinkingWrap.querySelector(".d-discuss-thinking-body");
-    const thinkingLabel = thinkingWrap.querySelector(".d-discuss-thinking-label");
-    const thinkingSpinner = thinkingWrap.querySelector(".d-discuss-thinking-spinner");
-
-    const toolsWrap = document.createElement("div");
-    toolsWrap.className = "d-discuss-tools";
-    body.appendChild(toolsWrap);
-
-    const answerEl = document.createElement("div");
-    answerEl.className = "d-discuss-answer";
-    body.appendChild(answerEl);
-
-    // Reset textInput / send state — we're committed.
-    textInput.value = ""; textInput.style.height = "auto";
-    updateSend();
-
-    let r;
     try {
-      r = await fetch("/api/promptflow/discuss/stream", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          text: userText,
-          conversation_id: currentConversationId || null,
-        }),
-      });
-    } catch (e) {
-      setError(assist, "Network error: " + (e?.message || e));
-      busy = false; updateSend();
-      return;
-    }
-    if (!r.ok || !r.body) {
-      // Sniff for JSON error vs HTML page.
-      const errText = await r.text().catch(() => "");
-      if (errText.trim().startsWith("{")) {
-        try {
-          const j = JSON.parse(errText);
-          setError(assist, j.message || j.error || ("Discuss failed (" + r.status + ")"));
-        } catch {
-          setError(assist, "Discuss failed (" + r.status + ")");
-        }
-      } else if (r.status === 404) {
-        setError(assist, "The /discuss/stream endpoint isn't reachable. Worker routing may not be deployed.");
-      } else if (r.status === 401) {
-        setError(assist, "Please sign in to continue.");
-        openAuth("signin");
-      } else {
-        setError(assist, "Discuss failed (HTTP " + r.status + ")");
+      // User bubble. No image/media for discuss path.
+      addUserMsg(userText, null, null, []);
+      const assist = addAssistMsg();
+      const body = assist.body;
+
+      // Mount three surfaces inside the assist bubble. They're
+      // appended in render order (thinking, search rows, answer)
+      // but the assist body height grows as each fills.
+      const thinkingWrap = document.createElement("div");
+      thinkingWrap.className = "d-discuss-thinking";
+      thinkingWrap.style.display = "none";
+      thinkingWrap.innerHTML =
+        '<div class="d-discuss-thinking-head">' +
+          '<span class="d-discuss-thinking-spinner"></span>' +
+          '<span class="d-discuss-thinking-label">Thinking…</span>' +
+        '</div>' +
+        '<div class="d-discuss-thinking-body"></div>';
+      body.appendChild(thinkingWrap);
+      const thinkingBody = thinkingWrap.querySelector(".d-discuss-thinking-body");
+      const thinkingLabel = thinkingWrap.querySelector(".d-discuss-thinking-label");
+      const thinkingSpinner = thinkingWrap.querySelector(".d-discuss-thinking-spinner");
+
+      const toolsWrap = document.createElement("div");
+      toolsWrap.className = "d-discuss-tools";
+      body.appendChild(toolsWrap);
+
+      const answerEl = document.createElement("div");
+      answerEl.className = "d-discuss-answer";
+      body.appendChild(answerEl);
+
+      // Reset textInput so the user sees the input clear immediately.
+      // (busy=true keeps further Enters from re-firing send() — we
+      // only need to clear the visible text.)
+      textInput.value = ""; textInput.style.height = "auto";
+
+      let r;
+      try {
+        r = await fetch("/api/promptflow/discuss/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: userText,
+            conversation_id: currentConversationId || null,
+          }),
+        });
+      } catch (e) {
+        setError(assist, "Network error: " + (e?.message || e));
+        return;
       }
-      busy = false; updateSend();
-      return;
-    }
-
-    // ── SSE reader ──────────────────────────────────────────────
-    // Anthropic sends framed SSE events: "event: <type>\ndata: <json>\n\n".
-    // We don't care about the event-type line — the data line carries
-    // the typed payload. Parse line-by-line, dispatch by payload.type.
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    // Maps content_block index → kind ("text" | "thinking" | "tool_use" |
-    // "web_search_tool_result"). Set when content_block_start fires;
-    // used by content_block_delta to route the delta to the right surface.
-    const blockKinds = new Map();
-    // Maps content_block index → tool-row DOM element so we can update
-    // it when the query JSON is fully assembled.
-    const toolRows = new Map();
-    // Maps content_block index → partial input_json string for tool_use
-    // blocks. Assembled across input_json_delta events.
-    const toolInputs = new Map();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        // Process complete SSE frames (terminated by blank line).
-        let frameEnd;
-        while ((frameEnd = buffer.indexOf("\n\n")) !== -1) {
-          const frame = buffer.slice(0, frameEnd);
-          buffer = buffer.slice(frameEnd + 2);
-          // Pull the data: line(s).
-          const lines = frame.split("\n");
-          for (const line of lines) {
-            if (!line.startsWith("data:")) continue;
-            const dataStr = line.slice(5).trim();
-            if (!dataStr) continue;
-            let evt;
-            try { evt = JSON.parse(dataStr); } catch { continue; }
-            handleSSE(evt);
+      if (!r.ok || !r.body) {
+        // Sniff for JSON error vs HTML page.
+        const errText = await r.text().catch(() => "");
+        if (errText.trim().startsWith("{")) {
+          try {
+            const j = JSON.parse(errText);
+            const msg = j.message || j.error || ("Discuss failed (" + r.status + ")");
+            const withStatus = r.status >= 500 ? msg + " (HTTP " + r.status + ")" : msg;
+            setError(assist, withStatus);
+          } catch {
+            setError(assist, "Discuss failed (" + r.status + ")");
           }
+        } else if (r.status === 404) {
+          setError(assist, "The /discuss/stream endpoint isn't reachable. Worker routing may not be deployed.");
+        } else if (r.status === 401) {
+          setError(assist, "Please sign in to continue.");
+          openAuth("signin");
+        } else {
+          setError(assist, "Discuss failed (HTTP " + r.status + ")");
         }
+        return;
       }
-    } catch (e) {
-      // Stream broke mid-response. Surface what we have plus a note.
-      if (answerEl.textContent || thinkingBody.textContent) {
-        // Partial answer is fine — leave it, but stop the spinner.
-      } else {
-        setError(assist, "Stream interrupted: " + (e?.message || e));
-      }
-    } finally {
-      // Finalize the thinking spinner so it doesn't keep spinning.
-      thinkingSpinner.style.display = "none";
-      thinkingLabel.textContent = thinkingBody.textContent ? "Reasoning" : "";
-      // Hide the thinking wrap entirely if nothing arrived.
-      if (!thinkingBody.textContent.trim()) thinkingWrap.style.display = "none";
-      busy = false; updateSend();
-    }
 
-    function handleSSE(evt) {
-      const t = evt.type;
-      if (t === "content_block_start") {
-        const idx = evt.index;
-        const blk = evt.content_block || {};
-        blockKinds.set(idx, blk.type);
-        if (blk.type === "thinking") {
-          thinkingWrap.style.display = "";
-        } else if (blk.type === "server_tool_use" && blk.name === "web_search") {
-          // Tool invocation begins. We'll fill in the query as
-          // input_json_delta events arrive. Create the row now so
-          // it appears in order with other tool rows.
-          const row = document.createElement("div");
-          row.className = "d-discuss-tool-row";
-          row.innerHTML =
-            '<span class="d-discuss-tool-icon">🔍</span>' +
-            '<span class="d-discuss-tool-label">Searching: </span>' +
-            '<span class="d-discuss-tool-query"></span>';
-          toolsWrap.appendChild(row);
-          toolRows.set(idx, row);
-          toolInputs.set(idx, "");
-        } else if (blk.type === "web_search_tool_result") {
-          // Result returned. Add a brief confirmation row.
-          const row = document.createElement("div");
-          row.className = "d-discuss-tool-row d-discuss-tool-row-result";
-          let resultCount = 0;
-          if (Array.isArray(blk.content)) resultCount = blk.content.length;
-          row.innerHTML =
-            '<span class="d-discuss-tool-icon">📄</span>' +
-            '<span class="d-discuss-tool-label">Found ' +
-              (resultCount > 0 ? resultCount + ' source' + (resultCount === 1 ? '' : 's') : 'results') +
-            '</span>';
-          toolsWrap.appendChild(row);
-        }
-      } else if (t === "content_block_delta") {
-        const idx = evt.index;
-        const kind = blockKinds.get(idx);
-        const delta = evt.delta || {};
-        if (delta.type === "thinking_delta" && kind === "thinking") {
-          thinkingBody.textContent += (delta.thinking || "");
-          stream.scrollTop = stream.scrollHeight;
-        } else if (delta.type === "text_delta" && kind === "text") {
-          answerEl.textContent += (delta.text || "");
-          stream.scrollTop = stream.scrollHeight;
-        } else if (delta.type === "input_json_delta" && kind === "server_tool_use") {
-          const partial = (toolInputs.get(idx) || "") + (delta.partial_json || "");
-          toolInputs.set(idx, partial);
-          // Try to extract the query if the JSON is far enough along.
-          // Anthropic emits the query field in chunks; we attempt a
-          // partial parse to surface it as it grows.
-          const m = /"query"\s*:\s*"([^"]*)/.exec(partial);
-          if (m) {
-            const row = toolRows.get(idx);
-            if (row) {
-              const q = row.querySelector(".d-discuss-tool-query");
-              if (q) q.textContent = m[1];
+      // ── SSE reader ──────────────────────────────────────────────
+      // Anthropic sends framed SSE events: "event: <type>\ndata: <json>\n\n".
+      // We don't care about the event-type line — the data line carries
+      // the typed payload. Parse line-by-line, dispatch by payload.type.
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      // Maps content_block index → kind ("text" | "thinking" | "tool_use" |
+      // "web_search_tool_result"). Set when content_block_start fires;
+      // used by content_block_delta to route the delta to the right surface.
+      const blockKinds = new Map();
+      // Maps content_block index → tool-row DOM element so we can update
+      // it when the query JSON is fully assembled.
+      const toolRows = new Map();
+      // Maps content_block index → partial input_json string for tool_use
+      // blocks. Assembled across input_json_delta events.
+      const toolInputs = new Map();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          // Process complete SSE frames (terminated by blank line).
+          let frameEnd;
+          while ((frameEnd = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, frameEnd);
+            buffer = buffer.slice(frameEnd + 2);
+            // Pull the data: line(s).
+            const lines = frame.split("\n");
+            for (const line of lines) {
+              if (!line.startsWith("data:")) continue;
+              const dataStr = line.slice(5).trim();
+              if (!dataStr) continue;
+              let evt;
+              try { evt = JSON.parse(dataStr); } catch { continue; }
+              handleSSE(evt);
             }
           }
         }
-      } else if (t === "message_stop") {
-        // Stream ended naturally.
-      } else if (t === "error" || (evt.error)) {
-        const msg = evt.error?.message || evt.message || "Stream error";
-        if (!answerEl.textContent) {
-          setError(assist, msg);
+      } catch (e) {
+        // Stream broke mid-response. Surface what we have plus a note.
+        if (!answerEl.textContent && !thinkingBody.textContent) {
+          setError(assist, "Stream interrupted: " + (e?.message || e));
+        }
+      } finally {
+        // Finalize the thinking spinner so it doesn't keep spinning.
+        thinkingSpinner.style.display = "none";
+        thinkingLabel.textContent = thinkingBody.textContent ? "Reasoning" : "";
+        // Hide the thinking wrap entirely if nothing arrived.
+        if (!thinkingBody.textContent.trim()) thinkingWrap.style.display = "none";
+      }
+
+      function handleSSE(evt) {
+        const t = evt.type;
+        if (t === "content_block_start") {
+          const idx = evt.index;
+          const blk = evt.content_block || {};
+          blockKinds.set(idx, blk.type);
+          if (blk.type === "thinking") {
+            thinkingWrap.style.display = "";
+          } else if (blk.type === "server_tool_use" && blk.name === "web_search") {
+            const row = document.createElement("div");
+            row.className = "d-discuss-tool-row";
+            row.innerHTML =
+              '<span class="d-discuss-tool-icon">🔍</span>' +
+              '<span class="d-discuss-tool-label">Searching: </span>' +
+              '<span class="d-discuss-tool-query"></span>';
+            toolsWrap.appendChild(row);
+            toolRows.set(idx, row);
+            toolInputs.set(idx, "");
+          } else if (blk.type === "web_search_tool_result") {
+            const row = document.createElement("div");
+            row.className = "d-discuss-tool-row d-discuss-tool-row-result";
+            let resultCount = 0;
+            if (Array.isArray(blk.content)) resultCount = blk.content.length;
+            row.innerHTML =
+              '<span class="d-discuss-tool-icon">📄</span>' +
+              '<span class="d-discuss-tool-label">Found ' +
+                (resultCount > 0 ? resultCount + ' source' + (resultCount === 1 ? '' : 's') : 'results') +
+              '</span>';
+            toolsWrap.appendChild(row);
+          }
+        } else if (t === "content_block_delta") {
+          const idx = evt.index;
+          const kind = blockKinds.get(idx);
+          const delta = evt.delta || {};
+          if (delta.type === "thinking_delta" && kind === "thinking") {
+            thinkingBody.textContent += (delta.thinking || "");
+            stream.scrollTop = stream.scrollHeight;
+          } else if (delta.type === "text_delta" && kind === "text") {
+            answerEl.textContent += (delta.text || "");
+            stream.scrollTop = stream.scrollHeight;
+          } else if (delta.type === "input_json_delta" && kind === "server_tool_use") {
+            const partial = (toolInputs.get(idx) || "") + (delta.partial_json || "");
+            toolInputs.set(idx, partial);
+            const m = /"query"\s*:\s*"([^"]*)/.exec(partial);
+            if (m) {
+              const row = toolRows.get(idx);
+              if (row) {
+                const q = row.querySelector(".d-discuss-tool-query");
+                if (q) q.textContent = m[1];
+              }
+            }
+          }
+        } else if (t === "message_stop") {
+          // Stream ended naturally.
+        } else if (t === "error" || (evt.error)) {
+          const msg = evt.error?.message || evt.message || "Stream error";
+          if (!answerEl.textContent) {
+            setError(assist, msg);
+          }
         }
       }
+    } finally {
+      // GUARANTEED reset of busy state. Without this finally, any
+      // mid-stream exception would leave busy=true and silently
+      // swallow subsequent Enter presses at the top-of-send() guard.
+      busy = false;
+      updateSend();
     }
   }
 
