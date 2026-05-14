@@ -12405,12 +12405,25 @@ promptflow whoami</code></pre>
     // open, is closed implicitly because send() resets the composer.
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      // Same self-healing logic as the button click: trust what the
+      // button is VISUALLY showing. If it shows Send, Enter must
+      // send — even if `busy` is stale-true behind the scenes.
+      if (sendBtn.classList.contains("stop")) {
+        // Visible stop → Enter cancels (matches button click).
+        if (currentAbortController) {
+          try { currentAbortController.abort(); } catch {}
+        }
+        return;
+      }
+      if (sendBtn.classList.contains("running")) {
+        return; // locked
+      }
+      // Visible send arrow — fire send, self-healing if needed.
       if (busy) {
-        // Visible-to-the-developer hint when Enter is silently
-        // swallowed. The watchdog will auto-recover after 60s, but
-        // sometimes you want to know WHY nothing happened.
         // eslint-disable-next-line no-console
-        console.log("[PromptFlow] send blocked: busy=true (waiting on previous in-flight call). Press Escape to force-reset.");
+        console.warn("[PromptFlow] Enter pressed while busy=true but button visually Send — force-resetting and sending.");
+        busy = false;
+        updateSend();
       }
       send();
     }
@@ -12512,7 +12525,20 @@ promptflow whoami</code></pre>
 
   // ── Send / generate (two-phase: plan → confirm → execute) ─────
   async function send() {
-    if (busy) return;
+    if (busy) {
+      // Self-healing guard. If the button is visually showing Send
+      // (no stop/running class) but busy is stale-true, we forge
+      // ahead instead of silently bailing. This makes the bug
+      // recoverable: any click/Enter that the user could legitimately
+      // expect to send WILL send.
+      if (!sendBtn.classList.contains("stop") && !sendBtn.classList.contains("running")) {
+        // eslint-disable-next-line no-console
+        console.warn("[PromptFlow] send() entered with busy=true but button visually Send — clearing stale busy.");
+        busy = false;
+      } else {
+        return; // legit in-flight call; defer.
+      }
+    }
     if (!ME) { openAuth("signup"); return; }
     const userText = textInput.value.trim();
 
@@ -13641,11 +13667,34 @@ promptflow whoami</code></pre>
   // (process run), the button is :disabled so this never fires.
   // Otherwise, send the message.
   sendBtn.onclick = () => {
-    if (busy) {
-      if (currentRunCancellable && currentAbortController) {
-        currentAbortController.abort();
+    // Trust the button's visual state, not the `busy` global. If
+    // these two drift apart (which can happen if a code path sets
+    // busy=true without calling updateSend immediately after), the
+    // user sees a clickable Send arrow but clicks silently fail
+    // because the handler bails on busy. The fix: read what the
+    // button is SHOWING right now and act on that.
+    if (sendBtn.classList.contains("stop")) {
+      // Visible stop button → user wants to cancel.
+      if (currentAbortController) {
+        try { currentAbortController.abort(); } catch {}
       }
       return;
+    }
+    if (sendBtn.classList.contains("running")) {
+      // Locked running state (non-cancellable). Should be disabled
+      // by the browser anyway; defensive no-op.
+      return;
+    }
+    // Visible send arrow → click MUST do something. If busy is
+    // stale (true without matching visual state), self-heal by
+    // forcing it false before sending. This makes the button
+    // exit-from-stuck-state recoverable in one click, no Escape
+    // key or page reload needed.
+    if (busy) {
+      // eslint-disable-next-line no-console
+      console.warn("[PromptFlow] send button clicked while busy=true but visually Send — force-resetting and sending.");
+      busy = false;
+      updateSend();
     }
     send();
   };
