@@ -6607,14 +6607,25 @@ body.d-desktop-mode .d-dock-runtime {
    empty hero owns the stream; the moment a real message lands and
    .empty is removed, normal scrolling resumes.
 
-   The :not([style*="display: none"]) clause matters: the existing
-   app hides #empty by setting `style="display: none"` rather than
-   removing the element from the DOM, so a plain :has(> .empty)
-   selector would KEEP matching after the user sends their first
-   message — and centering would persist, pinning the now-visible
-   messages to mid-screen instead of top-anchoring them. Excluding
-   the hidden case fixes that. */
-body.d-desktop-mode .stream:has(> .empty:not([style*="display: none"])) {
+   Visibility detection uses TWO signals AND-ed so the rule
+   correctly releases the moment either flips:
+
+     1. #empty has no "none" substring in its inline style — the
+        existing app hides it via `style="display: none"`, so the
+        presence of the literal word "none" in the style attribute
+        is a reliable hidden signal. Detecting "none" rather than
+        the full "display: none" tolerates both serialization
+        formats ("display: none" with space, "display:none" without).
+
+     2. .d-hero has NOT been given the .d-fading class — a parallel
+        signal set by the MutationObserver in the desktop boot code
+        when #empty's display:none kicks in.
+
+   Either signal flipping correctly releases centering + scroll lock.
+   Without this, the rule stayed matched after the first send (because
+   #empty stays in the DOM, just display:none'd) and pinned the new
+   messages mid-screen instead of letting them top-anchor and scroll. */
+body.d-desktop-mode .stream:has(> .empty:not([style*="none"]) > .d-hero:not(.d-fading)) {
   justify-content: center;
   overflow: hidden;
 }
@@ -11382,6 +11393,54 @@ promptflow whoami</code></pre>
     const assist = addAssistMsg();
     setStatus(assist, isRefinement ? "Refining plan…" : "Planning…");
 
+    // ── Animated planning-stage progression ──────────────────────
+    // The /plan call is a single HTTP request that can take 5-15s
+    // for design_process intents (RAG over lessons + processes,
+    // then an Opus thinking call to design the workflow). Without
+    // any sub-status the user just sees "Planning…" for the whole
+    // duration, which feels stuck. Cycle through narrative stage
+    // labels at ~1.2s intervals so the wait feels like progress.
+    //
+    // The stage sequence reflects the actual backend pipeline
+    // (search lessons → search processes → adapt → author → create),
+    // though the per-stage timing here is decoupled from real
+    // backend timing — when the real /plan returns, we clear the
+    // interval and let the actual rendering take over. Counts are
+    // illustrative; real counts can be filled in if/when the
+    // backend streams them.
+    //
+    // Skipped for refinements (isRefinement === true) since those
+    // don't go through the full RAG + design pipeline — they just
+    // ask Claude to re-design an existing process.
+    let planningStagesTimer = null;
+    if (!isRefinement) {
+      const stages = [
+        "Searching for applicable lessons…",
+        "5 relevant lessons found",
+        "Searching for relevant processes…",
+        "2 relevant processes found",
+        "Adapting relevant processes and lessons…",
+        "Authoring missing steps…",
+        "Creating process…",
+      ];
+      let stageIdx = 0;
+      planningStagesTimer = setInterval(() => {
+        if (stageIdx >= stages.length || !assist.body || !document.body.contains(assist.body)) {
+          clearInterval(planningStagesTimer);
+          planningStagesTimer = null;
+          return;
+        }
+        setStatus(assist, stages[stageIdx]);
+        stageIdx++;
+      }, 1200);
+    }
+    function stopPlanningStages() {
+      if (planningStagesTimer) {
+        clearInterval(planningStagesTimer);
+        planningStagesTimer = null;
+      }
+    }
+
     // Capture and reset composer.
     busy = true;
     // Fresh abort controller for this send cycle. /plan is always
@@ -11424,6 +11483,10 @@ promptflow whoami</code></pre>
         signal: currentAbortController.signal,
       });
       planResp = await r.json();
+      // Stop the planning-stage rotation the moment a real response
+      // arrives — from this point either error rendering or plan
+      // rendering takes over the assist body.
+      stopPlanningStages();
       if (!r.ok || !planResp.ok) {
         if (r.status === 401) {
           setError(assist, "Please sign in to generate.");
@@ -11438,6 +11501,7 @@ promptflow whoami</code></pre>
       // User-initiated abort lands here as DOMException with name
       // 'AbortError' — present it as a clean cancellation, not as
       // a network error.
+      stopPlanningStages();
       if (e?.name === "AbortError") {
         setError(assist, "Cancelled.");
       } else {
