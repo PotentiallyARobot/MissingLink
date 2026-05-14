@@ -3026,6 +3026,80 @@
     background:var(--gold-light); border-color:var(--gold-light);
   }
 
+  /* Chain navigation row — the gameplay loop. Sits below the primary
+     action row (Edit/Run) on every generated process card. Two
+     buttons, framed by the "↪ Continue the chain:" label so the user
+     understands these are next-step navigation, not just more actions.
+     Visually more subdued than Edit/Run — outlined, smaller, muted
+     until hover — so the primary actions still dominate. Hover lifts
+     them into gold to signal interactivity. */
+  .process-card-chain{
+    margin-top:10px; padding-top:10px;
+    border-top:1px dashed var(--border);
+    display:flex; align-items:center; gap:8px;
+    flex-wrap:wrap;
+  }
+  .process-card-chain .pcc-label{
+    font-family:var(--font-mono); font-size:10.5px;
+    color:var(--text-muted); letter-spacing:.04em;
+    margin-right:2px;
+  }
+  .process-card-chain .pcc-btn{
+    background:transparent;
+    border:1px solid rgba(232,169,23,0.35);
+    color:rgba(232,200,140,0.92);
+    padding:5px 11px; font-size:11px;
+    border-radius:14px;
+    text-transform:none; letter-spacing:.2px;
+    display:inline-flex; align-items:center; gap:5px;
+    transition:background .12s ease, border-color .12s ease, color .12s ease, transform .08s ease;
+  }
+  .process-card-chain .pcc-btn:hover{
+    background:rgba(232,169,23,0.08);
+    border-color:rgba(232,169,23,0.7);
+    color:var(--gold);
+  }
+  .process-card-chain .pcc-btn:active{ transform:translateY(1px); }
+  .process-card-chain .pcc-icon{
+    font-size:11px; color:var(--gold); opacity:0.95;
+  }
+
+  /* Back-to-source navigation link. Appears at the TOP of a process
+     card when it was generated via Compose/Adapt — the chain
+     breadcrumb pointing back to where this card came from. Visually
+     subtle so it doesn't compete with the card content, but unmistakably
+     a navigation affordance (arrow + the parent's name in gold). */
+  .process-card-source{
+    margin-bottom:6px;
+    display:flex; align-items:center;
+  }
+  .pcs-back-btn{
+    background:transparent;
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:4px 11px 4px 9px;
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:var(--font-mono); font-size:10.5px;
+    color:var(--text-muted); letter-spacing:.02em;
+    cursor:pointer;
+    transition:background .12s ease, border-color .12s ease, color .12s ease, transform .08s ease;
+  }
+  .pcs-back-btn:hover{
+    background:rgba(232,169,23,0.06);
+    border-color:rgba(232,169,23,0.55);
+    color:var(--text);
+  }
+  .pcs-back-btn:active{ transform:translateY(1px); }
+  .pcs-back-arrow{
+    color:var(--gold); font-size:11px;
+  }
+  .pcs-back-verb{
+    color:var(--text-muted); text-transform:lowercase; letter-spacing:.04em;
+  }
+  .pcs-back-name{
+    color:var(--gold); font-weight:500;
+  }
+
   /* Collapsible adapted-Python workflow panel. Uses native <details>
      for the show/hide toggle (no JS state to sync). The summary row
      reads "{} Adapted workflow  recipe_id · python" — a tiny code
@@ -8632,6 +8706,15 @@ promptflow whoami</code></pre>
   // command which always escapes back to fresh-plan mode.
   let refineBoundProcessId = null;
   let refineBoundProcessName = null;
+  // Chain-navigation parent. Set when the user clicks ✦ Compose or
+  // ✱ Adapt on an existing process card — captures the SOURCE
+  // process so the next generation's card knows where it came from
+  // and can render an "↑ Back to <source>" link. Captured at the
+  // top of send() and cleared immediately so it's strictly a
+  // one-shot signal for the next generation; if /plan fails or the
+  // intent doesn't produce a process card, the signal is gone and
+  // doesn't leak into a later unrelated generation.
+  let pendingParentProcess = null;  // { id, name, kind: "compose" | "adapt" } | null
   let conversationsCache = [];    // sidebar list
 
   // ── DOM refs ───────────────────────────────────────────
@@ -11466,6 +11549,14 @@ promptflow whoami</code></pre>
     const assist = addAssistMsg();
     setStatus(assist, isRefinement ? "Refining plan…" : "Planning…");
 
+    // Capture-and-clear the chain-navigation parent — strictly one
+    // shot. Anything that goes wrong (abort, error, intent mismatch)
+    // discards this signal so it doesn't bleed into a later unrelated
+    // generation. The captured value is used downstream when the new
+    // process card renders.
+    const generationParent = pendingParentProcess;
+    pendingParentProcess = null;
+
     // ── Animated planning-stage progression ──────────────────────
     // The /plan call is a single HTTP request that can take 5-15s
     // for design_process intents (RAG over lessons + processes,
@@ -11633,7 +11724,7 @@ promptflow whoami</code></pre>
         assist.body.appendChild(r);
       }
       const mode = planResp.intent === "update_process" ? "updated" : "saved";
-      renderProcessCard(assist, planResp.process, mode);
+      renderProcessCard(assist, planResp.process, mode, generationParent);
       const note = document.createElement("div");
       note.className = "status";
       note.textContent = planResp.message
@@ -12969,8 +13060,38 @@ promptflow whoami</code></pre>
   // Render a saved-process card. Used both for the design_process /
   // update_process intents (server already saved/updated) and for the
   // sidebar list. Includes a collapsible Python view when present.
-  function renderProcessCard(assist, proc, mode) {
+  //
+  // sourceParent is the chain-navigation parent — when present, the
+  // card renders an "↑ Back to <name>" link at the top so the user
+  // can return to the process they composed/adapted FROM. Only set
+  // when this card was produced by clicking ✦ Compose or ✱ Adapt on
+  // another card; null for direct "Generate a process …" prompts.
+  function renderProcessCard(assist, proc, mode, sourceParent) {
     // mode: "saved" | "updated" | "loaded"
+
+    // Chain-navigation back link. Sits above the main card so it's
+    // the first thing the user sees on the new generation — the
+    // breadcrumb back to where the chain came from. Click opens the
+    // parent process in the editor (full-screen loader, structured
+    // view) so the user can inspect or further compose from it.
+    if (sourceParent && sourceParent.id && sourceParent.name) {
+      const back = document.createElement("div");
+      back.className = "process-card-source";
+      const verb = sourceParent.kind === "adapt" ? "Adapted from" : "Composed from";
+      back.innerHTML =
+        `<button class="pcs-back-btn" type="button" title="Open ${escapeAttr(sourceParent.name)} in the editor">` +
+          `<span class="pcs-back-arrow">↑</span>` +
+          `<span class="pcs-back-verb">${escapeHtml(verb)}</span>` +
+          `<span class="pcs-back-name">${escapeHtml(sourceParent.name)}</span>` +
+        `</button>`;
+      back.querySelector(".pcs-back-btn").onclick = () => {
+        // openProcessEditor handles the full-screen loader, /process/get
+        // call, and structured pane render. busy guard inside it.
+        openProcessEditor(sourceParent.id);
+      };
+      assist.body.appendChild(back);
+    }
+
     const card = document.createElement("div");
     card.className = "plan-card";
     const inputs = (proc.input_kinds || []).join(", ") || "text";
@@ -13037,6 +13158,70 @@ promptflow whoami</code></pre>
     };
     actions.appendChild(runBtn);
     assist.body.appendChild(actions);
+
+    // ── Chain navigation row — the gameplay loop ────────────────
+    //
+    // Every generated process becomes a launching pad for the next
+    // generation. Two clicks chain through the graph:
+    //
+    //   ✦ Compose → generate a new process that uses THIS one as a
+    //                step (wraps the seed, adds upstream/downstream
+    //                steps). The cascade pays the seed's author a
+    //                royalty whenever the composition runs.
+    //
+    //   ✱ Adapt   → generate a NEW process derived from this one for
+    //                a different but related use case. Fork-style:
+    //                same skeleton, retuned for a new audience or
+    //                format. Adaptation lineage pays a royalty too.
+    //
+    // Both buttons fire send() immediately with a fully-formed
+    // design_process prompt — no typing required for the default
+    // case. The planner picks a plausible direction; if the user
+    // wants something specific, they type it in the input instead.
+    // The point is to make navigating the network of processes feel
+    // like clicking links in a wiki: one click per step, endless.
+    const chain = document.createElement("div");
+    chain.className = "process-card-chain";
+    chain.innerHTML = `<span class="pcc-label">↪ Continue the chain:</span>`;
+
+    const composeBtn = document.createElement("button");
+    composeBtn.className = "btn pcc-btn pcc-compose";
+    composeBtn.type = "button";
+    composeBtn.innerHTML = `<span class="pcc-icon">✦</span> Compose with this`;
+    composeBtn.title = `Generate a new process that uses "${proc.name}" as one of its steps`;
+    composeBtn.onclick = () => {
+      if (busy) return;
+      // Mark this process as the source for the next generation, so
+      // the resulting card can render an "↑ Back to <name>" link.
+      pendingParentProcess = { id: proc.id, name: proc.name, kind: "compose" };
+      // Compose = generate a process that uses the seed as a step.
+      // The planner will route this to design_process and look at the
+      // catalog for plausible upstream/downstream steps to chain in.
+      textInput.value = `Generate a process that uses "${proc.name}" as a step.`;
+      textInput.dispatchEvent(new Event("input"));
+      // Fire send on next tick so DOM updates land first.
+      setTimeout(() => send(), 0);
+    };
+    chain.appendChild(composeBtn);
+
+    const adaptBtn = document.createElement("button");
+    adaptBtn.className = "btn pcc-btn pcc-adapt";
+    adaptBtn.type = "button";
+    adaptBtn.innerHTML = `<span class="pcc-icon">✱</span> Adapt this`;
+    adaptBtn.title = `Generate a NEW process adapted from "${proc.name}" for a different use case`;
+    adaptBtn.onclick = () => {
+      if (busy) return;
+      pendingParentProcess = { id: proc.id, name: proc.name, kind: "adapt" };
+      // Adapt = generate a new process derived from the seed for a
+      // different but related use case. Fork lineage credits the
+      // seed author on every run of the adaptation.
+      textInput.value = `Generate a new process adapted from "${proc.name}" for a different but related use case.`;
+      textInput.dispatchEvent(new Event("input"));
+      setTimeout(() => send(), 0);
+    };
+    chain.appendChild(adaptBtn);
+
+    assist.body.appendChild(chain);
 
     if (proc.python_text) {
       const wrap = document.createElement("details");
