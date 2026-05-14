@@ -13097,6 +13097,8 @@ promptflow whoami</code></pre>
       const rawText = await r.text();
       const trimmed = rawText.trim();
       if (trimmed.startsWith("<")) {
+        // HTML response — edge-level failure. Give the user diagnostic
+        // hints based on status code since we have no JSON body to read.
         stopPlanningStages();
         const detail = r.status === 404
           ? "The /plan endpoint is not reachable. Check your worker routing."
@@ -13123,7 +13125,14 @@ promptflow whoami</code></pre>
           setError(assist, "Please sign in to generate.");
           openAuth("signin");
         } else {
-          setError(assist, planResp.message || planResp.error || "Planning failed.");
+          // Surface the server's actual error message when present —
+          // way more useful than a generic "Planning failed" line.
+          // The backend includes a `message` field on most failures.
+          const msg = planResp.message || planResp.error || "Planning failed.";
+          // Include status code in the message when it's an unexpected
+          // 500/502/503 — helps disambiguate transient vs persistent.
+          const withStatus = r.status >= 500 ? msg + " (HTTP " + r.status + ")" : msg;
+          setError(assist, withStatus);
         }
         busy = false; updateSend();
         return;
