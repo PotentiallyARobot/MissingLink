@@ -12326,6 +12326,21 @@ promptflow whoami</code></pre>
       window._pendingGenerateUploadId = null;
     }
 
+    // Forced-run lock. When the user clicked Run on a specific process
+    // card, _forceRunProcessId is set. The backend constrains the
+    // planner: intent=execute with picked_process_id=<this proc>, no
+    // creative reinterpretation. Without this, the planner is free to
+    // ignore the named process and design something else (e.g. when
+    // an image is attached from a previous turn, the planner would
+    // route to single-recipe video generation regardless of the named
+    // process). One-shot — cleared on send so the next freeform turn
+    // isn't accidentally still locked.
+    if (window._forceRunProcessId) {
+      fd.append("force_process_id", window._forceRunProcessId);
+      window._forceRunProcessId = null;
+      window._forceRunProcessName = null;
+    }
+
     // Generation preferences — pass the active allowlist if set. The
     // override layer wins over the persistent default when both
     // exist (per planGeneration logic). After append, consume the
@@ -13844,16 +13859,50 @@ promptflow whoami</code></pre>
     runBtn.className = "btn process-run-btn";
     runBtn.type = "button";
     runBtn.innerHTML = "▶ Run";
-    runBtn.title = `Use this process — type your input below`;
+    runBtn.title = `Execute "${proc.name}" — uses any input you've already typed or attached`;
     runBtn.onclick = () => {
-      // Pre-fill the input bar with a structured "Run X with: …"
-      // prefix so the planner picks this process. Focus the textarea
-      // at the cursor position right after the colon.
-      textInput.value = `Run "${proc.name}" with: `;
-      textInput.focus();
-      // Move caret to end so the user just keeps typing.
-      textInput.setSelectionRange(textInput.value.length, textInput.value.length);
-      updateSend();
+      if (busy) return;
+      // The Run button used to ONLY pre-fill the chat input with
+      // 'Run "X" with: ' and wait for the user to type. That routed
+      // through the planner, which had full discretion to re-interpret
+      // — if the user happened to have an image attached from a
+      // previous turn, the planner could ignore the named process
+      // entirely and design something totally different. Bad UX.
+      //
+      // New behavior:
+      //   1. Lock the next send to THIS process via _forceRunProcessId.
+      //      The backend constrains the planner: it MUST output
+      //      intent=execute with picked_process_id=<this proc>. No
+      //      creative reinterpretation; the planner's only job is to
+      //      fit the user's inputs to the process's input schema.
+      //   2. If the user already has text/image/zip staged, fire
+      //      send() immediately — they've provided everything needed.
+      //   3. If nothing is staged, focus the input and let them type
+      //      what to run it with. Pre-fill with a hint that mentions
+      //      the process by name for clarity.
+      window._forceRunProcessId = proc.id;
+      window._forceRunProcessName = proc.name;
+      const hasStagedInput =
+        (textInput.value || "").trim().length > 0
+        || (typeof primaryImage !== "undefined" && primaryImage)
+        || (typeof primaryVideo !== "undefined" && primaryVideo)
+        || (typeof primaryAudio !== "undefined" && primaryAudio)
+        || (typeof pendingContrib !== "undefined" && pendingContrib && pendingContrib.zip);
+      if (hasStagedInput) {
+        // Execute now with whatever the user has staged. If they
+        // didn't type any text, fabricate a minimal one so /plan has
+        // something to parse — the backend will use the process's
+        // input schema to map the attachments to fields.
+        if (!(textInput.value || "").trim()) {
+          textInput.value = `Run "${proc.name}" with the attached files.`;
+        }
+        send();
+      } else {
+        textInput.value = `Run "${proc.name}": `;
+        textInput.focus();
+        textInput.setSelectionRange(textInput.value.length, textInput.value.length);
+        updateSend();
+      }
     };
     actions.appendChild(runBtn);
     assist.body.appendChild(actions);
