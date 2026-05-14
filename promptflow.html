@@ -6233,6 +6233,108 @@ body.d-public-process-mode .d-pubgraph-view {
    step) and three adapt ideas (fork the seed for a new domain).
    Each is a clickable card that fires send() with a pre-formed
    design_prompt. */
+/* ── Step breakdown on process cards ────────────────────────────
+   Compact vertical list of each step in a process, with composed
+   sub-process steps highlighted as clickable links. Lets the user
+   see at a glance which processes are wired into this one and
+   where in the sequence each composed process sits. */
+.plan-val-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.step-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.step-breakdown-nested {
+  margin-left: 14px;
+  padding-left: 8px;
+  border-left: 1px dashed rgba(255,255,255,0.08);
+}
+.step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+  color: rgba(220,220,225,0.78);
+}
+.step-row-num {
+  flex-shrink: 0;
+  color: rgba(150,150,160,0.55);
+  font-size: 11px;
+  min-width: 18px;
+}
+.step-row-kind {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 500;
+  background: rgba(255,255,255,0.06);
+  color: rgba(200,200,210,0.7);
+}
+.step-row-kind-recipe {
+  background: rgba(120,180,255,0.10);
+  color: rgba(160,210,255,0.85);
+}
+.step-row-kind-claude {
+  background: rgba(180,150,250,0.10);
+  color: rgba(210,180,255,0.85);
+}
+.step-row-kind-loop {
+  background: rgba(150,200,150,0.10);
+  color: rgba(180,220,180,0.85);
+}
+.step-row-kind-process {
+  background: rgba(232,169,23,0.14);
+  color: rgba(240,200,120,0.95);
+  letter-spacing: 0.02em;
+}
+.step-row-name {
+  color: rgba(230,230,235,0.88);
+  word-break: break-word;
+}
+.step-row-name-process {
+  color: rgba(240,200,120,1);
+  font-weight: 500;
+}
+.step-row-process-link {
+  color: rgba(240,200,120,1);
+  text-decoration: underline;
+  text-decoration-color: rgba(240,200,120,0.4);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.step-row-process-link:hover {
+  text-decoration-color: rgba(240,200,120,1);
+}
+.step-row-author {
+  color: rgba(180,180,190,0.55);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+.step-row-meta {
+  color: rgba(150,150,160,0.55);
+  font-size: 10.5px;
+}
+.step-row-purpose {
+  color: rgba(180,180,190,0.6);
+  font-size: 11px;
+}
+.step-row-process {
+  padding: 4px 0;
+}
+
 .process-card-recs {
   margin-top: 12px;
   padding-top: 12px;
@@ -14852,6 +14954,116 @@ promptflow whoami</code></pre>
   // can return to the process they composed/adapted FROM. Only set
   // when this card was produced by clicking ✦ Compose or ✱ Adapt on
   // another card; null for direct "Generate a process …" prompts.
+  // Compact visible breakdown of a process's step sequence. Renders
+  // one row per step:
+  //   - recipe steps: [recipe] <recipe_id or model>
+  //   - claude steps: [claude] <truncated user_prompt or purpose>
+  //   - process steps: [↳ uses Process Name] — clickable, deep-links
+  //                    to the composed process's public page. Critical
+  //                    for legibility of multi-process compositions.
+  //   - loop steps: [loop over <path>] + recursed body indented
+  //
+  // Returns a single DOM node or null if no steps. Recursive — the
+  // depth param controls left-indent for nested loop bodies.
+  function renderStepBreakdown(steps, depth) {
+    if (!Array.isArray(steps) || steps.length === 0) return null;
+    const wrap = document.createElement("div");
+    wrap.className = "step-breakdown";
+    if (depth > 0) wrap.classList.add("step-breakdown-nested");
+    steps.forEach((s, i) => {
+      if (!s || typeof s !== "object") return;
+      const row = document.createElement("div");
+      row.className = "step-row step-row-" + (s.type || "unknown");
+      const num = depth === 0
+        ? String(i + 1) + "."
+        : "→";
+      const kind = s.type || "step";
+      let label = "";
+      let extra = ""; // optional small description after the name
+      if (s.type === "process") {
+        // Composed sub-process — the centerpiece. Look up the name
+        // from the processes cache. If we don't have it cached (rare
+        // — happens when the composed process is in another user's
+        // workspace and we haven't loaded it), fall back to the id.
+        const inner = (processesCache || []).find(p => p.id === s.process_id);
+        const innerName = inner ? inner.name : (s.process_id || "unknown process");
+        const subCount = inner && Array.isArray(inner.steps) ? inner.steps.length : 0;
+        const subMeta = subCount > 0 ? " · " + subCount + " sub-step" + (subCount === 1 ? "" : "s") : "";
+        // Public URL comes from the processes endpoint — it's set for
+        // the user's own processes (handle/slug known), null otherwise.
+        // When set, the name becomes a clickable hash-route link that
+        // the SPA picks up via maybeOpenPublicProcessRoute. When not
+        // set (system processes, other users' processes), show plain
+        // text — the user still sees what's composed, just can't
+        // click through.
+        const publicHref = inner && inner.public_url ? inner.public_url : null;
+        row.innerHTML =
+          '<span class="step-row-num">' + num + '</span>' +
+          '<span class="step-row-kind step-row-kind-process">↳ uses</span>';
+        const nameWrap = document.createElement("span");
+        nameWrap.className = "step-row-name step-row-name-process";
+        if (publicHref) {
+          const link = document.createElement("a");
+          link.className = "step-row-process-link";
+          link.href = publicHref;
+          link.textContent = innerName;
+          nameWrap.appendChild(link);
+        } else {
+          const txt = document.createElement("span");
+          txt.textContent = innerName;
+          nameWrap.appendChild(txt);
+        }
+        if (subMeta) {
+          const meta = document.createElement("span");
+          meta.className = "step-row-meta";
+          meta.textContent = subMeta;
+          nameWrap.appendChild(meta);
+        }
+        row.appendChild(nameWrap);
+        wrap.appendChild(row);
+        return;
+      }
+      if (s.type === "loop") {
+        label = "loop over " + (s.iterate_over || "list");
+        if (s.as) label += " as " + s.as;
+        extra = s.purpose ? truncate(s.purpose, 80) : "";
+        row.innerHTML =
+          '<span class="step-row-num">' + num + '</span>' +
+          '<span class="step-row-kind step-row-kind-' + kind + '">' + escapeHtml(kind) + '</span>' +
+          '<span class="step-row-name">' + escapeHtml(label) + '</span>' +
+          (extra ? '<span class="step-row-purpose">— ' + escapeHtml(extra) + '</span>' : '');
+        wrap.appendChild(row);
+        // Recurse into body, indented.
+        if (Array.isArray(s.body) && s.body.length > 0) {
+          const nested = renderStepBreakdown(s.body, depth + 1);
+          if (nested) wrap.appendChild(nested);
+        }
+        return;
+      }
+      if (s.type === "recipe") {
+        label = s.recipe_id || s.model || "recipe";
+      } else if (s.type === "claude") {
+        label = s.purpose
+          ? truncate(s.purpose, 80)
+          : (s.user_prompt ? truncate(s.user_prompt, 80) : "claude call");
+      } else {
+        label = s.type || "step";
+      }
+      extra = s.purpose && s.type !== "claude" ? truncate(s.purpose, 80) : "";
+      row.innerHTML =
+        '<span class="step-row-num">' + num + '</span>' +
+        '<span class="step-row-kind step-row-kind-' + kind + '">' + escapeHtml(kind) + '</span>' +
+        '<span class="step-row-name">' + escapeHtml(label) + '</span>' +
+        (extra ? '<span class="step-row-purpose">— ' + escapeHtml(extra) + '</span>' : '');
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+  function truncate(s, n) {
+    s = String(s || "");
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+
   function renderProcessCard(assist, proc, mode, sourceParent) {
     // mode: "saved" | "updated" | "loaded"
 
@@ -14904,10 +15116,19 @@ promptflow whoami</code></pre>
         <div class="plan-label">Output</div>
         <div class="plan-val">${escapeHtml(proc.output_kind || "video")}</div>
       </div>
-      <div class="plan-row">
+      <div class="plan-row plan-row-steps">
         <div class="plan-label">Steps</div>
-        <div class="plan-val">${stepCount} step${stepCount === 1 ? "" : "s"}</div>
+        <div class="plan-val plan-val-steps">${stepCount} step${stepCount === 1 ? "" : "s"}</div>
       </div>`;
+    // Inject the rendered step breakdown into the Steps row. Doing
+    // this after innerHTML (rather than in the template string) keeps
+    // the event handlers on composed-process links live, and lets
+    // renderStepBreakdown recurse for loop bodies cleanly.
+    const stepsValEl = card.querySelector(".plan-val-steps");
+    if (stepsValEl && stepCount > 0) {
+      const breakdown = renderStepBreakdown(proc.steps, 0);
+      if (breakdown) stepsValEl.appendChild(breakdown);
+    }
     assist.body.appendChild(card);
 
     // Action row — Edit opens the process editor (which also locks
@@ -15091,11 +15312,37 @@ promptflow whoami</code></pre>
         const data = await r.json().catch(() => null);
         if (!r.ok || !data || !data.ok) throw new Error("recs_failed");
 
-        const comps = Array.isArray(data.compositions) ? data.compositions : [];
-        const adapts = Array.isArray(data.adaptations) ? data.adaptations : [];
+        let comps = Array.isArray(data.compositions) ? data.compositions : [];
+        let adapts = Array.isArray(data.adaptations) ? data.adaptations : [];
 
-        // If both lists came back empty, hide the panel entirely.
-        // The seed might be too unique to recommend off of (rare).
+        // Top up to 3 each from a client-side template bank. Why:
+        // the LLM call is best-effort and sometimes returns fewer
+        // than 3 ideas, or 0 for the adapt list when the model
+        // doesn't prioritize that branch. Adapt cards are highly
+        // valuable (they teach the user the process is a reusable
+        // shape, not a one-off) so we make sure they always show.
+        // Each fallback references the seed by name and produces a
+        // real design_prompt that routes correctly through the
+        // planner's design_process intent classifier.
+        if (comps.length < 3) {
+          for (const fb of buildFallbackPcrComps(proc)) {
+            if (comps.length >= 3) break;
+            if (!comps.some(c => (c.name || "").toLowerCase() === fb.name.toLowerCase())) {
+              comps.push(fb);
+            }
+          }
+        }
+        if (adapts.length < 3) {
+          for (const fb of buildFallbackPcrAdapts(proc)) {
+            if (adapts.length >= 3) break;
+            if (!adapts.some(c => (c.name || "").toLowerCase() === fb.name.toLowerCase())) {
+              adapts.push(fb);
+            }
+          }
+        }
+
+        // After fallback top-up this is guaranteed false, but the
+        // guard remains as a final safety net.
         if (comps.length === 0 && adapts.length === 0) {
           recsWrap.remove();
           return;
@@ -16543,6 +16790,76 @@ promptflow whoami</code></pre>
     for (const c of compositions.slice(0, 3)) {
       listEl.appendChild(renderCompositionCard(c));
     }
+  }
+
+  // ── Fallback recs for the INLINE panel beneath chat process cards ─
+  //
+  // The /process/compositions endpoint returns a `compositions` array
+  // (ideas that use the seed as a sub-step) and an `adaptations`
+  // array (ideas that fork the seed's structure for a new domain).
+  // Either can come back short or empty depending on the LLM's
+  // priorities. These two builders fill in the gap so the panel
+  // always has 3 cards of each kind, derived from seed metadata.
+  //
+  // The card shape matches what makeRecCard() expects:
+  //   { name, pitch, uses_existing?, design_prompt }
+  //
+  // The design_prompt has to read like a user typing into chat — it
+  // routes through the planner's design_process intent classifier,
+  // so phrases like "Generate a process that..." anchor it correctly.
+  function buildFallbackPcrComps(seed) {
+    const name = (seed && seed.name) ? seed.name : "this process";
+    const outputKind = (seed && seed.output_kind) || "output";
+    const q = `"${name}"`;
+    return [
+      {
+        name: `${name} → quality-graded variants`,
+        pitch: `Run ${name} three times with different parameters, then have a Claude judge step score the outputs against quality criteria and surface the best one.`,
+        uses_existing: [],
+        design_prompt: `Generate a process that runs ${q} three times with varied parameters, then uses a Claude evaluation step to score each ${outputKind} and select the highest-quality result for the user.`,
+      },
+      {
+        name: `${name} → with research grounding`,
+        pitch: `Add a web research pre-step so ${name} runs against fresh, grounded context instead of model priors alone. Useful when the input benefits from real-world data.`,
+        uses_existing: [],
+        design_prompt: `Generate a process that first runs a web search on the user's topic, summarizes the top sources into a research brief, and then feeds that brief into ${q} as additional context.`,
+      },
+      {
+        name: `${name} → batched across inputs`,
+        pitch: `Loop ${name} across a list of inputs in one go and assemble the ${outputKind}s into a single bundled deliverable. Good for catalog work, A/B tests, or content series production.`,
+        uses_existing: [],
+        design_prompt: `Generate a process that takes an array of inputs, loops over them running ${q} on each, and assembles the resulting ${outputKind}s into a single bundled deliverable for the user.`,
+      },
+    ];
+  }
+
+  function buildFallbackPcrAdapts(seed) {
+    const name = (seed && seed.name) ? seed.name : "this process";
+    const outputKind = (seed && seed.output_kind) || "output";
+    const q = `"${name}"`;
+    // Three adaptation angles: different domain, different audience,
+    // different output format. Each keeps the seed's skeleton but
+    // retunes prompts/parameters/wiring for a new use case.
+    return [
+      {
+        name: `${name} — for a different domain`,
+        pitch: `Same step shape as ${name}, retargeted to an adjacent vertical (e.g. consumer mobile if the seed is enterprise SaaS, healthcare if the seed is fintech). Reuses what works; retunes domain-specific prompts.`,
+        uses_existing: [],
+        design_prompt: `Adapt ${q} for a different vertical or domain. Keep the structural steps the same but retune all prompts, examples, and parameters for the new context. Pick a domain that's clearly different from the original but where the same workflow shape would apply.`,
+      },
+      {
+        name: `${name} — short-form variant`,
+        pitch: `Compress ${name} into a faster, lighter version. Same structure, shorter outputs, fewer iterations — useful when the user wants a quick draft rather than a polished deliverable.`,
+        uses_existing: [],
+        design_prompt: `Adapt ${q} into a short-form, fast-draft variant. Trim the step prompts to produce a leaner ${outputKind}: shorter length, fewer details, single-pass instead of iterative. Keep the same overall structure.`,
+      },
+      {
+        name: `${name} — for a different audience`,
+        pitch: `Retarget ${name} for an audience the original doesn't serve well (e.g. solo founders if the seed is enterprise teams, beginners if the seed assumes expertise). Same skeleton, retuned voice and depth.`,
+        uses_existing: [],
+        design_prompt: `Adapt ${q} for a different audience — pick one that's clearly distinct from the original (e.g. beginners vs experts, solo vs team, consumer vs enterprise). Retune the prompts to match the new audience's vocabulary, expectations, and depth. Keep the structural steps.`,
+      },
+    ];
   }
 
   // Generate adaptation-style composition ideas client-side. Used to
