@@ -4381,14 +4381,17 @@ body {
   top: 0;
   bottom: var(--d-dock-h);
   z-index: 10;
-  overflow: auto;
-  /* Reserve space for the topbar so chat content doesn't render
-     underneath the search pill / tokens / account elements. The
-     topbar sits at top:12px and its content (26px icons) is roughly
-     30px tall — ending at viewport y≈42px. 48px puts content 6px
-     below the topbar's bottom edge for a clean visual gutter.
-     Previously this was 72px which left ~30px of dead space above
-     the first message; tightened to bring the chat thread up. */
+  /* Vertical-only scroll. Earlier this was overflow:auto (both
+     axes); when any inner element exceeded width — long process
+     names, wide code blocks, unbroken URLs — the canvas became
+     horizontally scrollable, and the browser's elastic overscroll
+     created the rubber-banding sensation. Locking overflow-x to
+     hidden kills it. Inner elements that legitimately need
+     horizontal scroll (code blocks, tables) still get their own
+     scroll containers. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
   padding-top: 48px;
 }
 
@@ -4400,10 +4403,12 @@ body {
 }
 .chat-wrap {
   height: 100%;
+  overflow-x: hidden;
 }
 .stream {
   /* Stream now scrolls inside the canvas area. */
   max-height: 100%;
+  overflow-x: hidden;
 }
 /* Tighter top padding in desktop mode — the 32px default leaves a
    wide gap below the topbar that makes the chat feel like it floats
@@ -5830,6 +5835,277 @@ body.d-desktop-mode .stream {
   font-size: 11.5px;
   color: rgba(170,170,176,0.75);
   margin-top: 2px;
+}
+
+/* ── Design-search thinking bubble ─────────────────────────────
+   Renders before the main planner card when the user asks to
+   "Generate a process …". Shows the catalog search step:
+   spinner → candidates considered → picks → hand-off line.
+   Quieter visual weight than the main plan card — this is a
+   reasoning step, not the deliverable. Mono font keeps it feeling
+   like a trace / log line. */
+.d-design-search {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(200,200,205,0.9);
+  background: rgba(20,20,22,0.4);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.d-design-search-phase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+.d-design-search-phase.d-design-search-quiet {
+  color: rgba(170,170,176,0.7);
+}
+.d-design-search-spinner {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(232,169,23,0.25);
+  border-top-color: rgba(232,169,23,0.85);
+  animation: d-ds-spin 0.85s linear infinite;
+}
+@keyframes d-ds-spin { to { transform: rotate(360deg); } }
+.d-design-search-label {
+  color: rgba(220,220,225,0.92);
+  font-size: 12px;
+}
+.d-design-search-section {
+  margin-top: 10px;
+}
+.d-design-search-sectitle {
+  font-size: 10.5px;
+  color: rgba(170,170,176,0.78);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.d-design-search-sectitle.d-design-search-empty {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11.5px;
+  color: rgba(170,170,176,0.72);
+}
+.d-design-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.d-design-search-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  color: rgba(180,180,186,0.75);
+}
+.d-design-search-list li.d-dsl-picked {
+  color: rgba(232,200,140,0.95);
+}
+.d-design-search-list li.d-dsl-picked .d-dsl-name::before {
+  content: "★ ";
+  color: rgba(232,169,23,0.85);
+}
+.d-dsl-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.d-dsl-score {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: rgba(140,140,148,0.7);
+}
+.d-design-search-pick {
+  padding: 6px 0;
+}
+.d-dsp-name {
+  color: rgba(232,200,140,0.95);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.d-dsp-reason {
+  color: rgba(180,180,186,0.78);
+  font-size: 11.5px;
+  margin-top: 3px;
+  padding-left: 14px;
+  line-height: 1.5;
+}
+.d-design-search-handoff {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px;
+  color: rgba(200,200,205,0.85);
+}
+.d-design-search-handoff strong {
+  color: rgba(232,200,140,0.95);
+  font-weight: 500;
+}
+
+/* ── Process-card recommendations panel ───────────────────────
+   Auto-loaded under every chat process card. Replaces the old
+   abstract "Compose with this / Adapt this" buttons with a menu
+   of CONCRETE proposals — three compose ideas (use the seed as a
+   step) and three adapt ideas (fork the seed for a new domain).
+   Each is a clickable card that fires send() with a pre-formed
+   design_prompt. */
+.process-card-recs {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.process-card-recs .pcr-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: rgba(170,170,176,0.72);
+  font-size: 12.5px;
+  font-family: ui-monospace, monospace;
+}
+.process-card-recs .pcr-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: rgba(232,169,23,0.6);
+  animation: pcr-pulse 1.2s ease-in-out infinite;
+}
+.process-card-recs .pcr-dot:nth-child(2) { animation-delay: 0.15s; }
+.process-card-recs .pcr-dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes pcr-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.4); }
+}
+.process-card-recs .pcr-loading-text {
+  margin-left: 4px;
+}
+
+.pcr-section {
+  margin-top: 14px;
+}
+.pcr-section:first-child {
+  margin-top: 0;
+}
+.pcr-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: rgba(220,220,225,0.92);
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.pcr-section-icon {
+  color: rgba(232,169,23,0.85);
+  font-size: 13px;
+}
+.pcr-section-subtitle {
+  font-size: 11.5px;
+  color: rgba(170,170,176,0.65);
+  margin-bottom: 9px;
+  font-style: italic;
+}
+.pcr-section-subtitle em {
+  color: rgba(232,200,140,0.85);
+  font-style: normal;
+}
+
+.pcr-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .pcr-list { grid-template-columns: 1fr; }
+}
+
+.pcr-card {
+  /* Reset button defaults — these are clickable cards. */
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  padding: 11px 12px 10px;
+  background: rgba(28,28,30,0.6);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--font-body);
+  transition: border-color .15s ease, background .15s ease, transform .12s ease;
+}
+.pcr-card:hover {
+  border-color: rgba(232,169,23,0.45);
+  background: rgba(232,169,23,0.04);
+}
+.pcr-card:active {
+  transform: translateY(1px);
+}
+.pcr-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pcr-kind-tag {
+  flex-shrink: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: rgba(232,169,23,0.85);
+  background: rgba(232,169,23,0.08);
+  border: 1px solid rgba(232,169,23,0.18);
+}
+.pcr-kind-tag.pcr-kind-adapt {
+  color: rgba(190,205,240,0.95);
+  background: rgba(150,170,220,0.06);
+  border-color: rgba(170,190,230,0.22);
+}
+.pcr-card-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(240,240,242,0.95);
+  line-height: 1.3;
+  word-break: break-word;
+}
+.pcr-card-pitch {
+  font-size: 11.5px;
+  color: rgba(180,180,186,0.85);
+  line-height: 1.45;
+  word-break: break-word;
+}
+.pcr-uses {
+  font-size: 10.5px;
+  color: rgba(150,200,150,0.85);
+  font-family: ui-monospace, monospace;
+  margin-top: 2px;
+}
+.pcr-uses span {
+  color: rgba(170,210,170,0.95);
+}
+.pcr-card-action {
+  margin-top: auto;
+  font-size: 11px;
+  color: rgba(232,169,23,0.78);
+  font-family: ui-monospace, monospace;
+  padding-top: 4px;
+}
+.pcr-card:hover .pcr-card-action {
+  color: rgba(232,200,140,1);
 }
 .d-contrib-error {
   font-size: 12.5px;
@@ -12208,6 +12484,130 @@ promptflow whoami</code></pre>
 
     // Append user turn — refinements / text-only don't include a thumbnail.
     addUserMsg(userText, userImg, userImgName, extraThumbs);
+
+    // ── Visible search-and-compose pre-pass for design intent ──
+    //
+    // PromptFlow's whole thesis is "create, reuse, and adapt what
+    // already works." When the user asks the planner to design a new
+    // process, the system should be VISIBLY reaching for existing
+    // work first — searching the catalog, surfacing candidates,
+    // picking the most relevant one, and composing the new design on
+    // top. Without this, the planner manufactures steps from scratch
+    // and the network effect of the shared layer never compounds.
+    //
+    // We detect design intent by leading verb (Generate/Design/Build/
+    // Make/Create a process). Forced-run, generate-with-zip, refine
+    // mode, and any chain-nav-driven send (pendingParentProcess
+    // already set) skip this — they have explicit source context.
+    // Anything else with a design verb takes the search detour.
+    //
+    // Order matters: this runs AFTER the user bubble lands so the
+    // search-step thinking bubble sits below the user's message,
+    // and BEFORE the main assist bubble + generationParent capture
+    // so the picked source flows into the existing chainSource path
+    // (which adds source_process_id to /plan FormData below).
+    const designIntentRe = /^\s*(generate|design|build|make|create)\s+(a\s+|an\s+|new\s+)?process\b/i;
+    const shouldRunDesignSearch =
+      designIntentRe.test(userText)
+      && !window._forceRunProcessId
+      && !window._pendingGenerateUploadId
+      && !pendingParentProcess
+      && !refineBoundProcessId
+      && !currentEditorProcessId;
+    if (shouldRunDesignSearch) {
+      const thinkAssist = addAssistMsg();
+      const thinkBody = thinkAssist.body;
+      thinkBody.innerHTML =
+        '<div class="d-design-search">' +
+          '<div class="d-design-search-phase">' +
+            '<span class="d-design-search-spinner"></span>' +
+            '<span class="d-design-search-label">Searching the catalog for relevant existing processes…</span>' +
+          '</div>' +
+        '</div>';
+
+      let searchData = null;
+      try {
+        const r = await fetch("/api/promptflow/plan/design_search", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query: userText }),
+        });
+        searchData = await r.json().catch(() => null);
+        if (!r.ok || !searchData || !searchData.ok) throw new Error("search_failed");
+      } catch {
+        // Search failed — fall through to a normal /plan call. The
+        // thinking bubble collapses to a quiet note so the user can
+        // see we tried.
+        thinkBody.innerHTML =
+          '<div class="d-design-search">' +
+            '<div class="d-design-search-phase d-design-search-quiet">' +
+              '<span class="d-design-search-label">No catalog matches found — designing from scratch.</span>' +
+            '</div>' +
+          '</div>';
+        searchData = null;
+      }
+
+      if (searchData) {
+        const cands = searchData.candidates || [];
+        const picks = searchData.picks || [];
+        // Three sections in the rendered thinking bubble:
+        //   1. Candidates considered (embedding shortlist, top 8)
+        //   2. Picks the rerank chose, each with relevance_reason
+        //   3. Compose hand-off line ("building on top of X")
+        const candHtml = cands.length > 0
+          ? '<div class="d-design-search-section">' +
+              '<div class="d-design-search-sectitle">Considered (' + cands.length + ' candidates)</div>' +
+              '<ul class="d-design-search-list">' +
+                cands.map(c =>
+                  '<li class="' + (c.was_picked ? 'd-dsl-picked' : '') + '">' +
+                    '<span class="d-dsl-name">' + escapeHtml(c.name) + '</span>' +
+                    '<span class="d-dsl-score">cosine ' + c.cosine + '</span>' +
+                  '</li>'
+                ).join("") +
+              '</ul>' +
+            '</div>'
+          : '';
+        const picksHtml = picks.length > 0
+          ? '<div class="d-design-search-section">' +
+              '<div class="d-design-search-sectitle">Picked as most relevant</div>' +
+              picks.map(p =>
+                '<div class="d-design-search-pick">' +
+                  '<div class="d-dsp-name">→ ' + escapeHtml(p.name) + '</div>' +
+                  (p.relevance_reason
+                    ? '<div class="d-dsp-reason">' + escapeHtml(p.relevance_reason) + '</div>'
+                    : '') +
+                '</div>'
+              ).join("") +
+            '</div>'
+          : '<div class="d-design-search-section">' +
+              '<div class="d-design-search-sectitle d-design-search-empty">No strong match found — designing from scratch.</div>' +
+            '</div>';
+        const composeHtml = searchData.top_pick_id
+          ? '<div class="d-design-search-handoff">Composing a new process that builds on <strong>' +
+              escapeHtml(searchData.top_pick_name) +
+            '</strong>…</div>'
+          : '<div class="d-design-search-handoff">Designing a new process from scratch…</div>';
+        thinkBody.innerHTML =
+          '<div class="d-design-search">' +
+            candHtml +
+            picksHtml +
+            composeHtml +
+          '</div>';
+
+        // Hand-off: set pendingParentProcess so the existing
+        // chainSource flow picks it up. The capture-and-clear three
+        // lines below reads this into generationParent and the /plan
+        // FormData picks up source_process_id + source_kind from it.
+        if (searchData.top_pick_id) {
+          pendingParentProcess = {
+            id: searchData.top_pick_id,
+            name: searchData.top_pick_name,
+            kind: "compose",
+          };
+        }
+      }
+    }
+
     const assist = addAssistMsg();
     // When chaining off an existing process via Compose/Adapt, surface
     // the source in the initial status so the user immediately sees
@@ -13945,68 +14345,137 @@ promptflow whoami</code></pre>
       };
       assist.body.appendChild(liveRow);
     }
+    // ── Recommended next processes ──────────────────────────────
     //
-    // Every generated process becomes a launching pad for the next
-    // generation. Two clicks chain through the graph:
+    // Auto-loaded after every generation. The previous version had
+    // two abstract verb buttons ("Compose with this" / "Adapt this")
+    // that asked the user to imagine what should come next. Now we
+    // call /process/compositions to get 3 CONCRETE compose proposals
+    // (new processes that USE this one as a step) and 3 CONCRETE
+    // adapt proposals (new processes that FORK this one's shape for
+    // a different domain). Each is named, pitched, and one-click
+    // generatable. The user picks from a menu instead of imagining.
     //
-    //   ✦ Compose → generate a new process that uses THIS one as a
-    //                step (wraps the seed, adds upstream/downstream
-    //                steps). The cascade pays the seed's author a
-    //                royalty whenever the composition runs.
-    //
-    //   ✱ Adapt   → generate a NEW process derived from this one for
-    //                a different but related use case. Fork-style:
-    //                same skeleton, retuned for a new audience or
-    //                format. Adaptation lineage pays a royalty too.
-    //
-    // Both buttons fire send() immediately with a fully-formed
-    // design_process prompt — no typing required for the default
-    // case. The planner picks a plausible direction; if the user
-    // wants something specific, they type it in the input instead.
-    // The point is to make navigating the network of processes feel
-    // like clicking links in a wiki: one click per step, endless.
-    const chain = document.createElement("div");
-    chain.className = "process-card-chain";
-    chain.innerHTML = `<span class="pcc-label">↪ Continue the chain:</span>`;
+    // This is the network effect made visible: every generated
+    // process surfaces six concrete reuse paths immediately. Royalty
+    // cascade fires every time the user clicks one.
+    const recsWrap = document.createElement("div");
+    recsWrap.className = "process-card-recs";
+    recsWrap.innerHTML =
+      '<div class="pcr-loading">' +
+        '<span class="pcr-dot"></span>' +
+        '<span class="pcr-dot"></span>' +
+        '<span class="pcr-dot"></span>' +
+        '<span class="pcr-loading-text">Brainstorming concrete next moves with this process…</span>' +
+      '</div>';
+    assist.body.appendChild(recsWrap);
 
-    const composeBtn = document.createElement("button");
-    composeBtn.className = "btn pcc-btn pcc-compose";
-    composeBtn.type = "button";
-    composeBtn.innerHTML = `<span class="pcc-icon">✦</span> Compose with this`;
-    composeBtn.title = `Generate a new process that uses "${proc.name}" as one of its steps`;
-    composeBtn.onclick = () => {
-      if (busy) return;
-      // Mark this process as the source for the next generation, so
-      // the resulting card can render an "↑ Back to <name>" link.
-      pendingParentProcess = { id: proc.id, name: proc.name, kind: "compose" };
-      // Compose = generate a process that uses the seed as a step.
-      // The planner will route this to design_process and look at the
-      // catalog for plausible upstream/downstream steps to chain in.
-      textInput.value = `Generate a process that uses "${proc.name}" as a step.`;
-      textInput.dispatchEvent(new Event("input"));
-      // Fire send on next tick so DOM updates land first.
-      setTimeout(() => send(), 0);
-    };
-    chain.appendChild(composeBtn);
+    // Helper: render a single recommendation card. Both compose and
+    // adapt cards use the same shape — name + pitch + a Generate
+    // button that fires send() with the design_prompt and the seed
+    // marked as chain parent. Reused across both sections.
+    function makeRecCard(rec, kind) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "pcr-card pcr-card-" + kind;
+      const usesPills = (rec.uses_existing || []).length > 0
+        ? '<div class="pcr-uses">+ <span>' +
+            rec.uses_existing.map(u => escapeHtml(u.name)).join('</span> · <span>') +
+          '</span></div>'
+        : '';
+      card.innerHTML =
+        '<div class="pcr-card-head">' +
+          '<span class="pcr-kind-tag pcr-kind-' + kind + '">' +
+            (kind === "compose" ? "✦ compose" : "✱ adapt") +
+          '</span>' +
+          '<span class="pcr-card-name">' + escapeHtml(rec.name) + '</span>' +
+        '</div>' +
+        '<div class="pcr-card-pitch">' + escapeHtml(rec.pitch) + '</div>' +
+        usesPills +
+        '<div class="pcr-card-action">Generate this →</div>';
+      card.onclick = () => {
+        if (busy) return;
+        // Mark this process as the source for the next generation —
+        // chainSource path on the backend uses this to scaffold
+        // composition or adaptation. The kind drives whether the
+        // planner is told to USE the seed as a step (compose) or
+        // FORK its structure (adapt).
+        pendingParentProcess = { id: proc.id, name: proc.name, kind };
+        textInput.value = rec.design_prompt;
+        textInput.dispatchEvent(new Event("input"));
+        setTimeout(() => send(), 0);
+      };
+      return card;
+    }
 
-    const adaptBtn = document.createElement("button");
-    adaptBtn.className = "btn pcc-btn pcc-adapt";
-    adaptBtn.type = "button";
-    adaptBtn.innerHTML = `<span class="pcc-icon">✱</span> Adapt this`;
-    adaptBtn.title = `Generate a NEW process adapted from "${proc.name}" for a different use case`;
-    adaptBtn.onclick = () => {
-      if (busy) return;
-      pendingParentProcess = { id: proc.id, name: proc.name, kind: "adapt" };
-      // Adapt = generate a new process derived from the seed for a
-      // different but related use case. Fork lineage credits the
-      // seed author on every run of the adaptation.
-      textInput.value = `Generate a new process adapted from "${proc.name}" for a different but related use case.`;
-      textInput.dispatchEvent(new Event("input"));
-      setTimeout(() => send(), 0);
-    };
-    chain.appendChild(adaptBtn);
+    // Fire the load in the background. The rest of the card renders
+    // immediately; the recs section fills in when /compositions
+    // returns (~10-20s on first call, instant on cached 24h calls).
+    (async () => {
+      try {
+        const r = await fetch("/api/promptflow/process/compositions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: proc.id }),
+        });
+        const data = await r.json().catch(() => null);
+        if (!r.ok || !data || !data.ok) throw new Error("recs_failed");
 
-    assist.body.appendChild(chain);
+        const comps = Array.isArray(data.compositions) ? data.compositions : [];
+        const adapts = Array.isArray(data.adaptations) ? data.adaptations : [];
+
+        // If both lists came back empty, hide the panel entirely.
+        // The seed might be too unique to recommend off of (rare).
+        if (comps.length === 0 && adapts.length === 0) {
+          recsWrap.remove();
+          return;
+        }
+
+        recsWrap.innerHTML = "";
+
+        if (comps.length > 0) {
+          const composeSec = document.createElement("div");
+          composeSec.className = "pcr-section";
+          composeSec.innerHTML =
+            '<div class="pcr-section-title">' +
+              '<span class="pcr-section-icon">✦</span>' +
+              'Compose this as a sub-process' +
+            '</div>' +
+            '<div class="pcr-section-subtitle">' +
+              'New processes that use <em>' + escapeHtml(proc.name) + '</em> as one of their steps' +
+            '</div>';
+          const list = document.createElement("div");
+          list.className = "pcr-list";
+          for (const c of comps) list.appendChild(makeRecCard(c, "compose"));
+          composeSec.appendChild(list);
+          recsWrap.appendChild(composeSec);
+        }
+
+        if (adapts.length > 0) {
+          const adaptSec = document.createElement("div");
+          adaptSec.className = "pcr-section";
+          adaptSec.innerHTML =
+            '<div class="pcr-section-title">' +
+              '<span class="pcr-section-icon">✱</span>' +
+              'Adapt this for a different domain' +
+            '</div>' +
+            '<div class="pcr-section-subtitle">' +
+              'Same shape, retargeted — fork lineage credits the original' +
+            '</div>';
+          const list = document.createElement("div");
+          list.className = "pcr-list";
+          for (const c of adapts) list.appendChild(makeRecCard(c, "adapt"));
+          adaptSec.appendChild(list);
+          recsWrap.appendChild(adaptSec);
+        }
+      } catch {
+        // Recs failed (network / endpoint not deployed yet). Hide
+        // the loading panel quietly — the rest of the card is fine
+        // without it, and the user can still type their own next
+        // move in the chat.
+        recsWrap.remove();
+      }
+    })();
 
     if (proc.python_text) {
       const wrap = document.createElement("details");
