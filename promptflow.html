@@ -6053,6 +6053,56 @@ body.d-desktop-mode .stream {
   display: none;
 }
 
+/* ── Duplicate-process warning ────────────────────────────────
+   Surfaced when the server's anti-duplication check catches the
+   planner producing a near-duplicate of an existing process. The
+   card points at the existing process with a "Run it instead"
+   action — saving the user a re-click and avoiding library noise.
+   Amber rather than red because this isn't an error — it's a
+   helpful redirect. */
+.d-dup-warn {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: rgba(232,169,23,0.06);
+  border: 1px solid rgba(232,169,23,0.3);
+  border-radius: 7px;
+}
+.d-dup-warn-title {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(232,200,140,0.9);
+  margin-bottom: 6px;
+}
+.d-dup-warn-body {
+  font-size: 13.5px;
+  color: rgba(240,240,242,0.88);
+  line-height: 1.55;
+  margin-bottom: 12px;
+}
+.d-dup-warn-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.d-dup-run-btn {
+  background: var(--d-gold, #e8a917);
+  color: #0a0a0b;
+  font-weight: 600;
+}
+.d-dup-view-link {
+  color: rgba(180,180,190,0.75);
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-decoration-color: rgba(180,180,190,0.3);
+}
+.d-dup-view-link:hover {
+  color: rgba(232,200,140,1);
+  text-decoration-color: rgba(232,200,140,0.8);
+}
+
 
 /* ── Process-card recommendations panel ───────────────────────
    Auto-loaded under every chat process card. Replaces the old
@@ -6087,11 +6137,16 @@ body.d-desktop-mode .stream {
 }
 .step-row {
   display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0 6px;
+  color: rgba(220,220,225,0.78);
+}
+.step-row-head {
+  display: flex;
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 2px 0;
-  color: rgba(220,220,225,0.78);
 }
 .step-row-num {
   flex-shrink: 0;
@@ -6131,6 +6186,7 @@ body.d-desktop-mode .stream {
 .step-row-name {
   color: rgba(230,230,235,0.88);
   word-break: break-word;
+  flex: 1 1 auto;
 }
 .step-row-name-process {
   color: rgba(240,200,120,1);
@@ -6156,8 +6212,17 @@ body.d-desktop-mode .stream {
   font-size: 10.5px;
 }
 .step-row-purpose {
-  color: rgba(180,180,190,0.6);
-  font-size: 11px;
+  /* Full-width sub-row for purpose text. Wraps naturally — no
+     truncation. Left-indented to visually associate with the step
+     header above. Dimmer color so it reads as commentary, not as
+     primary identifier. */
+  color: rgba(180,180,190,0.75);
+  font-size: 11.5px;
+  line-height: 1.55;
+  padding-left: 26px;
+  font-family: var(--font-body);
+  white-space: normal;
+  word-break: break-word;
 }
 .step-row-process {
   padding: 4px 0;
@@ -13123,6 +13188,38 @@ promptflow whoami</code></pre>
         if (r.status === 401) {
           setError(assist, "Please sign in to generate.");
           openAuth("signin");
+        } else if (r.status === 409 && planResp.error === "duplicate_process" && planResp.existing_process) {
+          // Server caught the planner producing a near-duplicate of
+          // an existing process. Surface a useful card pointing at
+          // the existing one — clicking "Run it instead" arms the
+          // forced-run path so the user gets where they were going
+          // with one extra click instead of wasted compute.
+          stopPlanningStages();
+          const existing = planResp.existing_process;
+          const dupEl = document.createElement("div");
+          dupEl.className = "d-dup-warn";
+          dupEl.innerHTML =
+            '<div class="d-dup-warn-title">Already in your library</div>' +
+            '<div class="d-dup-warn-body">' +
+              escapeHtml(planResp.message || "An existing process already does this.") +
+            '</div>' +
+            '<div class="d-dup-warn-actions">' +
+              '<button type="button" class="btn d-dup-run-btn">▶ Run "' + escapeHtml(existing.name) + '" instead</button>' +
+              (existing.slug ? '<a class="d-dup-view-link" href="/api/promptflow/p/' + encodeURIComponent(ME?.handle || '') + '/' + encodeURIComponent(existing.slug) + '">View the page →</a>' : '') +
+            '</div>';
+          assist.body.appendChild(dupEl);
+          const runBtn = dupEl.querySelector(".d-dup-run-btn");
+          if (runBtn) {
+            runBtn.onclick = () => {
+              if (busy) return;
+              window._forceRunProcessId = existing.id;
+              window._forceRunProcessName = existing.name;
+              textInput.value = 'Run "' + existing.name + '": ';
+              textInput.focus();
+              textInput.setSelectionRange(textInput.value.length, textInput.value.length);
+              updateSend();
+            };
+          }
         } else {
           // Surface the server's actual error message when present —
           // way more useful than a generic "Planning failed" line.
@@ -14854,12 +14951,13 @@ promptflow whoami</code></pre>
       if (s.type === "loop") {
         label = "loop over " + (s.iterate_over || "list");
         if (s.as) label += " as " + s.as;
-        extra = s.purpose ? truncate(s.purpose, 80) : "";
         row.innerHTML =
-          '<span class="step-row-num">' + num + '</span>' +
-          '<span class="step-row-kind step-row-kind-' + kind + '">' + escapeHtml(kind) + '</span>' +
-          '<span class="step-row-name">' + escapeHtml(label) + '</span>' +
-          (extra ? '<span class="step-row-purpose">— ' + escapeHtml(extra) + '</span>' : '');
+          '<div class="step-row-head">' +
+            '<span class="step-row-num">' + num + '</span>' +
+            '<span class="step-row-kind step-row-kind-' + kind + '">' + escapeHtml(kind) + '</span>' +
+            '<span class="step-row-name">' + escapeHtml(label) + '</span>' +
+          '</div>' +
+          (s.purpose ? '<div class="step-row-purpose">' + escapeHtml(s.purpose) + '</div>' : '');
         wrap.appendChild(row);
         // Recurse into body, indented.
         if (Array.isArray(s.body) && s.body.length > 0) {
@@ -14871,25 +14969,27 @@ promptflow whoami</code></pre>
       if (s.type === "recipe") {
         label = s.recipe_id || s.model || "recipe";
       } else if (s.type === "claude") {
-        label = s.purpose
-          ? truncate(s.purpose, 80)
-          : (s.user_prompt ? truncate(s.user_prompt, 80) : "claude call");
+        // For claude steps, purpose IS the label (it's the most
+        // human-readable summary). Long purpose text wraps naturally
+        // in the row container — no truncation.
+        label = s.purpose || (s.user_prompt ? s.user_prompt.split("\n")[0] : "claude call");
       } else {
         label = s.type || "step";
       }
-      extra = s.purpose && s.type !== "claude" ? truncate(s.purpose, 80) : "";
+      // For non-claude steps, purpose is rendered as a separate row
+      // below the label so the structural info (kind + identifier)
+      // stays scannable while the justification gets full wrapping.
+      const purposeBelow = s.purpose && s.type !== "claude" ? s.purpose : "";
       row.innerHTML =
-        '<span class="step-row-num">' + num + '</span>' +
-        '<span class="step-row-kind step-row-kind-' + kind + '">' + escapeHtml(kind) + '</span>' +
-        '<span class="step-row-name">' + escapeHtml(label) + '</span>' +
-        (extra ? '<span class="step-row-purpose">— ' + escapeHtml(extra) + '</span>' : '');
+        '<div class="step-row-head">' +
+          '<span class="step-row-num">' + num + '</span>' +
+          '<span class="step-row-kind step-row-kind-' + kind + '">' + escapeHtml(kind) + '</span>' +
+          '<span class="step-row-name">' + escapeHtml(label) + '</span>' +
+        '</div>' +
+        (purposeBelow ? '<div class="step-row-purpose">' + escapeHtml(purposeBelow) + '</div>' : '');
       wrap.appendChild(row);
     });
     return wrap;
-  }
-  function truncate(s, n) {
-    s = String(s || "");
-    return s.length > n ? s.slice(0, n - 1) + "…" : s;
   }
 
   function renderProcessCard(assist, proc, mode, sourceParent) {
@@ -15202,10 +15302,10 @@ promptflow whoami</code></pre>
           adaptSec.innerHTML =
             '<div class="pcr-section-title">' +
               '<span class="pcr-section-icon">✱</span>' +
-              'Adapt this for a different domain' +
+              'Reuse this step shape for a different problem' +
             '</div>' +
             '<div class="pcr-section-subtitle">' +
-              'Same shape, retargeted — fork lineage credits the original' +
+              'Same orchestration, entirely new use case — fork lineage credits the original' +
             '</div>';
           const list = document.createElement("div");
           list.className = "pcr-list";
@@ -16144,7 +16244,23 @@ promptflow whoami</code></pre>
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: pid }),
       });
-      const j = await r.json();
+      // Read as text first so an HTML response (Worker 500, auth
+      // redirect, edge 404) gives a useful error instead of crashing
+      // with "Unexpected token '<', '<!DOCTYPE'... is not valid JSON".
+      const rawText = await r.text();
+      const trimmed = rawText.trim();
+      if (trimmed.startsWith("<")) {
+        alert(
+          r.status === 404 ? "Could not load process: /process/get endpoint not reachable. Worker routing may be misconfigured."
+          : r.status === 401 || r.status === 403 ? "Could not load process: please sign in again."
+          : r.status >= 500 ? "Could not load process: server is having trouble (HTTP " + r.status + "). Try again."
+          : "Could not load process: server returned HTML (HTTP " + r.status + ")."
+        );
+        return;
+      }
+      let j;
+      try { j = JSON.parse(trimmed); }
+      catch { alert("Could not load process: couldn't parse server response."); return; }
       if (!j.ok || !j.process) { alert(j.message || j.error || "Could not load process."); return; }
       currentEditorProcessId = pid;
       currentEditorProcess = j.process;
@@ -16665,27 +16781,43 @@ promptflow whoami</code></pre>
     const name = (seed && seed.name) ? seed.name : "this process";
     const outputKind = (seed && seed.output_kind) || "output";
     const q = `"${name}"`;
-    // Three adaptation angles: different domain, different audience,
-    // different output format. Each keeps the seed's skeleton but
-    // retunes prompts/parameters/wiring for a new use case.
+    // ADAPT = reuse the step orchestration for a DIFFERENT problem
+    // entirely. The seed's name does NOT appear in adaptation names —
+    // adaptations are new processes, not variants. Each card proposes
+    // a structurally different real-world use case that happens to fit
+    // the same step shape (breakdown → loop → media gen → assemble,
+    // or whatever the seed implements). The design_prompt tells the
+    // planner to clone the step shape and pick a completely new
+    // problem domain — explicitly NOT a variant of the seed.
+    //
+    // Three angles that almost always produce real adaptations:
+    //   1. INVERT: same step kinds, role-flipped (output→input instead
+    //      of input→output). Useful when the seed is generative —
+    //      adapt = analytical.
+    //   2. RECONTEXT: same step orchestration, applied to a structurally
+    //      adjacent problem (e.g. seed handles narrative content →
+    //      adapt handles reference content; seed handles individual
+    //      items → adapt handles collections).
+    //   3. REPURPOSE: same orchestration, very different industry/
+    //      domain where the same shape solves a real need.
     return [
       {
-        name: `${name} — for a different domain`,
-        pitch: `Same step shape as ${name}, retargeted to an adjacent vertical (e.g. consumer mobile if the seed is enterprise SaaS, healthcare if the seed is fintech). Reuses what works; retunes domain-specific prompts.`,
+        name: `Analyze ${outputKind}s instead of generating them`,
+        pitch: `Take the step shape and invert it. The same orchestration that produces a ${outputKind} from raw inputs can be flipped to take a ${outputKind} and produce a structured analysis — break it into components, evaluate each, assemble findings. Same step kinds, role-flipped.`,
         uses_existing: [],
-        design_prompt: `Adapt ${q} for a different vertical or domain. Keep the structural steps the same but retune all prompts, examples, and parameters for the new context. Pick a domain that's clearly different from the original but where the same workflow shape would apply.`,
+        design_prompt: `Design a new process that REUSES the step orchestration of ${q} but FLIPS its direction. Instead of producing a ${outputKind} from inputs, take a ${outputKind} as input and produce a structured analytical breakdown — what's inside it, what choices were made, how it scores on quality criteria. Use the same step kinds (Claude reasoning, loops over discrete units, recipe calls) with their roles flipped from generative to analytical. The new process is NOT a variant of ${q} — it's a different process that happens to share the orchestration shape.`,
       },
       {
-        name: `${name} — short-form variant`,
-        pitch: `Compress ${name} into a faster, lighter version. Same structure, shorter outputs, fewer iterations — useful when the user wants a quick draft rather than a polished deliverable.`,
+        name: `Reference-style processing using this shape`,
+        pitch: `Same step orchestration, applied to reference/structured content instead of narrative content. If ${name} handles freeform creative work, the same shape handles documentation, specs, or catalog data — different inputs, different prompts, different end deliverable, identical orchestration.`,
         uses_existing: [],
-        design_prompt: `Adapt ${q} into a short-form, fast-draft variant. Trim the step prompts to produce a leaner ${outputKind}: shorter length, fewer details, single-pass instead of iterative. Keep the same overall structure.`,
+        design_prompt: `Design a new process whose step shape is identical to ${q}'s (same step kinds in the same order with the same data flow), but applied to a structurally adjacent problem in a reference / documentation / catalog domain. Pick a real use case where the orchestration shape transfers cleanly. The new process should have a name that reflects ITS purpose, not the seed's — it's a sibling, not a variant.`,
       },
       {
-        name: `${name} — for a different audience`,
-        pitch: `Retarget ${name} for an audience the original doesn't serve well (e.g. solo founders if the seed is enterprise teams, beginners if the seed assumes expertise). Same skeleton, retuned voice and depth.`,
+        name: `Cross-industry repurpose`,
+        pitch: `Take the step shape and apply it in a completely different industry where the same orchestration solves a real-world problem. The pipeline doesn't care what the inputs are about; it cares about how the inputs become outputs. Find a target where that pattern produces something useful.`,
         uses_existing: [],
-        design_prompt: `Adapt ${q} for a different audience — pick one that's clearly distinct from the original (e.g. beginners vs experts, solo vs team, consumer vs enterprise). Retune the prompts to match the new audience's vocabulary, expectations, and depth. Keep the structural steps.`,
+        design_prompt: `Design a new process that uses ${q}'s exact step orchestration (same step kinds, same order, same data flow between steps) but applies it to a completely different industry or domain where the orchestration shape solves a real need. Pick a target that's clearly distinct from ${q}'s domain — not "${q} for a different audience" but a new process for a genuinely different problem. The name must reflect the new problem, not reference ${q}.`,
       },
     ];
   }
@@ -19319,7 +19451,20 @@ new process. Compare its output to the current one before replacing.
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: pid }),
       });
-      const j = await r.json();
+      const rawText = await r.text();
+      const trimmed = rawText.trim();
+      if (trimmed.startsWith("<")) {
+        alert(
+          r.status === 404 ? "Could not load process: endpoint not reachable."
+          : r.status === 401 || r.status === 403 ? "Could not load process: please sign in again."
+          : r.status >= 500 ? "Could not load process: server is having trouble (HTTP " + r.status + "). Try again."
+          : "Could not load process: server returned HTML (HTTP " + r.status + ")."
+        );
+        return;
+      }
+      let j;
+      try { j = JSON.parse(trimmed); }
+      catch { alert("Could not load process: couldn't parse server response."); return; }
       if (!j.ok || !j.process) {
         alert(j.message || j.error || "Could not load process.");
         return;
