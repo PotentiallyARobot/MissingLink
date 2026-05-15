@@ -12688,6 +12688,13 @@ promptflow whoami</code></pre>
       const hasChat      = !!pendingContrib.chat;
       const hasContrib   = hasZip || hasChat;
       const hasAttachment = hasContrib || attachedFiles.length > 0;
+      // Suppress the verb bar when the user is staging inputs for a
+      // forced run (clicked Run on a process card → opened the run-card
+      // → uploaded files). The verb is already chosen — Run — and
+      // surfacing "Try: Improve / Combine / Search" here would be
+      // confusing. Once the user fires the run, _forceRunProcessId is
+      // cleared and normal attachment flows resume.
+      const isStagingForcedRun = !!window._forceRunProcessId;
       // Zip without chat is its own case: lessons can still be learned
       // from the artifacts alone (the backend has a stub path for this),
       // but the verb copy should reflect that and a soft hint should
@@ -12695,7 +12702,7 @@ promptflow whoami</code></pre>
       // "learn" route to the same /upload/extract pipeline; the label
       // change is purely about expectation-setting.
       const zipOnly = hasZip && !hasChat;
-      if (hasAttachment) {
+      if (hasAttachment && !isStagingForcedRun) {
         verbBar.hidden = false;
         const chips = hasContrib
           ? [
@@ -15905,24 +15912,44 @@ promptflow whoami</code></pre>
 
     // Build the form rows. Each kind gets a labeled control: textarea
     // for text, file picker for image/video/audio. Stash the control
-    // reference in `controls` keyed by kind, so the Run handler can
-    // collect values regardless of which fields are present.
-    const controls = {};
+    // reference in `controls` keyed by index, so the Run handler can
+    // collect values in the right order regardless of repeated kinds.
+    //
+    // When a kind repeats (e.g. ["image","image"] for first/last frame),
+    // we suffix the label with the slot index so the user knows which
+    // is which. This stops short of pulling semantic labels from the
+    // process schema — that'd be the right next step but requires the
+    // input_schema to carry per-field metadata, which today's processes
+    // don't all have.
+    const kindCounts = {};
+    inputKinds.forEach(k => {
+      const key = String(k).toLowerCase();
+      kindCounts[key] = (kindCounts[key] || 0) + 1;
+    });
+    const kindSeenIdx = {};
+    const controls = [];   // array, not map — preserves order
     let fieldsHtml = "";
     inputKinds.forEach((kind, idx) => {
       const k = String(kind).toLowerCase();
+      kindSeenIdx[k] = (kindSeenIdx[k] || 0) + 1;
+      const slotNum = kindSeenIdx[k];
+      const totalOfKind = kindCounts[k];
+      // Label: "Image" if only one of this kind, "Image 1" / "Image 2"
+      // when there are multiples. Same logic for video/audio.
+      const baseLabel = k.charAt(0).toUpperCase() + k.slice(1);
+      const labelText = totalOfKind > 1 ? `${baseLabel} ${slotNum}` : baseLabel;
       const fieldId = `rc-field-${idx}-${k}`;
       if (k === "text") {
         fieldsHtml +=
           '<div class="rc-field">' +
-            '<label class="rc-label" for="' + fieldId + '">Text</label>' +
+            '<label class="rc-label" for="' + fieldId + '">' + escapeHtml(labelText) + '</label>' +
             '<textarea class="rc-textarea" id="' + fieldId + '" rows="3" placeholder="Describe what to run this with..."></textarea>' +
           '</div>';
       } else if (k === "image" || k === "video" || k === "audio") {
         const accept = k === "image" ? "image/*" : k === "video" ? "video/*" : "audio/*";
         fieldsHtml +=
           '<div class="rc-field">' +
-            '<label class="rc-label">' + k.charAt(0).toUpperCase() + k.slice(1) + '</label>' +
+            '<label class="rc-label">' + escapeHtml(labelText) + '</label>' +
             '<label class="rc-file-picker" for="' + fieldId + '">' +
               '<span class="rc-file-label">Click to upload ' + escapeHtml(k) + '…</span>' +
               '<input type="file" id="' + fieldId + '" accept="' + accept + '" hidden>' +
@@ -15932,7 +15959,7 @@ promptflow whoami</code></pre>
         // Unknown kind — render a text field as a sane fallback
         fieldsHtml +=
           '<div class="rc-field">' +
-            '<label class="rc-label" for="' + fieldId + '">' + escapeHtml(k) + '</label>' +
+            '<label class="rc-label" for="' + fieldId + '">' + escapeHtml(labelText) + '</label>' +
             '<textarea class="rc-textarea" id="' + fieldId + '" rows="2"></textarea>' +
           '</div>';
       }
@@ -15954,12 +15981,15 @@ promptflow whoami</code></pre>
         '</div>' +
       '</div>';
 
-    // Wire control refs after the DOM is in place.
+    // Wire control refs after the DOM is in place. Order matters for
+    // repeated kinds — the first "image" slot becomes attachedFiles[0],
+    // second becomes attachedFiles[1], etc., which the backend reads
+    // as `image` and `image_2` in FormData.
     inputKinds.forEach((kind, idx) => {
       const k = String(kind).toLowerCase();
       const el = body.querySelector('#rc-field-' + idx + '-' + k);
       if (!el) return;
-      controls[k + '_' + idx] = { kind: k, el };
+      controls.push({ kind: k, el });
       // For file pickers, wire the label to update with the chosen filename.
       if (k === "image" || k === "video" || k === "audio") {
         el.addEventListener("change", () => {
@@ -16031,25 +16061,26 @@ promptflow whoami</code></pre>
     runBtnEl.addEventListener("click", async () => {
       if (busy) return;
 
-      // Collect inputs into a structured payload.
-      const collected = { text: "", files: {} };
-      let hasAnyInput = false;
-      Object.entries(controls).forEach(([key, c]) => {
+      // Collect inputs IN ORDER. Text rows accumulate into a single
+      // concatenated string; file rows each contribute a separate
+      // attachedFiles entry. Critical for repeated kinds (e.g. two
+      // "image" slots): each picker becomes its own entry so the
+      // chat's send() routes them to `image` and `image_2` slots
+      // instead of overwriting.
+      const stagedFiles = []; // array of { file, kind } in display order
+      const textParts = [];
+      controls.forEach(c => {
         if (c.kind === "text" || (c.kind !== "image" && c.kind !== "video" && c.kind !== "audio")) {
           const v = (c.el.value || "").trim();
-          if (v) {
-            collected.text += (collected.text ? "\n\n" : "") + v;
-            hasAnyInput = true;
-          }
+          if (v) textParts.push(v);
         } else {
-          // Media kinds — file picker
           if (c.el.files && c.el.files[0]) {
-            collected.files[c.kind] = c.el.files[0];
-            hasAnyInput = true;
+            stagedFiles.push({ file: c.el.files[0], kind: c.kind });
           }
         }
       });
 
+      const hasAnyInput = textParts.length > 0 || stagedFiles.length > 0;
       if (!hasAnyInput) {
         // Nothing typed/attached — flash the card border red briefly
         const cardEl = body.querySelector(".rc-card");
@@ -16069,19 +16100,19 @@ promptflow whoami</code></pre>
         '</div>';
 
       // Stage the inputs into the chat's existing input pipeline.
-      // The text goes into textInput; files go into attachedFiles[]
-      // (the same array the upload button populates). The chat's
-      // send() already classifies attachedFiles by kind and routes
-      // each into the right FormData slot — we just need to put the
-      // entries there in the same shape. _forceRunProcessId tells
-      // the backend to lock execution to THIS process.
+      // _forceRunProcessId locks execution to THIS process so the
+      // planner can't reinterpret. Text goes into textInput; each
+      // file becomes its own attachedFiles entry in display order.
+      // The chat's send() then classifies by kind: first "image"
+      // entry → FormData `image`, second → `image_2`, etc. — exactly
+      // the shape the backend reads.
       window._forceRunProcessId = proc.id;
       window._forceRunProcessName = proc.name;
-      textInput.value = collected.text || `Run "${proc.name}"`;
+      textInput.value = textParts.length > 0
+        ? textParts.join("\n\n")
+        : `Run "${proc.name}"`;
       attachedFiles = attachedFiles || [];
-      for (const kind of ["image", "video", "audio"]) {
-        const file = collected.files[kind];
-        if (!file) continue;
+      for (const { file, kind } of stagedFiles) {
         try {
           const dataUrl = await new Promise((res, rej) => {
             const r = new FileReader();
