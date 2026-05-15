@@ -6158,6 +6158,10 @@ body.d-desktop-mode .stream {
   color: rgba(255,220,140,0.95);
   font-weight: 600;
 }
+.rc-cost-detail {
+  color: rgba(180,180,200,0.55);
+  font-size: 11px;
+}
 .rc-cost-error {
   color: rgba(255,140,140,0.7);
 }
@@ -13599,10 +13603,16 @@ promptflow whoami</code></pre>
     // refinement; user escapes by typing "Generate process …" OR a
     // "Run X with …" invocation, in which case we drop the bind and
     // route normally so the planner picks the named process.
+    //
+    // _forceRunProcessId is also an escape — when set, the user
+    // clicked Run on a specific process card and wants to execute
+    // THAT process, not refine the currently-bound one. We clear
+    // the bind so the planner can route to the forced process.
     if (refineBoundProcessId) {
       const generateEscape = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
       const runEscape = /^\s*run\s+(my\s+)?["']?[^"'\n]+["']?\s+(with|using|on|for)\b/i;
-      if (generateEscape.test(userText) || runEscape.test(userText)) {
+      const forcedRunEscape = !!window._forceRunProcessId;
+      if (forcedRunEscape || generateEscape.test(userText) || runEscape.test(userText)) {
         refineBoundProcessId = null;
         refineBoundProcessName = null;
         paintRefineBindChip();
@@ -15908,6 +15918,40 @@ promptflow whoami</code></pre>
   // equivalent of the standalone process page's run section —
   // simpler (no auth chooser since user is logged in, no cascade
   // history since this is a fresh run), but the same shape.
+  // Coarse compute-cost estimate for a process, based on its output
+  // kind. Real compute cost depends on the plan recipe (which fal
+  // endpoint, what duration, what resolution) that /plan builds at
+  // run time — we can't know exact tokens before the user fires the
+  // run. But we CAN give an order-of-magnitude estimate so the user
+  // sees something useful in the run-card. Numbers are calibrated
+  // to typical fal pricing as of the cutoff (Wan 5s ≈ $0.18,
+  // ElevenLabs TTS ≈ $0.003/1k chars, Recraft v3 ≈ $0.04/image).
+  function estimateComputeTokens(proc) {
+    if (!proc) return null;
+    const outputKind = String(proc.output_kind || "").toLowerCase();
+    // Step count is a multiplier — a 5-step process burns more
+    // tokens than a 1-step process even at the same output kind.
+    const stepCount = Math.max(1, (proc.step_count || (proc.steps && proc.steps.length) || 1));
+    let base = 0;
+    if (outputKind === "video") {
+      base = 200;            // ~$0.18 fal for 5s clip
+    } else if (outputKind === "audio") {
+      base = 40;             // ~$0.03 ElevenLabs / Lyria
+    } else if (outputKind === "image") {
+      base = 12;             // ~$0.04-0.08 fal
+    } else if (outputKind === "text") {
+      base = 5;              // ~$0.003 Claude/OpenAI
+    } else {
+      base = 50;             // unknown — middle of the road
+    }
+    // Multi-step processes scale roughly linearly. Cap at 4× to
+    // avoid runaway estimates for pipelines like storyboards
+    // (which produce many images but most of cost is in 1-2
+    // expensive steps).
+    const mult = Math.min(4, 1 + (stepCount - 1) * 0.6);
+    return Math.round(base * mult);
+  }
+
   async function openRunCard(proc) {
     const cardAssist = addAssistMsg();
     const body = cardAssist.body;
@@ -16004,21 +16048,13 @@ promptflow whoami</code></pre>
       const el = body.querySelector('#rc-field-' + idx + '-' + k);
       if (!el) return;
       controls.push({ kind: k, el });
-      // For file pickers, wire the label to update with the chosen
-      // filename. Also wire an explicit click handler on the picker
-      // label as belt-and-suspenders — native label[for] association
-      // should open the file dialog, but we've seen browser variance,
-      // so the explicit handler guarantees the picker opens.
+      // Wire change listener to update the picker label with the
+      // chosen filename. Click-to-open is handled natively by the
+      // label[for=fieldId] association in the HTML above — no JS
+      // click forwarding needed (and adding it causes the dialog
+      // to open twice on label clicks).
       if (k === "image" || k === "video" || k === "audio") {
         const picker = el.closest(".rc-file-picker");
-        if (picker) {
-          picker.addEventListener("click", (e) => {
-            // Don't double-trigger when the click already came through
-            // the native label→input path.
-            if (e.target === el) return;
-            el.click();
-          });
-        }
         el.addEventListener("change", () => {
           const lbl = picker?.querySelector(".rc-file-label");
           if (lbl && el.files && el.files[0]) {
@@ -16051,21 +16087,32 @@ promptflow whoami</code></pre>
             // Owner running their own process. The cascade is zero
             // (no royalties owed to upstream creators), but compute
             // costs (fal, OpenAI, ElevenLabs, etc.) still apply and
-            // are charged at run-time. We can't show the compute
-            // figure upfront because the plan recipe isn't built yet
-            // — that happens during /plan after the user fires the
-            // run. Be honest about what "owner" really means: no
-            // royalties, but compute still applies.
+            // are charged at run-time. We can't show the exact
+            // compute figure upfront — that depends on the plan
+            // recipe (endpoint, duration, resolution) which /plan
+            // builds at run time. But we can give a coarse estimate
+            // based on the process's output kind, so the user has
+            // an order-of-magnitude sense before committing.
+            const estimate = estimateComputeTokens(proc);
+            const estStr = estimate
+              ? ' · ≈ <strong>' + estimate + ' tokens</strong> compute (final charge at run completion)'
+              : ' · compute charged at run time';
             costRow.innerHTML =
-              '<span class="rc-cost-line"><strong>No royalties</strong> (you own this process) · compute charged at run time</span>';
+              '<span class="rc-cost-line"><strong>No royalties</strong> (you own this process)' +
+              estStr + '</span>';
           } else {
             const remaining = typeof j.tokens_remaining === "number" ? j.tokens_remaining : null;
             const remainingStr = remaining !== null
-              ? ' · ' + remaining + ' tokens available'
+              ? ' · ' + remaining + ' available'
+              : '';
+            const estimate = estimateComputeTokens(proc);
+            const computeStr = estimate
+              ? ' + ≈ ' + estimate + ' compute'
               : '';
             costRow.innerHTML =
-              '<span class="rc-cost-line">Cost: <strong>' + total + ' tokens</strong>' +
-              ' (' + markupTotal + ' royalties + ' + bonusTotal + ' bonus)' +
+              '<span class="rc-cost-line"><strong>' + total + ' tokens</strong> royalties' +
+              computeStr +
+              ' <span class="rc-cost-detail">(' + markupTotal + ' to author, ' + bonusTotal + ' bonus)</span>' +
               escapeHtml(remainingStr) + '</span>';
           }
         } else {
@@ -16154,6 +16201,18 @@ promptflow whoami</code></pre>
       // The chat's send() then classifies by kind: first "image"
       // entry → FormData `image`, second → `image_2`, etc. — exactly
       // the shape the backend reads.
+      //
+      // Clear any refine-bind first. Clicking Run is an explicit
+      // "execute THIS process" action — the conversation isn't
+      // refining anymore. Without this, send() would route the
+      // staged text into a refine call on the previously-bound
+      // process instead of executing the one we're targeting.
+      if (typeof refineBoundProcessId !== "undefined" && refineBoundProcessId) {
+        refineBoundProcessId = null;
+        if (typeof refineBoundProcessName !== "undefined") refineBoundProcessName = null;
+        try { paintRefineBindChip(); } catch {}
+        try { paintEditorDoneRow(); } catch {}
+      }
       window._forceRunProcessId = proc.id;
       window._forceRunProcessName = proc.name;
       textInput.value = textParts.length > 0
