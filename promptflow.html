@@ -6125,6 +6125,14 @@ body.d-desktop-mode .stream {
   cursor: pointer;
   text-align: center;
   transition: all 0.12s ease;
+  position: relative;
+}
+.rc-file-picker .rc-file-label {
+  /* The label span shouldn't intercept clicks — they should fall
+     through to the parent <label>, which forwards to the file input.
+     Without this, some browsers register the click on the inner
+     span and the input doesn't open. */
+  pointer-events: none;
 }
 .rc-file-picker:hover {
   background: rgba(232,169,23,0.06);
@@ -15947,12 +15955,18 @@ promptflow whoami</code></pre>
           '</div>';
       } else if (k === "image" || k === "video" || k === "audio") {
         const accept = k === "image" ? "image/*" : k === "video" ? "video/*" : "audio/*";
+        // Note: input is positioned off-screen instead of using the
+        // `hidden` attribute. The `hidden` attribute makes the input
+        // display:none, which can break label→input click forwarding
+        // in some browsers. Off-screen positioning keeps the input
+        // in the focus/click order while making it invisible.
         fieldsHtml +=
           '<div class="rc-field">' +
             '<label class="rc-label">' + escapeHtml(labelText) + '</label>' +
             '<label class="rc-file-picker" for="' + fieldId + '">' +
               '<span class="rc-file-label">Click to upload ' + escapeHtml(k) + '…</span>' +
-              '<input type="file" id="' + fieldId + '" accept="' + accept + '" hidden>' +
+              '<input type="file" id="' + fieldId + '" accept="' + accept + '" ' +
+                'style="position:absolute;width:1px;height:1px;opacity:0">' +
             '</label>' +
           '</div>';
       } else {
@@ -15990,10 +16004,22 @@ promptflow whoami</code></pre>
       const el = body.querySelector('#rc-field-' + idx + '-' + k);
       if (!el) return;
       controls.push({ kind: k, el });
-      // For file pickers, wire the label to update with the chosen filename.
+      // For file pickers, wire the label to update with the chosen
+      // filename. Also wire an explicit click handler on the picker
+      // label as belt-and-suspenders — native label[for] association
+      // should open the file dialog, but we've seen browser variance,
+      // so the explicit handler guarantees the picker opens.
       if (k === "image" || k === "video" || k === "audio") {
+        const picker = el.closest(".rc-file-picker");
+        if (picker) {
+          picker.addEventListener("click", (e) => {
+            // Don't double-trigger when the click already came through
+            // the native label→input path.
+            if (e.target === el) return;
+            el.click();
+          });
+        }
         el.addEventListener("change", () => {
-          const picker = el.closest(".rc-file-picker");
           const lbl = picker?.querySelector(".rc-file-label");
           if (lbl && el.files && el.files[0]) {
             const f = el.files[0];
@@ -16022,9 +16048,16 @@ promptflow whoami</code></pre>
           const bonusTotal = j.total_bonus_tokens || 0;
           const total = markupTotal + bonusTotal;
           if (total === 0) {
-            // User owns this process or it's free
+            // Owner running their own process. The cascade is zero
+            // (no royalties owed to upstream creators), but compute
+            // costs (fal, OpenAI, ElevenLabs, etc.) still apply and
+            // are charged at run-time. We can't show the compute
+            // figure upfront because the plan recipe isn't built yet
+            // — that happens during /plan after the user fires the
+            // run. Be honest about what "owner" really means: no
+            // royalties, but compute still applies.
             costRow.innerHTML =
-              '<span class="rc-cost-line"><strong>Free</strong> — you own this process</span>';
+              '<span class="rc-cost-line"><strong>No royalties</strong> (you own this process) · compute charged at run time</span>';
           } else {
             const remaining = typeof j.tokens_remaining === "number" ? j.tokens_remaining : null;
             const remainingStr = remaining !== null
@@ -16059,7 +16092,22 @@ promptflow whoami</code></pre>
     // renders in a new bubble below the (now-collapsed) run-card.
     const runBtnEl = body.querySelector(".rc-run-btn");
     runBtnEl.addEventListener("click", async () => {
-      if (busy) return;
+      // eslint-disable-next-line no-console
+      console.log("[run-card] Run clicked", { busy, procId: proc.id });
+      if (busy) {
+        // Don't silently swallow — surface why nothing happened so the
+        // user can recover (Escape resets busy state).
+        const cardEl = body.querySelector(".rc-card");
+        if (cardEl) {
+          const note = document.createElement("div");
+          note.className = "rc-cost-line rc-cost-error";
+          note.style.marginTop = "8px";
+          note.textContent = "Another action is in progress — press Escape to cancel it first.";
+          cardEl.appendChild(note);
+          setTimeout(() => { try { note.remove(); } catch {} }, 4000);
+        }
+        return;
+      }
 
       // Collect inputs IN ORDER. Text rows accumulate into a single
       // concatenated string; file rows each contribute a separate
@@ -16112,6 +16160,8 @@ promptflow whoami</code></pre>
         ? textParts.join("\n\n")
         : `Run "${proc.name}"`;
       attachedFiles = attachedFiles || [];
+      // eslint-disable-next-line no-console
+      console.log("[run-card] staging files", { count: stagedFiles.length, kinds: stagedFiles.map(s => s.kind) });
       for (const { file, kind } of stagedFiles) {
         try {
           const dataUrl = await new Promise((res, rej) => {
@@ -16121,12 +16171,35 @@ promptflow whoami</code></pre>
             r.readAsDataURL(file);
           });
           attachedFiles.push({ file, dataUrl, kind });
-        } catch {}
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error("[run-card] failed to read file", file.name, e);
+        }
       }
+      // eslint-disable-next-line no-console
+      console.log("[run-card] firing send()", {
+        textLength: textInput.value.length,
+        attachedCount: attachedFiles.length,
+        forceRunProcessId: window._forceRunProcessId,
+        busy,
+      });
 
       // Fire the send. The existing /plan call picks up
       // _forceRunProcessId + the staged inputs and executes.
-      send();
+      try {
+        send();
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[run-card] send() threw", e);
+        // Restore the run-card so the user can retry
+        body.innerHTML =
+          '<div class="rc-card">' +
+            '<div class="rc-summary rc-cost-error">Run failed to start: ' + escapeHtml(String(e.message || e)) + '</div>' +
+            '<div class="rc-actions">' +
+              '<button type="button" class="rc-cancel-btn" onclick="this.closest(\'.rc-card\').remove()">Dismiss</button>' +
+            '</div>' +
+          '</div>';
+      }
     });
   }
 
