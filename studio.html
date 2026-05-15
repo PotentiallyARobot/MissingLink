@@ -6531,7 +6531,7 @@ function openModal(src, filename, ctx){
                     const inp = await prepareBatchShotForReuse(shot, slotIdx);
                     if (inp) {
                         closeModal();
-                        sendBatchInputToCreate(inp);
+                        await sendBatchInputToCreate(inp);
                     }
                 } finally {
                     btn.classList.remove('busy');
@@ -6562,17 +6562,14 @@ async function useAsInput(){
     if(!lastOutputFilename) return;
     try{
         // Create mode shortcut: the image is already in R2 (it's either
-        // a fresh generation or a restored history tile, both of which
-        // have a real upload_id). Re-uploading via genUploadToSlot would
-        // download the bytes, push them back to /upload, and create a
-        // duplicate row. Reuse the existing entry instead by reading
-        // the front-of-stage tile directly — same path the tile's ✨
-        // button takes (sendBatchInputToCreate). This is the lighter,
-        // faster, and DB-clean way to do it.
+        // a fresh generation or a restored history tile). Pass the tile
+        // through sendBatchInputToCreate; it will re-upload on-demand
+        // for history tiles whose id isn't a valid studio_uploads row,
+        // and short-circuit for tiles that already have a real upload_id.
         if (currentMode === 'generate') {
             const tile = (_batchInputs || []).find(b => !b._placeholder);
             if (tile) {
-                sendBatchInputToCreate(tile);
+                await sendBatchInputToCreate(tile);
                 return;
             }
             // Fallback: if there's no tile but lastOutputFilename is
@@ -7374,7 +7371,7 @@ function renderBatchInputs(){
         };
         tile.querySelector('.bit-send-create').onclick = (e) => {
             e.stopPropagation();
-            sendBatchInputToCreate(inp);
+            sendBatchInputToCreate(inp);  // async, fire-and-forget
         };
         tile.querySelector('.bit-send-camera').onclick = (e) => {
             e.stopPropagation();
@@ -7738,9 +7735,57 @@ function sendBatchInputToEdit(inp){
 // Switching to Create mode happens before the slot assignment so the
 // user lands in the right view; Generate-mode panels become visible
 // and the user can immediately hit GENERATE if they want.
-function sendBatchInputToCreate(inp){
+async function sendBatchInputToCreate(inp){
     if (!inp || inp._placeholder) return;
     setMode('generate');
+
+    // ── History-restored tiles: re-upload to get a real upload_id ─────
+    // Tiles loaded via restoreFromHistory have id = j.upload_id || j.id.
+    // For agent-image-gen rows that's the studio_uploads id (good); for
+    // anything else (Camera, Edit, All-Angles, or older agent_gen rows
+    // before result.upload_id was being written) it falls back to the
+    // studio_jobs row id like "agen_xxxxxxxx" — which the preflight
+    // check-ownership rightly rejects since it's not a studio_uploads
+    // row. Without this branch the user gets the misleading "Cleaned
+    // up 1 old reference from a previous session" toast 2 seconds
+    // after assigning, and the generation runs without the ref.
+    //
+    // Fix: when the tile came from history and we haven't already
+    // upgraded it, fetch the bytes and re-upload via /api/studio/upload
+    // to get a fresh studio_uploads row owned by this user. Cache the
+    // upgraded shape on the tile so repeated clicks don't create
+    // duplicate upload rows.
+    if (inp._fromHistory && !inp._reuploaded && inp.url) {
+        try {
+            const r = await fetchT(inp.url, null, 15000);
+            const blob = await r.blob();
+            const fname = inp.fname || `history-${Date.now()}.png`;
+            const file = new File([blob], fname, { type: blob.type || 'image/png' });
+            const fd = new FormData();
+            fd.append('image', file);
+            const upR = await fetchT(`${API}/api/studio/upload`, {
+                method: 'POST', body: fd,
+            }, 30000);
+            if (upR.status === 401) {
+                $('loginModal').classList.add('open');
+                return;
+            }
+            const d = await upR.json();
+            if (d && d.id && !d.error) {
+                // Rewrite the tile in place so future clicks short-circuit.
+                inp.id = d.id;
+                inp.url = d.url;
+                inp.fname = fname;
+                inp._reuploaded = true;
+            }
+            // If the upload failed we fall through with the original id —
+            // worst case the user sees the same scrub notice they saw
+            // before, no regression. Most uploads succeed.
+        } catch (e) {
+            // Network error — fall through with original id, same as above.
+        }
+    }
+
     // Per-model slot limit. For supportsMultiRef:false models, only
     // slot 0 is visible/usable — we always target slot 0 there and
     // overwrite-with-notif if it's already filled. Multi-ref models
@@ -9291,7 +9336,7 @@ function renderBatchGrid(){
                 toCreateBtn.classList.add('busy');
                 try {
                     const inp = await prepareBatchShotForReuse(shot, i);
-                    if (inp) sendBatchInputToCreate(inp);
+                    if (inp) await sendBatchInputToCreate(inp);
                 } finally {
                     toCreateBtn.classList.remove('busy');
                 }
