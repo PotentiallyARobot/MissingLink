@@ -6036,6 +6036,12 @@ body.d-desktop-mode .stream {
   border-color: rgba(232,169,23,0.9) !important;
   background: rgba(232,169,23,0.18) !important;
 }
+.d-dsc-summary {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  color: rgba(232,200,140,0.85);
+  padding: 2px 0;
+}
 /* Error state — when /plan/design_search itself fails. Visually
    distinct from the gold foundational-success state so the two
    outcomes can't be confused. Red palette signals "something
@@ -13461,8 +13467,22 @@ promptflow whoami</code></pre>
       url: e.dataUrl, name: e.file?.name || "",
     }));
 
-    // Append user turn — refinements / text-only don't include a thumbnail.
-    addUserMsg(userText, userImg, userImgName, extraThumbs);
+    // _skipDesignSearchOnce: set by the chooser-button handler when
+    // the user already sent a message and then picked a card. The
+    // re-fired send() is a continuation, NOT a new turn — we should
+    // skip the design-search pre-pass (we already did it) AND skip
+    // re-adding the user bubble (it's already in the chat). Read
+    // and clear here so both gates can see it.
+    const isChooserContinuation = !!window._skipDesignSearchOnce;
+    if (isChooserContinuation) window._skipDesignSearchOnce = false;
+
+    // Append user turn — refinements / text-only don't include a
+    // thumbnail. Skipped when this send() is a chooser continuation,
+    // since the user bubble is already on screen from the original
+    // turn.
+    if (!isChooserContinuation) {
+      addUserMsg(userText, userImg, userImgName, extraThumbs);
+    }
 
     // ── Visible search-and-compose pre-pass for design intent ──
     //
@@ -13486,15 +13506,9 @@ promptflow whoami</code></pre>
     // so the picked source flows into the existing chainSource path
     // (which adds source_process_id to /plan FormData below).
     const designIntentRe = /^\s*(generate|design|build|make|create)\s+(a\s+|an\s+|new\s+)?process\b/i;
-    // _skipDesignSearchOnce: set by the chooser-button handler when the
-    // user has already picked a path from the previous search. Lets the
-    // re-fired send() proceed straight to /plan without redoing the
-    // search. Cleared immediately so it doesn't persist across turns.
-    const skipDesignSearch = !!window._skipDesignSearchOnce;
-    if (skipDesignSearch) window._skipDesignSearchOnce = false;
     const shouldRunDesignSearch =
       designIntentRe.test(userText)
-      && !skipDesignSearch
+      && !isChooserContinuation
       && !window._forceRunProcessId
       && !window._pendingGenerateUploadId
       && !pendingParentProcess
@@ -13638,24 +13652,31 @@ promptflow whoami</code></pre>
               const action = btn.getAttribute("data-action");
               const procId = btn.getAttribute("data-process-id");
               const procName = btn.getAttribute("data-process-name");
-              // Disable all buttons immediately to prevent double-fire.
-              thinkBody.querySelectorAll("[data-action]").forEach(b => {
-                b.setAttribute("disabled", "disabled");
-              });
-              btn.classList.add("d-dsc-chosen");
 
+              // Collapse the menu to a single line showing the chosen
+              // path. No disabled buttons, no skip link — just a
+              // compact summary so the chat history stays readable.
+              // The /plan call below kicks off the actual design,
+              // which creates its OWN assist bubble for the output.
+              let summaryText;
               if (action === "compose" && procId) {
                 pendingParentProcess = {
                   id: procId,
                   name: procName,
                   kind: "compose",
                 };
-                setStatus(thinkAssist, "Building on top of \"" + procName + "\"…");
+                summaryText = 'Building on top of "' + procName + '"';
               } else {
-                // Skip / build new
                 pendingParentProcess = null;
-                setStatus(thinkAssist, "Designing fresh process…");
+                summaryText = "Designing a fresh process";
               }
+              thinkBody.innerHTML =
+                '<div class="d-design-search">' +
+                  '<div class="d-dsc-summary">→ ' + escapeHtml(summaryText) + '</div>' +
+                '</div>';
+              // Clear the status pill — the summary line carries the
+              // information now.
+              clearStatus(thinkAssist);
 
               textInput.value = capturedUserText;
               window._skipDesignSearchOnce = true;
