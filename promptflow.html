@@ -13389,7 +13389,7 @@ promptflow whoami</code></pre>
             '<span class="d-design-search-label">Searching the catalog for relevant existing processes…</span>' +
           '</div>' +
         '</div>';
-      setStatus(assist, "Searching the catalog…");
+      setStatus(thinkAssist, "Searching the catalog…");
 
       let searchData = null;
       let searchError = null;
@@ -13419,6 +13419,19 @@ promptflow whoami</code></pre>
           } else if (!r.ok) {
             searchError = "HTTP " + r.status;
             searchData = null;
+          } else if (searchData && searchData.meta && searchData.meta.timings) {
+            // Surface timings in console for easy bottleneck diagnosis.
+            // No user-visible UI for this — it's developer telemetry,
+            // but visible to anyone who opens DevTools.
+            const t = searchData.meta.timings;
+            console.log(
+              "[design_search] " +
+              "embed=" + (t.embed_query_ms || 0) + "ms · " +
+              "shortlist=" + (t.shortlist_ms || 0) + "ms · " +
+              "rerank=" + (t.rerank_ms || 0) + "ms · " +
+              "lessons=" + (t.lessons_ms || 0) + "ms · " +
+              "total=" + (t.total_ms || 0) + "ms"
+            );
           }
         }
       } catch (e) {
@@ -13440,7 +13453,7 @@ promptflow whoami</code></pre>
               '<div class="d-dse-fallback">Designing without catalog context — composition discovery skipped this turn.</div>' +
             '</div>' +
           '</div>';
-        setStatus(assist, "Catalog search failed · designing without context");
+        setStatus(thinkAssist, "Catalog search failed · designing without context");
         searchData = null;
       }
 
@@ -13497,15 +13510,15 @@ promptflow whoami</code></pre>
         // Status line reflects what search actually returned. Real
         // counts, real top-match name — never fabricated.
         if (searchData.top_pick_id) {
-          setStatus(assist,
+          setStatus(thinkAssist,
             cands.length + " candidate" + (cands.length === 1 ? "" : "s") +
             " · top match: " + searchData.top_pick_name + " · designing on top");
         } else if (cands.length > 0) {
-          setStatus(assist,
+          setStatus(thinkAssist,
             cands.length + " candidate" + (cands.length === 1 ? "" : "s") +
             " considered · first of its kind · designing original");
         } else {
-          setStatus(assist, "First of its kind · designing original");
+          setStatus(thinkAssist, "First of its kind · designing original");
         }
 
         // Hand-off: set pendingParentProcess so the existing
