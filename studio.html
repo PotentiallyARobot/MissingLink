@@ -4542,13 +4542,17 @@ function renderStartupOverlay(){
     const stageContradictsState = (stage === 'ready' && _gs.state !== 'ready');
     const stageIsFresh = stage && serverAge > 0 && serverAge < 60 && !stageContradictsState;
 
-    // Steady time-based progress. A typical cold boot takes ~90s, so the
-    // bar advances linearly from 0% to 95% over that window — about
-    // 1.06%/s, smooth and predictable. No stage caps, no two-phase ramp,
-    // no real-percent overrides: the bar is a pacing aid, not a literal
-    // readout of GPU subsystem state. Stage *text* still updates from
-    // server hints below, so the user sees what's actually happening;
-    // the bar just stops stuttering when those hints lag or jump.
+    // Stage-anchored progress. Cold boot stages have predictable timing,
+    // so the bar uses stage hits as anchors and falls back to elapsed
+    // time only for smoothing between stage updates. Calibration:
+    //   booting (0..30s)        → 0..30%
+    //   loading_transformer hit → snap to 30% (if not already past)
+    //   ...intermediate stages... → carried by the time curve
+    //   moving_to_gpu hit       → snap to 100% (final stage)
+    // Time curve (used when no stage update has arrived yet, or to fill
+    // the gap between stage heartbeats):
+    //   0..30s   → 0..30%   (matches the booting phase)
+    //   30..90s  → 30..100% (covers loading_transformer through MTG)
     //
     // CRUCIALLY, the timer is anchored to when a real boot started —
     // NOT when the overlay opened. When the overlay opens because state
@@ -4559,27 +4563,55 @@ function renderStartupOverlay(){
     // a stage update within the last 60s) OR state='warming' with stale
     // ready (server saw warmup_at bumped, container is spinning up).
     //
-    // If the GPU becomes ready before 90s the overlay closes early
-    // (bar resolves below 95%). If the boot overruns the bar parks at
-    // 95% until ready — never crosses the finish line on its own,
-    // never reverses (ratchet below).
+    // The bar parks at 100% if MTG fires but the GPU isn't formally
+    // ready yet — never reverses (ratchet below). The overlay closes
+    // when ready_at lands; the bar is visual, not literal completion.
     const bootActive = stageIsFresh || isWarmingForReal;
     if (bootActive && _bootStartedAt === null) {
         _bootStartedAt = Date.now();
     }
-    const EXPECTED_BOOT_MS = 90000;          // 90s — typical cold boot
-    const BAR_MAX_PCT = 95;                  // park here if boot overruns
+    const BAR_MAX_PCT = 100;
     const cycleElapsedMs = _bootStartedAt !== null
         ? (Date.now() - _bootStartedAt)
         : 0;
-    const candidatePct = Math.min(
-        BAR_MAX_PCT,
-        (cycleElapsedMs / EXPECTED_BOOT_MS) * BAR_MAX_PCT
-    );
+    const cycleElapsedSec = cycleElapsedMs / 1000;
+
+    // Piecewise-linear time fallback. First segment paces the booting
+    // phase (0..30% over ~30s); second segment paces the rest of the
+    // boot (30..100% over ~60s). Stage floors below override this
+    // whenever the server has reported a fresh stage.
+    let timePct;
+    if (cycleElapsedSec <= 30) {
+        timePct = (cycleElapsedSec / 30) * 30;
+    } else if (cycleElapsedSec <= 90) {
+        timePct = 30 + ((cycleElapsedSec - 30) / 60) * 70;
+    } else {
+        timePct = BAR_MAX_PCT;
+    }
+
+    // Stage-anchored floors. When the server reports a fresh stage, the
+    // bar snaps to at least the listed value — the ratchet below ensures
+    // we never go backward, only forward. loading_transformer is the
+    // threshold between "still booting" and "actually loading"; from
+    // moving_to_gpu onward, the boot is functionally done.
+    const STAGE_FLOORS = {
+        loading_transformer: 30,            // "Loading model weights"
+        moving_to_gpu:       BAR_MAX_PCT,   // "Moving model to GPU"
+        registering:         BAR_MAX_PCT,
+        compiling:           BAR_MAX_PCT,
+        finalizing:          BAR_MAX_PCT,
+        warming_up:          BAR_MAX_PCT,
+    };
+    let stageFloor = 0;
+    if (stageIsFresh && STAGE_FLOORS[stage] !== undefined) {
+        stageFloor = STAGE_FLOORS[stage];
+    }
 
     // Apply ratchet: the displayed pct can never decrease this cycle.
-    _startupMaxPct = Math.max(_startupMaxPct, candidatePct);
-    const pct = Math.min(95, _startupMaxPct);
+    // Whichever of (time-based, stage floor) is higher wins, and the
+    // displayed value can only ratchet upward from its previous frame.
+    _startupMaxPct = Math.max(_startupMaxPct, timePct, stageFloor);
+    const pct = Math.min(BAR_MAX_PCT, _startupMaxPct);
 
     const stageLabels = {
         booting:              'Starting container',
