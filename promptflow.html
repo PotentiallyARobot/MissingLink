@@ -13530,161 +13530,222 @@ promptflow whoami</code></pre>
       // The post-search setStatus calls below DO add value (real counts,
       // pick names) so those stay.
 
-      let searchData = null;
-      let searchError = null;
+      // ── Streaming compose endpoint ─────────────────────────────
+      // The compose pipeline streams SSE events as it reasons.
+      // Phase 1 (this iteration): exact_match auto-opens; otherwise
+      // surfaces the chooser. Future phases will stream component
+      // searches and decomposition events as well.
+      let composeError = null;
+      let exactMatch = null;
+      let needsComposePicks = null;
+      let needsComposeReasoning = null;
+      let didReceiveTerminalEvent = false;
+
       try {
-        const r = await fetch("/api/promptflow/plan/design_search", {
+        const r = await fetch("/api/promptflow/plan/compose", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ query: userText }),
         });
-        // Read as text first so we can surface server-error messages
-        // when the response is JSON-with-error vs HTML (500 page) vs
-        // genuinely-broken. Previous code lumped all of these together
-        // as "no match" which was actively misleading — a server
-        // outage looked identical to a clean empty search.
-        const responseText = await r.text();
-        if (responseText.trim().startsWith("<")) {
-          searchError = "Server returned HTML (HTTP " + r.status + "). The /plan/design_search route may be misconfigured.";
+        if (!r.ok || !r.body) {
+          composeError = "HTTP " + r.status;
         } else {
-          try {
-            searchData = JSON.parse(responseText);
-          } catch (parseErr) {
-            searchError = "Could not parse search response: " + parseErr.message;
-          }
-          if (searchData && !searchData.ok) {
-            searchError = searchData.message || searchData.error || ("HTTP " + r.status);
-            searchData = null;
-          } else if (!r.ok) {
-            searchError = "HTTP " + r.status;
-            searchData = null;
-          } else if (searchData && searchData.meta && searchData.meta.timings) {
-            // Surface timings in console for easy bottleneck diagnosis.
-            // No user-visible UI for this — it's developer telemetry,
-            // but visible to anyone who opens DevTools.
-            const t = searchData.meta.timings;
-            console.log(
-              "[design_search] " +
-              "embed=" + (t.embed_query_ms || 0) + "ms · " +
-              "shortlist=" + (t.shortlist_ms || 0) + "ms · " +
-              "rerank=" + (t.rerank_ms || 0) + "ms · " +
-              "lessons=" + (t.lessons_ms || 0) + "ms · " +
-              "total=" + (t.total_ms || 0) + "ms"
-            );
+          // SSE parser. Reads each event block (separated by \n\n),
+          // splits into "event:" + "data:" lines. Robust to chunked
+          // delivery — we accumulate text and only consume complete
+          // events. Anything left in the buffer after the stream
+          // ends is silently dropped (should be empty).
+          const reader = r.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            // Consume complete event blocks
+            let idx;
+            while ((idx = buf.indexOf("\n\n")) !== -1) {
+              const block = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              if (!block.trim()) continue;
+              let evName = "message";
+              let evData = "";
+              for (const line of block.split("\n")) {
+                if (line.startsWith("event:")) evName = line.slice(6).trim();
+                else if (line.startsWith("data:")) evData += line.slice(5).trim();
+              }
+              let payload = null;
+              try { payload = evData ? JSON.parse(evData) : {}; } catch {}
+
+              if (evName === "phase" && payload) {
+                // Live progress — replace the body label with the
+                // latest phase. Spinner stays.
+                thinkBody.innerHTML =
+                  '<div class="d-design-search">' +
+                    '<div class="d-design-search-phase">' +
+                      '<span class="d-design-search-spinner"></span>' +
+                      '<span class="d-design-search-label">' + escapeHtml(payload.label || "Working…") + '</span>' +
+                    '</div>' +
+                  '</div>';
+              } else if (evName === "exact_match" && payload) {
+                exactMatch = payload;
+                didReceiveTerminalEvent = true;
+              } else if (evName === "needs_compose" && payload) {
+                needsComposePicks = (payload.picks || []).filter(p =>
+                  p && p.process_id && !String(p.process_id).startsWith("system_")
+                );
+                needsComposeReasoning = payload.reasoning || null;
+                didReceiveTerminalEvent = true;
+              } else if (evName === "no_match" && payload) {
+                needsComposePicks = [];
+                needsComposeReasoning = payload.reasoning || null;
+                didReceiveTerminalEvent = true;
+              } else if (evName === "error" && payload) {
+                composeError = payload.message || "Compose pipeline error";
+                didReceiveTerminalEvent = true;
+              } else if (evName === "done") {
+                // Stream terminator. The actual decision was already
+                // captured in one of the events above.
+              }
+            }
           }
         }
       } catch (e) {
-        searchError = (e && e.message) || "Network error";
+        composeError = (e && e.message) || "Network error";
       }
 
-      // If we got a real error, show it visibly. The user (and Tyler
-      // in DevTools) can tell at a glance whether the empty path is
-      // "search worked, nothing matched" (good — proceed with
-      // foundational design) or "search broke, we're flying blind"
-      // (bad — surface the error so it can be fixed).
-      if (searchError) {
-        console.error("[design_search]", searchError);
+      // ── Error surface ──────────────────────────────────────────
+      if (composeError) {
+        console.error("[compose]", composeError);
         thinkBody.innerHTML =
           '<div class="d-design-search">' +
             '<div class="d-design-search-error">' +
               '<div class="d-dse-title">Catalog search unavailable</div>' +
-              '<div class="d-dse-detail">' + escapeHtml(searchError) + '</div>' +
+              '<div class="d-dse-detail">' + escapeHtml(composeError) + '</div>' +
               '<div class="d-dse-fallback">Designing without catalog context — composition discovery skipped this turn.</div>' +
             '</div>' +
           '</div>';
         setStatus(thinkAssist, "Catalog search failed · designing without context");
-        searchData = null;
-      }
+        // Fall through to normal /plan call so the user still gets a
+        // designed process even if discovery failed.
+      } else if (exactMatch) {
+        // ── Exact match auto-open ──────────────────────────────
+        // The catalog has a process that does exactly what the user
+        // asked for. Render it as a card in the chat and refine-bind
+        // so subsequent messages refine THIS process. No menu, no
+        // re-design — just open and let them iterate.
+        //
+        // Cascade settlement: not relevant at this step. Opening a
+        // process doesn't pay royalties. When the user later runs it,
+        // /process/use → resolveCascade credits the right authors.
+        thinkBody.innerHTML =
+          '<div class="d-design-search">' +
+            '<div class="d-dsc-summary">→ Found an exact match: <strong>' + escapeHtml(exactMatch.name) + '</strong></div>' +
+          '</div>';
+        clearStatus(thinkAssist);
 
-      if (searchData) {
-        const picks = searchData.picks || [];
-
-        if (picks.length > 0) {
-          // Clean chooser: one card per pick, all default to "build on
-          // top of this." A skip link at the bottom for "none of these."
-          // No three-way tracks, no run-existing option (irrelevant to
-          // a design intent), no rerank reasoning, no cosine scores.
-          // Just: here are some things that could be a starting point;
-          // pick one or skip.
-          thinkBody.innerHTML =
-            '<div class="d-design-search">' +
-              '<div class="d-dsc-prompt">Build on top of one of these?</div>' +
-              '<div class="d-dsc-picks">' +
-                picks.map(p =>
-                  '<button type="button" class="d-dsc-pick-card" ' +
-                    'data-action="compose" ' +
-                    'data-process-id="' + escapeHtml(p.process_id) + '" ' +
-                    'data-process-name="' + escapeHtml(p.name) + '">' +
-                    '<span class="d-dsc-pick-name">' + escapeHtml(p.name) + '</span>' +
-                  '</button>'
-                ).join("") +
-              '</div>' +
-              '<button type="button" class="d-dsc-skip" data-action="build">' +
-                'Skip — generate a fresh process instead' +
-              '</button>' +
-            '</div>';
-          setStatus(thinkAssist, "Pick one or skip to build fresh");
-        } else {
-          // No picks — pioneer card (unchanged, this is the genuinely
-          // novel-request path).
-          thinkBody.innerHTML =
-            '<div class="d-design-search">' +
-              '<div class="d-design-search-section">' +
-                '<div class="d-design-search-foundational">' +
-                  '<div class="d-dsf-title">First in the catalog ★</div>' +
-                  '<div class="d-dsf-pitch">Nothing like this exists yet. You\'re building original IP — build it, refine it, test it, and compose it with other processes to earn.</div>' +
-                  (searchData.reasoning_when_empty
-                    ? '<div class="d-dsf-reasoning"><span class="d-dsf-reasoning-label">Search detail:</span> ' + escapeHtml(searchData.reasoning_when_empty) + '</div>'
-                    : '') +
-                '</div>' +
-              '</div>' +
-            '</div>';
-          setStatus(thinkAssist, "First of its kind · designing original");
+        // Fetch the full process row and render the card. We refresh
+        // the cache first to make sure we have the latest copy.
+        await refreshProcesses();
+        const proc = (processesCache || []).find(p => p.id === exactMatch.process_id);
+        if (proc) {
+          const cardAssist = addAssistMsg();
+          renderProcessCard(cardAssist, proc, "loaded");
+          // Bind the conversation to this process if the user owns it.
+          // Non-owners can still RUN it via the card's Run button, but
+          // can't refine — refinement requires authorship.
+          if (exactMatch.is_owner) {
+            refineBoundProcessId = proc.id;
+            refineBoundProcessName = proc.name;
+            paintRefineBindChip();
+            paintEditorDoneRow();
+            // Highlight the just-rendered card to signal the bind.
+            const newCard = cardAssist.body.querySelector(".process-card");
+            if (newCard) {
+              document.querySelectorAll(".process-card.editing-bound").forEach(el => {
+                el.classList.remove("editing-bound");
+              });
+              newCard.classList.add("editing-bound");
+            }
+            if (textInput) {
+              textInput.placeholder = 'Refine "' + proc.name + '" — type what to change…';
+            }
+          }
+          busy = false;
+          updateSend();
         }
+        return;
+      } else if (needsComposePicks && needsComposePicks.length > 0) {
+        // ── Chooser (no exact match, multiple candidates) ──────
+        // Render the cards-list chooser. Click → set
+        // pendingParentProcess + re-fire send via the
+        // _skipDesignSearchOnce flag.
+        const picks = needsComposePicks;
+        thinkBody.innerHTML =
+          '<div class="d-design-search">' +
+            '<div class="d-dsc-prompt">Build on top of one of these?</div>' +
+            '<div class="d-dsc-picks">' +
+              picks.map(p =>
+                '<button type="button" class="d-dsc-pick-card" ' +
+                  'data-action="compose" ' +
+                  'data-process-id="' + escapeHtml(p.process_id) + '" ' +
+                  'data-process-name="' + escapeHtml(p.name) + '">' +
+                  '<span class="d-dsc-pick-name">' + escapeHtml(p.name) + '</span>' +
+                '</button>'
+              ).join("") +
+            '</div>' +
+            '<button type="button" class="d-dsc-skip" data-action="build">' +
+              'Skip — generate a fresh process instead' +
+            '</button>' +
+          '</div>';
+        setStatus(thinkAssist, "Pick one or skip to build fresh");
 
-        // When picks ≥ 1: STOP HERE. The chooser drives what happens
-        // next via button clicks. When picks is empty: continue to
-        // /plan as foundational design.
-        if (picks.length > 0) {
-          const capturedUserText = userText;
-          thinkBody.querySelectorAll("[data-action]").forEach(btn => {
-            btn.addEventListener("click", () => {
-              const action = btn.getAttribute("data-action");
-              const procId = btn.getAttribute("data-process-id");
-              const procName = btn.getAttribute("data-process-name");
-
-              // Collapse the menu to a single line showing the chosen
-              // path. No disabled buttons, no skip link — just a
-              // compact summary so the chat history stays readable.
-              // The /plan call below kicks off the actual design,
-              // which creates its OWN assist bubble for the output.
-              let summaryText;
-              if (action === "compose" && procId) {
-                pendingParentProcess = {
-                  id: procId,
-                  name: procName,
-                  kind: "compose",
-                };
-                summaryText = 'Building on top of "' + procName + '"';
-              } else {
-                pendingParentProcess = null;
-                summaryText = "Designing a fresh process";
-              }
-              thinkBody.innerHTML =
-                '<div class="d-design-search">' +
-                  '<div class="d-dsc-summary">→ ' + escapeHtml(summaryText) + '</div>' +
-                '</div>';
-              // Clear the status pill — the summary line carries the
-              // information now.
-              clearStatus(thinkAssist);
-
-              textInput.value = capturedUserText;
-              window._skipDesignSearchOnce = true;
-              send();
-            });
+        const capturedUserText = userText;
+        thinkBody.querySelectorAll("[data-action]").forEach(btn => {
+          btn.addEventListener("click", () => {
+            const action = btn.getAttribute("data-action");
+            const procId = btn.getAttribute("data-process-id");
+            const procName = btn.getAttribute("data-process-name");
+            let summaryText;
+            if (action === "compose" && procId) {
+              pendingParentProcess = {
+                id: procId,
+                name: procName,
+                kind: "compose",
+              };
+              summaryText = 'Building on top of "' + procName + '"';
+            } else {
+              pendingParentProcess = null;
+              summaryText = "Designing a fresh process";
+            }
+            thinkBody.innerHTML =
+              '<div class="d-design-search">' +
+                '<div class="d-dsc-summary">→ ' + escapeHtml(summaryText) + '</div>' +
+              '</div>';
+            clearStatus(thinkAssist);
+            textInput.value = capturedUserText;
+            window._skipDesignSearchOnce = true;
+            send();
           });
-          return;
-        }
+        });
+        // Bail — wait for the user's click.
+        return;
+      } else {
+        // ── No match — pioneer card, auto-advance to foundational
+        thinkBody.innerHTML =
+          '<div class="d-design-search">' +
+            '<div class="d-design-search-section">' +
+              '<div class="d-design-search-foundational">' +
+                '<div class="d-dsf-title">First in the catalog ★</div>' +
+                '<div class="d-dsf-pitch">Nothing like this exists yet. You\'re building original IP — build it, refine it, test it, and compose it with other processes to earn.</div>' +
+                (needsComposeReasoning
+                  ? '<div class="d-dsf-reasoning"><span class="d-dsf-reasoning-label">Search detail:</span> ' + escapeHtml(needsComposeReasoning) + '</div>'
+                  : '') +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        setStatus(thinkAssist, "First of its kind · designing original");
+        // Fall through to /plan as foundational design.
       }
     }
 
