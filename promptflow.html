@@ -5922,6 +5922,37 @@ body.d-desktop-mode .stream {
   line-height: 1.5;
   color: rgba(225,225,230,0.85);
 }
+/* Error state — when /plan/design_search itself fails. Visually
+   distinct from the gold foundational-success state so the two
+   outcomes can't be confused. Red palette signals "something
+   broke" rather than the gold "you're a pioneer" pattern. */
+.d-design-search-error {
+  padding: 10px 14px;
+  background: rgba(255,92,92,0.06);
+  border: 1px solid rgba(255,92,92,0.3);
+  border-radius: 6px;
+}
+.d-dse-title {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,140,140,0.95);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.d-dse-detail {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(255,180,180,0.8);
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.d-dse-fallback {
+  font-size: 12px;
+  color: rgba(180,180,190,0.7);
+  font-style: italic;
+}
 .d-design-search-list {
   list-style: none;
   margin: 0;
@@ -13361,24 +13392,55 @@ promptflow whoami</code></pre>
       setStatus(assist, "Searching the catalog…");
 
       let searchData = null;
+      let searchError = null;
       try {
         const r = await fetch("/api/promptflow/plan/design_search", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ query: userText }),
         });
-        searchData = await r.json().catch(() => null);
-        if (!r.ok || !searchData || !searchData.ok) throw new Error("search_failed");
-      } catch {
-        // Search failed — fall through to a normal /plan call. The
-        // thinking bubble collapses to a quiet note so the user can
-        // see we tried.
+        // Read as text first so we can surface server-error messages
+        // when the response is JSON-with-error vs HTML (500 page) vs
+        // genuinely-broken. Previous code lumped all of these together
+        // as "no match" which was actively misleading — a server
+        // outage looked identical to a clean empty search.
+        const responseText = await r.text();
+        if (responseText.trim().startsWith("<")) {
+          searchError = "Server returned HTML (HTTP " + r.status + "). The /plan/design_search route may be misconfigured.";
+        } else {
+          try {
+            searchData = JSON.parse(responseText);
+          } catch (parseErr) {
+            searchError = "Could not parse search response: " + parseErr.message;
+          }
+          if (searchData && !searchData.ok) {
+            searchError = searchData.message || searchData.error || ("HTTP " + r.status);
+            searchData = null;
+          } else if (!r.ok) {
+            searchError = "HTTP " + r.status;
+            searchData = null;
+          }
+        }
+      } catch (e) {
+        searchError = (e && e.message) || "Network error";
+      }
+
+      // If we got a real error, show it visibly. The user (and Tyler
+      // in DevTools) can tell at a glance whether the empty path is
+      // "search worked, nothing matched" (good — proceed with
+      // foundational design) or "search broke, we're flying blind"
+      // (bad — surface the error so it can be fixed).
+      if (searchError) {
+        console.error("[design_search]", searchError);
         thinkBody.innerHTML =
           '<div class="d-design-search">' +
-            '<div class="d-design-search-phase d-design-search-quiet">' +
-              '<span class="d-design-search-label">No catalog matches found — designing from scratch.</span>' +
+            '<div class="d-design-search-error">' +
+              '<div class="d-dse-title">Catalog search unavailable</div>' +
+              '<div class="d-dse-detail">' + escapeHtml(searchError) + '</div>' +
+              '<div class="d-dse-fallback">Designing without catalog context — composition discovery skipped this turn.</div>' +
             '</div>' +
           '</div>';
+        setStatus(assist, "Catalog search failed · designing without context");
         searchData = null;
       }
 
