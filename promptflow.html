@@ -6210,6 +6210,21 @@ body.d-desktop-mode .stream {
    distinct from the gold foundational-success state so the two
    outcomes can't be confused. Red palette signals "something
    broke" rather than the gold "you're a pioneer" pattern. */
+.rc-run-header {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  padding: 8px 0 10px;
+  border-bottom: 1px dashed rgba(232,169,23,0.22);
+  margin-bottom: 6px;
+}
+.rc-run-verb {
+  color: rgba(232,169,23,0.95);
+  font-weight: 600;
+}
+.rc-run-name {
+  color: rgba(255,220,140,0.9);
+}
+
 .d-design-search-error {
   padding: 10px 14px;
   background: rgba(255,92,92,0.06);
@@ -13926,19 +13941,45 @@ promptflow whoami</code></pre>
       }
     }
 
-    const assist = addAssistMsg();
+    // Adopt the run-card's bubble if one was handed off. The run-card
+    // creates a chat bubble for its form, then on Run it clears the
+    // bubble body and points window._runCardBubble at the {el, body}
+    // so send() can stream status + output into the SAME bubble.
+    // Result: one continuous timeline (form → status → output) where
+    // the form used to live, instead of a stacked "collapsed summary"
+    // bubble plus a fresh planning bubble. One-shot: read-and-clear
+    // so a later unrelated send doesn't reuse a stale reference.
+    let assist;
+    const adoptedBubble = window._runCardBubble || null;
+    window._runCardBubble = null;
+    if (adoptedBubble && adoptedBubble.el && adoptedBubble.body) {
+      assist = adoptedBubble;
+      // Scroll the adopted bubble into view so the user sees the
+      // status take over where the form just was.
+      try { assist.el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
+    } else {
+      assist = addAssistMsg();
+    }
     // When chaining off an existing process via Compose/Adapt, surface
     // the source in the initial status so the user immediately sees
     // "this is being built FROM something" — reinforces the gameplay
     // loop AND gives the impression that the planner is starting from
     // a known scaffold (which the backend is, in fact, doing).
+    //
+    // _forceRunProcessId means the user clicked Run on a specific
+    // process card via the run-card. The plan call still runs (it
+    // builds the recipe from inputs) but to the user this is just
+    // "the run starting" — they already committed; planning is
+    // internal plumbing they shouldn't see as a separate beat.
     const initialStatus = isRefinement
       ? "Refining plan…"
-      : (pendingParentProcess && pendingParentProcess.name
-          ? (pendingParentProcess.kind === "adapt"
-              ? `Adapting from "${pendingParentProcess.name}"…`
-              : `Composing from "${pendingParentProcess.name}"…`)
-          : "Planning…");
+      : window._forceRunProcessId
+          ? `Setting up…`
+          : (pendingParentProcess && pendingParentProcess.name
+              ? (pendingParentProcess.kind === "adapt"
+                  ? `Adapting from "${pendingParentProcess.name}"…`
+                  : `Composing from "${pendingParentProcess.name}"…`)
+              : "Planning…");
     setStatus(assist, initialStatus);
 
     // Capture-and-clear the chain-navigation parent — strictly one
@@ -16186,13 +16227,26 @@ promptflow whoami</code></pre>
         return;
       }
 
-      // Collapse the run-card to a summary line. The actual run
-      // result will render in a new bubble below via the normal
-      // send() flow.
+      // Convert the run-card into the "live run" host. Instead of
+      // replacing the bubble with a static "▶ Running…" summary AND
+      // letting send() create its own bubble below (two stacked
+      // artifacts), we keep this bubble as the home for the run:
+      //   1. Replace the form with a persistent header showing what's
+      //      running. The header sits at the top of the bubble and
+      //      everything send() appends (status spinner, output) flows
+      //      naturally beneath it.
+      //   2. Hand the bubble off to send() via window._runCardBubble.
+      //      send() detects this on its next call and renders its
+      //      status + output INTO this bubble's body, below the
+      //      header — one continuous timeline.
       body.innerHTML =
-        '<div class="rc-card rc-card-committed">' +
-          '<div class="rc-summary">▶ Running "' + escapeHtml(proc.name) + '"…</div>' +
+        '<div class="rc-run-header">' +
+          '<span class="rc-run-verb">▶ Running</span> ' +
+          '<span class="rc-run-name">' + escapeHtml(proc.name) + '</span>' +
         '</div>';
+      // Hand the SAME bubble off to send() so its status + output
+      // render here, below the header, in one continuous timeline.
+      window._runCardBubble = cardAssist;
 
       // Stage the inputs into the chat's existing input pipeline.
       // _forceRunProcessId locks execution to THIS process so the
