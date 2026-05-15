@@ -6042,6 +6042,158 @@ body.d-desktop-mode .stream {
   color: rgba(232,200,140,0.85);
   padding: 2px 0;
 }
+
+/* ── Run-card ─────────────────────────────────────────────────
+   In-chat run UI. Opens when the user clicks ▶ Run on a process
+   card. Renders structured input fields based on the process's
+   input_kinds, shows the cascade cost, and fires the run via
+   the existing /plan flow when [Run] is clicked. */
+.rc-card {
+  padding: 14px 16px;
+  background: rgba(20,20,28,0.5);
+  border: 1px solid rgba(232,169,23,0.32);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.rc-card-invalid {
+  border-color: rgba(255,92,92,0.7) !important;
+  background: rgba(255,92,92,0.06) !important;
+}
+.rc-card-committed,
+.rc-card-cancelled {
+  background: rgba(20,20,28,0.3);
+  border-color: rgba(180,180,200,0.18);
+  padding: 8px 14px;
+}
+.rc-header {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  color: rgba(230,230,240,0.95);
+}
+.rc-header-verb {
+  color: rgba(232,169,23,0.95);
+  font-weight: 600;
+}
+.rc-header-name {
+  color: rgba(255,220,140,0.9);
+}
+.rc-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rc-label {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(200,200,210,0.65);
+  text-transform: uppercase;
+}
+.rc-textarea {
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  background: rgba(10,10,14,0.6);
+  border: 1px solid rgba(180,180,200,0.18);
+  border-radius: 5px;
+  color: rgba(230,230,240,0.95);
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.rc-textarea:focus {
+  outline: none;
+  border-color: rgba(232,169,23,0.6);
+}
+.rc-file-picker {
+  display: block;
+  padding: 10px 12px;
+  background: rgba(10,10,14,0.6);
+  border: 1px dashed rgba(180,180,200,0.28);
+  border-radius: 5px;
+  color: rgba(180,180,200,0.7);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s ease;
+}
+.rc-file-picker:hover {
+  background: rgba(232,169,23,0.06);
+  border-color: rgba(232,169,23,0.4);
+  color: rgba(230,230,240,0.9);
+}
+.rc-file-picker.rc-has-file {
+  background: rgba(232,169,23,0.08);
+  border-style: solid;
+  border-color: rgba(232,169,23,0.4);
+  color: rgba(255,220,140,0.95);
+}
+.rc-cost-row {
+  padding: 6px 0;
+  border-top: 1px dashed rgba(180,180,200,0.12);
+}
+.rc-cost-line {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(200,200,210,0.75);
+}
+.rc-cost-line strong {
+  color: rgba(255,220,140,0.95);
+  font-weight: 600;
+}
+.rc-cost-error {
+  color: rgba(255,140,140,0.7);
+}
+.rc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.rc-cancel-btn,
+.rc-run-btn {
+  padding: 8px 16px;
+  border-radius: 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.rc-cancel-btn {
+  background: transparent;
+  border: 1px solid rgba(180,180,200,0.25);
+  color: rgba(200,200,210,0.7);
+}
+.rc-cancel-btn:hover {
+  background: rgba(180,180,200,0.08);
+  color: rgba(230,230,240,0.9);
+}
+.rc-run-btn {
+  background: rgba(232,169,23,0.85);
+  border: 1px solid rgba(232,169,23,0.95);
+  color: rgba(20,20,28,1);
+  font-weight: 600;
+}
+.rc-run-btn:hover {
+  background: rgba(255,200,60,0.95);
+  transform: translateY(-1px);
+}
+.rc-summary {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  color: rgba(232,200,140,0.85);
+}
+.rc-card-cancelled .rc-summary {
+  color: rgba(180,180,200,0.6);
+}
 /* Error state — when /plan/design_search itself fails. Visually
    distinct from the gold foundational-success state so the two
    outcomes can't be confused. Red palette signals "something
@@ -15734,6 +15886,219 @@ promptflow whoami</code></pre>
     return wrap;
   }
 
+  // Open a focused run-card in a new chat bubble. Renders structured
+  // input fields based on the process's input_kinds, shows the cost,
+  // and on [Run] fires the existing /plan → /execute flow with
+  // FormData built from the typed inputs. The run-card is the chat
+  // equivalent of the standalone process page's run section —
+  // simpler (no auth chooser since user is logged in, no cascade
+  // history since this is a fresh run), but the same shape.
+  async function openRunCard(proc) {
+    const cardAssist = addAssistMsg();
+    const body = cardAssist.body;
+
+    // Skeleton paint — render fields immediately, fetch cost in
+    // parallel and update the cost line when it arrives.
+    const inputKinds = Array.isArray(proc.input_kinds) && proc.input_kinds.length > 0
+      ? proc.input_kinds
+      : ["text"];
+
+    // Build the form rows. Each kind gets a labeled control: textarea
+    // for text, file picker for image/video/audio. Stash the control
+    // reference in `controls` keyed by kind, so the Run handler can
+    // collect values regardless of which fields are present.
+    const controls = {};
+    let fieldsHtml = "";
+    inputKinds.forEach((kind, idx) => {
+      const k = String(kind).toLowerCase();
+      const fieldId = `rc-field-${idx}-${k}`;
+      if (k === "text") {
+        fieldsHtml +=
+          '<div class="rc-field">' +
+            '<label class="rc-label" for="' + fieldId + '">Text</label>' +
+            '<textarea class="rc-textarea" id="' + fieldId + '" rows="3" placeholder="Describe what to run this with..."></textarea>' +
+          '</div>';
+      } else if (k === "image" || k === "video" || k === "audio") {
+        const accept = k === "image" ? "image/*" : k === "video" ? "video/*" : "audio/*";
+        fieldsHtml +=
+          '<div class="rc-field">' +
+            '<label class="rc-label">' + k.charAt(0).toUpperCase() + k.slice(1) + '</label>' +
+            '<label class="rc-file-picker" for="' + fieldId + '">' +
+              '<span class="rc-file-label">Click to upload ' + escapeHtml(k) + '…</span>' +
+              '<input type="file" id="' + fieldId + '" accept="' + accept + '" hidden>' +
+            '</label>' +
+          '</div>';
+      } else {
+        // Unknown kind — render a text field as a sane fallback
+        fieldsHtml +=
+          '<div class="rc-field">' +
+            '<label class="rc-label" for="' + fieldId + '">' + escapeHtml(k) + '</label>' +
+            '<textarea class="rc-textarea" id="' + fieldId + '" rows="2"></textarea>' +
+          '</div>';
+      }
+    });
+
+    body.innerHTML =
+      '<div class="rc-card">' +
+        '<div class="rc-header">' +
+          '<span class="rc-header-verb">▶ Run</span> ' +
+          '<span class="rc-header-name">' + escapeHtml(proc.name || "process") + '</span>' +
+        '</div>' +
+        '<div class="rc-fields">' + fieldsHtml + '</div>' +
+        '<div class="rc-cost-row" id="rc-cost-row">' +
+          '<span class="rc-cost-line">Calculating cost…</span>' +
+        '</div>' +
+        '<div class="rc-actions">' +
+          '<button type="button" class="rc-cancel-btn">Cancel</button>' +
+          '<button type="button" class="rc-run-btn">Run →</button>' +
+        '</div>' +
+      '</div>';
+
+    // Wire control refs after the DOM is in place.
+    inputKinds.forEach((kind, idx) => {
+      const k = String(kind).toLowerCase();
+      const el = body.querySelector('#rc-field-' + idx + '-' + k);
+      if (!el) return;
+      controls[k + '_' + idx] = { kind: k, el };
+      // For file pickers, wire the label to update with the chosen filename.
+      if (k === "image" || k === "video" || k === "audio") {
+        el.addEventListener("change", () => {
+          const picker = el.closest(".rc-file-picker");
+          const lbl = picker?.querySelector(".rc-file-label");
+          if (lbl && el.files && el.files[0]) {
+            const f = el.files[0];
+            lbl.textContent = f.name + " (" + Math.round(f.size / 1024) + " KB)";
+            picker.classList.add("rc-has-file");
+          }
+        });
+      }
+    });
+
+    // Fetch the cost quote in parallel. The /process/quote endpoint
+    // already exists — same one the cascade panel uses. Returns the
+    // cascade breakdown which we sum into a single total token cost.
+    (async () => {
+      try {
+        const r = await fetch("/api/promptflow/process/quote", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: proc.id }),
+        });
+        const j = await r.json();
+        const costRow = body.querySelector("#rc-cost-row");
+        if (!costRow) return;
+        if (j.ok) {
+          const markupTotal = j.total_markup_tokens || 0;
+          const bonusTotal = j.total_bonus_tokens || 0;
+          const total = markupTotal + bonusTotal;
+          if (total === 0) {
+            // User owns this process or it's free
+            costRow.innerHTML =
+              '<span class="rc-cost-line"><strong>Free</strong> — you own this process</span>';
+          } else {
+            const remaining = typeof j.tokens_remaining === "number" ? j.tokens_remaining : null;
+            const remainingStr = remaining !== null
+              ? ' · ' + remaining + ' tokens available'
+              : '';
+            costRow.innerHTML =
+              '<span class="rc-cost-line">Cost: <strong>' + total + ' tokens</strong>' +
+              ' (' + markupTotal + ' royalties + ' + bonusTotal + ' bonus)' +
+              escapeHtml(remainingStr) + '</span>';
+          }
+        } else {
+          costRow.innerHTML = '<span class="rc-cost-line rc-cost-error">Cost unavailable</span>';
+        }
+      } catch {
+        const costRow = body.querySelector("#rc-cost-row");
+        if (costRow) costRow.innerHTML = '<span class="rc-cost-line rc-cost-error">Cost unavailable</span>';
+      }
+    })();
+
+    // Cancel — collapse to a one-line summary.
+    const cancelBtn = body.querySelector(".rc-cancel-btn");
+    cancelBtn.addEventListener("click", () => {
+      body.innerHTML =
+        '<div class="rc-card rc-card-cancelled">' +
+          '<div class="rc-summary">✕ Run cancelled</div>' +
+        '</div>';
+    });
+
+    // Run — collect inputs, build FormData, hand off to send() with
+    // _forceRunProcessId set. Reuses the existing /plan → /execute
+    // → /status pipeline that all other run paths use, so the result
+    // renders in a new bubble below the (now-collapsed) run-card.
+    const runBtnEl = body.querySelector(".rc-run-btn");
+    runBtnEl.addEventListener("click", async () => {
+      if (busy) return;
+
+      // Collect inputs into a structured payload.
+      const collected = { text: "", files: {} };
+      let hasAnyInput = false;
+      Object.entries(controls).forEach(([key, c]) => {
+        if (c.kind === "text" || (c.kind !== "image" && c.kind !== "video" && c.kind !== "audio")) {
+          const v = (c.el.value || "").trim();
+          if (v) {
+            collected.text += (collected.text ? "\n\n" : "") + v;
+            hasAnyInput = true;
+          }
+        } else {
+          // Media kinds — file picker
+          if (c.el.files && c.el.files[0]) {
+            collected.files[c.kind] = c.el.files[0];
+            hasAnyInput = true;
+          }
+        }
+      });
+
+      if (!hasAnyInput) {
+        // Nothing typed/attached — flash the card border red briefly
+        const cardEl = body.querySelector(".rc-card");
+        if (cardEl) {
+          cardEl.classList.add("rc-card-invalid");
+          setTimeout(() => cardEl.classList.remove("rc-card-invalid"), 600);
+        }
+        return;
+      }
+
+      // Collapse the run-card to a summary line. The actual run
+      // result will render in a new bubble below via the normal
+      // send() flow.
+      body.innerHTML =
+        '<div class="rc-card rc-card-committed">' +
+          '<div class="rc-summary">▶ Running "' + escapeHtml(proc.name) + '"…</div>' +
+        '</div>';
+
+      // Stage the inputs into the chat's existing input pipeline.
+      // The text goes into textInput; files go into attachedFiles[]
+      // (the same array the upload button populates). The chat's
+      // send() already classifies attachedFiles by kind and routes
+      // each into the right FormData slot — we just need to put the
+      // entries there in the same shape. _forceRunProcessId tells
+      // the backend to lock execution to THIS process.
+      window._forceRunProcessId = proc.id;
+      window._forceRunProcessName = proc.name;
+      textInput.value = collected.text || `Run "${proc.name}"`;
+      attachedFiles = attachedFiles || [];
+      for (const kind of ["image", "video", "audio"]) {
+        const file = collected.files[kind];
+        if (!file) continue;
+        try {
+          const dataUrl = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = () => res(r.result);
+            r.onerror = rej;
+            r.readAsDataURL(file);
+          });
+          attachedFiles.push({ file, dataUrl, kind });
+        } catch {}
+      }
+
+      // Fire the send. The existing /plan call picks up
+      // _forceRunProcessId + the staged inputs and executes.
+      send();
+    });
+  }
+
   function renderProcessCard(assist, proc, mode, sourceParent) {
     // mode: "saved" | "updated" | "loaded"
 
@@ -15918,48 +16283,16 @@ promptflow whoami</code></pre>
     runBtn.className = "btn process-run-btn";
     runBtn.type = "button";
     runBtn.innerHTML = "▶ Run";
-    runBtn.title = `Execute "${proc.name}" — uses any input you've already typed or attached`;
+    runBtn.title = `Set up a run of "${proc.name}" — opens a form with the inputs this process needs`;
     runBtn.onclick = () => {
       if (busy) return;
-      // The Run button used to ONLY pre-fill the chat input with
-      // 'Run "X" with: ' and wait for the user to type. That routed
-      // through the planner, which had full discretion to re-interpret
-      // — if the user happened to have an image attached from a
-      // previous turn, the planner could ignore the named process
-      // entirely and design something totally different. Bad UX.
-      //
-      // New behavior:
-      //   1. Lock the next send to THIS process via _forceRunProcessId.
-      //      The backend constrains the planner: it MUST output
-      //      intent=execute with picked_process_id=<this proc>. No
-      //      creative reinterpretation; the planner's only job is to
-      //      fit the user's inputs to the process's input schema.
-      //   2. If the user already has text/image/zip staged, fire
-      //      send() immediately — they've provided everything needed.
-      //   3. If nothing is staged, focus the input and let them type
-      //      what to run it with. Pre-fill with a hint that mentions
-      //      the process by name for clarity.
-      window._forceRunProcessId = proc.id;
-      window._forceRunProcessName = proc.name;
-      const hasStagedInput =
-        (textInput.value || "").trim().length > 0
-        || (attachedFiles && attachedFiles.length > 0)
-        || (pendingContrib && pendingContrib.zip);
-      if (hasStagedInput) {
-        // Execute now with whatever the user has staged. If they
-        // didn't type any text, fabricate a minimal one so /plan has
-        // something to parse — the backend will use the process's
-        // input schema to map the attachments to fields.
-        if (!(textInput.value || "").trim()) {
-          textInput.value = `Run "${proc.name}" with the attached files.`;
-        }
-        send();
-      } else {
-        textInput.value = `Run "${proc.name}": `;
-        textInput.focus();
-        textInput.setSelectionRange(textInput.value.length, textInput.value.length);
-        updateSend();
-      }
+      // Open a focused run-card in a new chat bubble. Each input
+      // kind gets a typed control (textarea for text, file picker
+      // for media). Cost is fetched and shown inline. Click [Run]
+      // → existing /plan flow with FormData built from the typed
+      // inputs and _forceRunProcessId set so the planner can't
+      // reinterpret the request.
+      openRunCard(proc);
     };
     actions.appendChild(runBtn);
     assist.body.appendChild(actions);
