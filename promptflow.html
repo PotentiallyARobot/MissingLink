@@ -5897,6 +5897,31 @@ body.d-desktop-mode .stream {
   font-size: 11.5px;
   color: rgba(170,170,176,0.72);
 }
+/* Foundational-process callout — appears when the search returns
+   no strong match. Frames the moment as ownership + earning
+   opportunity rather than "we didn't find anything." Gold accents
+   match the cascade panel so the visual cue is "this is the
+   money side of the product." */
+.d-design-search-foundational {
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(232,169,23,0.07), rgba(232,169,23,0.02));
+  border: 1px solid rgba(232,169,23,0.28);
+  border-radius: 6px;
+}
+.d-dsf-title {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(232,200,140,0.95);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.d-dsf-pitch {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(225,225,230,0.85);
+}
 .d-design-search-list {
   list-style: none;
   margin: 0;
@@ -13333,6 +13358,7 @@ promptflow whoami</code></pre>
             '<span class="d-design-search-label">Searching the catalog for relevant existing processes…</span>' +
           '</div>' +
         '</div>';
+      setStatus(assist, "Searching the catalog…");
 
       let searchData = null;
       try {
@@ -13389,19 +13415,36 @@ promptflow whoami</code></pre>
               ).join("") +
             '</div>'
           : '<div class="d-design-search-section">' +
-              '<div class="d-design-search-sectitle d-design-search-empty">No strong match found — designing from scratch.</div>' +
+              '<div class="d-design-search-foundational">' +
+                '<div class="d-dsf-title">First in the catalog ★</div>' +
+                '<div class="d-dsf-pitch">Nothing like this exists yet. You\'re building original IP — build it, refine it, test it, and compose it with other processes to earn.</div>' +
+              '</div>' +
             '</div>';
         const composeHtml = searchData.top_pick_id
           ? '<div class="d-design-search-handoff">Composing a new process that builds on <strong>' +
               escapeHtml(searchData.top_pick_name) +
             '</strong>…</div>'
-          : '<div class="d-design-search-handoff">Designing a new process from scratch…</div>';
+          : '<div class="d-design-search-handoff">Designing your foundational process…</div>';
         thinkBody.innerHTML =
           '<div class="d-design-search">' +
             candHtml +
             picksHtml +
             composeHtml +
           '</div>';
+
+        // Status line reflects what search actually returned. Real
+        // counts, real top-match name — never fabricated.
+        if (searchData.top_pick_id) {
+          setStatus(assist,
+            cands.length + " candidate" + (cands.length === 1 ? "" : "s") +
+            " · top match: " + searchData.top_pick_name + " · designing on top");
+        } else if (cands.length > 0) {
+          setStatus(assist,
+            cands.length + " candidate" + (cands.length === 1 ? "" : "s") +
+            " considered · first of its kind · designing original");
+        } else {
+          setStatus(assist, "First of its kind · designing original");
+        }
 
         // Hand-off: set pendingParentProcess so the existing
         // chainSource flow picks it up. The capture-and-clear three
@@ -13440,52 +13483,25 @@ promptflow whoami</code></pre>
     const generationParent = pendingParentProcess;
     pendingParentProcess = null;
 
-    // ── Animated planning-stage progression ──────────────────────
+    // ── Real phase reporting ─────────────────────────────────────
     // The /plan call is a single HTTP request that can take 5-15s
-    // for design_process intents (RAG over lessons + processes,
-    // then an Opus thinking call to design the workflow). Without
-    // any sub-status the user just sees "Planning…" for the whole
-    // duration, which feels stuck. Cycle through narrative stage
-    // labels at ~1.2s intervals so the wait feels like progress.
+    // for design_process intents. We surface real progress as it
+    // happens: design_search opens with "Searching the catalog",
+    // then transitions to "Found N · top match: X" or "No matches"
+    // when the search returns, then "Designing" while /plan runs.
     //
-    // The stage sequence reflects the actual backend pipeline
-    // (search lessons → search processes → adapt → author → create),
-    // though the per-stage timing here is decoupled from real
-    // backend timing — when the real /plan returns, we clear the
-    // interval and let the actual rendering take over. Counts are
-    // illustrative; real counts can be filled in if/when the
-    // backend streams them.
+    // The earlier version cycled through fabricated lines like
+    // "5 relevant lessons found" on a 1.2s timer — those numbers
+    // were unrelated to anything happening on the server. Pure
+    // theater. Removed because anyone watching closely notices the
+    // mismatch and loses trust in the rest of the UI.
     //
-    // Skipped for refinements (isRefinement === true) since those
-    // don't go through the full RAG + design pipeline — they just
-    // ask Claude to re-design an existing process.
-    let planningStagesTimer = null;
-    if (!isRefinement) {
-      const stages = [
-        "Searching for applicable lessons…",
-        "5 relevant lessons found",
-        "Searching for relevant processes…",
-        "2 relevant processes found",
-        "Adapting relevant processes and lessons…",
-        "Authoring missing steps…",
-        "Creating process…",
-      ];
-      let stageIdx = 0;
-      planningStagesTimer = setInterval(() => {
-        if (stageIdx >= stages.length || !assist.body || !document.body.contains(assist.body)) {
-          clearInterval(planningStagesTimer);
-          planningStagesTimer = null;
-          return;
-        }
-        setStatus(assist, stages[stageIdx]);
-        stageIdx++;
-      }, 1200);
-    }
+    // stopPlanningStages kept as a no-op so the existing call sites
+    // below still work without modification.
     function stopPlanningStages() {
-      if (planningStagesTimer) {
-        clearInterval(planningStagesTimer);
-        planningStagesTimer = null;
-      }
+      // No interval to cancel — the real-status approach is event-
+      // driven. Kept as a no-op for compatibility with existing
+      // call sites; can be cleaned up later.
     }
 
     // Capture and reset composer.
@@ -13562,6 +13578,26 @@ promptflow whoami</code></pre>
       }));
     }
     consumeGenPrefsOverride();
+
+    // Status during /plan itself — this is the long phase where the
+    // planner model runs. Honest status reflecting what we just
+    // queued up rather than fabricated stages:
+    //   - design_process intent → "Designing process…"
+    //   - refinement              → "Refining process…"
+    //   - everything else         → "Planning…"
+    if (isRefinement) {
+      setStatus(assist, "Refining process…");
+    } else if (shouldRunDesignSearch) {
+      // Design search already updated status with its findings;
+      // bump to "Designing" now that the model is generating.
+      setStatus(assist, "Designing process…");
+    } else if (generationParent && generationParent.id) {
+      setStatus(assist,
+        (generationParent.kind === "adapt" ? "Adapting" : "Composing") +
+        " from \"" + generationParent.name + "\"…");
+    } else {
+      setStatus(assist, "Planning…");
+    }
 
     let planResp;
     try {
