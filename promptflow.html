@@ -13634,7 +13634,15 @@ promptflow whoami</code></pre>
         paintEditorDoneRow();
         // Fall through to the normal /plan flow below.
       } else {
-        textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        textInput.value = ""; textInput.style.height = "auto";
+        // Clear staged attachments — same reasoning as the main send
+        // path. Refine-bind consumes this turn; the next turn starts
+        // clean. Without this, files attached to a refine message
+        // pollute subsequent messages.
+        attachedFiles = [];
+        fileInput.value = "";
+        paintAttach();
+        updateSend();
         await refineBoundProcess(userText);
         return;
       }
@@ -13648,6 +13656,19 @@ promptflow whoami</code></pre>
     const primaryVideo = filesToSend.find(a => a.kind === "video") || null;
     const primaryAudio = filesToSend.find(a => a.kind === "audio") || null;
     const extraImages  = filesToSend.filter(a => a.kind === "image" && a !== primaryImage);
+
+    // Clear the staged-attachment globals AS SOON AS we've snapshotted
+    // them. The in-flight send has filesToSend (a local snapshot) to
+    // work with; the module-level attachedFiles being empty from here
+    // means any followup user message starts clean, regardless of
+    // which early-exit branch the rest of send() takes. Without this
+    // early clear, a send() that exits via refine-bind, contribution,
+    // discuss-stream, or any other early return leaves staged files
+    // lingering — they get re-attached to the user's NEXT message
+    // even though they were already consumed by the previous run.
+    attachedFiles = [];
+    fileInput.value = "";
+    paintAttach();
 
     const isRefinement = !primaryImage && !primaryVideo && !primaryAudio && !!currentConversationId;
     const userImg = primaryImage?.dataUrl || null;
@@ -14018,9 +14039,11 @@ promptflow whoami</code></pre>
     // whether the plan invokes a saved process (picked_process_id).
     currentAbortController = new AbortController();
     currentRunCancellable = true;
-    attachedFiles = []; fileInput.value = "";
+    // attachedFiles / fileInput / paintAttach already cleared
+    // immediately after the filesToSend snapshot above — see comment
+    // there. Just clear the text composer here.
     textInput.value = ""; textInput.style.height = "auto";
-    paintAttach(); updateSend();
+    updateSend();
 
     // ── Phase 1: /plan (no charge) ─────────────────────────────
     const fd = new FormData();
