@@ -2563,7 +2563,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <option value="gpt-image-2">🎨 Quality — gpt-image-2 (best, default)</option>
             <option value="gpt-image-1-mini">⚡ Fast — gpt-image-1-mini (~4× cheaper)</option>
             <option value="gpt-image-1.5">🪟 Transparent — gpt-image-1.5 (alpha PNG support)</option>
-            <option value="illustrious">🎭 Illustrious — Realism v5.5 (local SDXL, ~10s on warm GPU)</option>
         </select>
         <div class="size-hint" id="genModelHint">
             Latest model. Best photorealism + text rendering.
@@ -2611,7 +2610,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only gpt-only-section" style="display:none">
+    <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">⭐</span> QUALITY</div>
         <!-- Quality controls cost vs detail tradeoff. low = fast, cheap,
              rough; high = slow, expensive, refined; auto = let the model
@@ -2629,7 +2628,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only gpt-only-section" style="display:none">
+    <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">📦</span> FORMAT</div>
         <!-- Output format — PNG = lossless, larger files; JPEG = small,
              lossy, fastest; WebP = small, modern. PNG default since the
@@ -2651,7 +2650,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only gpt-only-section" style="display:none">
+    <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🌫️</span> BACKGROUND</div>
         <!-- Background transparency. gpt-image-2 itself does NOT support
              transparent backgrounds (per OpenAI's official docs as of
@@ -2678,86 +2677,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
          once at the app level: this is a creative tool, the user is
          opted into permissive mode by default. The _generateModeration
          state variable still exists so the request body is unchanged. -->
-
-    <!-- Negative prompt — Illustrious only (gpt-image-2 ignores
-         negative prompts; the worker discards them on that path). When
-         empty, the worker falls back to a sensible default that catches
-         the most common SDXL artifacts (bad hands, watermarks, etc.). -->
-    <div class="sec generate-only local-only-section" style="display:none">
-        <div class="sec-label"><span class="icon">🚫</span> NEGATIVE PROMPT
-            <span class="sec-label-count" style="font-weight:400;color:var(--text-muted)">optional</span>
-        </div>
-        <textarea class="custom-prompt" id="generateNegativePrompt"
-            placeholder="Things to avoid... (leave blank for sensible defaults)"
-            rows="3"
-            oninput="genSetNegativePrompt(this.value)"></textarea>
-        <div class="size-hint">Default suppresses common SDXL artifacts (bad anatomy, watermarks, JPEG noise, etc.)</div>
-    </div>
-
-    <!-- Sampler settings — exposes the SDXL knobs the model card
-         calls out (steps, CFG, seed) plus img2img denoise strength.
-         All visible only for local models since gpt-image-2 doesn't
-         accept any of these. The Strength row is further gated on
-         whether slot 0 is filled (img2img mode) — see
-         updateLocalControlsVisibility. -->
-    <div class="sec generate-only local-only-section" style="display:none">
-        <div class="sec-label"><span class="icon">⚙️</span> SAMPLER SETTINGS</div>
-
-        <!-- Steps. Card recommends 27+. Range chosen so the user can
-             trade speed for quality without going off the rails:
-             15 = fast draft (~6s), 27 = balanced (~10s), 50 = slow but
-             refined (~18s). 60 is a hard ceiling. -->
-        <div style="margin-bottom:14px">
-            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
-                <span>STEPS</span><span id="genStepsLabel">27</span>
-            </div>
-            <input type="range" id="genStepsSlider" min="15" max="60" value="27" step="1"
-                   oninput="genSetSteps(this.value)" style="width:100%">
-            <div class="size-hint">Higher = more detail. Card recommends 27+</div>
-        </div>
-
-        <!-- CFG. Card recommends 5. Range 1-15 covers the practical
-             span (below 1 is uninteresting, above 12 typically cooks
-             the image). 0.5 step gives fine control without overkill. -->
-        <div style="margin-bottom:14px">
-            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
-                <span>CFG SCALE</span><span id="genCfgLabel">5.0</span>
-            </div>
-            <input type="range" id="genCfgSlider" min="1" max="15" value="5" step="0.5"
-                   oninput="genSetCfg(this.value)" style="width:100%">
-            <div class="size-hint">How strictly to follow the prompt. Card recommends 5</div>
-        </div>
-
-        <!-- Seed. Empty = random (server picks). Number = fixed.
-             The 🎲 button clears to random; "lock" = type a seed in.
-             After generation, the actual seed used is shown on the
-             result tile so the user can copy it back here for
-             reproduction. -->
-        <div style="margin-bottom:14px">
-            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
-                <span>SEED</span>
-                <button type="button" onclick="genSetSeed('')" title="Random seed for next generation"
-                        style="background:none;border:none;color:var(--gold);font-family:var(--font-mono);font-size:10px;cursor:pointer;padding:0">🎲 RANDOM</button>
-            </div>
-            <input type="number" id="genSeedInput" placeholder="random"
-                   min="0" step="1" oninput="genSetSeed(this.value)"
-                   style="width:100%;padding:8px 10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:12px;outline:none">
-            <div class="size-hint">Empty = random each generation. Number = reproducible</div>
-        </div>
-
-        <!-- Denoise strength — img2img only. Toggled visible by
-             updateLocalControlsVisibility based on slot 0. Range
-             0.05-0.95 (the model snaps tighter; the worker re-clamps).
-             0.7 is the default — moderate transformation. -->
-        <div id="genStrengthRow" style="display:none">
-            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:4px">
-                <span>IMG2IMG STRENGTH</span><span id="genStrengthLabel">0.70</span>
-            </div>
-            <input type="range" id="genStrengthSlider" min="0.05" max="0.95" value="0.70" step="0.05"
-                   oninput="genSetStrength(this.value)" style="width:100%">
-            <div class="size-hint">How much to deviate from the reference. 0.3 = subtle, 0.7 = transform, 0.9 = mostly ignore</div>
-        </div>
-    </div>
 
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🔢</span> NUMBER OF IMAGES
@@ -3179,40 +3098,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
-<!-- Illustrious boot-confirmation modal. Shown when the user picks
-     Illustrious from the model dropdown — the boot has a non-trivial
-     token cost (200 tokens) so we want explicit consent before
-     spinning up the SDXL container. Clicking YES fires warmupIllustrious;
-     clicking NO reverts the dropdown to gpt-image-2 (no charge). The
-     idle copy is mandatory per UX requirement: users need to know
-     the container will scale down after 10 min of inactivity. -->
-<div class="popup-modal" id="illustriousConfirmModal" onclick="if(event.target===this)cancelIllustrious()">
-    <div class="popup-card">
-        <button class="modal-close" onclick="cancelIllustrious()">×</button>
-        <div class="popup-icon">🎭</div>
-        <h2>Start Illustrious model?</h2>
-        <p class="popup-balance">Cost: <b id="illustriousBootCost">200</b> tokens</p>
-        <div style="text-align:left;font-size:11px;color:var(--text-muted);line-height:1.6;margin:14px 0 18px;padding:14px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono)">
-            <div style="margin-bottom:8px;color:var(--text)">
-                <b style="color:var(--gold)">⚡ One-time boot fee.</b>
-                Spinning up the Illustrious container takes ~30-120 seconds and uses dedicated GPU resources.
-            </div>
-            <div style="margin-bottom:8px">
-                The container <b style="color:var(--text)">stays warm for 10 minutes</b> after your last generation.
-                You can run as many generations as you want during that window with no extra boot fee.
-            </div>
-            <div>
-                If you go idle for 10+ minutes the container shuts down and re-starting it later costs another <b id="illustriousBootCost2">200</b> tokens.
-            </div>
-        </div>
-        <p class="popup-balance" style="margin-bottom:18px">Your balance: <b id="illustriousUserBalance">0</b> tokens</p>
-        <div style="display:flex;gap:10px">
-            <button class="gen-btn" onclick="cancelIllustrious()" style="flex:1;background:var(--surface-2);color:var(--text);border:1px solid var(--border)">No, cancel</button>
-            <button class="gen-btn" onclick="confirmIllustrious()" style="flex:1">Yes, start it</button>
-        </div>
-    </div>
-</div>
-
 <!-- LOGIN MODAL (full landing) -->
 <div class="popup-modal" id="loginModal">
     <div class="popup-card" style="max-width:440px;padding:24px 32px">
@@ -3464,26 +3349,6 @@ let pollTimers={}; // jobId → interval
 // "Connecting…" label until the first status poll resolves, rather than
 // briefly claiming the GPU is cold before we actually know.
 let _gpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
-// Parallel state for the second container (SDXL Illustrious worker).
-// Populated from d.gpu_illustrious in pollStatus. The frontend uses
-// _activeGpuState() below to decide which one to show in the overlay
-// and header badge — Illustrious when the user is currently looking
-// at the Create flow with a local model selected, Qwen otherwise.
-let _illustriousGpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
-// Returns the GPU state the user is currently "facing." When they're
-// in Create mode with an isLocal model selected, the Illustrious
-// container is what they're waiting on, so the overlay/header should
-// reflect THAT container's status — not the Qwen container's. Anywhere
-// else (Camera, Edit, Batch, or Create with a GPT model), the Qwen
-// container is the relevant one. This keeps the existing UI behavior
-// for the 95% of paths that don't touch Illustrious.
-function _activeGpuState() {
-    const inLocalCreate = (typeof currentMode !== 'undefined') &&
-                          currentMode === 'generate' &&
-                          _GEN_MODEL_CAPS[_generateModel] &&
-                          _GEN_MODEL_CAPS[_generateModel].isLocal;
-    return inLocalCreate ? _illustriousGpuState : _gpuState;
-}
 // Has the very first /status response landed yet? Until it has, we never
 // claim "GPU ready" — the badge stays on "Connecting…" so a page load can't
 // flash a stale ready state inherited from a previous session.
@@ -4184,13 +4049,8 @@ function setMode(mode, opts){
     // them is misleading.
     document.querySelectorAll('.generate-only').forEach(el => el.style.display = mode === 'generate' ? '' : 'none');
     document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
-    // After the mass .generate-only toggle, re-apply the model-aware
-    // sub-toggle for .gpt-only-section vs .local-only-section. The mass
-    // setter above doesn't know about per-model classification, so it
-    // would otherwise leave Illustrious-only panels (Sampler Settings,
-    // Negative Prompt) visible when GPT-image is selected, and vice
-    // versa. genSetModel does the right thing for the currently active
-    // model — calling it here re-establishes the correct visibility.
+    // Re-apply per-model panel visibility when entering Create. genSetModel
+    // toggles the multi-ref slot count based on the active model.
     if (mode === 'generate' && typeof genSetModel === 'function') {
         genSetModel(_generateModel);
     }
@@ -4294,15 +4154,6 @@ function setMode(mode, opts){
             })();
         }
     }
-
-    // NOTE: We do NOT auto-warmup on Create-mode entry anymore — the
-    // boot fee requires explicit user confirmation, and silently
-    // charging or auto-opening the confirmation modal on mode changes
-    // would be poor UX. If the user has Illustrious selected from a
-    // prior session and the container has gone cold, they re-confirm
-    // either by clicking GENERATE (warmupIllustrious fires server-side
-    // with the boot deduct) or by re-selecting Illustrious from the
-    // dropdown (which re-opens the confirmation modal).
 }
 
 function updateGenButton(){
@@ -4411,16 +4262,6 @@ async function pollStatus(){
                 renderQueue();
             }
         }
-        // Parallel block for the Illustrious worker. Same shape, separate
-        // state object — the overlay reads via _activeGpuState() which
-        // picks based on currentMode + _generateModel.
-        if (d.gpu_illustrious) {
-            const prevIllusState = _illustriousGpuState.state;
-            _illustriousGpuState = Object.assign({}, d.gpu_illustrious, { _receivedAt: Date.now() });
-            if (prevIllusState !== d.gpu_illustrious.state || d.gpu_illustrious.state === 'warming') {
-                renderQueue();
-            }
-        }
         // The first /status response has landed — from this point on we
         // can paint a confirmed state. Until this flips true the header
         // badge stays on "Connecting…" regardless of what's in _gpuState.
@@ -4453,10 +4294,7 @@ function updateHeaderStatusBadge(connected){
         renderStartupOverlay();
         return;
     }
-    // Read the state the user is currently facing — Illustrious when in
-    // Create mode with a local model, Qwen otherwise. Local alias so the
-    // body of the function stays unchanged below.
-    const _gs = _activeGpuState();
+    const _gs = _gpuState;
     const state = _gs.state || 'unknown';
     // Heartbeat freshness is GROUND TRUTH for liveness: if the consumer
     // thread or per-step pings have updated ready_at within the last
@@ -4497,12 +4335,7 @@ function updateHeaderStatusBadge(connected){
         // The "compiling" stage is the slow actual compile work happening
         // during the warmup forward pass — no granular progress available so
         // we show elapsed time to reassure the user it's still alive.
-        // Illustrious-specific stages are tagged below the Qwen ones —
-        // the maps are unioned because the active container is whichever
-        // one _gs points at (Qwen OR Illustrious, never both at once
-        // for the badge purpose).
         const stageMap = {
-            // Qwen worker stages
             booting:              'Starting container',
             loading_transformer:  'Loading model',
             loading_text_encoder: 'Loading encoder',
@@ -4514,9 +4347,6 @@ function updateHeaderStatusBadge(connected){
             finalizing:           'Finalizing',
             warming_up:           'Final warmup',
             ready:                'GPU ready',
-            // Illustrious worker stages
-            downloading_checkpoint: 'Downloading model',
-            loading_pipeline:       'Loading pipeline',
         };
         const stage = _gs.startup_stage;
         // Same contradiction guard as in renderStartupOverlay: when state
@@ -4532,9 +4362,6 @@ function updateHeaderStatusBadge(connected){
         let text;
         if (stageIsTrustworthy && stage === 'registering' && _gs.startup_total > 0) {
             text = `Registering ${_gs.startup_progress}/${_gs.startup_total}`;
-        } else if (stageIsTrustworthy && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
-            // Real percent — Civitai download reports 0..100 directly.
-            text = `Downloading model · ${_gs.startup_progress}%`;
         } else if (stageIsTrustworthy && stage === 'compiling') {
             const age = _gs.startup_age_s || 0;
             text = age > 0 ? `Compiling kernels · ${age}s` : 'Compiling kernels';
@@ -4592,13 +4419,7 @@ let _bootStartedAt = null;
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
-    // Read whichever container's state the user is currently waiting on.
-    // _activeGpuState() returns the Illustrious state when in Create
-    // mode with a local model, otherwise the Qwen state. This lets the
-    // SAME overlay show progress for either container without UI
-    // duplication — the user sees download/load progress for the model
-    // they're actually about to use, no matter which one it is.
-    const _gs = _activeGpuState();
+    const _gs = _gpuState;
     // Audience gate. The cold-boot overlay only makes sense when the
     // user is going to actually USE the GPU — that means logged in
     // AND has at least one token. For everyone else:
@@ -4761,7 +4582,6 @@ function renderStartupOverlay(){
     const pct = Math.min(95, _startupMaxPct);
 
     const stageLabels = {
-        // ── Qwen worker stages ──
         booting:              'Starting container',
         loading_transformer:  'Loading model weights',
         loading_text_encoder: 'Loading text encoder',
@@ -4773,21 +4593,12 @@ function renderStartupOverlay(){
         finalizing:           'Finalizing',
         warming_up:           'Final warmup',
         ready:                'GPU ready',
-        // ── Illustrious worker stages ──
-        downloading_checkpoint: 'Downloading model from Civitai',
-        loading_pipeline:       'Loading SDXL pipeline',
     };
     let stageText;
     if (_gs.state === 'cold') {
         stageText = 'Connecting…';
     } else if (stageIsFresh && stage === 'registering' && _gs.startup_total > 0) {
         stageText = `Registering · ${_gs.startup_progress}/${_gs.startup_total}`;
-    } else if (stageIsFresh && stage === 'downloading_checkpoint' && _gs.startup_total > 0) {
-        // Real percent for the Civitai download in the *label* — reads
-        // 'Downloading model · 47%'. The bar itself is time-based (see
-        // above), so the label is where the user sees actual byte
-        // progress.
-        stageText = `Downloading model · ${_gs.startup_progress}%`;
     } else if (stageIsFresh && stage && stageLabels[stage]) {
         stageText = stageLabels[stage];
     } else {
@@ -4802,34 +4613,14 @@ function renderStartupOverlay(){
     if (stageEl) stageEl.textContent = stageText;
     if (elapsedEl) elapsedEl.textContent = `${elapsed}s`;
     if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
-    // Illustrious-specific copy when the active state is the SDXL
-    // worker. Reference identity check (===) is reliable here — the
-    // helper returns one of the two state objects directly, no copy.
-    const isIllustrious = (_gs === _illustriousGpuState);
     if (titleEl) {
-        if (isIllustrious) {
-            titleEl.textContent = _gs.state === 'cold'
-                ? 'Starting Illustrious model…'
-                : 'Loading Illustrious…';
-        } else {
-            titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
-        }
+        titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     }
     if (subEl) {
-        if (isIllustrious) {
-            // First-boot path is dominated by the Civitai download.
-            // Cached-boot path is just SDXL load (~30s). We mention
-            // both possibilities since the user doesn't know which
-            // they're hitting.
-            subEl.textContent = stage === 'downloading_checkpoint'
-                ? "First-time download from Civitai — 6.5 GB. This only happens once; subsequent generations skip straight to inference."
-                : "Loading the Realism Illustrious checkpoint and SDXL pipeline. About 30-60 seconds when the model is cached.";
-        } else {
-            // Single, fixed message whenever the overlay is up — keeps the
-            // copy stable instead of mutating into "Almost there" at 60s
-            // (which was a lie when the actual elapsed climbed past that).
-            subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
-        }
+        // Single, fixed message whenever the overlay is up — keeps the
+        // copy stable instead of mutating into "Almost there" at 60s
+        // (which was a lie when the actual elapsed climbed past that).
+        subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
     }
 }
 
@@ -5210,79 +5001,6 @@ let _generateModeration = 'low';
 // our UX (more would crowd the stage in Create's single-image flow).
 let _generateCount = 1;
 
-// ── Illustrious-only sampler controls ─────────────────────────────────
-// These are exposed only when an isLocal model is selected. State is
-// persisted in localStorage like the gpt-image controls so a returning
-// user finds their last settings. Defaults match the model card's
-// recommended-settings list (steps=27, cfg=5) and the worker's defaults
-// (denoise=0.7).
-let _illustriousNegativePrompt = '';
-let _illustriousSteps = 27;
-let _illustriousCfg = 5.0;
-let _illustriousSeed = '';      // '' = random per request; numeric string = fixed
-let _illustriousStrength = 0.7; // img2img only
-
-function genSetNegativePrompt(v){
-    _illustriousNegativePrompt = (v || '').toString();
-    persistGenerateState();
-}
-function genSetSteps(v){
-    let n = parseInt(v, 10);
-    if (!isFinite(n)) n = 27;
-    _illustriousSteps = Math.max(15, Math.min(60, n));
-    const lbl = $('genStepsLabel'); if (lbl) lbl.textContent = String(_illustriousSteps);
-    const sl = $('genStepsSlider');
-    if (sl && parseInt(sl.value, 10) !== _illustriousSteps) sl.value = String(_illustriousSteps);
-    persistGenerateState();
-}
-function genSetCfg(v){
-    let n = parseFloat(v);
-    if (!isFinite(n)) n = 5.0;
-    _illustriousCfg = Math.max(1, Math.min(15, n));
-    const lbl = $('genCfgLabel'); if (lbl) lbl.textContent = _illustriousCfg.toFixed(1);
-    const sl = $('genCfgSlider');
-    if (sl && parseFloat(sl.value) !== _illustriousCfg) sl.value = String(_illustriousCfg);
-    persistGenerateState();
-}
-function genSetSeed(v){
-    const s = (v === null || v === undefined) ? '' : String(v).trim();
-    // Empty string is the canonical "random" — display as empty in the
-    // input. Otherwise we coerce to a non-negative integer; non-numeric
-    // input falls back to empty (random) so the user never gets a
-    // confusing "seed=NaN" experience.
-    if (s === '') {
-        _illustriousSeed = '';
-    } else {
-        const n = parseInt(s, 10);
-        _illustriousSeed = (isFinite(n) && n >= 0) ? String(n) : '';
-    }
-    const inp = $('genSeedInput');
-    if (inp && inp.value !== _illustriousSeed) inp.value = _illustriousSeed;
-    persistGenerateState();
-}
-function genSetStrength(v){
-    let n = parseFloat(v);
-    if (!isFinite(n)) n = 0.7;
-    _illustriousStrength = Math.max(0.05, Math.min(0.95, n));
-    const lbl = $('genStrengthLabel'); if (lbl) lbl.textContent = _illustriousStrength.toFixed(2);
-    const sl = $('genStrengthSlider');
-    if (sl && parseFloat(sl.value) !== _illustriousStrength) sl.value = String(_illustriousStrength);
-    persistGenerateState();
-}
-
-// Show/hide the img2img strength slider based on whether slot 0 has a
-// reference. Called from genSetModel (when switching to/from Illustrious),
-// renderGenSlot (when a slot is filled or cleared), and sendBatchInputToCreate
-// (when "Use as Input" pushes a result back into a slot). Also shows or
-// hides the entire local-only control band based on which model is active.
-function updateLocalControlsVisibility(){
-    const caps = _GEN_MODEL_CAPS[_generateModel];
-    const isLocal = !!(caps && caps.isLocal);
-    const hasRef = isLocal && _generateRefs[0] !== null && _generateRefs[0] !== undefined;
-    const strengthRow = $('genStrengthRow');
-    if (strengthRow) strengthRow.style.display = hasRef ? '' : 'none';
-}
-
 function genSlotFileChange(i){
     const inp = $('genSlotFile' + i);
     if (inp.files.length) genUploadToSlot(i, inp.files[0]);
@@ -5342,22 +5060,14 @@ function renderGenSlot(i){
         empty.style.display = '';
         filled.style.display = 'none';
     }
-    // Slot 0's filled/empty state determines whether Illustrious is in
-    // img2img or txt2img mode, which gates the denoise-strength row's
-    // visibility. Other slots don't affect it (Illustrious is single-ref).
-    if (i === 0 && typeof updateLocalControlsVisibility === 'function') {
-        updateLocalControlsVisibility();
-    }
 }
 
 function genUpdateCounter(){
     const el = $('genSlotCounter');
     if (!el) return;
-    // Per-model max — Illustrious is single-ref img2img (max 1),
-    // GPT models support up to 4 refs in this UI. We only count
-    // slots that are actually visible/usable for the active model
-    // so a leftover ref in slot 1 from a previous gpt-image session
-    // doesn't inflate the counter while the user is on Illustrious.
+    // Per-model max — supportsMultiRef:false caps at 1, otherwise up
+    // to 4 slots. We only count slots usable by the active model so
+    // leftover refs from a previous model don't inflate the counter.
     const caps = _GEN_MODEL_CAPS[_generateModel];
     const max = (caps && caps.supportsMultiRef === false) ? 1 : 4;
     let filled = 0;
@@ -5533,39 +5243,21 @@ function genUpdateCompression(){
 // reference page documents up to 16 images for the GPT Image family).
 // Encoded per-model so a future variant that drops multi-ref support
 // is caught automatically by the gate in doGenerateMode.
-//
-// isLocal: when true, generation routes through our own GPU
-// (/api/studio/illustrious-generate) instead of OpenAI. Local models
-// have different control surfaces (no quality/format/compression knobs
-// since those are gpt-image-only) and different progress affordances
-// (cold-start of the dedicated Modal container, ~30-120s).
 const _GEN_MODEL_CAPS = {
     'gpt-image-2': {
         supportsTransparent: false,
         supportsMultiRef: true,
-        isLocal: false,
         hint: 'Latest model. Best photorealism + text rendering.',
     },
     'gpt-image-1-mini': {
         supportsTransparent: false,
         supportsMultiRef: true,
-        isLocal: false,
         hint: 'About 4× cheaper than Quality. Great for drafts and high-volume work.',
     },
     'gpt-image-1.5': {
         supportsTransparent: true,
         supportsMultiRef: true,
-        isLocal: false,
         hint: 'Slightly cheaper than Quality at high tier. Only model that supports transparent PNGs.',
-    },
-    'illustrious': {
-        supportsTransparent: false,
-        // SDXL img2img is single-image — the pipeline takes one
-        // reference and denoises toward the prompt. Multiple refs
-        // would need IP-Adapter or ControlNet, neither wired up yet.
-        supportsMultiRef: false,
-        isLocal: true,
-        hint: 'Realism Illustrious v5.5 on local GPU. Text-to-image, or text+image (img2img) with one reference. Cold start ~30-120s, then ~10s per image.',
     },
 };
 
@@ -5575,10 +5267,6 @@ const _GEN_MODEL_CAPS = {
 // state (it's only valid on gpt-image-1.5), and re-prices.
 function genSetModel(m){
     if (!_GEN_MODEL_CAPS[m]) m = 'gpt-image-2';  // unknown → default
-    // Track the previous model so a cancelled Illustrious confirmation
-    // can revert to whatever was selected before. Captured BEFORE the
-    // assignment so we have the actual previous, not the new value.
-    const previousModel = _generateModel;
     _generateModel = m;
     const sel = $('genModelSelect');
     if (sel && sel.value !== m) sel.value = m;
@@ -5598,28 +5286,10 @@ function genSetModel(m){
             genSetBackground('auto');
         }
     }
-    // ── Local-model branching ────────────────────────────────────────
-    const isLocal = !!_GEN_MODEL_CAPS[m].isLocal;
-    // Only toggle visibility of model-specific Create panels when we're
-    // actually in Create mode. Without this gate, calls to genSetModel
-    // from page-load paths (restoreGenerateState) or from non-Create
-    // contexts would clear the inline display:none on these panels and
-    // make them visible underneath whatever mode the user is actually
-    // in. There's no CSS rule scoping .generate-only to display:none —
-    // mode visibility is enforced exclusively by inline styles set in
-    // setMode — so we have to be careful to leave those styles alone
-    // outside Create. setMode('generate') re-fires genSetModel on entry
-    // so the proper model branching still applies the moment the user
-    // actually enters Create.
+    // Reference slots — single vs multi depending on the model. Only
+    // adjust visibility while in Create to avoid clobbering inline
+    // display:none on the panels when called from non-Create contexts.
     if (currentMode === 'generate') {
-        document.querySelectorAll('.gpt-only-section').forEach(el => {
-            el.style.display = isLocal ? 'none' : '';
-        });
-        document.querySelectorAll('.local-only-section').forEach(el => {
-            el.style.display = isLocal ? '' : 'none';
-        });
-        // Reference slots — single vs multi depending on the model.
-        // Same gate applies: only adjust visibility while in Create.
         const supportsMultiRef = !!_GEN_MODEL_CAPS[m].supportsMultiRef;
         for (let i = 1; i < 4; i++) {
             const slotEl = document.getElementById(`genSlot${i}`);
@@ -5627,151 +5297,9 @@ function genSetModel(m){
         }
     }
     if (typeof genUpdateCounter === 'function') genUpdateCounter();
-    if (typeof updateLocalControlsVisibility === 'function') {
-        updateLocalControlsVisibility();
-    }
-
-    // ── Boot confirmation gate (Illustrious only) ───────────────────
-    // Picking Illustrious has a token cost — we need explicit consent
-    // before firing the wake. Three sub-cases:
-    //   1. Container already hot (recent heartbeat) — no charge would
-    //      be incurred anyway; warmupIllustrious's server-side check
-    //      returns "already_hot" and skips. No modal needed; we just
-    //      proceed silently.
-    //   2. Container cold/sleeping AND user is logged in — show the
-    //      confirmation modal. _illustriousPendingPreviousModel is
-    //      stashed so Cancel can revert.
-    //   3. Not logged in — don't fire the modal at all. The user will
-    //      hit the login flow when they click GENERATE; if they're
-    //      logged in by then, this same model selection persists and
-    //      we'll re-evaluate at click time.
-    if (isLocal && m === 'illustrious' && _user) {
-        const ig = (typeof _illustriousGpuState !== 'undefined') ? _illustriousGpuState : null;
-        const ra = ig ? ig.ready_age_s : null;
-        const heartbeatRecent = ra !== null && ra !== undefined && ra < 30;
-        if (!heartbeatRecent) {
-            // Cold or unknown — open the confirmation modal. We don't
-            // fire the warmup yet; that happens only on confirmIllustrious().
-            // Stash previous model so Cancel can put it back.
-            _illustriousPendingPreviousModel = previousModel === 'illustrious'
-                ? 'gpt-image-2'   // never revert TO illustrious — fall back to default
-                : previousModel;
-            showIllustriousConfirm();
-            // Fall through so persistence / cost label still update for
-            // the now-Illustrious selection. If the user cancels, we'll
-            // revert via genSetModel(previousModel).
-        }
-        // If heartbeatRecent: container is hot, no charge needed, proceed
-        // silently. This lets users toggle back and forth within a session
-        // without re-confirming.
-    }
 
     persistGenerateState();
     if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
-}
-
-// Stashed during the Illustrious confirmation flow — used to revert the
-// dropdown if the user clicks "No, cancel". null when no confirmation
-// is in flight.
-let _illustriousPendingPreviousModel = null;
-
-function showIllustriousConfirm(){
-    // Populate the cost + balance from the canonical worker values.
-    // _user.illustrious_boot_cost comes from /auth/me; if missing
-    // (older /auth/me response cached), fall back to a sane default
-    // and let the next /auth/me refresh pick up the real number.
-    const cost = (_user && typeof _user.illustrious_boot_cost === 'number')
-        ? _user.illustrious_boot_cost : 200;
-    const bal = (_user && typeof _user.tokens === 'number') ? _user.tokens : 0;
-    const c1 = $('illustriousBootCost'); if (c1) c1.textContent = cost;
-    const c2 = $('illustriousBootCost2'); if (c2) c2.textContent = cost;
-    const b = $('illustriousUserBalance');
-    if (b) b.textContent = bal;
-    $('illustriousConfirmModal').classList.add('open');
-}
-
-function cancelIllustrious(){
-    $('illustriousConfirmModal').classList.remove('open');
-    // Revert the dropdown to whatever was selected before the user
-    // picked Illustrious. genSetModel handles all the visibility
-    // re-toggling (gpt-only-section back on, local-only-section off).
-    const prev = _illustriousPendingPreviousModel || 'gpt-image-2';
-    _illustriousPendingPreviousModel = null;
-    if (_generateModel !== prev) {
-        genSetModel(prev);
-    }
-}
-
-async function confirmIllustrious(){
-    $('illustriousConfirmModal').classList.remove('open');
-    _illustriousPendingPreviousModel = null;
-    // Fire the warmup — this is the moment we agreed to charge the
-    // boot cost. The endpoint deducts server-side and dispatches
-    // the wake fetch to Modal.
-    try {
-        const r = await fetchT(`${API}/api/studio/illustrious-warmup`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-        }, 8000);
-        const d = await r.json().catch(() => ({}));
-        if (d.ok) {
-            // Update the local token balance immediately so the header
-            // reflects the deduction without waiting for the next
-            // /auth/me poll. If the server returned 'already_hot' or
-            // 'debounced' there's no deduction (tokens unchanged); the
-            // value still echoes back so this is safe to apply.
-            if (typeof d.tokens === 'number' && _user) {
-                _user.tokens = d.tokens;
-                const tc = $('tokenCount');
-                if (tc) tc.textContent = d.tokens;
-            }
-            // Force a status poll so the cold-boot overlay flips on
-            // immediately rather than waiting up to 5s for the next
-            // poll cycle.
-            if (d.wake_dispatched && typeof pollStatus === 'function') {
-                pollStatus();
-            }
-        } else if (d.error === 'insufficient_tokens') {
-            // Not enough tokens for the boot fee. Revert dropdown and
-            // open the buy modal so they can top up.
-            showNotif(`Need ${d.needed} tokens to start Illustrious — you have ${d.have}.`, 'error');
-            genSetModel('gpt-image-2');
-            if (typeof showBuyModal === 'function') showBuyModal();
-        } else if (d.error === 'illustrious_not_configured') {
-            showNotif('Illustrious is not configured on this server. Please contact support.', 'error');
-            genSetModel('gpt-image-2');
-        } else {
-            showNotif(d.message || 'Could not start Illustrious. Please try again.', 'error');
-            genSetModel('gpt-image-2');
-        }
-    } catch (e) {
-        showNotif('Network error starting Illustrious. Please try again.', 'error');
-        genSetModel('gpt-image-2');
-    }
-}
-
-// Fire-and-forget warmup ping for the Illustrious worker. Used by paths
-// OTHER than the explicit confirmation flow — specifically the GENERATE-
-// click warmup-on-cold check. We charge the boot fee here too (the
-// endpoint always charges when dispatching a real wake), and the user
-// has effectively pre-consented by being on Illustrious + clicking
-// GENERATE. The visible header balance updates immediately so they see
-// the deduction.
-async function warmupIllustrious(){
-    try {
-        const r = await fetchT(`${API}/api/studio/illustrious-warmup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-        }, 8000);
-        const d = await r.json().catch(() => ({}));
-        if (d.ok && typeof d.tokens === 'number' && _user) {
-            _user.tokens = d.tokens;
-            const tc = $('tokenCount');
-            if (tc) tc.textContent = d.tokens;
-        }
-    } catch (e) {
-        // Best-effort — a failed warmup just means the user pays the
-        // cold-start cost on click instead. No notification needed.
-    }
 }
 
 // Background opaque/auto/transparent. Transparent is only honored when
@@ -5907,32 +5435,6 @@ function genGetEffectiveSize(){
     return _generateSize;
 }
 
-// SDXL-aspect helpers for the Illustrious path. The OpenAI Create
-// flow uses 1024-based sizes (1024², 1024x1536, 1536x1024) which are
-// off-spec for SDXL — SDXL was trained at total ≈ 1024² with
-// non-square aspects like 896x1152. We map by aspect ratio:
-//   square-ish → 1024 × 1024
-//   portrait   →  896 × 1152  (the model card's recommended default)
-//   landscape  → 1152 × 896
-// Custom W×H is honored as-is; the worker re-snaps to multiples of 8
-// and clamps to 512..1536, so we don't need to redo that here.
-function genGetIllustriousW(){
-    if (_generateSize === 'custom') return _generateCustomW;
-    const m = String(_generateSize).match(/^(\d+)x(\d+)$/);
-    if (!m) return 896;
-    const w = parseInt(m[1]); const h = parseInt(m[2]);
-    if (w === h) return 1024;
-    return w > h ? 1152 : 896;
-}
-function genGetIllustriousH(){
-    if (_generateSize === 'custom') return _generateCustomH;
-    const m = String(_generateSize).match(/^(\d+)x(\d+)$/);
-    if (!m) return 1152;
-    const w = parseInt(m[1]); const h = parseInt(m[2]);
-    if (w === h) return 1024;
-    return w > h ? 896 : 1152;
-}
-
 // Restore state on page load + on first entry to Generate mode.
 function persistGenerateState(){
     try {
@@ -5949,14 +5451,6 @@ function persistGenerateState(){
             background: _generateBackground,
             moderation: _generateModeration,
             count: _generateCount,
-            // Illustrious-only controls. Persisted alongside the gpt-image
-            // ones so a user who has both types of generation in their
-            // history keeps their full settings without overwrite.
-            illustriousNegativePrompt: _illustriousNegativePrompt,
-            illustriousSteps: _illustriousSteps,
-            illustriousCfg: _illustriousCfg,
-            illustriousSeed: _illustriousSeed,
-            illustriousStrength: _illustriousStrength,
         }));
     } catch (e) {}
 }
@@ -6038,24 +5532,6 @@ function restoreGenerateState(){
         if (typeof d.size === 'string') {
             _generateSize = d.size;
         }
-        // Illustrious controls. Pull each with type-narrowing so a
-        // corrupt/older blob can't crash the restore — a missing key
-        // just leaves the in-memory default in place.
-        if (typeof d.illustriousNegativePrompt === 'string') {
-            _illustriousNegativePrompt = d.illustriousNegativePrompt;
-        }
-        if (typeof d.illustriousSteps === 'number') {
-            _illustriousSteps = Math.max(15, Math.min(60, d.illustriousSteps));
-        }
-        if (typeof d.illustriousCfg === 'number') {
-            _illustriousCfg = Math.max(1, Math.min(15, d.illustriousCfg));
-        }
-        if (typeof d.illustriousSeed === 'string') {
-            _illustriousSeed = d.illustriousSeed;
-        }
-        if (typeof d.illustriousStrength === 'number') {
-            _illustriousStrength = Math.max(0.05, Math.min(0.95, d.illustriousStrength));
-        }
         // Defer DOM updates — buttons may not exist in DOM yet at
         // first restore (this runs early on page init).
         requestAnimationFrame(() => {
@@ -6083,15 +5559,6 @@ function restoreGenerateState(){
             const countLbl = $('genCountLabel');
             if (countLbl) countLbl.textContent = String(_generateCount);
             genUpdateCostLabel();
-            // Sync the Illustrious controls to their DOM elements. The
-            // setters update both the labels and the inputs so we just
-            // call them with the current state values.
-            const negEl = $('generateNegativePrompt');
-            if (negEl) negEl.value = _illustriousNegativePrompt;
-            genSetSteps(_illustriousSteps);
-            genSetCfg(_illustriousCfg);
-            genSetSeed(_illustriousSeed);
-            genSetStrength(_illustriousStrength);
             // Scrub any refs whose IDs no longer belong to the current
             // user (different account, deleted upload, etc). Deferred so
             // checkAuth has a chance to populate the auth cookie/state
@@ -6123,35 +5590,6 @@ async function doGenerateMode(_autoRetried){
     if (activeCount >= MAX_QUEUED) {
         showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
         return;
-    }
-    // Click-as-return-from-idle: if the Illustrious container has scaled
-    // down (10 min idle), the user needs to re-confirm the boot fee
-    // before we fire another generation. Without this, returning to a
-    // stale tab would silently charge them another 200 tokens — the
-    // exact UX we built the confirmation modal to prevent. So instead
-    // of firing warmupIllustrious directly here, we open the same
-    // modal genSetModel uses, and bail out of this click. The user
-    // confirms, the warmup fires, and they click GENERATE again to
-    // actually start the generation. Slight extra friction is the
-    // right tradeoff for not surprising them with a charge.
-    {
-        const _caps = _GEN_MODEL_CAPS[_generateModel];
-        if (_caps && _caps.isLocal) {
-            const ig = _illustriousGpuState;
-            const ra = ig.ready_age_s;
-            const heartbeatRecent = ra !== null && ra !== undefined && ra < 30;
-            if (!heartbeatRecent && (ig.state === 'cold' || ig.state === 'sleeping' || ig.state === 'unknown')) {
-                // Cold container — re-prompt for boot consent. Stash
-                // 'gpt-image-2' as the cancel-fallback (rather than
-                // the current model, which IS Illustrious — we don't
-                // want cancel to revert TO Illustrious). The dropdown
-                // is already on Illustrious, so showing the modal
-                // doesn't visually change anything outside of itself.
-                _illustriousPendingPreviousModel = 'gpt-image-2';
-                showIllustriousConfirm();
-                return;
-            }
-        }
     }
     // ── Pre-flight ref ownership validation ─────────────────────────
     // The cleanest place to validate is before we even build refIds.
@@ -6217,24 +5655,11 @@ async function doGenerateMode(_autoRetried){
     // per-model in _GEN_MODEL_CAPS, so a future variant added to the
     // dropdown that drops multi-ref support gets caught here without
     // anyone needing to remember to update this branch.
-    //
-    // Illustrious (isLocal + supportsMultiRef:false) is special: it
-    // does single-image img2img, so 0 or 1 refs are both fine, but
-    // 2+ refs collapse silently to just the first. We INFORM the user
-    // about that collapse rather than blocking the request — the gate
-    // for the "no refs at all" case is gone now that img2img works.
     const _capsCurrent = _GEN_MODEL_CAPS[_generateModel];
     if (refIds.length > 1) {
-        if (_capsCurrent && _capsCurrent.isLocal && _capsCurrent.supportsMultiRef === false) {
-            // Illustrious: warn but proceed. Slot 0 is the img2img input.
-            showNotif(
-                `Illustrious uses a single reference image — only slot 1 will be used. ` +
-                `(Other slots will be ignored for this generation.)`,
-                'info'
-            );
-        } else if (_capsCurrent && _capsCurrent.supportsMultiRef === false) {
-            // Future single-ref non-local model — block, since we'd be
-            // dropping refs without any path to use them.
+        if (_capsCurrent && _capsCurrent.supportsMultiRef === false) {
+            // Future single-ref model — block, since we'd be dropping
+            // refs without any path to use them.
             showNotif(
                 `${_generateModel} accepts only one reference image. ` +
                 `Either remove the extra refs or switch to a model that ` +
@@ -6308,44 +5733,8 @@ async function doGenerateMode(_autoRetried){
     renderQueue();
     const tickHandle = setInterval(() => { try { renderQueue(); } catch {} }, 1000);
     try {
-        const isLocal = !!(_GEN_MODEL_CAPS[_generateModel] && _GEN_MODEL_CAPS[_generateModel].isLocal);
         let r;
-        if (isLocal) {
-            // Illustrious / local SDXL path. Different request shape and
-            // a longer timeout to ride out cold-start (Modal container
-            // wake + first-time Civitai download + load = up to 4 min
-            // worst case; warm requests are ~10s). Worker timeout is
-            // 360s, frontend adds 30s headroom so the worker's
-            // AbortController fires first with a useful error.
-            r = await fetchT(`${API}/api/studio/illustrious-generate`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    n: _generateCount,
-                    // Map the size preset to W/H. SDXL accepts arbitrary
-                    // multiples of 8 within reasonable bounds; the
-                    // worker re-clamps to 512..1536 with /8 snapping.
-                    width: genGetIllustriousW(),
-                    height: genGetIllustriousH(),
-                    // Sampler controls from the Illustrious-only panel.
-                    // The empty seed string is the canonical "random" —
-                    // worker treats seed=-1 as "pick a fresh int per
-                    // request", which is what the user wants when the
-                    // input is empty.
-                    negative_prompt: _illustriousNegativePrompt,
-                    steps: _illustriousSteps,
-                    cfg: _illustriousCfg,
-                    seed: _illustriousSeed === '' ? -1 : parseInt(_illustriousSeed, 10),
-                    denoise_strength: _illustriousStrength,
-                    // img2img reference. Single-ref slice: the worker
-                    // fetches this from R2 and base64-encodes before
-                    // forwarding to Modal. Empty array on the txt2img
-                    // path; worker handles the missing case as txt2img.
-                    reference_image_ids: refIds.slice(0, 1),
-                }),
-            }, 390_000);
-        } else {
-            r = await fetchT(`${API}/api/studio/agent-image-gen`, {
+        r = await fetchT(`${API}/api/studio/agent-image-gen`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     prompt,
@@ -6381,7 +5770,6 @@ async function doGenerateMode(_autoRetried){
             }, refIds.length
                 ? (_generateQuality === 'high' ? 390_000 : 270_000)
                 : (_generateQuality === 'high' ? 270_000 : 150_000));
-        }
         const d = await r.json();
         if (!d.ok) {
             // Specially handle reference_not_owned: scrub the stale
@@ -8321,19 +7709,15 @@ function sendBatchInputToEdit(inp){
 function sendBatchInputToCreate(inp){
     if (!inp || inp._placeholder) return;
     setMode('generate');
-    // Per-model slot limit. Illustrious is single-ref img2img — only
-    // slot 0 is visible/usable. Without this branch, "Use as Input"
-    // for the second image while Illustrious is selected would silently
-    // land it in slot 1 (which is hidden), so the user thinks nothing
-    // happened. With it, we always target slot 0 in single-ref models
-    // and overwrite-with-notif if it's already filled.
+    // Per-model slot limit. For supportsMultiRef:false models, only
+    // slot 0 is visible/usable — we always target slot 0 there and
+    // overwrite-with-notif if it's already filled. Multi-ref models
+    // fill the first empty slot and overwrite slot 0 if all are full.
     const caps = _GEN_MODEL_CAPS[_generateModel];
     const maxSlots = (caps && caps.supportsMultiRef === false) ? 1 : 4;
     // First empty slot wins within the per-model cap. _generateRefs is
     // fixed-length 4 in storage, but we only USE the first `maxSlots`
-    // for the active model. Indexes >= maxSlots remain inert in
-    // localStorage from a prior gpt-image session — they don't get
-    // touched by this function and they're hidden in the UI.
+    // for the active model.
     let targetSlot = -1;
     for (let i = 0; i < maxSlots; i++) {
         if (_generateRefs[i] === null) { targetSlot = i; break; }
@@ -8379,11 +7763,6 @@ function sendBatchInputToCreate(inp){
     // Same pattern genUploadToSlot already follows for the first ref.
     if (targetSlot === 0 && inp.w && inp.h && typeof genSnapSizeToImage === 'function') {
         genSnapSizeToImage(inp.w, inp.h);
-    }
-    // Refresh the denoise-strength control's visibility — it toggles
-    // based on whether slot 0 has a ref (img2img vs txt2img).
-    if (typeof updateLocalControlsVisibility === 'function') {
-        updateLocalControlsVisibility();
     }
 }
 
