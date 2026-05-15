@@ -7101,6 +7101,21 @@ body.d-desktop-mode .stream {
   line-height: 1.45;
   word-break: break-word;
 }
+.pcr-card-output {
+  font-size: 11.5px;
+  color: rgba(255,220,140,0.92);
+  font-family: ui-monospace, monospace;
+  margin-top: 4px;
+  font-weight: 500;
+}
+.pcr-card-stepchange {
+  font-size: 10.5px;
+  color: rgba(150,170,200,0.7);
+  font-family: ui-monospace, monospace;
+  margin-top: 3px;
+  line-height: 1.4;
+  font-style: italic;
+}
 .pcr-uses {
   font-size: 10.5px;
   color: rgba(150,200,150,0.85);
@@ -16744,6 +16759,20 @@ promptflow whoami</code></pre>
             rec.uses_existing.map(u => escapeHtml(u.name)).join('</span> · <span>') +
           '</span></div>'
         : '';
+      // Adapt cards get two extra context lines when the planner
+      // returned them: `concrete_output` (what the user actually
+      // gets, e.g. "30-second product trailer") and `step_change`
+      // (the one-sentence diff vs the seed, e.g. "Scene breakdown
+      // becomes feature breakdown; image gen becomes UI mockup gen.").
+      // These make the structural-reuse story concrete instead of
+      // abstract. Compose cards skip them — composition cards lean
+      // on the uses_existing pills + pitch which is plenty.
+      const concreteOutput = (kind === "adapt" && rec.concrete_output)
+        ? '<div class="pcr-card-output">→ ' + escapeHtml(rec.concrete_output) + '</div>'
+        : '';
+      const stepChange = (kind === "adapt" && rec.step_change)
+        ? '<div class="pcr-card-stepchange">How: ' + escapeHtml(rec.step_change) + '</div>'
+        : '';
       card.innerHTML =
         '<div class="pcr-card-head">' +
           '<span class="pcr-kind-tag pcr-kind-' + kind + '">' +
@@ -16752,6 +16781,8 @@ promptflow whoami</code></pre>
           '<span class="pcr-card-name">' + escapeHtml(rec.name) + '</span>' +
         '</div>' +
         '<div class="pcr-card-pitch">' + escapeHtml(rec.pitch) + '</div>' +
+        concreteOutput +
+        stepChange +
         usesPills +
         '<div class="pcr-card-action">Generate this →</div>';
       card.onclick = () => {
