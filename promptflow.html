@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PromptFlow — Animate any image</title>
+<title>PromptFlow — A shared process layer for AI builders</title>
 <link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png">
 <style>
   /* Shared design tokens with studio.html so PromptFlow feels like a
@@ -6205,6 +6205,67 @@ body.d-desktop-mode .stream {
 }
 .rc-card-cancelled .rc-summary {
   color: rgba(180,180,200,0.6);
+}
+
+/* ── Validate-output row ─────────────────────────────────────
+   Appears after a successful run for the process author. One-click
+   path from "this ran" to "this is publishable." */
+.validate-output-row {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: rgba(232,169,23,0.06);
+  border: 1px solid rgba(232,169,23,0.32);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.vo-body { flex: 1; }
+.vo-title {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: rgba(255,220,140,0.95);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.vo-pitch {
+  font-size: 11.5px;
+  color: rgba(200,200,210,0.75);
+  line-height: 1.45;
+}
+.vo-confirmed {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: rgba(150,210,150,0.95);
+  font-weight: 600;
+}
+.vo-actions { flex-shrink: 0; }
+.vo-validate-btn {
+  padding: 8px 14px;
+  background: rgba(232,169,23,0.85);
+  border: 1px solid rgba(232,169,23,0.95);
+  color: rgba(20,20,28,1);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.vo-validate-btn:hover:not(:disabled) {
+  background: rgba(255,200,60,0.95);
+  transform: translateY(-1px);
+}
+.vo-validate-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.vo-error {
+  font-size: 11px;
+  color: rgba(255,140,140,0.9);
+  margin-top: 6px;
+  flex-basis: 100%;
 }
 /* Error state — when /plan/design_search itself fails. Visually
    distinct from the gold foundational-success state so the two
@@ -14560,6 +14621,12 @@ promptflow whoami</code></pre>
                 }
                 if (pickedPid) {
                   renderChatWithProcessButton(assist, activePlanId, pickedPid);
+                  // Author-only "Verify this output" affordance. Shows
+                  // when the run succeeded AND the user is the process
+                  // owner AND the process hasn't been validated yet.
+                  // Clicking it promotes the process to publishable
+                  // state — the marketplace quality gate.
+                  renderValidateOutputButton(assist, pickedPid, activePlanId);
                 }
 
                 renderSaveAsProcess(assist, activePlanId, planResp.plan);
@@ -16554,30 +16621,31 @@ promptflow whoami</code></pre>
 
     // Publish nudge — fires for the user's own unpublished processes.
     // Two states:
-    //   (a) Not yet test-run: "Test it first" — publishing is gated
-    //       behind a successful personal run. This stops creators
-    //       from shipping untested work and stops the marketplace
-    //       from filling with broken processes. The cascade pays
-    //       creators when others use it, so personal validation is
-    //       the quality floor.
-    //   (b) Test-run complete (total_runs > 0): full publish nudge.
+    //   (a) Not yet validated: "Verify a run first" — publishing is
+    //       gated behind the author personally verifying at least
+    //       one successful run's output. This stops the marketplace
+    //       from filling with processes their authors never reviewed.
+    //       Stronger than total_runs > 0 (which counted any fired
+    //       plan including failed ones nobody looked at).
+    //   (b) Validated (validated_at != null): full publish nudge.
     //
     // System processes, already-published processes, and other
     // people's processes don't get the nudge.
     const isMine = proc.created_by_user_id && ME && proc.created_by_user_id === ME.id;
     const alreadyPublished = !!proc.is_published;
     const isSystem = !!proc.is_system;
-    const hasBeenRun = (proc.total_runs || 0) > 0;
+    const isValidated = !!proc.validated_at;
     if (isMine && !alreadyPublished && !isSystem) {
       const nudge = document.createElement("div");
-      if (!hasBeenRun) {
-        // ── State (a): Test it first ────────────────────────────
+      nudge.dataset.processId = proc.id;
+      if (!isValidated) {
+        // ── State (a): Verify a run first ───────────────────────
         nudge.className = "pc-publish-nudge pc-pn-untested";
         nudge.innerHTML =
           '<div class="pc-pn-icon">▶</div>' +
           '<div class="pc-pn-body">' +
-            '<div class="pc-pn-title">Test it first</div>' +
-            '<div class="pc-pn-pitch">Run this process once to make sure it works. Then you can publish it and start earning when others compose with it.</div>' +
+            '<div class="pc-pn-title">Verify a run first</div>' +
+            '<div class="pc-pn-pitch">Run this process, review the output, and click "Verify this output" to confirm it works. Then you can publish it and start earning when others compose with it.</div>' +
           '</div>' +
           '<div class="pc-pn-actions">' +
             '<button type="button" class="btn pc-pn-test">Run a test →</button>' +
@@ -16585,23 +16653,7 @@ promptflow whoami</code></pre>
         const testBtn = nudge.querySelector(".pc-pn-test");
         testBtn.onclick = () => {
           if (busy) return;
-          // Same force-run path the Run button uses — planner
-          // constrains to this exact process. We pre-fill the
-          // input with a generic prompt and fire send().
-          window._forceRunProcessId = proc.id;
-          window._forceRunProcessName = proc.name;
-          const hasStagedInput =
-            (textInput.value || "").trim().length > 0
-            || (attachedFiles && attachedFiles.length > 0)
-            || (pendingContrib && pendingContrib.zip);
-          if (hasStagedInput) {
-            send();
-          } else {
-            textInput.value = `Run "${proc.name}": `;
-            textInput.focus();
-            textInput.setSelectionRange(textInput.value.length, textInput.value.length);
-            updateSend();
-          }
+          openRunCard(proc);
         };
       } else {
         // ── State (b): ready to publish ─────────────────────────
@@ -16969,6 +17021,108 @@ promptflow whoami</code></pre>
       </div>
       ${rows}`;
     assist.body.appendChild(wrap);
+  }
+
+  // Render an author-only "Verify this output" button after a
+  // successful run. Lets the process owner promote the process from
+  // "tested" to "validated" state. Validation unlocks publishing.
+  //
+  // Visible only when:
+  //  - User is the process author (created_by_user_id === ME.id)
+  //  - Process is not already validated
+  //  - Process isn't a system process (those are validated by Anthropic)
+  function renderValidateOutputButton(assist, processId, planId) {
+    if (!ME || !ME.id || !processId || !planId) return;
+    // Look up the process from the cache. We need to know if the user
+    // owns it and whether it's already validated. If the proc isn't
+    // in the cache (fresh design that hasn't synced yet), we render
+    // the button anyway — server-side ownership check is the source
+    // of truth.
+    const proc = (processesCache || []).find(p => p.id === processId);
+    if (proc) {
+      if (proc.is_system) return;                       // system processes
+      const isMine = proc.created_by_user_id === ME.id;
+      if (!isMine) return;                              // not the author
+      if (proc.validated_at) return;                    // already validated
+    }
+
+    const row = document.createElement("div");
+    row.className = "validate-output-row";
+    row.innerHTML =
+      '<div class="vo-body">' +
+        '<div class="vo-title">Output look right?</div>' +
+        '<div class="vo-pitch">Verify this run to mark the process as validated. ' +
+        'Once validated, you can publish it and start earning when others use it.</div>' +
+      '</div>' +
+      '<div class="vo-actions">' +
+        '<button type="button" class="btn vo-validate-btn">✓ Verify this output</button>' +
+      '</div>';
+    assist.body.appendChild(row);
+
+    const btn = row.querySelector(".vo-validate-btn");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Validating…";
+      try {
+        const r = await fetch("/api/promptflow/process/validate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ process_id: processId, run_id: planId }),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          btn.disabled = false;
+          btn.textContent = "✓ Verify this output";
+          const err = document.createElement("div");
+          err.className = "vo-error";
+          err.textContent = j.message || j.error || "Couldn't validate.";
+          row.appendChild(err);
+          setTimeout(() => { try { err.remove(); } catch {} }, 5000);
+          return;
+        }
+        // Update the local cache row so any other UI that depends on
+        // validated_at (publish nudge, process card meta) re-renders
+        // in the new state without a full page reload.
+        if (proc) {
+          proc.validated_at = j.validated_at;
+          proc.validated_by_run_id = j.validated_by_run_id;
+        }
+        row.innerHTML =
+          '<div class="vo-body">' +
+            '<div class="vo-confirmed">✓ Validated — this process is ready to publish</div>' +
+          '</div>';
+        // Re-paint any visible publish nudges for this process so
+        // they immediately switch from "Verify first" to "Publish".
+        document.querySelectorAll('.pc-publish-nudge[data-process-id="' + processId + '"]').forEach(el => {
+          // Trigger a soft re-render by removing — the next process
+          // card render will re-add in the new state. For now we
+          // just hide the "untested" variant; a fresh card render
+          // (e.g. on /library reopen) will show the publish CTA.
+          if (el.classList.contains("pc-pn-untested")) {
+            el.classList.remove("pc-pn-untested");
+            el.classList.add("pc-pn-validated");
+            const title = el.querySelector(".pc-pn-title");
+            const pitch = el.querySelector(".pc-pn-pitch");
+            if (title) title.textContent = "Ready to publish";
+            if (pitch) pitch.textContent = "You verified the output — now publish so others can compose with it and you start earning.";
+            const action = el.querySelector(".pc-pn-test");
+            if (action) {
+              action.textContent = "Publish →";
+              action.classList.remove("pc-pn-test");
+              action.classList.add("pc-pn-publish-redirect");
+            }
+          }
+        });
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "✓ Verify this output";
+        const err = document.createElement("div");
+        err.className = "vo-error";
+        err.textContent = "Network error — try again.";
+        row.appendChild(err);
+        setTimeout(() => { try { err.remove(); } catch {} }, 5000);
+      }
+    });
   }
 
   // Save-as-process affordance shown after a successful run.
