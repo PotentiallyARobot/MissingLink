@@ -7138,6 +7138,35 @@ body.d-desktop-mode .stream {
   border-color: rgba(127,150,180,0.6);
 }
 
+/* "Publish to earn" — green ready-state nudge. Fires after the
+   first successful run; the check signals "this works, you're
+   one click from earning." */
+.pc-pn-ready {
+  background: linear-gradient(180deg, rgba(120,200,140,0.10), rgba(120,200,140,0.03));
+  border-color: rgba(120,200,140,0.40);
+  box-shadow: 0 0 0 1px rgba(120,200,140,0.05);
+}
+.pc-pn-ready .pc-pn-title {
+  color: rgba(180,230,190,1);
+}
+.pc-pn-icon-check {
+  background: rgba(120,200,140,0.20) !important;
+  color: rgba(160,230,170,1) !important;
+  border: 1px solid rgba(120,200,140,0.55);
+  font-weight: 700;
+  font-size: 16px;
+  animation: pc-pn-check-pulse 2.4s ease-in-out infinite;
+}
+@keyframes pc-pn-check-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(120,200,140,0.0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(120,200,140,0.0),
+                0 0 12px 2px rgba(120,200,140,0.25);
+  }
+}
+
 /* ── Duplicate-process warning ────────────────────────────────
    Surfaced when the server's anti-duplication check catches the
    planner producing a near-duplicate of an existing process. The
@@ -7377,8 +7406,21 @@ body.d-desktop-mode .stream {
 
 .pcr-list {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+/* Drop to 2 columns when the container narrows, 1 column when very
+   narrow. Cards are dense (name + pitch + chain + pills + action),
+   cramming 3 across at narrow viewports clips the chain blocks. */
+@media (max-width: 1100px) {
+  .pcr-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .pcr-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (max-width: 900px) {
   .pcr-list { grid-template-columns: 1fr; }
@@ -7399,6 +7441,11 @@ body.d-desktop-mode .stream {
   color: var(--text);
   font-family: var(--font-body);
   transition: border-color .15s ease, background .15s ease, transform .12s ease;
+  /* Without min-width:0, the card's content (chain block names,
+     pill rows, etc) can force the grid column wider than the
+     viewport, causing the overflow we saw in the screenshot.
+     min-width:0 lets the card actually shrink to fit. */
+  min-width: 0;
 }
 .pcr-card:hover {
   border-color: rgba(232,169,23,0.45);
@@ -7412,6 +7459,7 @@ body.d-desktop-mode .stream {
   align-items: baseline;
   gap: 6px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 .pcr-kind-tag {
   flex-shrink: 0;
@@ -7429,6 +7477,22 @@ body.d-desktop-mode .stream {
   color: rgba(190,205,240,0.95);
   background: rgba(150,170,220,0.06);
   border-color: rgba(170,190,230,0.22);
+}
+/* Pattern pill — shows the composition pattern (batch /
+   evaluation-loop / multi-modal-pivot / etc) alongside the kind
+   tag. Subtle so it doesn't overwhelm; legible enough that the
+   user reads three cards and sees "batch / evaluation / multi-
+   modal" at a glance instead of three vague pitches. */
+.pcr-card-pattern {
+  flex-shrink: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: rgba(180,180,200,0.78);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
 }
 .pcr-card-name {
   flex: 1 1 auto;
@@ -7532,10 +7596,12 @@ body.d-desktop-mode .stream {
   font-size: 11px;
   color: rgba(230,230,235,0.95);
   font-weight: 500;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  /* Wrap rather than clip — chain block names are critical context.
+     Truncating "Storyboard Package with Voiceover" to "Storyboard P…"
+     loses the meaning the chain is meant to convey. */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .pcr-chain-block-target .pcr-chain-name {
   color: rgba(255,220,150,0.98);
@@ -12049,9 +12115,24 @@ promptflow whoami</code></pre>
       r.className = "text"; r.textContent = turn.plan.rationale;
       assist.body.appendChild(r);
     }
-    // Static (read-only) plan summary — same fields as the editable
-    // card but rendered as text.
-    if (turn.plan) {
+    // Plan summary — gated on whether this was a saved-process run.
+    // For saved processes (picked_process_id set), recipe/model knobs
+    // are misleading — they show the FIRST step's recipe, which for
+    // multi-step processes is rarely the whole pipeline. Render a
+    // simplified "Running <process>" line instead.
+    if (turn.plan?.picked_process_id) {
+      const card = document.createElement("div");
+      card.className = "plan-card";
+      const stepCount = Array.isArray(turn.plan.steps) ? turn.plan.steps.length : 1;
+      card.innerHTML =
+        '<div class="row">' +
+          '<span class="k">Running</span>' +
+          '<span class="v">Saved process (' + stepCount + ' step' + (stepCount === 1 ? '' : 's') + ')</span>' +
+        '</div>';
+      assist.body.appendChild(card);
+    } else if (turn.plan) {
+      // Ad-hoc single-recipe historical turn — show the recipe/model
+      // knobs since they actually were the whole plan in this case.
       const card = document.createElement("div");
       card.className = "plan-card";
       const rows = [
@@ -15032,6 +15113,23 @@ promptflow whoami</code></pre>
                   // Clicking it promotes the process to publishable
                   // state — the marketplace quality gate.
                   renderValidateOutputButton(assist, pickedPid, activePlanId);
+
+                  // Bump the in-memory cache's total_runs so any
+                  // visible process card for this process flips its
+                  // publish nudge from "Test it first" to "✓ Publish
+                  // to earn" immediately. Without this update, the
+                  // user runs successfully but the nudge stays in the
+                  // un-tested state until full page reload.
+                  if (Array.isArray(processesCache)) {
+                    const cachedProc = processesCache.find(p => p.id === pickedPid);
+                    if (cachedProc) {
+                      cachedProc.total_runs = (cachedProc.total_runs || 0) + 1;
+                      // Re-paint visible nudges for this process.
+                      // The nudge's dataset.processId lets us target
+                      // it without re-rendering the whole card.
+                      flipPublishNudgeToReady(pickedPid, cachedProc);
+                    }
+                  }
                 } else {
                   // No picked_process_id — this was an ad-hoc single-recipe
                   // run, not an invocation of a saved process. Offer the
@@ -17081,31 +17179,29 @@ promptflow whoami</code></pre>
 
     // Publish nudge — fires for the user's own unpublished processes.
     // Two states:
-    //   (a) Not yet validated: "Verify a run first" — publishing is
-    //       gated behind the author personally verifying at least
-    //       one successful run's output. This stops the marketplace
-    //       from filling with processes their authors never reviewed.
-    //       Stronger than total_runs > 0 (which counted any fired
-    //       plan including failed ones nobody looked at).
-    //   (b) Validated (validated_at != null): full publish nudge.
+    //   (a) Not yet run: "Run a test first" — show the user has to
+    //       actually fire the process before publishing makes sense.
+    //   (b) Successfully run at least once: "✓ Publish to earn" — a
+    //       green check + prominent publish CTA. The first successful
+    //       run is the quality signal that gates publishing.
     //
     // System processes, already-published processes, and other
     // people's processes don't get the nudge.
     const isMine = proc.created_by_user_id && ME && proc.created_by_user_id === ME.id;
     const alreadyPublished = !!proc.is_published;
     const isSystem = !!proc.is_system;
-    const isValidated = !!proc.validated_at;
+    const hasBeenRun = (proc.total_runs || 0) > 0;
     if (isMine && !alreadyPublished && !isSystem) {
       const nudge = document.createElement("div");
       nudge.dataset.processId = proc.id;
-      if (!isValidated) {
-        // ── State (a): Verify a run first ───────────────────────
+      if (!hasBeenRun) {
+        // ── State (a): Run a test first ─────────────────────────
         nudge.className = "pc-publish-nudge pc-pn-untested";
         nudge.innerHTML =
           '<div class="pc-pn-icon">▶</div>' +
           '<div class="pc-pn-body">' +
-            '<div class="pc-pn-title">Verify a run first</div>' +
-            '<div class="pc-pn-pitch">Run this process, review the output, and click "Verify this output" to confirm it works. Then you can publish it and start earning when others compose with it.</div>' +
+            '<div class="pc-pn-title">Run a test first</div>' +
+            '<div class="pc-pn-pitch">Run this process once to make sure it works. Then publish it and start earning when others compose with it.</div>' +
           '</div>' +
           '<div class="pc-pn-actions">' +
             '<button type="button" class="btn pc-pn-test">Run a test →</button>' +
@@ -17116,13 +17212,15 @@ promptflow whoami</code></pre>
           openRunCard(proc);
         };
       } else {
-        // ── State (b): ready to publish ─────────────────────────
-        nudge.className = "pc-publish-nudge";
+        // ── State (b): publish to earn ──────────────────────────
+        // The successful run already validated this works. One
+        // click away from earning. Green check + prominent CTA.
+        nudge.className = "pc-publish-nudge pc-pn-ready";
         nudge.innerHTML =
-          '<div class="pc-pn-icon">★</div>' +
+          '<div class="pc-pn-icon pc-pn-icon-check">✓</div>' +
           '<div class="pc-pn-body">' +
-            '<div class="pc-pn-title">Make this earn</div>' +
-            '<div class="pc-pn-pitch">It works ✓ — now publish it. When someone composes or runs your process, you get paid in tokens automatically. The cascade does the rest.</div>' +
+            '<div class="pc-pn-title">Publish to earn</div>' +
+            '<div class="pc-pn-pitch">It works. Publish it now and start earning tokens every time someone runs or composes with it.</div>' +
           '</div>' +
           '<div class="pc-pn-actions">' +
             '<button type="button" class="btn pc-pn-publish">Publish free</button>' +
@@ -17345,14 +17443,27 @@ promptflow whoami</code></pre>
       // These make the structural-reuse story concrete instead of
       // abstract. Compose cards skip them — composition cards lean
       // on the uses_existing pills + pitch which is plenty.
-      const concreteOutput = (kind === "adapt" && rec.concrete_output)
+      // Both compose and adapt cards surface their structured fields
+      // when present. Compose cards: end_user (named persona), pattern
+      // (which composition shape — batch/evaluation/multi-modal/etc),
+      // concrete_output (the deliverable). Adapt cards: end_user,
+      // step_change (diff vs seed), concrete_output. These break the
+      // formulaic "wraps the seed with X" voice that emerges when the
+      // model only has name+pitch to fill.
+      const concreteOutput = rec.concrete_output
         ? '<div class="pcr-card-output">→ ' + escapeHtml(rec.concrete_output) + '</div>'
         : '';
-      const endUser = (kind === "adapt" && rec.end_user)
+      const endUser = rec.end_user
         ? '<div class="pcr-card-enduser">For: ' + escapeHtml(rec.end_user) + '</div>'
         : '';
       const stepChange = (kind === "adapt" && rec.step_change)
         ? '<div class="pcr-card-stepchange">How: ' + escapeHtml(rec.step_change) + '</div>'
+        : '';
+      // Composition pattern pill — shows WHICH composition shape this
+      // is (batch / evaluation-loop / multi-modal-pivot / etc). Makes
+      // the diversity across the 3 compose cards visible at a glance.
+      const patternPill = (kind === "compose" && rec.pattern)
+        ? '<div class="pcr-card-pattern">' + escapeHtml(rec.pattern) + '</div>'
         : '';
 
       // Chain visualization. Makes the "your process becomes part
@@ -17403,6 +17514,7 @@ promptflow whoami</code></pre>
           '<span class="pcr-kind-tag pcr-kind-' + kind + '">' +
             (kind === "compose" ? "✦ compose" : "✱ adapt") +
           '</span>' +
+          patternPill +
           '<span class="pcr-card-name">' + escapeHtml(rec.name) + '</span>' +
         '</div>' +
         '<div class="pcr-card-pitch">' + escapeHtml(rec.pitch) + '</div>' +
@@ -17627,6 +17739,86 @@ promptflow whoami</code></pre>
   //  - User is the process author (created_by_user_id === ME.id)
   //  - Process is not already validated
   //  - Process isn't a system process (those are validated by Anthropic)
+  // Flip any visible publish nudges for a process from the "Test it
+  // first" state to "✓ Publish to earn" state. Called after a
+  // successful run bumps total_runs on the cache. Re-renders the
+  // nudge in place rather than re-rendering the whole process card —
+  // less visual disruption, keeps scroll position stable.
+  function flipPublishNudgeToReady(processId, proc) {
+    const isMine = proc.created_by_user_id && ME && proc.created_by_user_id === ME.id;
+    if (!isMine) return;
+    if (proc.is_system) return;
+    if (proc.is_published) return;
+
+    const visibleNudges = document.querySelectorAll(
+      '.pc-publish-nudge[data-process-id="' + processId + '"]'
+    );
+    visibleNudges.forEach(nudge => {
+      // Only flip if currently in the untested state. If already in
+      // ready state (e.g. user clicked Run twice in a row), leave it.
+      if (!nudge.classList.contains("pc-pn-untested")) return;
+      nudge.classList.remove("pc-pn-untested");
+      nudge.classList.add("pc-pn-ready");
+      nudge.innerHTML =
+        '<div class="pc-pn-icon pc-pn-icon-check">✓</div>' +
+        '<div class="pc-pn-body">' +
+          '<div class="pc-pn-title">Publish to earn</div>' +
+          '<div class="pc-pn-pitch">It works. Publish it now and start earning tokens every time someone runs or composes with it.</div>' +
+        '</div>' +
+        '<div class="pc-pn-actions">' +
+          '<button type="button" class="btn pc-pn-publish">Publish free</button>' +
+          '<button type="button" class="btn pc-pn-price">Set a price →</button>' +
+        '</div>';
+      // Re-bind handlers — innerHTML replacement wiped them.
+      const publishBtn = nudge.querySelector(".pc-pn-publish");
+      const priceBtn   = nudge.querySelector(".pc-pn-price");
+      publishBtn.onclick = async () => {
+        publishBtn.disabled = true;
+        priceBtn.disabled = true;
+        publishBtn.textContent = "Publishing…";
+        try {
+          const r = await fetch("/api/promptflow/process/monetize", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              id: processId,
+              monetized: true,
+              markup_tokens: 0,
+              bonus_tokens: 0,
+            }),
+          });
+          const j = await r.json();
+          if (j.ok) {
+            // Update cache + remove nudge.
+            proc.is_published = true;
+            proc.is_monetized = true;
+            proc.markup_tokens = 0;
+            proc.bonus_tokens = 0;
+            nudge.remove();
+            // Also refresh full process list so portfolio/library views update.
+            refreshProcesses().catch(() => {});
+          } else {
+            publishBtn.disabled = false;
+            priceBtn.disabled = false;
+            publishBtn.textContent = "Publish free";
+            const err = document.createElement("div");
+            err.className = "vo-error";
+            err.textContent = j.message || j.error || "Couldn't publish.";
+            nudge.appendChild(err);
+            setTimeout(() => { try { err.remove(); } catch {} }, 4000);
+          }
+        } catch {
+          publishBtn.disabled = false;
+          priceBtn.disabled = false;
+          publishBtn.textContent = "Publish free";
+        }
+      };
+      priceBtn.onclick = () => {
+        openMonetizeModal(processId);
+      };
+    });
+  }
+
   function renderValidateOutputButton(assist, processId, planId) {
     if (!ME || !ME.id || !processId || !planId) return;
     // Look up the process from the cache. We need to know if the user
