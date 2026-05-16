@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MissingLink — Admin</title>
+<link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --gold:#E8A917;--gold-light:#F5C842;--gold-dim:rgba(232,169,23,.08);
+  --black:#09090B;--surface:#111113;--surface-2:#18181B;--surface-3:#1F1F23;
+  --border:#27272A;--border-light:#3F3F46;
+  --text:#E4E4E7;--text-dim:#A1A1AA;--text-muted:#71717A;
+  --red:#EF4444;--green:#22C55E;
+  --font-display:'Space Mono','JetBrains Mono',monospace;
+  --font-mono:'JetBrains Mono','Fira Code',monospace;
+  --font-body:'DM Sans','Segoe UI',sans-serif;
+}
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+html,body{height:100%}
+body{background:var(--black);color:var(--text);font-family:var(--font-body);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+
+/* Header */
+.hdr{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;padding:12px 22px;background:var(--surface);border-bottom:1px solid var(--border)}
+.hdr h1{font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--text-dim)}
+.hdr h1 span{color:var(--gold)}
+.hdr .crumbs{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:8px}
+.hdr .crumbs a{color:var(--text-dim);text-decoration:none;cursor:pointer}
+.hdr .crumbs a:hover{color:var(--gold)}
+.hdr .crumbs .sep{color:var(--border-light)}
+.hdr .crumbs .cur{color:var(--gold)}
+.hdr .spacer{flex:1}
+.hdr .me{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:4px 10px;border:1px solid var(--border);border-radius:4px}
+.hdr .me b{color:var(--gold);font-weight:600}
+
+/* Search */
+.toolbar{display:flex;align-items:center;gap:12px;padding:14px 22px;background:var(--surface);border-bottom:1px solid var(--border)}
+.search{flex:1;max-width:420px;position:relative}
+.search input{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:8px 12px 8px 32px;border-radius:6px;outline:none;transition:border-color .15s}
+.search input:focus{border-color:var(--gold)}
+.search::before{content:"⌕";position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:14px;pointer-events:none}
+.stat{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:5px 11px;border:1px solid var(--border);border-radius:4px}
+.stat b{color:var(--text);font-weight:600}
+
+/* Body */
+main{padding:22px;max-width:1400px;margin:0 auto}
+
+/* Users grid (folders) */
+.users-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.user-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:transform .12s,border-color .12s,box-shadow .12s}
+.user-card:hover{border-color:var(--gold);transform:translateY(-2px);box-shadow:0 8px 24px rgba(232,169,23,.06)}
+.user-card .thumbs{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,80px);gap:2px;background:var(--surface-3);aspect-ratio:3/2}
+.user-card .thumbs .t{position:relative;overflow:hidden;background:var(--surface-2)}
+.user-card .thumbs .t.big{grid-column:1/3;grid-row:1/3}
+.user-card .thumbs .t.more{display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);background:var(--surface-3);font-weight:600}
+.user-card .thumbs img{width:100%;height:100%;object-fit:cover;display:block;background:var(--surface-3)}
+.user-card .thumbs .empty{display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;grid-column:1/-1;grid-row:1/-1}
+.user-card .meta{padding:12px 14px;display:flex;align-items:center;gap:10px}
+.user-card .av{width:32px;height:32px;border-radius:50%;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--gold);flex-shrink:0;overflow:hidden}
+.user-card .av img{width:100%;height:100%;object-fit:cover}
+.user-card .info{flex:1;min-width:0}
+.user-card .em{font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-card .sub{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:2px;display:flex;gap:8px}
+.user-card .sub .count{color:var(--gold)}
+
+/* Generations grid (drill-down) */
+.user-header{display:flex;align-items:center;gap:16px;background:var(--surface);border:1px solid var(--border);padding:18px 20px;border-radius:10px;margin-bottom:18px}
+.user-header .av{width:56px;height:56px;border-radius:50%;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--gold);overflow:hidden;flex-shrink:0}
+.user-header .av img{width:100%;height:100%;object-fit:cover}
+.user-header h2{font-size:18px;font-weight:600;color:var(--text)}
+.user-header .em{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-top:3px}
+.user-header .stats{display:flex;gap:14px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-top:6px}
+.user-header .stats b{color:var(--gold)}
+.user-header .back{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-decoration:none;border:1px solid var(--border);padding:6px 12px;border-radius:5px;cursor:pointer}
+.user-header .back:hover{color:var(--gold);border-color:var(--gold)}
+
+.gens-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.gen{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:border-color .12s,transform .12s}
+.gen:hover{border-color:var(--gold);transform:translateY(-2px)}
+.gen .img{aspect-ratio:1;background:var(--surface-3);position:relative;overflow:hidden}
+.gen .img img{width:100%;height:100%;object-fit:cover;display:block}
+.gen .img .mode{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.65);color:var(--gold);font-family:var(--font-mono);font-size:9px;padding:3px 7px;border-radius:3px;text-transform:uppercase;letter-spacing:.5px}
+.gen .cap{padding:9px 12px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+.gen .cap .prompt{color:var(--text-dim);font-family:var(--font-body);font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px;line-height:1.35}
+
+/* Load more / states */
+.loader{display:flex;justify-content:center;padding:32px 0}
+.btn{background:var(--surface-2);color:var(--text);border:1px solid var(--border);font-family:var(--font-mono);font-size:11px;padding:9px 22px;border-radius:6px;cursor:pointer;transition:all .15s}
+.btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty-state{text-align:center;padding:80px 20px;color:var(--text-muted);font-family:var(--font-mono);font-size:12px}
+.error-state{text-align:center;padding:80px 20px;color:var(--red);font-family:var(--font-mono);font-size:12px}
+.error-state .h{font-size:14px;color:var(--text);margin-bottom:8px;font-family:var(--font-body);font-weight:600}
+
+/* Lightbox */
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:100;display:none;align-items:center;justify-content:center;padding:40px}
+.lb.open{display:flex}
+.lb img{max-width:100%;max-height:calc(100vh - 140px);display:block;border-radius:6px}
+.lb .info{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);max-width:80%;background:rgba(20,20,23,.95);border:1px solid var(--border);padding:14px 20px;border-radius:8px;font-family:var(--font-mono);font-size:11px}
+.lb .info .p{color:var(--text);font-family:var(--font-body);font-size:13px;margin-bottom:8px;max-height:80px;overflow-y:auto;line-height:1.5}
+.lb .info .meta{color:var(--text-muted);display:flex;gap:14px;flex-wrap:wrap}
+.lb .info .meta b{color:var(--gold)}
+.lb .close{position:absolute;top:20px;right:20px;background:var(--surface);border:1px solid var(--border);color:var(--text);width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.lb .close:hover{border-color:var(--gold);color:var(--gold)}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <h1>MISSING<span>·</span>LINK / ADMIN</h1>
+  <div class="crumbs" id="crumbs">
+    <a id="crumb-home">Users</a>
+  </div>
+  <div class="spacer"></div>
+  <div class="me" id="me">…</div>
+</header>
+
+<div class="toolbar" id="toolbar">
+  <div class="search">
+    <input id="search" type="text" placeholder="Filter by email or name…" autocomplete="off">
+  </div>
+  <div class="stat" id="stat-total">Loading…</div>
+</div>
+
+<main id="main">
+  <div class="loader"><div class="spinner"></div></div>
+</main>
+
+<div class="lb" id="lb">
+  <button class="close" id="lb-close">✕</button>
+  <img id="lb-img" alt="">
+  <div class="info" id="lb-info"></div>
+</div>
+
+<script>
+"use strict";
+
+const PAGE_SIZE = 20;
+const state = {
+  view: "users",      // "users" | "user"
+  userId: null,
+  users: [],
+  usersOffset: 0,
+  usersDone: false,
+  gens: [],
+  gensOffset: 0,
+  gensDone: false,
+  currentUser: null,
+  filter: "",
+  loading: false,
+};
+
+// ── helpers ─────────────────────────────────────────────────────
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtDate = (sec) => {
+  if (!sec) return "—";
+  const d = new Date(sec * 1000);
+  const now = Date.now();
+  const diff = (now - d.getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return Math.floor(diff/60) + "m ago";
+  if (diff < 86400) return Math.floor(diff/3600) + "h ago";
+  if (diff < 86400*30) return Math.floor(diff/86400) + "d ago";
+  return d.toLocaleDateString();
+};
+
+async function api(path, opts={}) {
+  const r = await fetch(path, { credentials: "include", ...opts });
+  if (r.status === 401) {
+    document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;font-family:var(--font-mono);color:var(--text-muted)"><div style="font-size:14px;color:var(--text)">Not signed in</div><a href="/studio.html" style="color:var(--gold)">Go to Studio →</a></div>';
+    throw new Error("not_logged_in");
+  }
+  if (r.status === 403) {
+    document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;font-family:var(--font-mono);color:var(--text-muted)"><div style="font-size:14px;color:var(--red)">Access denied</div><div>This page is restricted.</div><a href="/studio.html" style="color:var(--gold)">← Studio</a></div>';
+    throw new Error("forbidden");
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data?.ok === false) {
+    throw new Error(data?.error || `HTTP ${r.status}`);
+  }
+  return data;
+}
+
+// ── crumbs ──────────────────────────────────────────────────────
+function renderCrumbs() {
+  const c = $("#crumbs");
+  if (state.view === "users") {
+    c.innerHTML = '<span class="cur">Users</span>';
+  } else {
+    const email = state.currentUser?.email || state.userId;
+    c.innerHTML = '<a id="crumb-home">Users</a><span class="sep">/</span><span class="cur">' + esc(email) + '</span>';
+    $("#crumb-home").onclick = () => navigate("users");
+  }
+}
+
+// ── users view ──────────────────────────────────────────────────
+async function loadUsersBatch() {
+  if (state.loading || state.usersDone) return;
+  state.loading = true;
+  renderLoader();
+  try {
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(state.usersOffset) });
+    if (state.filter) params.set("q", state.filter);
+    const data = await api("/api/studio/admin/users?" + params.toString());
+    state.users.push(...(data.users || []));
+    state.usersOffset += (data.users || []).length;
+    state.usersDone = !data.has_more;
+    if (typeof data.total === "number") {
+      $("#stat-total").innerHTML = "<b>" + data.total.toLocaleString() + "</b> user" + (data.total === 1 ? "" : "s");
+    }
+  } catch (e) {
+    renderError(e.message);
+    state.loading = false;
+    return;
+  }
+  state.loading = false;
+  renderUsersView();
+}
+
+function renderUsersView() {
+  if (state.view !== "users") return;
+  const main = $("#main");
+  if (state.users.length === 0 && !state.loading) {
+    main.innerHTML = '<div class="empty-state">No users match.</div>';
+    return;
+  }
+  let html = '<div class="users-grid" id="ug">';
+  for (const u of state.users) html += userCardHtml(u);
+  html += '</div>';
+  if (!state.usersDone) {
+    html += '<div class="loader" id="loader-anchor"><button class="btn" id="loadmore">Load more</button></div>';
+  } else if (state.users.length > 0) {
+    html += '<div class="empty-state">— end —</div>';
+  }
+  main.innerHTML = html;
+  for (const card of main.querySelectorAll(".user-card")) {
+    card.onclick = () => navigate("user", card.dataset.uid);
+  }
+  const lm = $("#loadmore");
+  if (lm) {
+    lm.onclick = loadUsersBatch;
+    setupInfiniteScroll($("#loader-anchor"), loadUsersBatch);
+  }
+}
+
+function userCardHtml(u) {
+  const initial = (u.email || "?").trim().charAt(0).toUpperCase();
+  const av = u.picture
+    ? '<img src="' + esc(u.picture) + '" alt="" referrerpolicy="no-referrer">'
+    : esc(initial);
+  const thumbs = Array.isArray(u.thumbs) ? u.thumbs : [];
+  let thumbsHtml = '';
+  if (thumbs.length === 0) {
+    thumbsHtml = '<div class="empty">no generations yet</div>';
+  } else {
+    // 1 big + 4 small if we have 5; otherwise show what we have
+    const n = Math.min(5, thumbs.length);
+    for (let i = 0; i < n; i++) {
+      const cls = (i === 0 && n > 1) ? "t big" : "t";
+      thumbsHtml += '<div class="' + cls + '"><img loading="lazy" src="' + esc(thumbs[i]) + '" alt=""></div>';
+    }
+    // If user has more than what we showed, add a +N tile
+    if (u.gen_count > n) {
+      thumbsHtml += '<div class="t more">+' + (u.gen_count - n) + '</div>';
+    } else {
+      // pad with empty cells so layout looks consistent
+      for (let i = n; i < 5; i++) thumbsHtml += '<div class="t"></div>';
+    }
+  }
+  const name = u.name && u.name !== u.email ? u.name : "";
+  return (
+    '<div class="user-card" data-uid="' + esc(u.id) + '">' +
+      '<div class="thumbs">' + thumbsHtml + '</div>' +
+      '<div class="meta">' +
+        '<div class="av">' + av + '</div>' +
+        '<div class="info">' +
+          '<div class="em">' + esc(u.email) + '</div>' +
+          '<div class="sub">' +
+            '<span class="count">' + (u.gen_count || 0) + ' gen' + (u.gen_count === 1 ? "" : "s") + '</span>' +
+            '<span>·</span>' +
+            '<span>last seen ' + fmtDate(u.last_login || u.created_at) + '</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// ── user (generations) view ─────────────────────────────────────
+async function loadUserGens(reset=false) {
+  if (state.loading) return;
+  if (!reset && state.gensDone) return;
+  state.loading = true;
+  if (reset) renderLoader();
+  try {
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(state.gensOffset) });
+    const data = await api("/api/studio/admin/user/" + encodeURIComponent(state.userId) + "/generations?" + params.toString());
+    state.gens.push(...(data.generations || []));
+    state.gensOffset += (data.generations || []).length;
+    state.gensDone = !data.has_more;
+    if (data.user) state.currentUser = data.user;
+    if (typeof data.total === "number") {
+      $("#stat-total").innerHTML = "<b>" + data.total.toLocaleString() + "</b> generation" + (data.total === 1 ? "" : "s");
+    }
+  } catch (e) {
+    renderError(e.message);
+    state.loading = false;
+    return;
+  }
+  state.loading = false;
+  renderUserView();
+}
+
+function renderUserView() {
+  if (state.view !== "user") return;
+  const main = $("#main");
+  const u = state.currentUser || { email: state.userId };
+  const initial = (u.email || "?").trim().charAt(0).toUpperCase();
+  const av = u.picture
+    ? '<img src="' + esc(u.picture) + '" alt="" referrerpolicy="no-referrer">'
+    : esc(initial);
+
+  let header = (
+    '<div class="user-header">' +
+      '<div class="av">' + av + '</div>' +
+      '<div>' +
+        '<h2>' + esc(u.name || u.email) + '</h2>' +
+        '<div class="em">' + esc(u.email) + '</div>' +
+        '<div class="stats">' +
+          '<span><b>' + (u.gen_count != null ? u.gen_count : state.gens.length) + '</b> generations</span>' +
+          '<span>·</span>' +
+          '<span>joined ' + fmtDate(u.created_at) + '</span>' +
+          '<span>·</span>' +
+          '<span>last login ' + fmtDate(u.last_login) + '</span>' +
+          (u.tokens != null ? '<span>·</span><span><b>' + u.tokens + '</b> tokens</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<a class="back" id="back-btn">← back</a>' +
+    '</div>'
+  );
+
+  let gridHtml;
+  if (state.gens.length === 0 && state.gensDone) {
+    gridHtml = '<div class="empty-state">No generations.</div>';
+  } else {
+    gridHtml = '<div class="gens-grid">';
+    for (const g of state.gens) gridHtml += genCardHtml(g);
+    gridHtml += '</div>';
+    if (!state.gensDone) {
+      gridHtml += '<div class="loader" id="loader-anchor"><button class="btn" id="loadmore">Load more</button></div>';
+    } else if (state.gens.length > 0) {
+      gridHtml += '<div class="empty-state">— end —</div>';
+    }
+  }
+
+  main.innerHTML = header + gridHtml;
+  $("#back-btn").onclick = () => navigate("users");
+  for (const card of main.querySelectorAll(".gen")) {
+    card.onclick = () => openLightbox(card.dataset.id);
+  }
+  const lm = $("#loadmore");
+  if (lm) {
+    lm.onclick = () => loadUserGens(false);
+    setupInfiniteScroll($("#loader-anchor"), () => loadUserGens(false));
+  }
+}
+
+function genCardHtml(g) {
+  const prompt = g.prompt ? '<div class="prompt">' + esc(g.prompt) + '</div>' : '';
+  return (
+    '<div class="gen" data-id="' + esc(g.id) + '">' +
+      '<div class="img">' +
+        '<img loading="lazy" src="' + esc(g.url) + '" alt="">' +
+        (g.mode ? '<div class="mode">' + esc(g.mode) + '</div>' : '') +
+      '</div>' +
+      '<div class="cap">' +
+        prompt +
+        fmtDate(g.created_at) +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// ── lightbox ────────────────────────────────────────────────────
+function openLightbox(genId) {
+  const g = state.gens.find(x => x.id === genId);
+  if (!g) return;
+  $("#lb-img").src = g.url;
+  $("#lb-info").innerHTML =
+    (g.prompt ? '<div class="p">' + esc(g.prompt) + '</div>' : '') +
+    '<div class="meta">' +
+      (g.mode ? '<span>mode: <b>' + esc(g.mode) + '</b></span>' : '') +
+      (g.w && g.h ? '<span>size: <b>' + g.w + '×' + g.h + '</b></span>' : '') +
+      (g.seed ? '<span>seed: <b>' + g.seed + '</b></span>' : '') +
+      '<span>' + fmtDate(g.created_at) + '</span>' +
+      '<span><a href="' + esc(g.url) + '" target="_blank" style="color:var(--gold)">open ↗</a></span>' +
+    '</div>';
+  $("#lb").classList.add("open");
+}
+$("#lb-close").onclick = () => $("#lb").classList.remove("open");
+$("#lb").onclick = (e) => { if (e.target.id === "lb") $("#lb").classList.remove("open"); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#lb").classList.remove("open"); });
+
+// ── routing / infinite scroll / helpers ─────────────────────────
+function navigate(view, userId) {
+  state.view = view;
+  if (view === "users") {
+    state.userId = null;
+    state.currentUser = null;
+    location.hash = "";
+  } else if (view === "user") {
+    state.userId = userId;
+    state.gens = [];
+    state.gensOffset = 0;
+    state.gensDone = false;
+    location.hash = "user/" + userId;
+  }
+  renderCrumbs();
+  if (view === "users") {
+    if (state.users.length === 0) loadUsersBatch();
+    else renderUsersView();
+  } else {
+    loadUserGens(true);
+  }
+  window.scrollTo(0, 0);
+}
+
+let io = null;
+function setupInfiniteScroll(anchor, cb) {
+  if (io) io.disconnect();
+  if (!anchor) return;
+  io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting && !state.loading) cb();
+    }
+  }, { rootMargin: "400px" });
+  io.observe(anchor);
+}
+
+function renderLoader() {
+  if (state.view === "users" && state.users.length > 0) return;
+  if (state.view === "user" && state.gens.length > 0) return;
+  $("#main").innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+}
+function renderError(msg) {
+  $("#main").innerHTML = '<div class="error-state"><div class="h">Something went wrong</div>' + esc(msg) + '</div>';
+}
+
+// ── search (filter users by email/name) ─────────────────────────
+let searchTimer = null;
+$("#search").addEventListener("input", (e) => {
+  if (state.view !== "users") return;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.filter = e.target.value.trim();
+    state.users = [];
+    state.usersOffset = 0;
+    state.usersDone = false;
+    loadUsersBatch();
+  }, 250);
+});
+
+// ── hash routing on load + back/forward ─────────────────────────
+function fromHash() {
+  const m = location.hash.match(/^#user\/(.+)$/);
+  if (m) navigate("user", decodeURIComponent(m[1]));
+  else navigate("users");
+}
+window.addEventListener("hashchange", fromHash);
+
+// ── boot ────────────────────────────────────────────────────────
+(async function boot() {
+  try {
+    // quick whoami probe via the existing balance endpoint (cheap)
+    // but really we let /api/studio/admin/* return 401/403 if not authorized.
+    fromHash();
+    // populate "me" pill once we have at least one admin response
+    setTimeout(() => {
+      if (state.users.length || state.gens.length) {
+        // best-effort: grab from currentUser or first user (we don't know self email here)
+      }
+      $("#me").textContent = "admin";
+    }, 50);
+  } catch (e) {
+    renderError(e.message);
+  }
+})();
+</script>
+</body>
+</html>
