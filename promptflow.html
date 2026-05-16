@@ -6213,6 +6213,102 @@ body.d-desktop-mode .stream {
   color: rgba(180,180,200,0.6);
 }
 
+/* ── Compose token-flow animation ────────────────────────────
+   Fires when a user picks a compose card. Visualizes the cascade
+   commitment: a gold coin flies from the picked card up to the
+   seed process author, where "+200t" floats up to confirm. The
+   downstream royalty is symbolic at this moment — the real
+   settlement happens when the new composed process actually runs.
+   But showing the flow at the DECISION point lands the cascade
+   pitch hard. */
+.compose-token-fly {
+  position: fixed;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: rgba(255,200,80,1);
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  text-shadow:
+    0 0 8px rgba(232,169,23,0.9),
+    0 0 16px rgba(232,169,23,0.45),
+    0 0 24px rgba(232,169,23,0.25);
+  transform: translate(-50%, -50%) scale(0.4) rotate(0deg);
+  z-index: 10000;
+  pointer-events: none;
+  animation: compose-token-fly-anim 1.2s cubic-bezier(0.34, 0.6, 0.4, 1) forwards;
+}
+@keyframes compose-token-fly-anim {
+  0% {
+    transform: translate(-50%, -50%) scale(0.4) rotate(0deg);
+    opacity: 0;
+  }
+  15% {
+    transform: translate(-50%, -50%) scale(1.15) rotate(80deg);
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform:
+      translate(calc(-50% + var(--dx)), calc(-50% + var(--dy)))
+      scale(0.7) rotate(540deg);
+    opacity: 0;
+  }
+}
+
+.compose-token-float {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: rgba(255,220,140,1);
+  text-shadow:
+    0 0 6px rgba(232,169,23,0.7),
+    0 1px 2px rgba(0,0,0,0.6);
+  z-index: 10001;
+  pointer-events: none;
+  opacity: 0;
+  animation: compose-token-float-anim 0.9s ease-out 0.9s forwards;
+}
+@keyframes compose-token-float-anim {
+  0% {
+    transform: translate(-50%, -50%) translateY(8px) scale(0.85);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) translateY(-28px) scale(1.05);
+    opacity: 0;
+  }
+}
+
+.pc-author-glow {
+  animation: pc-author-glow-anim 1.2s ease-out 0.85s 1;
+  border-radius: 4px;
+}
+@keyframes pc-author-glow-anim {
+  0% {
+    box-shadow: 0 0 0 0 rgba(232,169,23,0);
+    background: transparent;
+  }
+  30% {
+    box-shadow: 0 0 18px 4px rgba(232,169,23,0.5);
+    background: rgba(232,169,23,0.12);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(232,169,23,0);
+    background: transparent;
+  }
+}
+
 /* ── Royalty settlement card ────────────────────────────────
    The "tokens cascade to creators" moment — visible after every
    paid run. Replaces the prior one-line status, which functioned
@@ -17166,6 +17262,72 @@ promptflow whoami</code></pre>
     // adapt cards use the same shape — name + pitch + a Generate
     // button that fires send() with the design_prompt and the seed
     // marked as chain parent. Reused across both sections.
+    // Animate a gold token flying from the clicked compose card to
+    // the seed process's author badge, where a "+200t" floats up.
+    // The 200 is representative — when the user's new composed
+    // process actually runs, the real cascade will fire and a
+    // settlement card shows the precise numbers. THIS animation
+    // sells the COMMITMENT moment: "you just decided to build on
+    // top of someone's work; tokens will flow to them."
+    function animateComposeTokenFlow(pickedCard, seedProc) {
+      // Find the seed process card's author element. The card lives
+      // higher up in the stream — walk up from the recommendations
+      // panel to find the .process-card it belongs to, then locate
+      // its .pc-author span.
+      const recsPanel = pickedCard.closest(".process-card-recs");
+      if (!recsPanel) return;
+      const seedCard = recsPanel.closest(".process-card")
+        || recsPanel.previousElementSibling
+        || stream.querySelector(".process-card");
+      const authorEl = seedCard ? seedCard.querySelector(".pc-author") : null;
+
+      // Fallback target — if no author element, aim at the top of
+      // the seed card. Still communicates flow direction even without
+      // a personal target.
+      const targetEl = authorEl || seedCard;
+      if (!targetEl) return;
+
+      const startRect = pickedCard.getBoundingClientRect();
+      const endRect = targetEl.getBoundingClientRect();
+
+      // Center points.
+      const startX = startRect.left + startRect.width / 2;
+      const startY = startRect.top + 20;       // near the top of the card, not its middle
+      const endX = endRect.left + endRect.width / 2;
+      const endY = endRect.top + endRect.height / 2;
+
+      // The flying token — absolute-positioned, animated via two
+      // CSS custom properties (--dx, --dy) for the translate target.
+      const token = document.createElement("div");
+      token.className = "compose-token-fly";
+      token.style.left = startX + "px";
+      token.style.top = startY + "px";
+      token.style.setProperty("--dx", (endX - startX) + "px");
+      token.style.setProperty("--dy", (endY - startY) + "px");
+      token.textContent = "◉";
+      document.body.appendChild(token);
+
+      // Float-up amount, appears at the destination when the token
+      // arrives. Staggered start so it shows up RIGHT as the token
+      // collapses into the author area.
+      const float = document.createElement("div");
+      float.className = "compose-token-float";
+      float.style.left = endX + "px";
+      float.style.top = endY + "px";
+      float.textContent = "+200 t";
+      document.body.appendChild(float);
+
+      // Brief glow on the author element to confirm receipt.
+      if (authorEl) authorEl.classList.add("pc-author-glow");
+
+      // Cleanup after animations complete.
+      setTimeout(() => {
+        try { token.remove(); } catch {}
+        try { float.remove(); } catch {}
+        if (authorEl) authorEl.classList.remove("pc-author-glow");
+      }, 1800);
+    }
+
     function makeRecCard(rec, kind) {
       const card = document.createElement("button");
       card.type = "button";
@@ -17272,6 +17434,27 @@ promptflow whoami</code></pre>
             }
           });
         }
+
+        // Token-flow animation. Visualize the cascade BEFORE the new
+        // process is even generated — when the user commits to building
+        // on top of the seed, they're committing to a downstream royalty
+        // path. A gold token flies from the picked card to the seed
+        // author's badge above, where a "+200t" floats up. Makes the
+        // "tokens flow to the upstream author" pitch tangible at the
+        // moment of decision, not buried in a settlement card after a
+        // future run.
+        //
+        // Compose is the act that creates the relationship; the actual
+        // royalty fires later on each downstream run. But showing the
+        // flow at the compose moment is what makes the demo land — the
+        // user SEES the commitment.
+        try {
+          animateComposeTokenFlow(card, proc);
+        } catch (e) {
+          // Animation failures must never block the generation itself.
+          console.warn("[PromptFlow] token-flow animation failed:", e);
+        }
+
         // Mark this process as the source for the next generation —
         // chainSource path on the backend uses this to scaffold
         // composition or adaptation. The kind drives whether the
