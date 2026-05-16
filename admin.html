@@ -105,10 +105,29 @@ main{padding:22px;max-width:1400px;margin:0 auto}
 .lb .info .meta b{color:var(--gold)}
 .lb .close{position:absolute;top:20px;right:20px;background:var(--surface);border:1px solid var(--border);color:var(--text);width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .lb .close:hover{border-color:var(--gold);color:var(--gold)}
+
+/* Auth gate — hide everything until the server confirms admin */
+#app{display:none}
+body.ready #app{display:block}
+body.ready #splash{display:none}
+#splash{position:fixed;inset:0;background:var(--black);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:1000;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+#splash .spinner{width:22px;height:22px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+#splash.denied .spinner{display:none}
+#splash .msg{letter-spacing:.5px}
+#splash .sub{font-size:10px;color:var(--text-muted)}
+#splash .sub a{color:var(--gold);text-decoration:none}
+#splash .sub a:hover{text-decoration:underline}
+#splash.denied .msg{color:var(--red);font-size:14px;font-family:var(--font-body);font-weight:600}
 </style>
 </head>
 <body>
 
+<div id="splash">
+  <div class="spinner"></div>
+  <div class="msg">verifying access…</div>
+</div>
+
+<div id="app">
 <header class="hdr">
   <h1>MISSING<span>·</span>LINK / ADMIN</h1>
   <div class="crumbs" id="crumbs">
@@ -134,6 +153,8 @@ main{padding:22px;max-width:1400px;margin:0 auto}
   <img id="lb-img" alt="">
   <div class="info" id="lb-info"></div>
 </div>
+
+</div><!-- /#app -->
 
 <script>
 "use strict";
@@ -171,18 +192,26 @@ const fmtDate = (sec) => {
 async function api(path, opts={}) {
   const r = await fetch(path, { credentials: "include", ...opts });
   if (r.status === 401) {
-    document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;font-family:var(--font-mono);color:var(--text-muted)"><div style="font-size:14px;color:var(--text)">Not signed in</div><a href="/studio.html" style="color:var(--gold)">Go to Studio →</a></div>';
+    showDenied("Not signed in", '<a href="/studio.html">Go to Studio →</a>');
     throw new Error("not_logged_in");
   }
   if (r.status === 403) {
-    document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;font-family:var(--font-mono);color:var(--text-muted)"><div style="font-size:14px;color:var(--red)">Access denied</div><div>This page is restricted.</div><a href="/studio.html" style="color:var(--gold)">← Studio</a></div>';
+    showDenied("Access denied", 'This page is restricted. <a href="/studio.html">← Studio</a>');
     throw new Error("forbidden");
   }
   const data = await r.json().catch(() => ({}));
   if (!r.ok || data?.ok === false) {
-    throw new Error(data?.error || `HTTP ${r.status}`);
+    throw new Error(data?.error || ("HTTP " + r.status));
   }
   return data;
+}
+
+function showDenied(msg, subHtml) {
+  const splash = document.getElementById("splash");
+  splash.classList.add("denied");
+  splash.innerHTML = '<div class="msg">' + msg + '</div>' +
+    (subHtml ? '<div class="sub">' + subHtml + '</div>' : '');
+  // Keep #app hidden — body.ready is never set on the denied path.
 }
 
 // ── crumbs ──────────────────────────────────────────────────────
@@ -474,20 +503,31 @@ window.addEventListener("hashchange", fromHash);
 
 // ── boot ────────────────────────────────────────────────────────
 (async function boot() {
+  // Probe admin access first. If this 401s or 403s, api() shows the
+  // denied splash and #app stays hidden forever. Only on success do we
+  // flip body.ready=true to reveal the UI.
   try {
-    // quick whoami probe via the existing balance endpoint (cheap)
-    // but really we let /api/studio/admin/* return 401/403 if not authorized.
-    fromHash();
-    // populate "me" pill once we have at least one admin response
-    setTimeout(() => {
-      if (state.users.length || state.gens.length) {
-        // best-effort: grab from currentUser or first user (we don't know self email here)
-      }
-      $("#me").textContent = "admin";
-    }, 50);
+    const probe = await api("/api/studio/admin/users?limit=" + PAGE_SIZE + "&offset=0");
+    // Seed the users list from the probe so we don't waste the request.
+    state.users = probe.users || [];
+    state.usersOffset = state.users.length;
+    state.usersDone = !probe.has_more;
+    if (typeof probe.total === "number") {
+      // Pre-fill the stat pill before reveal so nothing flashes "Loading…".
+      const stat = document.getElementById("stat-total");
+      if (stat) stat.innerHTML = "<b>" + probe.total.toLocaleString() + "</b> user" + (probe.total === 1 ? "" : "s");
+    }
   } catch (e) {
-    renderError(e.message);
+    // api() already painted the denied splash; just stop.
+    return;
   }
+
+  // Reveal the UI.
+  document.body.classList.add("ready");
+  $("#me").textContent = "admin";
+
+  // Route from hash (#user/<id> → detail view, otherwise → users list).
+  fromHash();
 })();
 </script>
 </body>
