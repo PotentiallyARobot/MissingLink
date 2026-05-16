@@ -6743,6 +6743,20 @@ body.d-desktop-mode .stream {
   color: #0a0a0b;
   border-color: rgba(232,169,23,1);
 }
+.pc-pill-cost {
+  font-family: ui-monospace, monospace;
+}
+.pc-pill-cost-free {
+  background: rgba(232,169,23,0.10);
+  color: rgba(255,220,140,0.92);
+  border-color: rgba(232,169,23,0.35);
+}
+.pc-pill-unpublished {
+  background: rgba(150,150,160,0.07);
+  color: rgba(170,170,180,0.75);
+  border-color: rgba(150,150,160,0.20);
+  font-family: ui-monospace, monospace;
+}
 .pc-pill-fork {
   background: rgba(127,182,224,0.10);
   color: rgba(160,200,235,0.95);
@@ -6804,6 +6818,11 @@ body.d-desktop-mode .stream {
   background: rgba(122,180,122,0.08);
   border-color: rgba(122,180,122,0.18);
   color: rgba(180,220,180,0.9);
+}
+.pc-meta-pill-negative {
+  background: rgba(220,140,140,0.06);
+  border-color: rgba(220,140,140,0.18);
+  color: rgba(230,180,180,0.85);
 }
 .pc-meta-icon {
   color: rgba(170,170,176,0.65);
@@ -16774,7 +16793,20 @@ promptflow whoami</code></pre>
     const lifecyclePills = [];
     if (proc.is_draft) lifecyclePills.push('<span class="pc-pill pc-pill-draft">DRAFT</span>');
     if (proc.is_published && !proc.is_draft) lifecyclePills.push('<span class="pc-pill pc-pill-published">PUBLISHED</span>');
-    if (proc.is_monetized) lifecyclePills.push('<span class="pc-pill pc-pill-monetized">' + (proc.markup_tokens || 0) + ' tk/run</span>');
+    // Cost-to-run pill — always shown, honest about pricing state.
+    // Lets the user know upfront whether running this costs them
+    // anything, instead of discovering it at the run-card step.
+    const isOwnerView = !!(ME && proc.created_by_user_id === ME.id);
+    if (isOwnerView) {
+      lifecyclePills.push('<span class="pc-pill pc-pill-cost pc-pill-cost-free">Free for you</span>');
+    } else if (proc.is_monetized) {
+      const totalCost = (proc.markup_tokens || 0) + (proc.bonus_tokens || 0);
+      lifecyclePills.push('<span class="pc-pill pc-pill-monetized">' + totalCost + ' tk/run</span>');
+    } else if (proc.is_published) {
+      lifecyclePills.push('<span class="pc-pill pc-pill-cost pc-pill-cost-free">Free</span>');
+    } else {
+      lifecyclePills.push('<span class="pc-pill pc-pill-unpublished">Unpublished</span>');
+    }
     if (proc.is_fork || proc.forked_from) lifecyclePills.push('<span class="pc-pill pc-pill-fork">FORK</span>');
     // Lineage line — resolve parent's name from processesCache.
     let lineageHtml = "";
@@ -16791,9 +16823,13 @@ promptflow whoami</code></pre>
           parentLink +
         '</div>';
     }
-    // Author handle — show when we have one. Builds trust + credit.
-    const authorHtml = (proc.author_handle || proc.handle)
-      ? '<span class="pc-author">by <strong>@' + escapeHtml(proc.author_handle || proc.handle) + '</strong></span>'
+    // Author — handle preferred, display name as fallback. Empty
+    // only when both are missing (rare; orphaned processes).
+    const authorName = proc.author_handle || proc.handle
+      ? '@' + (proc.author_handle || proc.handle)
+      : (proc.author_display_name || proc.display_name || "");
+    const authorHtml = authorName
+      ? '<span class="pc-author">by <strong>' + escapeHtml(authorName) + '</strong></span>'
       : "";
     // Public URL — only when there's one (own + slug, or published).
     const urlHtml = proc.public_url
@@ -16802,20 +16838,35 @@ promptflow whoami</code></pre>
           '<a class="pc-url-link" href="' + escapeAttr(proc.public_url) + '">' + escapeHtml(proc.public_url) + '</a>' +
         '</div>'
       : "";
-    // Metadata pills row — surfaces the data that would otherwise hide
-    // in plain label/value rows. Step count, total runs, fork lineage
-    // count, output dimensions when known.
+    // Metadata pills row — KEY STATS, always visible. Showing zeros
+    // is more honest than hiding the row: a new user knows what to
+    // expect (0 runs means they could be first), and demo viewers
+    // see the complete picture.
     const metaPills = [];
     metaPills.push('<span class="pc-meta-pill"><span class="pc-meta-icon">⊙</span>' + stepCount + ' step' + (stepCount === 1 ? '' : 's') + '</span>');
     metaPills.push('<span class="pc-meta-pill"><span class="pc-meta-arrow">→</span>' + escapeHtml(proc.output_kind || 'output') + '</span>');
-    if (proc.total_runs && proc.total_runs > 0) {
-      metaPills.push('<span class="pc-meta-pill"><span class="pc-meta-icon">▶</span>' + proc.total_runs + ' run' + (proc.total_runs === 1 ? '' : 's') + '</span>');
-    }
+    // Runs — always show, even when 0. "0 runs" is a useful signal.
+    const totalRuns = proc.total_runs || 0;
+    metaPills.push('<span class="pc-meta-pill"><span class="pc-meta-icon">▶</span>' + totalRuns + ' run' + (totalRuns === 1 ? '' : 's') + '</span>');
+    // Composed-by — relationship signal worth showing when present.
     if (proc.composed_by_count && proc.composed_by_count > 0) {
       metaPills.push('<span class="pc-meta-pill"><span class="pc-meta-icon">⌥</span>' + proc.composed_by_count + ' composed by</span>');
     }
-    if (proc.total_helpful && proc.total_helpful > 0) {
-      metaPills.push('<span class="pc-meta-pill pc-meta-pill-positive"><span class="pc-meta-icon">✓</span>' + proc.total_helpful + ' helpful</span>');
+    // Helpful ratio — show when there's any signal. "94% helpful
+    // (32 votes)" is way more honest than just raw helpful count,
+    // which inflates if 32 helpful + 200 unhelpful.
+    const helpful = proc.total_helpful || 0;
+    const unhelpful = proc.total_unhelpful || 0;
+    const totalVotes = helpful + unhelpful;
+    if (totalVotes > 0) {
+      const pct = Math.round((helpful / totalVotes) * 100);
+      const cls = pct >= 80 ? 'pc-meta-pill-positive' : pct >= 50 ? '' : 'pc-meta-pill-negative';
+      metaPills.push('<span class="pc-meta-pill ' + cls + '"><span class="pc-meta-icon">✓</span>' + pct + '% helpful (' + totalVotes + ' vote' + (totalVotes === 1 ? '' : 's') + ')</span>');
+    }
+    // Validated badge — only when set, only for the owner viewing
+    // their own process (it's a publishing signal, not a public stat).
+    if (proc.validated_at && isOwnerView) {
+      metaPills.push('<span class="pc-meta-pill pc-meta-pill-positive"><span class="pc-meta-icon">★</span>validated</span>');
     }
     card.innerHTML =
       // Header — name + status, author below
