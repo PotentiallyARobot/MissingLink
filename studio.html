@@ -4241,7 +4241,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <button type="button" class="share-dialog-link-add" id="shareDialogLinkAdd" onclick="addShareLinkRow()">+ Add link</button>
                     <div class="share-dialog-tags-hint">Optional · your portfolio, where to buy prints, a tutorial you followed.</div>
                 </div>
-                <div class="share-dialog-field">
+                <div class="share-dialog-field" id="shareDialogOrientationField">
                     <label class="share-dialog-field-label">
                         Orientation <span class="share-dialog-field-counter">optional</span>
                     </label>
@@ -5194,6 +5194,16 @@ async function toggleNsfwPref(checked){
         }
         _user.nsfw_enabled = d.nsfw_enabled ? 1 : 0;
         log(d.nsfw_enabled ? 'NSFW content shown unblurred' : 'NSFW content will be blurred', 'success');
+        // When NSFW gets turned off, an orientation filter would
+        // otherwise stay applied but invisible (the popover section
+        // hides itself). Clear it on both surfaces so the user doesn't
+        // end up with a stuck filter they can't see or un-set.
+        if (!d.nsfw_enabled) {
+            if (_galleryFilters.orientation) _galleryFilters.orientation = '';
+            if (_stageGalleryFilters.orientation) _stageGalleryFilters.orientation = '';
+            updateFilterBadge('modal');
+            updateFilterBadge('stage');
+        }
         // Re-fetch both gallery surfaces from page 1 so the new filter
         // setting takes effect immediately. Cheap — page size is 20.
         if (typeof refreshGalleryFromScratch === 'function' && $('galleryModal')?.style.display !== 'none') {
@@ -8116,6 +8126,16 @@ function _patchGalleryItemSocial(jobId, patch){
             if (it.id === jobId) Object.assign(it, patch);
         }
     }
+    // Re-paint the card strip if the patch changed any field the
+    // strip reads. Cheap — guard so we only call when reaction data
+    // moved (likes / viewer_liked / reactions / viewer_reaction /
+    // tips_total). Comment count doesn't affect the bar so we skip
+    // when that's the only change.
+    const visualKeys = ['likes_count', 'viewer_liked', 'reactions', 'viewer_reaction', 'tips_total'];
+    if (visualKeys.some((k) => patch && k in patch)
+        && typeof _repaintCardReactions === 'function') {
+        _repaintCardReactions(jobId);
+    }
 }
 
 // Fetch latest social state for the lightbox-bound job and repaint
@@ -8204,8 +8224,8 @@ async function toggleShareJob(jobId, makePublic, payload){
     const path = makePublic ? 'share' : 'unshare';
     // Body: when publishing, forward whatever the dialog supplied so
     // the server can persist title / caption / description / tags /
-    // links in one POST. When unpublishing, body is always empty
-    // (server takes no params).
+    // links / orientation in one POST. When unpublishing, body is
+    // always empty (server takes no params).
     const body = (makePublic && payload && typeof payload === 'object')
         ? JSON.stringify({
             title: payload.title || null,
@@ -8213,6 +8233,7 @@ async function toggleShareJob(jobId, makePublic, payload){
             description: payload.description || null,
             tags: Array.isArray(payload.tags) ? payload.tags : null,
             links: Array.isArray(payload.links) ? payload.links : null,
+            orientation: payload.orientation || null,
           })
         : JSON.stringify({});
     try {
@@ -8315,6 +8336,10 @@ let _shareDialogImageUrl = '';
 // every time it changes so we don't have to sync per-row.
 let _shareDialogLinks = [];
 const SHARE_DIALOG_MAX_LINKS = 10;
+// Single-value orientation selection. Empty string means "Any" /
+// unselected — that's the default and the value we won't bother
+// sending up on publish.
+let _shareDialogOrientation = '';
 
 async function openShareDialog(jobId, opts){
     if (!_user) {
@@ -8351,6 +8376,18 @@ async function openShareDialog(jobId, opts){
     if (descEl) descEl.value = '';
     _renderShareLinkRows();
     _updateShareDialogCounters();
+    // Reset orientation state + chip selection.
+    _shareDialogOrientation = '';
+    _paintShareDialogOrientation();
+    // Orientation tagging is only meaningful for NSFW content. Mirror
+    // the popover gate: if the creator hasn't enabled NSFW in their
+    // own profile, hide the row entirely. They can still post — just
+    // without the orientation tag, which is fine since their content
+    // won't be flagged for orientation-filtered views anyway.
+    const orientField = $('shareDialogOrientationField');
+    if (orientField) {
+        orientField.style.display = (_user && _user.nsfw_enabled) ? '' : 'none';
+    }
 
     // Show the modal + start tag extraction.
     const dlg = $('shareDialog');
@@ -8373,6 +8410,7 @@ function closeShareDialog(){
     _shareDialogLinks = [];
     _shareDialogPrompt = '';
     _shareDialogImageUrl = '';
+    _shareDialogOrientation = '';
     const tagInput = $('shareDialogTagInput');
     if (tagInput) tagInput.value = '';
     // Reset publish button state for next open.
@@ -8459,6 +8497,31 @@ function addShareLinkRow(){
         const rows = document.querySelectorAll('.share-dialog-link-row');
         const last = rows[rows.length - 1];
         if (last) last.querySelector('.sd-link-url')?.focus();
+    });
+}
+
+// ── Share dialog orientation chips ──────────────────────────────────
+//
+// Single-select chip row. Clicking a chip selects it and deselects the
+// others; clicking the currently-selected chip clears the selection
+// (back to "Any"). The Any chip (empty-string value) is the always-on
+// default state. State lives in _shareDialogOrientation and is sent
+// up as `orientation` in the share payload.
+
+function _paintShareDialogOrientation(){
+    const container = $('shareDialogOrientation');
+    if (!container) return;
+    container.querySelectorAll('.sd-orientation-chip').forEach((btn) => {
+        const v = btn.dataset.val || '';
+        btn.classList.toggle('selected', v === _shareDialogOrientation);
+        // Wire click handler — defer to event delegation would be
+        // simpler but per-button is fine here (8 chips).
+        btn.onclick = () => {
+            const cur = btn.dataset.val || '';
+            // Re-clicking the selected chip toggles back to Any.
+            _shareDialogOrientation = (_shareDialogOrientation === cur) ? '' : cur;
+            _paintShareDialogOrientation();
+        };
     });
 }
 
@@ -8610,10 +8673,18 @@ async function confirmPublishFromDialog(){
     const links = _shareDialogLinks
         .map(l => ({ url: (l.url || '').trim(), label: (l.label || '').trim() }))
         .filter(l => l.url.length > 0);
+    // Orientation comes from the chip selector state. Only forwarded
+    // when explicitly set — '' (Any) means the field stays null so
+    // re-shares without re-toggling don't accidentally null out a
+    // previously-set value... actually we DO want to forward an empty
+    // string here so the server treats it as "no orientation" rather
+    // than preserving the prior value. The server handler validates
+    // against the allowed-list and stores NULL when it doesn't match.
+    const orientation = _shareDialogOrientation || '';
 
     const pubBtn = $('shareDialogPublish');
     if (pubBtn) { pubBtn.disabled = true; pubBtn.textContent = 'Publishing…'; }
-    const result = await toggleShareJob(jobId, true, { title, caption, description, tags, links });
+    const result = await toggleShareJob(jobId, true, { title, caption, description, tags, links, orientation });
     if (result === null) {
         // toggleShareJob already showed an error notification. Re-enable
         // the publish button so the user can retry.
@@ -8649,6 +8720,7 @@ document.addEventListener('keydown',e=>{
         // both feel like overlays the user expects Escape to clear.
         if (typeof closeShareDialog === 'function') closeShareDialog();
         if (typeof closeFilterPopover === 'function') closeFilterPopover();
+        if (typeof closeReactionPicker === 'function') closeReactionPicker();
         if(_markup && _markup.active) closeMarkupModal(false);
     }
 });
@@ -14763,6 +14835,7 @@ function _buildGalleryCard(it, surface){
     // helpers we wire into the card's onclick handlers.
     const card = document.createElement('div');
     card.className = 'history-card gallery-card';
+    card.dataset.jobId = it.id;
 
     // NSFW blur policy: an image is blurred unless the viewer has
     // explicitly enabled NSFW in their preferences. Anonymous viewers
@@ -14801,12 +14874,16 @@ function _buildGalleryCard(it, surface){
         share_links: Array.isArray(it.share_links) ? it.share_links : [],
         published_at: it.published_at || 0,
     };
-    // Click handler — opens the lightbox unless the click landed on an
-    // action button or the NSFW reveal overlay (handled inline).
+    // Click handler — opens the lightbox unless the click landed on
+    // one of the inline action affordances. Each absorbs its own click
+    // via event.stopPropagation in onclick, but we also early-out here
+    // for double safety + clarity.
     card.onclick = (ev) => {
         if (ev.target.closest('.gc-unshare')) return;
         if (ev.target.closest('.gc-reveal-overlay')) return;
         if (ev.target.closest('.gc-keyword')) return;
+        if (ev.target.closest('.gc-remix-icon')) return;
+        if (ev.target.closest('.gc-reactions')) return;
         openModal(it.url, null, ctx);
     };
 
@@ -14837,6 +14914,31 @@ function _buildGalleryCard(it, surface){
            </div>`
         : '';
 
+    // ── Remix icon (top-right) ──────────────────────────────────────
+    // Always present — viewers tapping this kick off the 5-token remix
+    // flow that loads the image into Create mode as a reference. Owners
+    // see it too (so they can use their own work as input for a new gen
+    // without paying themselves). On hover-capable devices it fades in
+    // on card hover; on touch it's always visible (CSS handles both).
+    const remixIcon = `<button class="gc-remix-icon" title="Remix this image (5 tokens to creator)" onclick="event.stopPropagation(); remixGalleryItem('${it.id}')">🎨</button>`;
+
+    // ── Author overlay (bottom-left of thumb) ──────────────────────
+    // Deterministic avatar color from the author hash so the same user
+    // always gets the same color across the feed. Hash → 0-360 hue →
+    // HSL — bright enough to read on dark/light backdrops. The avatar
+    // shows the first 2 hex chars of the handle for a tiny visual
+    // identity beyond the color alone.
+    const authorHandle = it.author || '@anon';
+    const handleStripped = authorHandle.replace(/^@/, '');
+    const avatarLetters = (handleStripped.slice(0, 2) || '??').toUpperCase();
+    const avatarHue = _hashHue(authorHandle);
+    const authorOverlay = `
+        <div class="gc-author-overlay">
+            <span class="gc-author-avatar" style="background:hsl(${avatarHue},58%,62%)">${escapeHtml(avatarLetters)}</span>
+            <span class="gc-author-handle">${escapeHtml(authorHandle)}</span>
+        </div>
+    `;
+
     // Keyword chips — first 5 only on the card, rest available in the
     // lightbox / on click. Each chip triggers a fresh search on its
     // surface so the user can drill into related work with one tap.
@@ -14856,22 +14958,333 @@ function _buildGalleryCard(it, surface){
         }
     }
 
+    // ── Reactions bar (bottom of card) ──────────────────────────────
+    // Always shown for shared images. Lets viewers add an emoji
+    // reaction without opening the lightbox. Each emoji is clickable;
+    // viewer's current pick is highlighted. Tips total renders on the
+    // right as a separate gold indicator (different signal — actual
+    // tokens transferred, not free clicks).
+    const reactionsHtml = _renderCardReactionBar(it);
+
     card.innerHTML = `
         <div class="history-card-thumb">
             <img src="${it.url}" loading="lazy" alt="">
             ${nsfwBadge}
             ${mineBadge}
+            ${remixIcon}
             ${unshareBtn}
+            ${authorOverlay}
             ${revealOverlay}
         </div>
         <div class="history-card-meta">
-            <div class="gc-author">${escapeHtml(it.author || '@anon')}</div>
             ${title ? `<div class="gc-title">${escapeHtml(title)}</div>` : ''}
             <div class="gc-caption">${escapeHtml(caption)}</div>
             ${chipsHtml}
         </div>
+        ${reactionsHtml}
     `;
     return card;
+}
+
+// ── Card reactions bar ──────────────────────────────────────────────
+//
+// Builds the bottom strip of a gallery card. Shows a fixed set of
+// emoji reactions (heart, laugh, wow, sad, fire) with counts, plus a
+// "+" button for the picker, and a tips indicator on the right. Each
+// emoji is a button that calls toggleCardReaction; the viewer's own
+// reaction (if any) is highlighted with the gold-dim class.
+//
+// Layout order matches the reference screenshot: 👍 ❤️ 😂 😮 😢 + … ⚡
+// We use the existing studio_likes as the 👍 thumbs (independent from
+// the multi-emoji reactions table) so the popularity-sort axis stays
+// stable while extra emoji reactions are additive.
+
+const CARD_REACTION_KINDS = [
+    { kind: 'heart', emoji: '❤️' },
+    { kind: 'laugh', emoji: '😂' },
+    { kind: 'wow', emoji: '😮' },
+    { kind: 'sad', emoji: '😢' },
+    { kind: 'fire', emoji: '🔥' },
+];
+
+function _renderCardReactionBar(it){
+    const counts = it.reactions || {};
+    const viewerKind = it.viewer_reaction || null;
+    const viewerLiked = it.viewer_liked ? 1 : 0;
+    const likesCount = it.likes_count || 0;
+    const tipsTotal = it.tips_total || 0;
+
+    // Thumbs (likes) chip — separate from emoji reactions in the data
+    // model but rendered in the same row so the user sees a single
+    // unified strip. Calls the existing /like endpoint via the
+    // toggleCardLike helper below.
+    const likeChip = `
+        <button class="gc-reaction ${viewerLiked ? 'viewer' : ''}"
+                onclick="event.stopPropagation(); toggleCardLike('${it.id}')"
+                title="${viewerLiked ? 'Remove thumbs up' : 'Thumbs up'}">
+            <span class="gc-reaction-emoji">👍</span>
+            <span class="gc-reaction-count">${likesCount}</span>
+        </button>
+    `;
+
+    // Emoji reaction chips — only render the ones with a non-zero
+    // count OR the viewer's own reaction. Keeps the row uncluttered
+    // when a new card has no reactions yet, but always shows the
+    // viewer their selection. The + button opens the full picker.
+    const emojiChips = CARD_REACTION_KINDS
+        .filter(({ kind }) => (counts[kind] || 0) > 0 || viewerKind === kind)
+        .map(({ kind, emoji }) => {
+            const cnt = counts[kind] || 0;
+            const isViewer = viewerKind === kind;
+            return `
+                <button class="gc-reaction ${isViewer ? 'viewer' : ''}"
+                        onclick="event.stopPropagation(); toggleCardReaction('${it.id}', '${kind}')"
+                        title="${isViewer ? 'Remove ' + emoji : 'React with ' + emoji}">
+                    <span class="gc-reaction-emoji">${emoji}</span>
+                    <span class="gc-reaction-count">${cnt}</span>
+                </button>
+            `;
+        }).join('');
+
+    // The + button opens the floating reaction picker. We pass the
+    // anchor (the button itself) so the picker can position relative
+    // to it. The picker callback toggles via toggleCardReaction.
+    const addBtn = `
+        <button class="gc-reaction-add"
+                onclick="event.stopPropagation(); openReactionPicker(this, '${it.id}')"
+                title="Add reaction">+</button>
+    `;
+
+    // Tips indicator on the right — only visible when there have been
+    // actual token transfers. Different visual weight (gold) from the
+    // free emoji reactions so users read it as "this image earned
+    // money" rather than "this image is popular".
+    const tipsHtml = tipsTotal > 0
+        ? `<span class="gc-tips" title="Tokens tipped to creator">⚡ ${tipsTotal}</span>`
+        : '';
+
+    return `
+        <div class="gc-reactions">
+            ${likeChip}
+            ${emojiChips}
+            ${addBtn}
+            ${tipsHtml}
+        </div>
+    `;
+}
+
+// Tiny string → 0..360 hue hash. Deterministic so the same handle
+// always gets the same avatar color across the feed. Uses a simple
+// djb2-style sum then mods to the hue range. Saturation/lightness
+// are fixed in the CSS template so colors stay readable on the dark
+// card background.
+function _hashHue(str){
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) {
+        h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+    }
+    return h % 360;
+}
+
+// ── Card reaction toggle handlers ───────────────────────────────────
+//
+// toggleCardReaction posts to /react and patches the local item state
+// so the bar repaints without a full feed re-fetch. We update both
+// _galleryItems and _stageGalleryItems (whichever contains the id)
+// so the card stays in sync regardless of which surface owns it.
+// Errors revert the local state.
+
+async function toggleCardReaction(jobId, kind){
+    if (!_user) {
+        showNotif('Sign in to react to gallery images.', 'info');
+        return;
+    }
+    if (!jobId || !kind) return;
+    // Optimistic update — compute what the new state should look like
+    // and patch local items before the server round-trip so the UI
+    // feels instant. Toggle semantics: if viewer's current reaction
+    // is this same kind, the click clears it; otherwise this becomes
+    // the new reaction (and any prior one is removed).
+    const it = _findGalleryItem(jobId);
+    if (it) {
+        const prior = it.viewer_reaction || null;
+        const counts = { ...(it.reactions || {}) };
+        if (prior === kind) {
+            // Clear.
+            counts[kind] = Math.max(0, (counts[kind] || 0) - 1);
+            it.viewer_reaction = null;
+        } else {
+            if (prior) counts[prior] = Math.max(0, (counts[prior] || 0) - 1);
+            counts[kind] = (counts[kind] || 0) + 1;
+            it.viewer_reaction = kind;
+        }
+        it.reactions = counts;
+        _repaintCardReactions(jobId);
+    }
+
+    try {
+        const r = await fetchT(`${API}/api/studio/job/${encodeURIComponent(jobId)}/react`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind }),
+        }, 8000);
+        const d = await r.json();
+        if (!d.ok) {
+            showNotif(`Couldn't save reaction: ${d.error || 'unknown'}`, 'error');
+            // Don't bother reverting — next page load will re-sync.
+            return;
+        }
+        // Server's response is authoritative — patch local with the
+        // canonical counts in case our optimistic math was off (rare,
+        // but happens if another tab reacted between our read + write).
+        const it2 = _findGalleryItem(jobId);
+        if (it2) {
+            it2.reactions = d.counts || {};
+            it2.viewer_reaction = d.viewer_reaction || null;
+            _repaintCardReactions(jobId);
+        }
+    } catch (e) {
+        showNotif(`Network error: ${e.message}`, 'error');
+    }
+}
+
+// Same shape but for the binary thumbs-up via /like.
+async function toggleCardLike(jobId){
+    if (!_user) {
+        showNotif('Sign in to like gallery images.', 'info');
+        return;
+    }
+    if (!jobId) return;
+    // Optimistic flip.
+    const it = _findGalleryItem(jobId);
+    if (it) {
+        const wasLiked = !!it.viewer_liked;
+        it.viewer_liked = wasLiked ? 0 : 1;
+        it.likes_count = Math.max(0, (it.likes_count || 0) + (wasLiked ? -1 : 1));
+        _repaintCardReactions(jobId);
+    }
+    try {
+        const r = await fetchT(`${API}/api/studio/job/${encodeURIComponent(jobId)}/like`, {
+            method: 'POST',
+        }, 6000);
+        const d = await r.json();
+        if (!d.ok) {
+            showNotif(`Couldn't save like: ${d.error || 'unknown'}`, 'error');
+            return;
+        }
+        const it2 = _findGalleryItem(jobId);
+        if (it2) {
+            it2.viewer_liked = d.liked ? 1 : 0;
+            it2.likes_count = d.likes_count || 0;
+            _repaintCardReactions(jobId);
+        }
+    } catch (e) {
+        showNotif(`Network error: ${e.message}`, 'error');
+    }
+}
+
+// Helper — find a gallery item across both surfaces by id. Returns
+// the first match (each id is unique across the entire gallery, but
+// the same item can be in both arrays if the user is viewing the
+// modal and the stage at once).
+function _findGalleryItem(jobId){
+    for (const arr of [_galleryItems, _stageGalleryItems]) {
+        if (!Array.isArray(arr)) continue;
+        for (const it of arr) if (it && it.id === jobId) return it;
+    }
+    return null;
+}
+
+// Repaint just the reactions strip for cards matching this job id.
+// Both surfaces may have the same card — we iterate every matching
+// node. Cheaper than re-rendering the whole grid.
+function _repaintCardReactions(jobId){
+    const it = _findGalleryItem(jobId);
+    if (!it) return;
+    const html = _renderCardReactionBar(it);
+    document.querySelectorAll(`.gallery-card[data-job-id="${CSS.escape(jobId)}"]`).forEach((card) => {
+        const existing = card.querySelector('.gc-reactions');
+        if (existing) {
+            existing.outerHTML = html;
+        } else {
+            card.insertAdjacentHTML('beforeend', html);
+        }
+    });
+}
+
+// ── Floating reaction picker ────────────────────────────────────────
+//
+// Tiny popover anchored to the + button on a card. Shows the five
+// emoji choices in a row; clicking applies via toggleCardReaction.
+// Outside-click and Escape both close. Only one picker is open at a
+// time — opening a new one closes any previous instance.
+
+let _reactionPickerEl = null;
+let _reactionPickerOutsideHandler = null;
+
+function openReactionPicker(anchorEl, jobId){
+    closeReactionPicker();
+    if (!anchorEl || !jobId) return;
+
+    const pop = document.createElement('div');
+    pop.className = 'reaction-picker';
+    // Render every kind regardless of current count — the picker is
+    // for ADDING a reaction, so the user should see all options. The
+    // viewer-current one (if any) gets a visual highlight so they
+    // know what they currently have.
+    const it = _findGalleryItem(jobId);
+    const cur = it?.viewer_reaction || null;
+    pop.innerHTML = CARD_REACTION_KINDS.map(({ kind, emoji }) => `
+        <button class="reaction-picker-btn ${cur === kind ? 'viewer' : ''}"
+                data-kind="${kind}"
+                title="React with ${emoji}">${emoji}</button>
+    `).join('');
+    pop.querySelectorAll('.reaction-picker-btn').forEach((b) => {
+        b.onclick = (ev) => {
+            ev.stopPropagation();
+            toggleCardReaction(jobId, b.dataset.kind);
+            closeReactionPicker();
+        };
+    });
+    document.body.appendChild(pop);
+
+    // Position above the anchor button. If there's not enough room
+    // above (close to the top of the viewport), drop it below instead.
+    const r = anchorEl.getBoundingClientRect();
+    // Render first to measure — then reposition. opacity:0 dodge while
+    // measuring would be cleaner; in practice the animation hides the
+    // jump.
+    pop.style.left = '0px';
+    pop.style.top = '0px';
+    const pr = pop.getBoundingClientRect();
+    let left = r.left + r.width / 2 - pr.width / 2;
+    // Clamp horizontally within the viewport (8px margin).
+    left = Math.max(8, Math.min(left, window.innerWidth - pr.width - 8));
+    let top = r.top - pr.height - 8;
+    if (top < 8) top = r.bottom + 8;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+
+    _reactionPickerEl = pop;
+    // Outside-click + Escape close. Defer attaching the outside-click
+    // a tick so the click that opened us doesn't immediately close us.
+    setTimeout(() => {
+        _reactionPickerOutsideHandler = (ev) => {
+            if (!pop.contains(ev.target)) closeReactionPicker();
+        };
+        document.addEventListener('mousedown', _reactionPickerOutsideHandler);
+    }, 0);
+}
+
+function closeReactionPicker(){
+    if (_reactionPickerEl) {
+        _reactionPickerEl.remove();
+        _reactionPickerEl = null;
+    }
+    if (_reactionPickerOutsideHandler) {
+        document.removeEventListener('mousedown', _reactionPickerOutsideHandler);
+        _reactionPickerOutsideHandler = null;
+    }
 }
 
 // Paint the filter chip row for a gallery surface. Two chips so far:
@@ -15034,6 +15447,7 @@ function openFilterPopover(surface, anchorEl){
                 <button class="gfp-option" data-val="agent">Agent</button>
             </div>
         </div>
+        ${(_user && _user.nsfw_enabled) ? `
         <div class="gfp-section">
             <span class="gfp-label">Orientation</span>
             <div class="gfp-options" data-key="orientation">
@@ -15045,7 +15459,7 @@ function openFilterPopover(surface, anchorEl){
                 <button class="gfp-option" data-val="bi">Bi</button>
                 <button class="gfp-option" data-val="queer">Queer</button>
             </div>
-        </div>
+        </div>` : ''}
         ${_user ? `
         <div class="gfp-section">
             <span class="gfp-label">Author</span>
