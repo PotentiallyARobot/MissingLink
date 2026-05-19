@@ -1363,6 +1363,147 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .use-input-btn.shared{background:var(--gold);color:var(--black);border-color:var(--gold)}
 .use-input-btn.shared:hover{background:var(--gold-dim);color:var(--gold)}
 
+/* ── Preference row inside the user menu (NSFW toggle) ──────────────
+   Same horizontal rhythm as .user-menu-item but non-clickable as a
+   whole; only the inner switch reacts to clicks. */
+.user-menu-pref-row{
+    width:100%;display:flex;align-items:center;gap:10px;
+    padding:10px 12px;border-radius:6px;
+}
+.user-menu-pref-row .user-menu-label{flex:1;min-width:0}
+
+/* iOS-style toggle pill. Track + dot, no extra DOM beyond the checkbox
+   that the label wraps. Gold when on; muted gray when off. */
+.pref-switch{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0;cursor:pointer}
+.pref-switch input{position:absolute;opacity:0;pointer-events:none;width:0;height:0}
+.pref-switch-track{
+    position:absolute;inset:0;border-radius:10px;
+    background:var(--surface-3);border:1px solid var(--border);
+    transition:background .15s,border-color .15s;
+}
+.pref-switch-track::after{
+    content:"";position:absolute;top:1px;left:1px;
+    width:16px;height:16px;border-radius:50%;
+    background:var(--text-muted);
+    transition:transform .15s,background .15s;
+}
+.pref-switch input:checked + .pref-switch-track{
+    background:var(--gold-dim);border-color:var(--gold);
+}
+.pref-switch input:checked + .pref-switch-track::after{
+    transform:translateX(16px);background:var(--gold);
+}
+
+/* ── NSFW handling on gallery cards ──────────────────────────────────
+   Cards carry .nsfw-blurred when the viewer hasn't opted in AND the
+   image is flagged. We blur the thumbnail and overlay a "Tap to reveal"
+   button that one-shots the blur off (the per-card escape hatch — the
+   global preference change goes through user-menu). */
+.gallery-card.nsfw-blurred .history-card-thumb img,
+.gallery-card.nsfw-blurred .history-card-mosaic{
+    filter:blur(22px) saturate(.85);
+    transform:scale(1.05);  /* hide the blurred edge */
+    transition:filter .2s,transform .2s;
+}
+.gallery-card.nsfw-blurred .history-card-thumb{position:relative}
+.gallery-card.nsfw-blurred .gc-reveal-overlay{
+    position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:8px;z-index:3;
+    background:rgba(0,0,0,.35);cursor:pointer;
+    color:var(--white);text-align:center;padding:12px;
+    transition:background .15s;
+}
+.gallery-card.nsfw-blurred .gc-reveal-overlay:hover{background:rgba(0,0,0,.5)}
+.gallery-card.nsfw-blurred .gc-reveal-overlay .gc-reveal-icon{
+    font-size:22px;
+}
+.gallery-card.nsfw-blurred .gc-reveal-overlay .gc-reveal-label{
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    letter-spacing:1px;text-transform:uppercase;
+}
+.gallery-card:not(.nsfw-blurred) .gc-reveal-overlay{display:none}
+/* Once revealed, the overlay's display is forced off via JS on click. */
+.gallery-card.nsfw-revealed .gc-reveal-overlay{display:none!important}
+.gallery-card.nsfw-revealed .history-card-thumb img,
+.gallery-card.nsfw-revealed .history-card-mosaic{filter:none;transform:none}
+
+/* Persistent NSFW badge — sits on the corner whether or not the image
+   is blurred. Lets viewers who've opted in still know what they're
+   looking at. */
+.gallery-card .gc-nsfw-badge{
+    position:absolute;top:6px;left:6px;z-index:4;
+    background:rgba(239,68,68,.92);color:#fff;
+    font-family:var(--font-mono);font-size:9px;font-weight:700;
+    letter-spacing:1px;padding:3px 7px;border-radius:4px;
+    pointer-events:none;
+}
+/* When both MINE + NSFW are present, stack them vertically. */
+.gallery-card .gc-nsfw-badge + .gc-mine-badge,
+.gallery-card .gc-mine-badge + .gc-nsfw-badge{margin-top:24px}
+
+/* Keyword chips below the caption — small, monospace, click-to-search. */
+.gallery-card .gc-keywords{
+    display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;
+}
+.gallery-card .gc-keyword{
+    display:inline-block;font-family:var(--font-mono);font-size:8.5px;
+    color:var(--text-muted);background:var(--surface-3);
+    border:1px solid var(--border);border-radius:3px;
+    padding:1px 5px;cursor:pointer;transition:all .12s;
+    letter-spacing:.3px;line-height:1.4;
+}
+.gallery-card .gc-keyword:hover{
+    border-color:var(--gold);color:var(--gold);background:var(--gold-dim);
+}
+
+/* ── Gallery filter chip row ─────────────────────────────────────────
+   Sits below the search row in BOTH the modal head and stage head.
+   Used for NSFW filter + active keyword chip. Compact so it doesn't
+   eat vertical space; wraps cleanly when many filters are active. */
+.gallery-filters{
+    display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+    flex-basis:100%;order:100;
+    padding-top:2px;
+}
+.gallery-filter-chip{
+    display:inline-flex;align-items:center;gap:5px;
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:14px;padding:4px 10px;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    letter-spacing:.5px;color:var(--text-muted);
+    cursor:pointer;transition:all .12s;
+    text-transform:uppercase;
+}
+.gallery-filter-chip:hover{border-color:var(--gold);color:var(--gold)}
+.gallery-filter-chip.active{
+    background:var(--gold-dim);border-color:var(--gold);color:var(--gold);
+}
+.gallery-filter-chip.danger.active{
+    background:rgba(239,68,68,.12);border-color:var(--red);color:var(--red);
+}
+.gallery-filter-chip .gfc-close{
+    margin-left:2px;opacity:.7;font-size:12px;line-height:1;
+}
+.gallery-filter-chip:hover .gfc-close{opacity:1}
+
+/* Pending-enrichment toast — small banner that surfaces "image will
+   appear shortly" after share so users aren't confused by the delay. */
+.gallery-pending-toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    z-index:10025;
+    background:var(--surface-2);border:1px solid var(--gold);
+    border-radius:8px;padding:10px 16px;
+    font-family:var(--font-mono);font-size:11px;color:var(--text);
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    animation:pending-toast-in .25s ease-out;
+    max-width:min(420px,92vw);
+}
+.gallery-pending-toast .gpt-icon{color:var(--gold);margin-right:6px}
+@keyframes pending-toast-in{
+    from{opacity:0;transform:translate(-50%,8px)}
+    to{opacity:1;transform:translate(-50%,0)}
+}
+
 /* ── Stage community gallery ───────────────────────────────────────
    In-stage version of the community gallery — the default view of the
    output area when there's no result/batch/focus. Z-indexed above the
@@ -2425,6 +2566,24 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     </span>
                 </button>
             </div>
+            <!-- Preferences section — viewer toggles that don't require
+                 leaving the page. NSFW gate is the only one for now; new
+                 toggles can stack as siblings without re-layouts. The
+                 toggle item layouts like the others but uses an inline
+                 .pref-switch widget instead of a follow-on icon. -->
+            <div class="user-menu-section">
+                <div class="user-menu-pref-row">
+                    <span class="user-menu-icon">🔞</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">Show NSFW content</span>
+                        <span class="user-menu-sub">Reveal flagged images in the gallery</span>
+                    </span>
+                    <label class="pref-switch" title="When off, NSFW images are blurred until you tap to reveal one at a time.">
+                        <input type="checkbox" id="prefNsfwToggle" onchange="toggleNsfwPref(this.checked)">
+                        <span class="pref-switch-track"></span>
+                    </label>
+                </div>
+            </div>
             <div class="user-menu-section user-menu-section-foot">
                 <button class="user-menu-item user-menu-item-danger" onclick="closeUserMenu();doLogout()" role="menuitem">
                     <span class="user-menu-icon">↪</span>
@@ -2987,6 +3146,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <button type="button" id="stageGallerySearchClear" class="gallery-search-clear" title="Clear search" onclick="clearStageGallerySearch()">×</button>
                 </div>
                 <button type="button" class="sg-expand-btn" onclick="openGalleryModal()" title="Open full-screen gallery">⛶ Expand</button>
+                <!-- Filter chip row — wraps to its own line via flex-basis:100% -->
+                <div class="gallery-filters" id="stageGalleryFilters"></div>
             </div>
             <!-- Scrollable body — observer for infinite scroll lives here. -->
             <div class="stage-gallery-body" id="stageGalleryBody">
@@ -3272,6 +3433,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <button type="button" id="gallerySearchClear" class="gallery-search-clear" title="Clear search" onclick="clearGallerySearch()">×</button>
             </div>
             <button class="modal-close" onclick="closeGalleryModal()">×</button>
+            <!-- Filter chip row — sits on its own line under the search via
+                 the .gallery-filters{flex-basis:100%;order:100} CSS. Chips
+                 are rendered by JS so the keyword filter can show / hide
+                 and label dynamically based on viewer state. -->
+            <div class="gallery-filters" id="galleryFilters"></div>
         </div>
         <div class="history-modal-body">
             <div id="galleryGrid" class="history-grid">
@@ -3765,6 +3931,14 @@ async function checkAuth(){
             $('tokenBadge').classList.toggle('low',d.tokens<200);
             $('secBuyTokens').style.display='';
             closeLoginModal();
+            // Sync the NSFW preference toggle with the server-side state.
+            // /auth/me returns nsfw_enabled (0/1); the user-menu checkbox
+            // reflects it so the user sees their current setting without
+            // a separate fetch. Also stash it on _user for client-side
+            // gates (blur logic in renderGallery).
+            _user.nsfw_enabled = d.nsfw_enabled ? 1 : 0;
+            const tog = $('prefNsfwToggle');
+            if (tog) tog.checked = !!d.nsfw_enabled;
             // Pre-warm the GPU so cold-start happens while the user is
             // uploading and picking a pose, not after they click Generate.
             // Only fire on the logged-out → logged-in transition, or on first
@@ -4129,6 +4303,55 @@ async function doLogout(){
     } catch (e) {}
     updateGenButton();
     log('Signed out');
+}
+
+// ── NSFW preference toggle ─────────────────────────────────────────
+//
+// Persists the viewer's "show NSFW" preference and triggers a re-render
+// of both gallery surfaces (modal + stage) so the change takes effect
+// without a page reload. The server is the source of truth — we round-
+// trip rather than optimistically updating, so a server reject (e.g.
+// session expired) leaves the toggle in the correct state.
+async function toggleNsfwPref(checked){
+    if (!_user) {
+        showNotif('Sign in to save your gallery preferences.', 'info');
+        const tog = $('prefNsfwToggle');
+        if (tog) tog.checked = false;
+        return;
+    }
+    try {
+        const r = await fetchT(`${API}/api/studio/preferences`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nsfw_enabled: checked ? 1 : 0 }),
+        }, 6000);
+        const d = await r.json();
+        if (!d.ok) {
+            log(`Preference save failed: ${d.error || 'unknown'}`, 'error');
+            const tog = $('prefNsfwToggle');
+            if (tog) tog.checked = !!_user.nsfw_enabled;  // revert
+            return;
+        }
+        _user.nsfw_enabled = d.nsfw_enabled ? 1 : 0;
+        log(d.nsfw_enabled ? 'NSFW content shown unblurred' : 'NSFW content will be blurred', 'success');
+        // Re-fetch both gallery surfaces from page 1 so the new filter
+        // setting takes effect immediately. Cheap — page size is 20.
+        if (typeof refreshGalleryFromScratch === 'function' && $('galleryModal')?.style.display !== 'none') {
+            refreshGalleryFromScratch();
+        }
+        if (typeof refreshStageGalleryFromScratch === 'function') {
+            // Stage gallery may not be visible right now (e.g. user is
+            // viewing a result image). Still refresh so it has fresh
+            // data the next time the stage clears.
+            _stageGalleryFirstLoaded = false;  // force re-init on next show
+            const sg = document.getElementById('stageGallery');
+            if (sg && sg.style.display !== 'none') {
+                refreshStageGalleryFromScratch();
+            }
+        }
+    } catch (e) {
+        log(`Preference save network err: ${e.message}`, 'error');
+    }
 }
 
 // ── Buy modals ────────────────────────────────────
@@ -6940,11 +7163,40 @@ async function toggleShareJob(jobId, makePublic){
             if (typeof updateShareResultButton === 'function') updateShareResultButton();
         }
         log(d.is_public ? `Shared ${jobId} to gallery` : `Unshared ${jobId}`, 'success');
+        // First-share path returns enrichment_pending=1 — the server has
+        // marked the row public but the moderation + description pipeline
+        // hasn't finished yet, so the image is gated from the feed by
+        // enriched_at IS NOT NULL until then. Surface this to the user
+        // with a brief toast so they don't refresh and worry it failed.
+        if (d.is_public && d.enrichment_pending) {
+            showGalleryPendingToast();
+        }
         return d.is_public ? 1 : 0;
     } catch (e) {
         log(`Share toggle network error: ${e.message}`, 'error');
         return null;
     }
+}
+
+// One-off toast that fades in after a fresh share. The server-side
+// enrichment runs as a background task via ctx.waitUntil, so we don't
+// know exactly when it'll finish; the toast just tells the user "it's
+// processing" and dismisses itself after 7 seconds (or on click).
+let _galleryToastTimer = null;
+function showGalleryPendingToast(){
+    // Remove any previous toast so rapid-fire shares don't stack.
+    const existing = document.querySelector('.gallery-pending-toast');
+    if (existing) existing.remove();
+    if (_galleryToastTimer) { clearTimeout(_galleryToastTimer); _galleryToastTimer = null; }
+    const el = document.createElement('div');
+    el.className = 'gallery-pending-toast';
+    el.innerHTML = `<span class="gpt-icon">⏳</span>Your image is being processed for the gallery — it'll appear after moderation completes (a few seconds).`;
+    el.onclick = () => { el.remove(); if (_galleryToastTimer) clearTimeout(_galleryToastTimer); };
+    document.body.appendChild(el);
+    _galleryToastTimer = setTimeout(() => {
+        el.classList.add('fading');
+        setTimeout(() => el.remove(), 250);
+    }, 7000);
 }
 
 function closeModal(){
@@ -13026,11 +13278,173 @@ function setupGalleryInfiniteScroll(){
     _galleryScrollObserver.observe(sentinel);
 }
 
+// ── Shared gallery helpers ─────────────────────────────────────────
+//
+// Both renderGallery (modal) and renderStageGallery (stage) emit the
+// same kind of card, so the card-construction logic lives here.
+// Surface-specific bits (which surface to refresh on action, which
+// filter container to paint) are passed in.
+
+// Build a single .gallery-card element from a gallery item. Handles:
+//   - MINE badge + corner unshare button for items the viewer owns
+//   - NSFW badge whenever is_nsfw=1
+//   - Blur overlay when the viewer hasn't enabled NSFW
+//   - Description as primary caption (falls back to title/prompt)
+//   - Keyword chips (click to search; surface-specific)
+//   - Click-to-open lightbox with the right context object
+function _buildGalleryCard(it, surface){
+    // surface = 'modal' | 'stage' — drives which set of unshare/search
+    // helpers we wire into the card's onclick handlers.
+    const card = document.createElement('div');
+    card.className = 'history-card gallery-card';
+
+    // NSFW blur policy: an image is blurred unless the viewer has
+    // explicitly enabled NSFW in their preferences. Anonymous viewers
+    // (no _user) always get blur. The card carries a per-card "reveal"
+    // affordance — clicking the overlay one-shots the blur off for
+    // that single tile without changing the global preference.
+    const viewerNsfwOn = !!(_user && _user.nsfw_enabled);
+    const isNsfw = !!it.is_nsfw;
+    const blurred = isNsfw && !viewerNsfwOn;
+    if (blurred) card.classList.add('nsfw-blurred');
+
+    const ctx = it.mine
+        ? { type: 'galleryItem', jobId: it.id, is_public: 1 }
+        : { type: 'galleryItem' };
+    // Click handler — opens the lightbox unless the click landed on an
+    // action button or the NSFW reveal overlay (handled inline).
+    card.onclick = (ev) => {
+        if (ev.target.closest('.gc-unshare')) return;
+        if (ev.target.closest('.gc-reveal-overlay')) return;
+        if (ev.target.closest('.gc-keyword')) return;
+        openModal(it.url, null, ctx);
+    };
+
+    // Primary caption: description (from vision enrichment) is richer
+    // than the original prompt, so prefer it. Fall back to user-supplied
+    // caption, then prompt, then empty.
+    const title = it.share_title || '';
+    const caption = it.share_caption
+        || it.description
+        || it.prompt
+        || '';
+
+    const mineBadge = it.mine ? `<div class="gc-mine-badge">MINE</div>` : '';
+    const nsfwBadge = isNsfw ? `<div class="gc-nsfw-badge">NSFW</div>` : '';
+    const unshareHandler = surface === 'stage'
+        ? `unshareFromStageGallery('${it.id}')`
+        : `unshareFromGallery('${it.id}')`;
+    const unshareBtn = it.mine
+        ? `<button class="gc-unshare" title="Remove from Community Gallery" onclick="event.stopPropagation(); ${unshareHandler}">×</button>`
+        : '';
+    // Reveal overlay — only present when blurred. Click flips a class
+    // that disables the blur for this tile, without touching the
+    // global preference. Inline handler so we don't need a registry.
+    const revealOverlay = blurred
+        ? `<div class="gc-reveal-overlay" onclick="event.stopPropagation(); this.closest('.gallery-card').classList.add('nsfw-revealed')">
+              <span class="gc-reveal-icon">🔞</span>
+              <span class="gc-reveal-label">NSFW · Tap to reveal</span>
+           </div>`
+        : '';
+
+    // Keyword chips — first 5 only on the card, rest available in the
+    // lightbox / on click. Each chip triggers a fresh search on its
+    // surface so the user can drill into related work with one tap.
+    let chipsHtml = '';
+    if (it.keywords) {
+        const kws = it.keywords.split(',')
+            .map(k => k.trim())
+            .filter(k => k && k.length <= 30)
+            .slice(0, 5);
+        if (kws.length) {
+            const searchFn = surface === 'stage'
+                ? 'searchStageGalleryFromChip'
+                : 'searchGalleryFromChip';
+            chipsHtml = `<div class="gc-keywords">${kws.map(k =>
+                `<span class="gc-keyword" onclick="event.stopPropagation(); ${searchFn}('${escapeHtml(k).replace(/'/g, "\\'")}')">${escapeHtml(k)}</span>`
+            ).join('')}</div>`;
+        }
+    }
+
+    card.innerHTML = `
+        <div class="history-card-thumb">
+            <img src="${it.url}" loading="lazy" alt="">
+            ${nsfwBadge}
+            ${mineBadge}
+            ${unshareBtn}
+            ${revealOverlay}
+        </div>
+        <div class="history-card-meta">
+            <div class="gc-author">${escapeHtml(it.author || '@anon')}</div>
+            ${title ? `<div class="gc-title">${escapeHtml(title)}</div>` : ''}
+            <div class="gc-caption">${escapeHtml(caption)}</div>
+            ${chipsHtml}
+        </div>
+    `;
+    return card;
+}
+
+// Paint the filter chip row for a gallery surface. Two chips so far:
+//   - "Show NSFW" toggle, only when viewer is logged in (anon viewers
+//     have no opt-in path; we don't show a chip they can't use)
+//   - Active keyword filter (when the search came from a chip click)
+function _renderGalleryFilters(containerId, surface){
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const chips = [];
+    if (_user) {
+        const nsfwOn = !!_user.nsfw_enabled;
+        chips.push(
+            `<button class="gallery-filter-chip ${nsfwOn ? 'active danger' : ''}"
+                     onclick="toggleNsfwPref(${!nsfwOn})"
+                     title="${nsfwOn ? 'NSFW content is currently shown — click to blur' : 'NSFW content is currently blurred — click to reveal'}">
+                ${nsfwOn ? '🔞 NSFW SHOWN' : '🔞 NSFW HIDDEN'}
+             </button>`
+        );
+    }
+    // Active query indicator — clearable chip when there's a search in
+    // progress. Visual reinforcement for what's filtering the feed; the
+    // search input on its own can scroll away on tight layouts.
+    const q = surface === 'stage' ? _stageGalleryQuery : _galleryQuery;
+    if (q) {
+        const clearFn = surface === 'stage' ? 'clearStageGallerySearch()' : 'clearGallerySearch()';
+        chips.push(
+            `<button class="gallery-filter-chip active" onclick="${clearFn}" title="Clear search">
+                "${escapeHtml(q.slice(0, 30))}"<span class="gfc-close">×</span>
+             </button>`
+        );
+    }
+    el.innerHTML = chips.join('');
+}
+
+// Keyword-chip click → fires a fresh search on that surface. Splits
+// "modal" vs "stage" so each surface preserves its own search state
+// (user can have different queries running in each).
+function searchGalleryFromChip(kw){
+    if (!kw) return;
+    const inp = $('gallerySearchInput');
+    if (inp) inp.value = kw;
+    _galleryQuery = kw;
+    refreshGalleryFromScratch();
+}
+function searchStageGalleryFromChip(kw){
+    if (!kw) return;
+    const inp = $('stageGallerySearch');
+    if (inp) inp.value = kw;
+    _stageGalleryQuery = kw;
+    refreshStageGalleryFromScratch();
+}
+
 function renderGallery(){
     const grid = $('galleryGrid');
     const countEl = $('galleryModalCount');
     const sentinel = $('galleryScrollSentinel');
     if (!grid) return;
+
+    // Filter chip row (NSFW state + active query) — always paint, even
+    // for empty results, so the user can clear filters that produced
+    // the empty state.
+    _renderGalleryFilters('galleryFilters', 'modal');
 
     // Header count — shows total matching the current query, or a
     // simple "(N)" when no query is active. Hidden when empty.
@@ -13062,47 +13476,9 @@ function renderGallery(){
         return;
     }
 
-    // Full rebuild — gallery isn't as latency-sensitive as the history
-    // grid (no in-place share toggles to preserve), and a clean rebuild
-    // makes search-result swaps painless. Each card is a div with an
-    // image, author handle, optional title/caption, and either a "MINE"
-    // pill + unshare button (when ctx.mine===1) or nothing.
     grid.innerHTML = '';
     for (const it of _galleryItems) {
-        const card = document.createElement('div');
-        card.className = 'history-card gallery-card';
-        // Clicking anywhere on the card (other than action buttons)
-        // opens the image in the lightbox. Owner-only contexts pass
-        // the job id so the lightbox can render its own share/unshare
-        // button alongside download.
-        const ctx = it.mine
-            ? { type: 'galleryItem', jobId: it.id, is_public: 1 }
-            : { type: 'galleryItem' };
-        card.onclick = (ev) => {
-            if (ev.target.closest('.gc-unshare')) return;
-            openModal(it.url, null, ctx);
-        };
-        const title = it.share_title || '';
-        const caption = it.share_caption || it.prompt || '';
-        const mineBadge = it.mine
-            ? `<div class="gc-mine-badge">MINE</div>`
-            : '';
-        const unshareBtn = it.mine
-            ? `<button class="gc-unshare" title="Remove from Community Gallery" onclick="event.stopPropagation(); unshareFromGallery('${it.id}')">×</button>`
-            : '';
-        card.innerHTML = `
-            <div class="history-card-thumb">
-                <img src="${it.url}" loading="lazy" alt="">
-                ${mineBadge}
-                ${unshareBtn}
-            </div>
-            <div class="history-card-meta">
-                <div class="gc-author">${escapeHtml(it.author || '@anon')}</div>
-                ${title ? `<div class="gc-title">${escapeHtml(title)}</div>` : ''}
-                <div class="gc-caption">${escapeHtml(caption)}</div>
-            </div>
-        `;
-        grid.appendChild(card);
+        grid.appendChild(_buildGalleryCard(it, 'modal'));
     }
 
     // Sentinel visibility — show only when there's still more to fetch.
@@ -13256,6 +13632,10 @@ function renderStageGallery(){
     const sentinel = $('stageGallerySentinel');
     if (!grid) return;
 
+    // Filter chip row — NSFW toggle + active query. Painted before the
+    // grid so the user sees the controls even on an empty result.
+    _renderGalleryFilters('stageGalleryFilters', 'stage');
+
     if (countEl) {
         if (_stageGalleryTotal > 0) {
             countEl.textContent = _stageGalleryQuery
@@ -13282,36 +13662,13 @@ function renderStageGallery(){
         return;
     }
 
+    // Build each card via the shared helper so NSFW blur, the reveal
+    // overlay, description, and keyword chips behave identically to
+    // the modal surface. The 'stage' marker routes click-to-search and
+    // unshare actions back through the stage-side state.
     grid.innerHTML = '';
     for (const it of _stageGalleryItems) {
-        const card = document.createElement('div');
-        card.className = 'history-card gallery-card';
-        const ctx = it.mine
-            ? { type: 'galleryItem', jobId: it.id, is_public: 1 }
-            : { type: 'galleryItem' };
-        card.onclick = (ev) => {
-            if (ev.target.closest('.gc-unshare')) return;
-            openModal(it.url, null, ctx);
-        };
-        const title = it.share_title || '';
-        const caption = it.share_caption || it.prompt || '';
-        const mineBadge = it.mine ? `<div class="gc-mine-badge">MINE</div>` : '';
-        const unshareBtn = it.mine
-            ? `<button class="gc-unshare" title="Remove from Community Gallery" onclick="event.stopPropagation(); unshareFromStageGallery('${it.id}')">×</button>`
-            : '';
-        card.innerHTML = `
-            <div class="history-card-thumb">
-                <img src="${it.url}" loading="lazy" alt="">
-                ${mineBadge}
-                ${unshareBtn}
-            </div>
-            <div class="history-card-meta">
-                <div class="gc-author">${escapeHtml(it.author || '@anon')}</div>
-                ${title ? `<div class="gc-title">${escapeHtml(title)}</div>` : ''}
-                <div class="gc-caption">${escapeHtml(caption)}</div>
-            </div>
-        `;
-        grid.appendChild(card);
+        grid.appendChild(_buildGalleryCard(it, 'stage'));
     }
 
     if (sentinel) {
