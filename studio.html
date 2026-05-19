@@ -16,13 +16,13 @@
   --font-display:'Space Mono','JetBrains Mono',monospace;
   --font-mono:'JetBrains Mono','Fira Code',monospace;
   --font-body:'DM Sans','Segoe UI',sans-serif;
-  --sidebar-w:320px;--header-h:48px;--console-h:0px;
+  --sidebar-w:320px;--header-h:48px;
 }
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
 html,body{height:100%;overflow:hidden}
 body{background:var(--black);color:var(--text);font-family:var(--font-body);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
 
-.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;grid-template-rows:var(--header-h) 1fr var(--console-h);grid-template-areas:"header header""sidebar main""console console";height:100vh;width:100vw;overflow:hidden}
+.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;grid-template-rows:var(--header-h) 1fr;grid-template-areas:"header header""sidebar main";height:100vh;width:100vw;overflow:hidden}
 
 /* Header */
 .app-header{grid-area:header;display:flex;align-items:center;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);z-index:100;gap:10px}
@@ -1143,6 +1143,33 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .history-sentinel::before{content:"";display:inline-block;width:12px;height:12px;border:2px solid var(--surface-3);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .history-loading,.history-empty{grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px}
+
+/* Image-shaped skeleton tiles shown while the first page of a gallery
+   loads. No text — the goal is to telegraph "feed of images coming"
+   from the very first paint, not "this app is reading text at you."
+   Aspect ratio matches a typical portrait-ish gallery card. Shimmer
+   animation is a moving diagonal highlight for a sense of progress.*/
+.gallery-skeleton-card{
+    aspect-ratio:3/4;
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    overflow:hidden;
+    position:relative;
+}
+.gallery-skeleton-shimmer{
+    position:absolute;inset:0;
+    background:linear-gradient(110deg,
+        transparent 30%,
+        rgba(255,255,255,.04) 50%,
+        transparent 70%);
+    background-size:300% 100%;
+    animation:gallery-skel-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes gallery-skel-shimmer{
+    0%   { background-position:200% 0; }
+    100% { background-position:-200% 0; }
+}
 .history-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative;cursor:pointer;transition:all .15s;display:flex;flex-direction:column}
 .history-card:hover{border-color:var(--gold);transform:translateY(-2px)}
 .history-card-thumb{width:100%;aspect-ratio:1/1;background:var(--surface-3);overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
@@ -1193,6 +1220,17 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .gallery-card{position:relative}
 .gallery-card .gc-author{font-family:var(--font-mono);font-size:9px;color:var(--gold);font-weight:600;letter-spacing:.5px;margin-bottom:2px}
 .gallery-card .gc-title{font-size:11px;color:var(--text);font-weight:600;line-height:1.3;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+/* Compact one-line title strip — sits directly under the image when
+   the creator gave a share_title. Replaces the older multi-line meta
+   block (which also showed the auto-caption + keyword chips). With
+   tags + description gone, the card needs to be visually quieter so
+   the image carries the weight. */
+.gallery-card .gc-title-strip{
+    font-size:11px;color:var(--text);font-weight:600;
+    padding:7px 10px;
+    line-height:1.25;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
 .gallery-card .gc-caption{font-size:9px;color:var(--text-muted);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
 /* "Mine" pill on the corner of cards the viewer owns. Gives them a fast
    visual cue for which gallery items they can unshare. */
@@ -1780,9 +1818,37 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* Tip indicator on the card — separate from emoji reactions since it
    represents real token transfers, not free clicks. */
 .gc-tips{
-    margin-left:auto;display:inline-flex;align-items:center;gap:3px;
+    display:inline-flex;align-items:center;gap:3px;
     color:var(--gold);font-weight:700;font-size:10px;
 }
+
+/* Tip button on cards — distinct from the emoji reactions (free
+   clicks) because it represents an actual token transfer to the
+   creator. Gold-bordered to signal "real money" weight, but quiet
+   enough to fit alongside the emoji row. Hidden on the creator's
+   own cards (no self-tipping). */
+/* Remix + Tip action buttons sit on the right side of the reactions
+   bar. Remix is always present (for logged-in users); it gets the
+   margin-left:auto that pushes both buttons to the right. Tip sits
+   next to it when shown. */
+.gc-remix-btn,
+.gc-tip-btn{
+    display:inline-flex;align-items:center;gap:4px;
+    background:transparent;border:1px solid var(--gold-dim);
+    color:var(--gold);cursor:pointer;
+    padding:3px 9px;border-radius:10px;
+    font-family:var(--font-mono);font-size:10px;font-weight:700;
+    letter-spacing:.5px;transition:all .12s;
+    line-height:1;
+}
+.gc-remix-btn{margin-left:auto}
+.gc-remix-btn:hover,
+.gc-tip-btn:hover{
+    background:var(--gold-dim);border-color:var(--gold);
+}
+/* When remix is hidden (anonymous viewer), tip takes the right-push.
+   When both are hidden, .gc-tips still gets it from its own rule. */
+.gc-reactions:not(:has(.gc-remix-btn)) .gc-tip-btn{margin-left:auto}
 
 /* Emoji picker popover — appended to body when the + button is
    clicked. Tiny floating panel with the six allowed reactions in a
@@ -2113,6 +2179,24 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .lbc-creator-link:hover{
     border-color:var(--gold);color:var(--gold);background:var(--gold-dim);
 }
+/* "See all by @author" link inside the creator block. Full-width
+   button at the bottom of the creator card; clicking it opens the
+   gallery filtered to that author. Visually distinct from the link
+   chips above (those go to external URLs); this stays inside the
+   app, so it gets a chevron not a 🔗 icon. */
+.lbc-creator-view-all{
+    display:block;width:100%;
+    margin-top:4px;
+    background:var(--gold-dim);border:1px solid var(--gold);
+    color:var(--gold);cursor:pointer;
+    border-radius:5px;padding:8px 10px;
+    font-family:var(--font-mono);font-size:11px;font-weight:700;
+    letter-spacing:.3px;text-align:left;
+    transition:all .12s;
+}
+.lbc-creator-view-all:hover{
+    background:var(--gold);color:var(--black);
+}
 .lbc-section-label{
     font-family:var(--font-mono);font-size:9px;font-weight:700;
     color:var(--text-muted);letter-spacing:1.5px;text-transform:uppercase;
@@ -2217,6 +2301,61 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    plain #outPh placeholder text so it covers it visually whenever both
    want to be visible (the MutationObserver keeps display states in
    sync, but a z-index buffer makes any transient race harmless). */
+/* ── Stage view tabs (Studio / Gallery) ─────────────────────────────
+   Two-button switcher anchored at top-left of the stage. The active
+   tab shows in gold; the inactive one is muted. Sits above the stage
+   gallery and the placeholder via a high z-index so it stays clickable
+   in either view mode. Compact pill-shaped buttons; on narrow screens
+   the labels collapse and only icons show. */
+/* ── Stage view tabs (Gallery / Studio) — header placement ──────────
+   Two-button switcher anchored in the top app-header bar (no longer
+   floating over the stage). Inline pill nav with rounded outer
+   container. The active tab is gold-filled; inactive is muted. On
+   narrow screens the labels collapse and only icons show. */
+/* Stage view tab nav — Gallery / Studio. Originally floated on the
+   stage as a pill; now lives inline in the app header (.hdr-stage-tabs
+   variant). Each tab is a flat segmented-control button that reads as
+   header navigation rather than as a free-floating widget. Active tab
+   gets the gold pill fill; inactive is muted. On narrow screens the
+   labels collapse and only icons show. */
+.stage-tabs{
+    display:inline-flex;gap:2px;
+    background:transparent;
+    border:none;border-radius:0;
+    padding:0;
+    flex:0 0 auto;
+    align-self:stretch;
+    align-items:center;
+}
+/* Header-specific variant — sits inline with the title + token badge,
+   visually flush with the header so it reads as top-bar navigation
+   not a separate widget. The margin lifts it off the title; the
+   stretched height lines it up vertically inside the 48px bar. */
+.hdr-stage-tabs{
+    margin-left:16px;
+}
+.stage-tab{
+    display:inline-flex;align-items:center;gap:6px;
+    background:transparent;border:none;
+    color:var(--text-muted);cursor:pointer;
+    padding:6px 14px;border-radius:8px;
+    font-family:var(--font-mono);font-size:10px;font-weight:700;
+    letter-spacing:1px;text-transform:uppercase;
+    transition:all .15s;
+    line-height:1;
+}
+.stage-tab:hover{color:var(--text);background:var(--surface-2)}
+.stage-tab.active{
+    background:var(--gold);color:var(--black);
+}
+.stage-tab.active:hover{background:var(--gold);color:var(--black)}
+.stage-tab-icon{font-size:13px;line-height:1}
+@media (max-width:700px){
+    .stage-tab-label{display:none}
+    .stage-tab{padding:6px 9px}
+    .hdr-stage-tabs{margin-left:8px}
+}
+
 .stage-gallery{
     position:absolute;inset:0;z-index:5;
     display:flex;flex-direction:column;
@@ -2225,9 +2364,25 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .stage-gallery-head{
     flex:0 0 auto;display:flex;align-items:center;gap:12px;
-    padding:14px 18px;border-bottom:1px solid var(--border);
+    /* Tabs moved to the header — no more left gutter needed for them
+       in this row. */
+    padding:14px 18px;
+    border-bottom:1px solid var(--border);
     background:linear-gradient(180deg,var(--surface),rgba(17,17,19,.5));
     flex-wrap:wrap;
+}
+
+/* Icon-only variant for the filter + expand buttons — drops the text
+   label so the header looks like icons next to a search bar (matches
+   the simpler chrome the user asked for). */
+.gallery-filter-btn.icon-only,
+.sg-expand-btn.icon-only{
+    width:36px;height:36px;padding:0;
+    display:inline-flex;align-items:center;justify-content:center;
+    font-size:16px;flex-shrink:0;
+}
+.gallery-filter-btn.icon-only .gfb-badge{
+    position:absolute;top:-4px;right:-4px;
 }
 .stage-gallery-head .sg-title{
     display:flex;align-items:center;gap:8px;flex:0 0 auto;
@@ -2881,16 +3036,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 .toast.show{transform:translateX(0)}
 .toast.error{border-color:var(--red);color:var(--red)}
 
-.console{grid-area:console;background:var(--surface);border-top:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:all .2s}
-.console-tabs{display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--border);min-height:28px;gap:4px}
-.console-tab{font-family:var(--font-mono);font-size:10px;padding:4px 10px;color:var(--text-muted);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent}
-.console-tab.active{color:var(--gold);border-bottom-color:var(--gold)}
-.console-body{flex:1;overflow-y:auto;padding:6px 12px;font-family:var(--font-mono);font-size:10px;line-height:1.7;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-.log-line{color:var(--text-dim)}.log-line.error{color:var(--red)}.log-line.success{color:var(--green)}
-.log-ts{color:var(--text-muted);margin-right:8px}
-.gpu-info{font-family:var(--font-mono);font-size:9px;color:var(--text-muted);padding:2px 12px;border-top:1px solid var(--border);display:flex;gap:12px;align-items:center}
-.gpu-info .gi-dot{width:5px;height:5px;border-radius:50%}
-
 /* Popup modals (buy, login) */
 .popup-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10000;align-items:center;justify-content:center;padding:20px}
 .popup-modal.open{display:flex}
@@ -2992,7 +3137,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     /* Hide secondary header elements on narrow screens; keep badge + auth */
     .hdr-right #userEmail { display: none; }
     .hdr-right .user-avatar { display: none; }
-    #btnConsole { display: none; }
     #btnGpu { display: none; }
     /* Gallery header button: shrink to icon-only on phones to make room
        for the auth controls. The 🎨 emoji is the affordance; "Gallery"
@@ -3206,6 +3350,23 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <button class="hdr-hamburger" id="btnHamburger" onclick="toggleMobileSidebar()" aria-label="Menu">☰</button>
     <img src="https://www.missinglink.build/logo.png" alt="" onerror="this.style.display='none'">
     <h1>MISSINGLINK <span>IMAGE STUDIO</span></h1>
+    <!-- ── STAGE VIEW TABS (in header) ───────────────────────────────
+         Two-button workspace switcher anchored in the top bar. Gallery
+         is the leftmost / primary entry; Studio sits next to it.
+         setStageView ('studio'|'gallery') toggles which view the
+         stage shows; the active tab gets the gold pill style. Sits
+         in the header rather than the stage itself so it stays
+         reachable when modals/overlays cover the stage. -->
+    <div class="stage-tabs hdr-stage-tabs" id="stageTabs">
+        <button class="stage-tab active" data-view="gallery" onclick="setStageView('gallery')" title="Community Gallery">
+            <span class="stage-tab-icon">🌐</span>
+            <span class="stage-tab-label">Gallery</span>
+        </button>
+        <button class="stage-tab" data-view="studio" onclick="setStageView('studio')" title="Your workspace">
+            <span class="stage-tab-icon">🎨</span>
+            <span class="stage-tab-label">Studio</span>
+        </button>
+    </div>
     <div class="hdr-right">
         <div id="authOut">
             <button class="hdr-btn auth-btn" onclick="loginGoogle()">🔑 SIGN IN</button>
@@ -3215,11 +3376,12 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <span>🪙</span><span id="tokenCount">0</span>
             </div>
         </div>
-        <button class="hdr-btn" id="btnConsole" onclick="toggleConsole()">▸ Console</button>
         <!-- Community Gallery button — opens the public gallery modal where
              anyone (logged in or not) can browse images other users have
-             shared. Placed in the header so it's reachable from every mode. -->
-        <button class="hdr-btn" id="btnGallery" onclick="openGalleryModal()" title="Browse the community gallery">🎨 Gallery</button>
+             shared. Used to live in the header — moved to the stage tabs
+             (top-left of stage) so it sits alongside the Studio toggle
+             and feels like a workspace switcher rather than a header
+             link competing with subscription / billing chrome. -->
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <!-- User menu trigger — clickable avatar that opens a dropdown
              with subscription / billing / account actions. Lives at the
@@ -3853,27 +4015,30 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              with infinite scroll, optional search. -->
         <div class="stage-gallery" id="stageGallery" style="display:none">
             <div class="stage-gallery-head">
+                <!-- Minimal header — globe icon + count badge, no
+                     "COMMUNITY GALLERY" wordmark. The Studio/Gallery
+                     tabs at the top already telegraph what this view
+                     is; repeating it here was redundant chrome. -->
                 <div class="sg-title">
-                    <span class="sg-icon">🎨</span>
-                    <span>Community Gallery</span>
+                    <span class="sg-icon" title="Community Gallery">🌐</span>
                     <span class="sg-count" id="stageGalleryCount"></span>
                 </div>
                 <div class="sg-search-wrap">
                     <span class="gs-icon">🔍</span>
-                    <input type="text" id="stageGallerySearch" class="gallery-search-input" placeholder="Search the gallery…" autocomplete="off" spellcheck="false">
+                    <input type="text" id="stageGallerySearch" class="gallery-search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
                     <button type="button" id="stageGallerySearchClear" class="gallery-search-clear" title="Clear search" onclick="clearStageGallerySearch()">×</button>
                 </div>
-                <button class="gallery-filter-btn" id="stageGalleryFilterBtn" type="button" onclick="toggleFilterPopover('stage', this)" title="Filters">
-                    🎛 Filters<span class="gfb-badge" id="stageGalleryFilterBadge">0</span>
+                <button class="gallery-filter-btn icon-only" id="stageGalleryFilterBtn" type="button" onclick="toggleFilterPopover('stage', this)" title="Filters">
+                    🎛<span class="gfb-badge" id="stageGalleryFilterBadge">0</span>
                 </button>
-                <button type="button" class="sg-expand-btn" onclick="openGalleryModal()" title="Open full-screen gallery">⛶ Expand</button>
+                <button type="button" class="sg-expand-btn icon-only" onclick="openGalleryModal()" title="Open full-screen gallery">⛶</button>
                 <!-- Active-filter chip row — rendered by JS. -->
                 <div class="gallery-filters" id="stageGalleryFilters"></div>
             </div>
             <!-- Scrollable body — observer for infinite scroll lives here. -->
             <div class="stage-gallery-body" id="stageGalleryBody">
                 <div id="stageGalleryGrid" class="history-grid stage-gallery-grid">
-                    <div class="history-loading">Loading community work…</div>
+                    <div class="history-loading"></div>
                 </div>
                 <div id="stageGallerySentinel" class="history-sentinel" style="display:none"></div>
             </div>
@@ -4439,14 +4604,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
 <!-- JOB QUEUE (inside main area) -->
 
-<!-- CONSOLE -->
-<div class="console" id="consoleDrawer">
-    <div class="console-tabs">
-        <button class="console-tab active">System</button>
-    </div>
-    <div class="console-body" id="consoleBody"></div>
-</div>
-
 </div>
 
 <!-- Three.js for viewport -->
@@ -4619,7 +4776,7 @@ const API=''; // same origin
 
 let _user=null;
 let imageId=null,imageUrl=null;
-let consoleOpen=false,hwOpen=true;
+let hwOpen=true;
 let currentMode='camera';
 let slots=[null,null,null];
 let myJobs=[]; // {id, status, mode, thumb, result}
@@ -4688,15 +4845,17 @@ document.addEventListener('click', (e) => {
     }
 });
 
-function log(msg,lvl){
-    const body=$('consoleBody'); if(!body) return;
-    const div=document.createElement('div');
-    div.className='log-line'+(lvl==='error'?' error':lvl==='success'?' success':'');
-    const ts=new Date().toLocaleTimeString();
-    div.innerHTML=`<span class="log-ts">${ts}</span>${msg.replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}`;
-    body.appendChild(div);
-    body.scrollTop=body.scrollHeight;
-    while(body.children.length>200) body.removeChild(body.firstChild);
+// Console drawer was removed from the UI — keeping this function as a
+// no-op so the many existing call sites don't need to be patched. We
+// still forward to the browser console at debug level for in-browser
+// dev observability, but nothing renders in the app chrome.
+function log(msg, lvl){
+    try {
+        const fn = (lvl === 'error') ? console.error
+                 : (lvl === 'success') ? console.info
+                 : console.log;
+        fn.call(console, '[studio]', msg);
+    } catch {}
 }
 
 // Modal notification + confirm helpers — replace native alert()/confirm() so
@@ -5633,12 +5792,10 @@ function updateGenButton(){
 }
 
 // ── Console / HW ──────────────────────────────────
-function toggleConsole(){
-    consoleOpen=!consoleOpen;
-    document.documentElement.style.setProperty('--console-h',consoleOpen?'200px':'0px');
-    $('btnConsole').classList.toggle('active',consoleOpen);
-    $('btnConsole').textContent=consoleOpen?'▾ Console':'▸ Console';
-}
+// Console UI was removed. Keep the function name as a no-op so any
+// stray onclick handlers (browser extensions, deep links, etc.) that
+// might still call it don't throw.
+function toggleConsole(){ /* console removed */ }
 function toggleHW(){
     hwOpen=!hwOpen;
     $('historyOverlay').style.display=hwOpen?'flex':'none';
@@ -8389,17 +8546,28 @@ async function openShareDialog(jobId, opts){
         orientField.style.display = (_user && _user.nsfw_enabled) ? '' : 'none';
     }
 
-    // Show the modal + start tag extraction.
+    // Show the modal + start the AI auto-populate. The autofill call
+    // hits /extract-publish-fields which returns title/caption/
+    // description/tags in one round-trip — covers what the separate
+    // tag-only extractor did plus the new prose fields. We mark each
+    // field as "AI suggested" while it's pending; user edits clear
+    // that mark so we don't clobber human input on a slow response.
     const dlg = $('shareDialog');
     if (dlg) dlg.style.display = 'flex';
-    _kickoffShareTagExtraction();
+    _kickoffShareAutofill();
 
     // Wire counter updates so the user can see how close they are to
     // the title/caption/description limits. oninput overwrites prior
-    // handlers — fine since openShareDialog is the only caller.
-    if (titleEl) titleEl.oninput = _updateShareDialogCounters;
-    if (capEl) capEl.oninput = _updateShareDialogCounters;
-    if (descEl) descEl.oninput = _updateShareDialogCounters;
+    // handlers — fine since openShareDialog is the only caller. We
+    // also mark each field as touched so a late AI response doesn't
+    // overwrite what the user typed.
+    if (titleEl) titleEl.oninput = () => { titleEl.dataset.userEdited = '1'; _updateShareDialogCounters(); };
+    if (capEl) capEl.oninput = () => { capEl.dataset.userEdited = '1'; _updateShareDialogCounters(); };
+    if (descEl) descEl.oninput = () => { descEl.dataset.userEdited = '1'; _updateShareDialogCounters(); };
+    // Clear any prior userEdited flags on a fresh open.
+    if (titleEl) titleEl.removeAttribute('data-user-edited');
+    if (capEl) capEl.removeAttribute('data-user-edited');
+    if (descEl) descEl.removeAttribute('data-user-edited');
 }
 
 function closeShareDialog(){
@@ -8525,17 +8693,22 @@ function _paintShareDialogOrientation(){
     });
 }
 
-// Fires the tag-extraction call. Server takes prompt + title + caption
-// and returns 6-10 suggested tags. Falls back to a regex extraction if
-// the API key isn't configured, so the dialog still shows something
-// useful even with no upstream LLM.
-async function _kickoffShareTagExtraction(){
+// Fires the full publish-fields autofill. Server takes the image URL
+// + prompt and returns suggested title / caption / description / tags
+// in one call. Each text field is only painted if the user hasn't
+// already typed in it (data-user-edited flag), so a slow AI response
+// can't clobber human input. Tag chips always overwrite the pending
+// state since we know they're empty at openShareDialog time.
+async function _kickoffShareAutofill(){
     const tagsBox = $('shareDialogTags');
     const loadingEl = $('shareDialogTagsLoading');
     const tagInput = $('shareDialogTagInput');
     const regenBtn = $('shareDialogRegen');
     if (!tagsBox) return;
-    if (loadingEl) { loadingEl.style.display = ''; loadingEl.textContent = 'Extracting…'; }
+    if (loadingEl) {
+        loadingEl.style.display = '';
+        loadingEl.textContent = 'AI is drafting title, caption, and tags…';
+    }
     if (tagInput) tagInput.style.display = 'none';
     if (regenBtn) regenBtn.disabled = true;
 
@@ -8543,42 +8716,58 @@ async function _kickoffShareTagExtraction(){
     // dialog can't paint into a new one.
     const jobIdAtCall = _shareDialogJobId;
     try {
-        // Include current title/caption text in the extraction request
-        // so the user gets richer tags after they've typed something.
-        const title = $('shareDialogTitle')?.value || '';
-        const caption = $('shareDialogCaption')?.value || '';
-        const r = await fetchT(`${API}/api/studio/extract-tags`, {
+        const r = await fetchT(`${API}/api/studio/extract-publish-fields`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 prompt: _shareDialogPrompt,
-                title, caption,
+                image_url: _shareDialogImageUrl,
             }),
-        }, 12000);
+        }, 25000);
         const d = await r.json();
         if (_shareDialogJobId !== jobIdAtCall) return;  // stale
         if (!d.ok) {
-            if (loadingEl) loadingEl.textContent = 'No suggestions — type your own below.';
+            if (loadingEl) loadingEl.textContent = 'AI suggestions unavailable — type your own.';
             if (tagInput) tagInput.style.display = '';
-            if (regenBtn) regenBtn.disabled = false;
             return;
         }
+
+        // Paint the prose fields ONLY if the user hasn't already
+        // started typing in them. The dataset flag is set by the
+        // oninput handler in openShareDialog. The trim guards against
+        // pasting in whitespace-only suggestions.
+        const titleEl = $('shareDialogTitle');
+        if (titleEl && !titleEl.dataset.userEdited && d.title?.trim()) {
+            titleEl.value = d.title.trim();
+        }
+        const capEl = $('shareDialogCaption');
+        if (capEl && !capEl.dataset.userEdited && d.caption?.trim()) {
+            capEl.value = d.caption.trim();
+        }
+        const descEl = $('shareDialogDescription');
+        if (descEl && !descEl.dataset.userEdited && d.description?.trim()) {
+            descEl.value = d.description.trim();
+        }
+        _updateShareDialogCounters();
+
         _shareDialogTags = Array.isArray(d.tags) ? [...d.tags] : [];
         _renderShareTagChips();
     } catch (e) {
-        if (loadingEl) loadingEl.textContent = 'Tag extraction failed — type your own below.';
+        if (loadingEl) loadingEl.textContent = 'AI suggestions failed — type your own.';
         if (tagInput) tagInput.style.display = '';
     } finally {
         if (regenBtn) regenBtn.disabled = false;
     }
 }
 
-// "Regenerate" link → re-run extraction. Useful after the user has
-// typed a more specific title or caption and wants tags refreshed.
+// "Regenerate" link → re-run the autofill. Clears existing tags but
+// leaves prose fields alone (the user may have edited them; we don't
+// want to overwrite). For prose, the autofill already respects
+// userEdited flags so it won't clobber.
 function regenerateShareTags(){
     _shareDialogTags = [];
     _renderShareTagChips();
-    _kickoffShareTagExtraction();
+    _kickoffShareAutofill();
 }
 
 function _renderShareTagChips(){
@@ -14696,11 +14885,49 @@ function openGalleryModal(){
     // currently active without opening the popover. Cheap, idempotent.
     updateFilterBadge('modal');
     const grid = $('galleryGrid');
-    if (grid) grid.innerHTML = `<div class="gallery-empty">Loading the gallery…</div>`;
+    // Skeleton image tiles instead of text — keeps the gallery feeling
+    // visual from the very first paint. The shimmer animation in CSS
+    // signals loading without writing the word "loading" on screen.
+    if (grid) grid.innerHTML = _renderGallerySkeleton(12);
     loadGalleryPage(0).then(() => {
         renderGallery();
         setupGalleryInfiniteScroll();
     });
+}
+
+// Builds N shimmer-tile placeholders that occupy the same grid slots
+// the real cards will fill in. Used by both gallery surfaces. No
+// text — purely a visual placeholder, so the loading state never
+// reads as "this app is text-heavy."
+function _renderGallerySkeleton(n){
+    const tile = '<div class="gallery-skeleton-card"><div class="gallery-skeleton-shimmer"></div></div>';
+    return tile.repeat(Math.max(1, n));
+}
+
+// Open the gallery filtered to one author's public work. Triggered
+// from the "See all by @handle" button inside the discussion panel.
+// Pre-flight: close any open lightbox so the user lands on the feed
+// view, set the author filter, then open the modal and force a fresh
+// fetch through refreshGalleryFromScratch (which respects the new
+// filter). The author chip on the chip row makes the active filter
+// obvious; the × on that chip clears it.
+function viewGalleryByAuthor(handle){
+    if (!handle) return;
+    // Normalize — strip any leading @ since the filter chip + the
+    // server both expect the bare 8-char hex.
+    const clean = handle.replace(/^@/, '').toLowerCase().trim();
+    if (!/^[0-9a-f]{4,16}$/.test(clean)) return;
+    // Close the lightbox first so the new view isn't behind it.
+    closeModal();
+    // Apply the filter to the modal gallery state. We don't touch the
+    // stage gallery filter — that surface keeps its independent view.
+    _galleryFilters.author = clean;
+    // Clear any existing search query so the author filter isn't
+    // narrowed further by stale search text from a previous session.
+    _galleryQuery = '';
+    const inp = $('gallerySearchInput');
+    if (inp) inp.value = '';
+    openGalleryModal();
 }
 
 function closeGalleryModal(){
@@ -14939,24 +15166,12 @@ function _buildGalleryCard(it, surface){
         </div>
     `;
 
-    // Keyword chips — first 5 only on the card, rest available in the
-    // lightbox / on click. Each chip triggers a fresh search on its
-    // surface so the user can drill into related work with one tap.
-    let chipsHtml = '';
-    if (it.keywords) {
-        const kws = it.keywords.split(',')
-            .map(k => k.trim())
-            .filter(k => k && k.length <= 30)
-            .slice(0, 5);
-        if (kws.length) {
-            const searchFn = surface === 'stage'
-                ? 'searchStageGalleryFromChip'
-                : 'searchGalleryFromChip';
-            chipsHtml = `<div class="gc-keywords">${kws.map(k =>
-                `<span class="gc-keyword" onclick="event.stopPropagation(); ${searchFn}('${escapeHtml(k).replace(/'/g, "\\'")}')">${escapeHtml(k)}</span>`
-            ).join('')}</div>`;
-        }
-    }
+    // Keyword chips and the auto-generated caption used to live in
+    // the meta block under the image. Both have been removed — the
+    // image itself is the primary signal, and packing the card with
+    // text made the feed feel cluttered. Title is still shown when the
+    // creator gave one (it's their headline, not autogen), but only
+    // as a single restrained line.
 
     // ── Reactions bar (bottom of card) ──────────────────────────────
     // Always shown for shared images. Lets viewers add an emoji
@@ -14976,11 +15191,7 @@ function _buildGalleryCard(it, surface){
             ${authorOverlay}
             ${revealOverlay}
         </div>
-        <div class="history-card-meta">
-            ${title ? `<div class="gc-title">${escapeHtml(title)}</div>` : ''}
-            <div class="gc-caption">${escapeHtml(caption)}</div>
-            ${chipsHtml}
-        </div>
+        ${title ? `<div class="gc-title-strip">${escapeHtml(title)}</div>` : ''}
         ${reactionsHtml}
     `;
     return card;
@@ -15048,6 +15259,8 @@ function _renderCardReactionBar(it){
 
     // The + button opens the floating reaction picker. We pass the
     // anchor (the button itself) so the picker can position relative
+    // The + button opens the floating reaction picker. We pass the
+    // anchor (the button itself) so the picker can position relative
     // to it. The picker callback toggles via toggleCardReaction.
     const addBtn = `
         <button class="gc-reaction-add"
@@ -15055,7 +15268,34 @@ function _renderCardReactionBar(it){
                 title="Add reaction">+</button>
     `;
 
-    // Tips indicator on the right — only visible when there have been
+    // Tip button — sits between the reactions and the tips total so
+    // visitors who want to pay the creator can do it without opening
+    // the lightbox. Hidden for the creator's own posts (can't tip
+    // yourself) and for anonymous viewers (no token balance to deduct
+    // from). Calls the existing tipGalleryItem flow which handles the
+    // confirm dialog + balance check + buy-tokens upsell.
+    const canTip = _user && !it.mine;
+    const tipBtn = canTip
+        ? `<button class="gc-tip-btn"
+                  onclick="event.stopPropagation(); tipGalleryItem('${it.id}')"
+                  title="Tip 10 tokens to creator">⚡ Tip</button>`
+        : '';
+
+    // Remix button — always visible in the reactions bar (in addition
+    // to the hover-only paint icon at top-right of the thumb, which
+    // some users miss). Costs 5 tokens, all of which go to the
+    // creator. Shown for everyone except anonymous viewers — owners
+    // CAN remix their own work (it's a quick way to use an old gen
+    // as a reference for a new one without paying anyone). The icon
+    // is the same 🎨 brush used on the top-right hover icon so the
+    // affordance is recognizable across both surfaces.
+    const remixBtn = _user
+        ? `<button class="gc-remix-btn"
+                  onclick="event.stopPropagation(); remixGalleryItem('${it.id}')"
+                  title="${it.mine ? 'Use as reference (free for own work)' : 'Remix · 5 tokens to creator'}">🎨 Remix</button>`
+        : '';
+
+    // Tips total on the right — only visible when there have been
     // actual token transfers. Different visual weight (gold) from the
     // free emoji reactions so users read it as "this image earned
     // money" rather than "this image is popular".
@@ -15068,6 +15308,8 @@ function _renderCardReactionBar(it){
             ${likeChip}
             ${emojiChips}
             ${addBtn}
+            ${remixBtn}
+            ${tipBtn}
             ${tipsHtml}
         </div>
     `;
@@ -15298,7 +15540,7 @@ function closeReactionPicker(){
 // matches what the server accepts via query params. The defaults map
 // to "no filter applied" — sort=new, all the rest unset.
 function _defaultGalleryFilters(){
-    return { sort: 'new', time: '', mode: '', mine: 0, nsfw: '', violence: '', orientation: '' };
+    return { sort: 'new', time: '', mode: '', mine: 0, nsfw: '', violence: '', orientation: '', author: '' };
 }
 let _galleryFilters = _defaultGalleryFilters();
 let _stageGalleryFilters = _defaultGalleryFilters();
@@ -15315,6 +15557,7 @@ function _countActiveFilters(f){
     if (f.nsfw) n++;  // only counts when explicit override is set
     if (f.violence) n++;  // ditto for the violence/gore axis
     if (f.orientation) n++;
+    if (f.author) n++;
     return n;
 }
 
@@ -15328,6 +15571,7 @@ function _applyFiltersToParams(params, f){
     if (f.nsfw) params.set('nsfw', f.nsfw);
     if (f.violence) params.set('violence', f.violence);
     if (f.orientation) params.set('orientation', f.orientation);
+    if (f.author) params.set('author', f.author);
 }
 
 function _renderGalleryFilters(containerId, surface){
@@ -15371,6 +15615,13 @@ function _renderGalleryFilters(containerId, surface){
             trans: 'Trans', bi: 'Bi', queer: 'Queer', other: 'Other',
         };
         chips.push(`<button class="gallery-filter-chip active" onclick="${clearFnFor('orientation','')}" title="Clear orientation filter">${escapeHtml(labels[f.orientation] || f.orientation)}<span class="gfc-close">×</span></button>`);
+    }
+    // Author filter chip — set when the user clicks "see all by @user"
+    // from the discussion panel. Clickable × clears it, returning the
+    // feed to the unfiltered view.
+    if (f.author) {
+        const handle = f.author.startsWith('@') ? f.author : '@' + f.author;
+        chips.push(`<button class="gallery-filter-chip active" onclick="${clearFnFor('author','')}" title="Clear author filter">By ${escapeHtml(handle)}<span class="gfc-close">×</span></button>`);
     }
     // Active query indicator — clearable chip when there's a search in
     // progress. Visual reinforcement for what's filtering the feed; the
@@ -15755,18 +16006,55 @@ let _stageGalleryFirstLoaded = false;
 
 const STAGE_GALLERY_PAGE_SIZE = 20;
 
-// Show / hide the inline stage gallery, mirroring outPh's visibility.
-// Called by a MutationObserver in init plus directly from a few code
-// paths that we know touch outPh (so we don't have to wait for the
-// observer microtask). Also lazily kicks off the first load.
+// Two-tab stage view: 'studio' (workspace — output / batch grid /
+// generation results) or 'gallery' (community feed). Default
+// 'gallery' so first-time visitors land on the feed of community
+// work — gives them something to look at while they figure out what
+// they want to make. Persisted in localStorage so the user's
+// preference sticks across reloads; explicit 'studio' from a prior
+// session is respected, but absence (first visit) defaults to gallery.
+window._stageView = (() => {
+    try {
+        const v = localStorage.getItem('studio_stage_view');
+        return (v === 'studio') ? 'studio' : 'gallery';
+    } catch { return 'gallery'; }
+})();
+
+function setStageView(view){
+    if (view !== 'studio' && view !== 'gallery') view = 'studio';
+    window._stageView = view;
+    try { localStorage.setItem('studio_stage_view', view); } catch {}
+    // Paint the tab buttons' active state.
+    document.querySelectorAll('.stage-tab').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+    });
+    // Drive visibility. _syncStageGalleryVisibility reads window._stageView
+    // and acts accordingly.
+    _syncStageGalleryVisibility();
+}
+
+// Show / hide the inline stage gallery. Behavior depends on
+// window._stageView:
+//   'studio'  → gallery is hidden regardless of placeholder state
+//   'gallery' → gallery is shown unless there's an active output/batch
+//
+// We still respect the existing outPh visibility logic for the
+// 'gallery' case so the gallery doesn't cover a freshly-generated
+// image. Called by a MutationObserver in init plus directly from a
+// few code paths that touch outPh.
 function _syncStageGalleryVisibility(){
     const sg = document.getElementById('stageGallery');
     const ph = document.getElementById('outPh');
     if (!sg || !ph) return;
-    // Treat both '' and 'inline' (the browser-computed default for a
-    // <span>) as "visible." Anything that's a literal 'none' hides
-    // the gallery. We never touch outPh's display ourselves — letting
-    // the existing visibility logic continue to own that variable.
+    // In studio mode the gallery never shows. The Studio tab is the
+    // workspace — output / batch / placeholder. The user can still
+    // hit the ⛶ expand button on the GALLERY tab (or open the full
+    // gallery modal from search results) to access the feed.
+    if (window._stageView !== 'gallery') {
+        sg.style.display = 'none';
+        return;
+    }
+    // Gallery mode — show the feed unless a real result is up.
     const phVisible = ph.style.display !== 'none';
     sg.style.display = phVisible ? 'flex' : 'none';
     // First-time visible → fire the initial page fetch so users see
@@ -15774,6 +16062,11 @@ function _syncStageGalleryVisibility(){
     if (phVisible && !_stageGalleryFirstLoaded) {
         _stageGalleryFirstLoaded = true;
         updateFilterBadge('stage');
+        // Paint skeleton tiles so the user sees image-shaped boxes
+        // instead of text while the first page loads. Reads as a feed
+        // immediately rather than as a page with text on it.
+        const grid = $('stageGalleryGrid');
+        if (grid) grid.innerHTML = _renderGallerySkeleton(8);
         loadStageGalleryPage(0).then(() => {
             renderStageGallery();
             setupStageGalleryInfiniteScroll();
@@ -16084,6 +16377,19 @@ function renderLightboxComments(opts){
             ? `<div class="lbc-creator-prompt"><span class="lbc-creator-prompt-label">PROMPT</span>${escapeHtml(c.prompt)}</div>`
             : '';
         const mineChip = c.mine ? `<span class="lbc-creator-mine">YOU</span>` : '';
+        // "View all by @handle" link — gold-styled chip that opens the
+        // gallery modal pre-filtered to this author's public work.
+        // Only shown for OTHER authors (not the viewer's own posts —
+        // they can already see their own work via the "Only my shares"
+        // filter, and there's no value in re-promoting that path).
+        const handleClean = (c.author || '').replace(/^@/, '');
+        const viewAllChip = (!c.mine && handleClean)
+            ? `<button class="lbc-creator-view-all"
+                       onclick="viewGalleryByAuthor('${escapeHtml(handleClean).replace(/'/g, "\\'")}')"
+                       title="See all work by ${escapeHtml(c.author)}">
+                  See all by ${escapeHtml(c.author)} →
+               </button>`
+            : '';
         const block = document.createElement('div');
         block.className = 'lbc-creator';
         block.innerHTML = `
@@ -16097,6 +16403,7 @@ function renderLightboxComments(opts){
             ${descriptionHtml}
             ${linksHtml}
             ${promptHtml}
+            ${viewAllChip}
         `;
         body.appendChild(block);
 
@@ -17040,9 +17347,10 @@ document.addEventListener('DOMContentLoaded',()=>{
             // happen the same tick as the mutation.
             new MutationObserver(_syncStageGalleryVisibility)
                 .observe(ph, { attributes: true, attributeFilter: ['style'] });
-            // Initial sync — outPh starts visible on a fresh page load,
-            // so this triggers the first gallery fetch immediately.
-            _syncStageGalleryVisibility();
+            // Paint the persisted stage view (studio | gallery) on the
+            // tab buttons + sync visibility immediately. This runs after
+            // the DOM has rendered, so the tab buttons exist.
+            setStageView(window._stageView);
         }
     })();
     // Deep-link support: /studio.html?view=gallery opens the gallery
