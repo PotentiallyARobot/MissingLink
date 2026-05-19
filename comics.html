@@ -32,15 +32,30 @@ input,textarea{font-family:inherit;color:inherit}
   background:var(--surface); border-bottom:1px solid var(--border);
   position:relative; z-index:100;
 }
-.hdr-brand{display:flex;align-items:center;gap:10px}
+.hdr-brand{display:flex;align-items:center;gap:10px;min-width:0}
 .hdr-logo{
-  width:34px; height:34px; border-radius:50%;
+  position:relative;
+  height:34px; min-width:34px;
+  display:inline-flex; align-items:center; justify-content:flex-start;
+  flex-shrink:0; text-decoration:none;
+}
+.hdr-logo-fallback{
+  position:absolute; top:0; left:0;
+  width:34px; height:34px;
+  border-radius:50%;
   background:radial-gradient(circle at 35% 35%, var(--gold-light), var(--gold) 55%, var(--gold-dark));
-  display:flex;align-items:center;justify-content:center;
+  display:flex; align-items:center; justify-content:center;
   box-shadow:0 0 14px var(--gold-glow), inset 0 0 8px rgba(0,0,0,.3);
 }
-.hdr-logo svg{width:20px;height:20px;color:var(--black)}
-.hdr-title{font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim)}
+.hdr-logo-fallback svg{width:20px;height:20px;color:var(--black)}
+.hdr-logo-img{
+  position:relative; z-index:1;
+  height:34px; width:auto; max-height:34px; display:block;
+  /* Image grows naturally to its aspect ratio. If it's a square mark
+     it sits at 34x34 covering the fallback ring. If it's a horizontal
+     wordmark it extends to the right and still covers the ring. */
+}
+.hdr-title{font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);white-space:nowrap}
 .hdr-title .div{margin:0 8px;color:var(--border-light)}
 .hdr-title .accent{color:var(--gold)}
 
@@ -104,7 +119,7 @@ input,textarea{font-family:inherit;color:inherit}
 .sidebar{grid-row:1 / 3; border-right:1px solid var(--border); background:var(--surface); overflow-y:auto}
 .workarea{display:grid; grid-template-columns: 1fr 380px; min-width:0; min-height:0}
 .right-tools{border-left:1px solid var(--border); background:var(--surface); overflow-y:auto; padding:14px 12px}
-.bottom-bar{grid-column:1 / 3; border-top:1px solid var(--border); background:var(--surface); display:grid; grid-template-columns: 1fr 1fr 1fr; padding:14px 20px; gap:24px; align-items:start}
+.bottom-bar{grid-column:1 / -1; border-top:1px solid var(--border); background:var(--surface); display:grid; grid-template-columns: 1fr 1fr 1fr; padding:14px 20px; gap:24px; align-items:start}
 
 /* ─── Sidebar ──────────────────────────────────────────────────── */
 .sb{padding:14px 14px 24px}
@@ -206,8 +221,10 @@ input,textarea{font-family:inherit;color:inherit}
 .add-page-btn svg{width:13px;height:13px}
 
 /* ─── Main canvas ──────────────────────────────────────────────── */
-.canvas{padding:18px 22px 14px;overflow-y:auto;display:flex;flex-direction:column;min-width:0}
-.canvas-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap}
+.canvas{padding:18px 22px 14px;overflow-y:auto;display:flex;flex-direction:column;min-width:0;min-height:0}
+.canvas-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;flex-shrink:0}
+.canvas > #comic-page{flex:1;min-height:0}
+.canvas > #page-strip{flex-shrink:0;margin-top:8px}
 .canvas-title-wrap{flex:1;min-width:0}
 .canvas-title{
   display:flex;align-items:center;gap:8px;
@@ -296,44 +313,85 @@ input,textarea{font-family:inherit;color:inherit}
   max-width:90%;margin-top:2px;
 }
 
-/* Full-canvas empty state — when no pages exist or page has no panels */
+/* Full-canvas empty state — focused, centered card. Constrained width
+   so it doesn't sprawl across wide canvases; the surrounding canvas
+   stays clean (just background) instead of being "framed" with a giant
+   dashed box that exaggerates how empty it feels. */
 .canvas-empty{
   position:relative;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:14px;
-  min-height:460px;border-radius:10px;overflow:hidden;
-  background:var(--surface);border:1px solid var(--border-light);
+  min-height:380px;
+  width:100%;max-width:520px;margin:0 auto;
+  padding:28px 28px;
+  text-align:center;
 }
-.canvas-empty-bg{
-  position:absolute;inset:0;
-  background-size:cover;background-position:center;
-  opacity:.32;filter:blur(1px) saturate(.85);
+.canvas-empty-icon{
+  width:112px;height:112px;border-radius:18px;overflow:hidden;
+  flex-shrink:0;
+  background:
+    radial-gradient(ellipse at 50% 35%, rgba(232,169,23,.10) 0%, rgba(232,169,23,.02) 70%),
+    var(--surface);
+  border:1px solid rgba(232,169,23,.22);
+  padding:10px;display:flex;align-items:center;justify-content:center;
+  margin-bottom:2px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5), 0 0 28px rgba(232,169,23,.12);
 }
-.canvas-empty-bg::after{
-  content:"";position:absolute;inset:0;
-  background:radial-gradient(circle at 50% 50%, transparent 0%, var(--surface) 75%);
-}
+.canvas-empty-icon img{width:100%;height:100%;object-fit:contain;display:block;flex-shrink:0}
 .canvas-empty-inner{
   position:relative;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:14px;
-  padding:30px;max-width:440px;text-align:center;
+  padding:0;max-width:420px;text-align:center;
 }
 .canvas-empty-title{
-  font-family:var(--font-mono);font-size:13px;font-weight:600;
+  font-family:var(--font-mono);font-size:14px;font-weight:700;
   color:var(--text);letter-spacing:1.5px;text-transform:uppercase;
+  margin:0;
 }
 .canvas-empty-sub{
-  font-size:13px;color:var(--text-dim);line-height:1.6;max-width:380px;
+  font-size:13px;color:var(--text-muted);line-height:1.6;max-width:360px;
 }
 .canvas-empty-cta{
   display:inline-flex;align-items:center;gap:8px;
-  padding:10px 18px;border-radius:7px;
+  padding:12px 22px;border-radius:7px;margin-top:2px;
   background:var(--gold);color:#0a0606;border:0;cursor:pointer;
   font-family:var(--font-mono);font-size:11px;font-weight:700;
   letter-spacing:.8px;text-transform:uppercase;
   transition:all .15s;
+  box-shadow:0 4px 16px rgba(232,169,23,.20);
 }
-.canvas-empty-cta:hover{background:var(--gold-light);transform:translateY(-1px)}
+.canvas-empty-cta:hover{background:var(--gold-light);transform:translateY(-1px);box-shadow:0 6px 22px rgba(232,169,23,.28)}
 .canvas-empty-cta svg{width:14px;height:14px}
+
+/* Horizontal progress indicator shown ABOVE the canvas-empty icon.
+   Compact 5-dot row + "Step N of 5" label — communicates progress
+   without consuming vertical space the way a vertical checklist did. */
+.canvas-empty-progress{
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  margin-bottom:4px;
+}
+.progress-label{
+  font-family:var(--font-mono);font-size:10px;font-weight:700;
+  letter-spacing:1.5px;text-transform:uppercase;
+  color:var(--text-muted);
+}
+.progress-dots{
+  display:flex;align-items:center;gap:8px;
+}
+.progress-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--surface-3);
+  border:1px solid var(--border);
+  transition:all .15s;
+}
+.progress-dot.done{
+  background:var(--gold);border-color:var(--gold);
+}
+.progress-dot.current{
+  background:rgba(232,169,23,.15);
+  border-color:var(--gold);
+  width:12px;height:12px;
+  box-shadow:0 0 0 3px rgba(232,169,23,.12);
+}
 
 /* ─── Cover preview (dynamic — replaces the hardcoded SVG) ────── */
 .sb-cover-bg{
@@ -677,34 +735,63 @@ input,textarea{font-family:inherit;color:inherit}
 .add-char-row svg{width:13px;height:13px}
 
 /* Character editor form (inside modal) */
-.char-form{display:grid;grid-template-columns:160px 1fr;gap:16px;align-items:start}
+.char-form{display:grid;grid-template-columns:180px 1fr;gap:18px;align-items:start}
 .char-form-preview{
-  display:flex;flex-direction:column;align-items:center;gap:8px;
-  padding:14px;background:var(--surface-2);border-radius:8px;border:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  padding:16px 14px;background:var(--surface-2);border-radius:10px;border:1px solid var(--border);
+  position:sticky;top:0;
 }
 .char-preview-av{
-  width:120px;height:120px;border-radius:50%;border:2px solid var(--gold);
-  overflow:hidden;background:#1a1611;
+  width:140px;height:140px;border-radius:50%;border:1px solid var(--border);
+  overflow:hidden;background:var(--surface-3);
+  display:flex;align-items:center;justify-content:center;
+  transition:border-color .15s;
 }
+.char-preview-av.has-portrait{border:2px solid var(--gold);box-shadow:0 0 16px rgba(232,169,23,.18)}
+.char-preview-av .char-img-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+.char-preview-av img{width:100%;height:100%;object-fit:cover;display:block}
 .char-preview-av svg{width:100%;height:100%;display:block}
+.portrait-placeholder{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  padding:14px;color:var(--text-muted);text-align:center;
+}
+.portrait-placeholder svg{width:32px;height:32px;color:var(--border-strong);flex:none}
+.portrait-placeholder-label{
+  font-family:var(--font-mono);font-size:9px;font-weight:600;
+  letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);
+  line-height:1.3;
+}
 .char-preview-name{font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--text);text-align:center;line-height:1.2}
 .char-preview-role{font-size:10px;color:var(--text-muted);font-family:var(--font-mono);text-align:center}
 
-.char-fields{display:flex;flex-direction:column;gap:11px}
-.field-row{display:flex;flex-direction:column;gap:5px}
+.preview-status{
+  display:flex;align-items:flex-start;gap:6px;
+  margin-top:6px;padding:8px 10px;border-radius:6px;
+  background:rgba(232,169,23,.06);border:1px solid rgba(232,169,23,.15);
+  font-size:10.5px;font-family:var(--font-mono);
+  color:var(--gold);line-height:1.4;text-align:left;
+}
+.preview-status svg{width:11px;height:11px;flex-shrink:0;margin-top:2px}
+
+.char-fields{display:flex;flex-direction:column;gap:14px}
+.field-row{display:flex;flex-direction:column;gap:6px}
 .field-label{
   font-family:var(--font-mono);font-size:10px;font-weight:600;
   color:var(--text-muted);letter-spacing:.8px;text-transform:uppercase;
 }
+.field-hint{
+  font-weight:400;text-transform:none;letter-spacing:0;
+  color:var(--text-muted);opacity:.75;font-size:10px;margin-left:2px;
+}
 .field-row input.text-input,
 .field-row textarea.text-input{
   background:var(--surface-2);border:1px solid var(--border);border-radius:6px;
-  padding:8px 11px;font-size:12px;color:var(--text);line-height:1.4;
+  padding:9px 12px;font-size:12.5px;color:var(--text);line-height:1.5;
   transition:border-color .15s;font-family:inherit;
 }
 .field-row input.text-input:focus,
 .field-row textarea.text-input:focus{outline:none;border-color:var(--gold)}
-.field-row textarea.text-input{resize:vertical;min-height:54px;font-family:inherit}
+.field-row textarea.text-input{resize:vertical;min-height:120px;font-family:inherit}
 
 .choice-row{display:flex;flex-wrap:wrap;gap:5px}
 .choice-chip{
@@ -1060,6 +1147,161 @@ input,textarea{font-family:inherit;color:inherit}
 }
 .strip-add.strip-add-img:hover .strip-add-icon{transform:scale(1.06);filter:saturate(1.15)}
 
+/* ═════════════════════════════════════════════════════════════════
+   Hamburger menu button — desktop hidden, mobile shown
+   ═════════════════════════════════════════════════════════════════ */
+.hdr-menu-btn{
+  display:none;background:transparent;border:0;cursor:pointer;
+  color:var(--text-dim);padding:8px;align-items:center;justify-content:center;
+  margin-right:4px;transition:color .15s;
+}
+.hdr-menu-btn:hover{color:var(--text)}
+.hdr-menu-btn svg{width:22px;height:22px}
+
+/* ═════════════════════════════════════════════════════════════════
+   RESPONSIVE — Tablet (≤1100px): drop the right-tools rail, tighten
+   the sidebar and script panel.
+   ═════════════════════════════════════════════════════════════════ */
+@media (max-width: 1100px){
+  :root{ --sidebar-w: 240px; }
+  .app{
+    grid-template-columns: var(--sidebar-w) 1fr;
+  }
+  .right-tools{ display:none; }
+  .workarea{ grid-template-columns: 1fr 340px; }
+  .bottom-bar{ grid-column: 1 / -1; }
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   RESPONSIVE — Phablet / mobile-landscape (≤860px): sidebar becomes
+   a slide-in drawer; canvas + script panel stack vertically; the
+   bottom bar wraps to a single column; the page is scrollable end
+   to end instead of locked to the viewport.
+   ═════════════════════════════════════════════════════════════════ */
+@media (max-width: 860px){
+  html, body{ height:auto; overflow:auto; }
+  body{ overflow-x:hidden; }
+
+  /* Vertical-stack layout for the whole app */
+  .app{
+    display:flex;
+    flex-direction:column;
+    height:auto;
+    width:100%;
+    overflow:visible;
+  }
+
+  /* Sidebar drawer */
+  .sidebar{
+    position:fixed; left:0; top:var(--header-h);
+    height:calc(100vh - var(--header-h));
+    width:280px; max-width:85vw;
+    transform:translateX(-100%);
+    transition:transform .25s ease;
+    z-index:90;
+    box-shadow:6px 0 28px rgba(0,0,0,.55);
+  }
+  body.drawer-open .sidebar{ transform:translateX(0); }
+  body.drawer-open::before{
+    content:""; position:fixed; inset:var(--header-h) 0 0 0;
+    background:rgba(0,0,0,.6); z-index:80;
+    animation:fade-in .2s ease;
+  }
+  @keyframes fade-in{ from{ opacity:0; } to{ opacity:1; } }
+
+  /* Hamburger visible */
+  .hdr-menu-btn{ display:flex; }
+
+  /* Workarea stacks: canvas, then script-panel */
+  .workarea{
+    display:flex;
+    flex-direction:column;
+    height:auto;
+    grid-template-columns:none;
+  }
+  .canvas{
+    width:100%;
+    overflow:visible;
+    padding:14px 14px 10px;
+  }
+  .script-panel{
+    width:100%;
+    border-left:none;
+    border-top:1px solid var(--border);
+    max-height:none;
+  }
+
+  /* Bottom bar stacks into one column */
+  .bottom-bar{
+    grid-column: 1 / -1;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    padding:14px 16px;
+  }
+
+  /* Header tightening */
+  .hdr{ padding:0 12px; }
+  .hdr-title{ font-size:11px; letter-spacing:1px; }
+  .hdr-nav{ gap:2px; margin:0; flex:1; justify-content:flex-end; }
+  .nav-tab{ padding:6px 10px; font-size:10px; gap:5px; }
+  .nav-tab svg{ width:14px; height:14px; }
+  .hdr-right{ gap:6px; }
+  .hdr-help, .discord-btn{ display:none; }
+
+  /* Comic page panels shorter on small screens */
+  .comic-page{ grid-template-rows: 140px 160px 160px; }
+  .canvas-empty{ min-height:300px; }
+
+  /* Cover preview smaller */
+  .sb-cover{ max-height:220px; }
+
+  /* Modals — keep some breathing room but allow full-screen behavior */
+  .modal-backdrop{ padding:0; align-items:stretch; }
+  .modal{
+    max-width:100vw !important;
+    height:100vh; max-height:100vh;
+    border-radius:0;
+    margin:0;
+  }
+  .modal-body{ flex:1; overflow-y:auto; }
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   RESPONSIVE — Phone (≤480px): tightest version of mobile.
+   ═════════════════════════════════════════════════════════════════ */
+@media (max-width: 480px){
+  .hdr-nav{ display:none; }
+  /* Hide "Export Comic" text on phone — just icon */
+  .export-btn{
+    padding:8px 10px; font-size:0;
+  }
+  .export-btn svg{ width:18px; height:18px; margin:0; }
+  .hdr-title{ font-size:10px; }
+  .hdr{ padding:0 8px; }
+
+  .canvas{ padding:10px 10px 6px; }
+  .comic-page{ grid-template-rows: 100px 130px 130px; gap:4px; padding:6px; }
+  .canvas-empty{ min-height:240px; }
+  .canvas-empty-icon{ width:72px; height:72px; }
+  .canvas-empty-title{ font-size:12px; }
+  .canvas-empty-sub{ font-size:11.5px; }
+
+  /* Char editor: stack the avatar column above the form */
+  .char-form{ grid-template-columns:1fr; }
+
+  /* Style strip wraps on narrow screens */
+  .style-strip{ flex-wrap:wrap; }
+  .style-thumb-card{ width:64px; }
+  .style-thumb-img{ width:64px; height:64px; }
+
+  /* Environments grid single col */
+  .env-grid{ grid-template-columns:1fr; }
+
+  /* Bottom bar a bit tighter */
+  .bottom-bar{ padding:12px 12px; gap:12px; }
+}
+
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
@@ -1070,12 +1312,18 @@ input,textarea{font-family:inherit;color:inherit}
 
 <!-- ──────────────── HEADER ──────────────── -->
 <header class="hdr">
+  <button class="hdr-menu-btn" id="hdr-menu-btn" aria-label="Open menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
   <div class="hdr-brand">
-    <div class="hdr-logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-    </div>
+    <a class="hdr-logo" href="https://www.missinglink.build" target="_blank" rel="noopener" aria-label="MissingLink home">
+      <span class="hdr-logo-fallback" aria-hidden="true"></span>
+      <img src="https://www.missinglink.build/logo.png" alt="MissingLink" referrerpolicy="no-referrer"
+           class="hdr-logo-img"
+           onerror="this.remove();">
+    </a>
     <div class="hdr-title">
-      MISSINGLINK<span class="div">|</span><span class="accent">COMIC STUDIO</span>
+      <span class="accent">COMIC STUDIO</span>
     </div>
   </div>
 
@@ -1985,6 +2233,7 @@ const api = (() => {
         },
         characters: [],
         pages: [
+          { id: localId('pg'), project_id: pid, position: 0, title: 'Cover',  subtitle: '', is_cover: 1, status: 'draft' },
           { id: localId('pg'), project_id: pid, position: 1, title: 'Page 1', subtitle: '', is_cover: 0, status: 'draft' },
         ],
         panels: [],
@@ -2636,18 +2885,31 @@ function renderCharEditor() {
   $('#char-modal-title').textContent = isNew ? 'New character' : 'Edit · ' + (existing.name || 'Unnamed');
 
   function render() {
+    const hasPortrait = !!draft.ref_image_url;
     $('#char-modal-body').innerHTML = `
       <div class="char-form">
         <div class="char-form-preview">
-          <div class="char-preview-av" id="preview-av"><div class="char-img-wrap">${charImageHtml(draft, 'preview')}</div></div>
+          <div class="char-preview-av ${hasPortrait ? 'has-portrait' : ''}" id="preview-av">
+            <div class="char-img-wrap">${hasPortrait
+              ? `<img src="${escAttr(draft.ref_image_url)}" alt="${escAttr(draft.name || 'Character')}">`
+              : `<div class="portrait-placeholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                </div>`
+            }</div>
+          </div>
           <div class="char-preview-name">${escHtml(draft.name || 'Unnamed')}</div>
           <div class="char-preview-role">${escHtml(draft.role || '')}</div>
-          ${!isNew ? `
-            <button class="regen-portrait-btn" id="regen-portrait-btn" title="Regenerate portrait image">
+          ${isNew ? `
+            <div class="preview-status">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span>Portrait will be generated<br>from your description</span>
+            </div>
+          ` : `
+            <button class="regen-portrait-btn" id="regen-portrait-btn" title="${hasPortrait ? 'Generate a fresh portrait' : 'Generate portrait from description'}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-              ${draft.ref_image_url ? 'Regen Portrait' : 'Generate Portrait'}
+              ${hasPortrait ? 'Regenerate' : 'Generate portrait'}
             </button>
-          ` : ''}
+          `}
         </div>
         <div class="char-fields">
           <div class="field-row">
@@ -2656,39 +2918,16 @@ function renderCharEditor() {
           </div>
           <div class="field-row">
             <label class="field-label">Role</label>
-            <input type="text" class="text-input" id="f-role" maxlength="80" value="${escHtml(draft.role || '')}" placeholder="e.g. Young swordsman">
+            <input type="text" class="text-input" id="f-role" maxlength="80" value="${escHtml(draft.role || '')}" placeholder="e.g. Young swordsman, weary detective, palace guard">
           </div>
           <div class="field-row">
-            <label class="field-label">Description</label>
-            <input type="text" class="text-input" id="f-desc" maxlength="160" value="${escHtml(draft.description || '')}" placeholder="e.g. Determined, brooding">
-          </div>
-          <div class="field-row">
-            <label class="field-label">Skin</label>
-            <div class="choice-row" id="f-skin">
-              ${SKIN_OPTS.map(s => `<div class="choice-chip ${draft.appearance.skin === s ? 'active' : ''}" data-v="${s}">${s.charAt(0).toUpperCase() + s.slice(1)}</div>`).join('')}
-            </div>
-          </div>
-          <div class="field-row">
-            <label class="field-label">Hair style</label>
-            <div class="choice-row" id="f-hairstyle">
-              ${HAIR_STYLES.map(([v, l]) => `<div class="choice-chip ${draft.appearance.hair_style === v ? 'active' : ''}" data-v="${v}">${l}</div>`).join('')}
-            </div>
-          </div>
-          <div class="field-row">
-            <label class="field-label">Hair color</label>
-            <div class="swatch-row" id="f-haircolor">
-              ${HAIR_PALETTE.map(c => `<div class="swatch ${draft.appearance.hair_color === c ? 'active' : ''}" data-v="${c}" style="background:${c}"></div>`).join('')}
-            </div>
-          </div>
-          <div class="field-row">
-            <label class="field-label">Eye color</label>
-            <div class="swatch-row" id="f-eyecolor">
-              ${EYE_PALETTE.map(c => `<div class="swatch ${draft.appearance.eye_color === c ? 'active' : ''}" data-v="${c}" style="background:${c}"></div>`).join('')}
-            </div>
-          </div>
-          <div class="field-row">
-            <label class="field-label">Appearance prompt <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0">(for image gen)</span></label>
-            <textarea class="text-input" id="f-prompt" maxlength="400" rows="2" placeholder="e.g. tall lean build, messy black hair, weathered cloak with bronze clasps">${escHtml((draft.appearance && draft.appearance.prompt) || '')}</textarea>
+            <label class="field-label">
+              Visual description
+              <span class="field-hint">— the AI uses this to generate the portrait and panel art</span>
+            </label>
+            <textarea class="text-input" id="f-desc" maxlength="500" rows="5" placeholder="Describe how your character looks. Be specific: age, build, hair, eyes, skin, clothing, distinguishing features.
+
+Example: Late 30s, tall and lean, salt-and-pepper hair tied back, deep-set green eyes, weathered leather coat over a dark tunic, a faint scar across the left brow.">${escHtml(draft.description || (draft.appearance && draft.appearance.prompt) || '')}</textarea>
           </div>
 
           <!-- Reference images: photos/sketches the user uploads to
@@ -2697,7 +2936,7 @@ function renderCharEditor() {
                prompts. -->
           <div class="refs-section">
             <div class="refs-head">
-              <div class="refs-label">Reference Images</div>
+              <div class="refs-label">Reference images <span class="field-hint">(optional)</span></div>
               <div class="refs-count"><span id="refs-count-num">${(draft.reference_images || []).length}</span> / 6</div>
             </div>
             <div class="refs-grid" id="refs-grid">
@@ -2712,7 +2951,7 @@ function renderCharEditor() {
       ${!isNew ? `<button class="btn-danger" id="form-delete-btn">Delete</button>` : ''}
       <div class="spacer"></div>
       <button class="btn btn-secondary" id="form-cancel-btn">Cancel</button>
-      <button class="btn btn-primary" id="form-save-btn">${isNew ? 'Create character' : 'Save changes'}</button>
+      <button class="btn btn-primary" id="form-save-btn">${isNew ? 'Create &amp; generate' : 'Save changes'}</button>
     `;
     wireFormEvents();
     renderRefsGrid();
@@ -2806,52 +3045,28 @@ function renderCharEditor() {
 
   function wireFormEvents() {
     // Repaint the preview after any appearance change. We only redraw
-    // the procedural SVG when the user is actively editing — if they
-    // already have a generated portrait, the live SVG won't match the
-    // generated one, so we show the SVG to make the form feel
-    // responsive, and the user can regenerate to see the real result.
-    // (When local mode generates a "fake" portrait by storing the SVG
-    // as a data URL, this becomes seamless.)
+    // Preview repaint — updates name/role labels only. Portrait is
+    // either the generated image or the "will be generated" placeholder;
+    // we don't try to fake it with a procedural SVG (that was the
+    // misleading cartoon avatar that confused users into thinking the
+    // form's choices controlled the actual character look).
     function repaintPreview() {
-      // Always show the procedural SVG during active editing so changes
-      // are immediately visible. A "Regenerate Portrait" button below
-      // commits the appearance to a generated image.
-      $('#preview-av').innerHTML = '<div class="char-img-wrap">' + charPreviewSvg(draft) + '</div>';
-      $('.char-preview-name').textContent = draft.name || 'Unnamed';
-      $('.char-preview-role').textContent = draft.role || '';
+      const nm = document.querySelector('.char-preview-name');
+      const rl = document.querySelector('.char-preview-role');
+      if (nm) nm.textContent = draft.name || 'Unnamed';
+      if (rl) rl.textContent = draft.role || '';
     }
 
     $('#f-name').addEventListener('input', e => { draft.name = e.target.value; repaintPreview(); });
     $('#f-role').addEventListener('input', e => { draft.role = e.target.value; repaintPreview(); });
-    $('#f-desc').addEventListener('input', e => { draft.description = e.target.value; repaintPreview(); });
-    $('#f-prompt').addEventListener('input', e => {
+    $('#f-desc').addEventListener('input', e => {
+      // The description IS the appearance prompt. Mirror it into
+      // appearance.prompt so the backend portrait generator gets it
+      // through whichever field path it reads from.
+      draft.description = e.target.value;
+      draft.appearance = draft.appearance || {};
       draft.appearance.prompt = e.target.value;
     });
-
-    function bindChoice(rootSel, key) {
-      $(rootSel).querySelectorAll('.choice-chip').forEach(chip => {
-        chip.onclick = () => {
-          draft.appearance[key] = chip.dataset.v;
-          $(rootSel).querySelectorAll('.choice-chip').forEach(c =>
-            c.classList.toggle('active', c.dataset.v === chip.dataset.v));
-          repaintPreview();
-        };
-      });
-    }
-    function bindSwatch(rootSel, key) {
-      $(rootSel).querySelectorAll('.swatch').forEach(sw => {
-        sw.onclick = () => {
-          draft.appearance[key] = sw.dataset.v;
-          $(rootSel).querySelectorAll('.swatch').forEach(s =>
-            s.classList.toggle('active', s.dataset.v === sw.dataset.v));
-          repaintPreview();
-        };
-      });
-    }
-    bindChoice('#f-skin', 'skin');
-    bindChoice('#f-hairstyle', 'hair_style');
-    bindSwatch('#f-haircolor', 'hair_color');
-    bindSwatch('#f-eyecolor', 'eye_color');
 
     // Regenerate Portrait — calls the backend portrait route which
     // hits OpenAI's image API (or our local-mode stylized SVG faker).
@@ -2907,6 +3122,7 @@ function renderCharEditor() {
         }
         body.classList.remove('saving');
         renderCharList();
+        maybeRefreshEmptyState();
 
         // Auto-trigger portrait generation on new characters, or when
         // an existing character has no portrait yet. Editing an existing
@@ -3012,6 +3228,37 @@ async function generatePortrait(charId, isRegen) {
 
 // Wire the global modal buttons (close + backdrop click + Esc)
 $('#manage-chars-btn').addEventListener('click', openCharModal);
+
+// ═════════════════════════════════════════════════════════════════
+// Mobile drawer — hamburger toggles the sidebar in/out of view.
+// The drawer state lives on <body> so CSS rules drive the actual
+// transforms; click handlers here just flip the class.
+// ═════════════════════════════════════════════════════════════════
+const menuBtn = $('#hdr-menu-btn');
+if (menuBtn) {
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.body.classList.toggle('drawer-open');
+  });
+  // Tap the backdrop (anywhere outside the sidebar and menu button) to close
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('drawer-open')) return;
+    if (e.target.closest('.sidebar') || e.target.closest('#hdr-menu-btn')) return;
+    document.body.classList.remove('drawer-open');
+  });
+  // Tapping a page inside the drawer closes it (so the user sees their pick)
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.page-item, .sb-tab')) {
+      document.body.classList.remove('drawer-open');
+    }
+  });
+  // Auto-close drawer when resizing back to desktop
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 860) {
+      document.body.classList.remove('drawer-open');
+    }
+  });
+}
 $('#char-modal-close').addEventListener('click', closeCharModal);
 $('#char-modal').addEventListener('click', (e) => {
   if (e.target.id === 'char-modal') closeCharModal();
@@ -3179,12 +3426,7 @@ function renderComicPage() {
   if (panels.length === 0) {
     cp.classList.remove('layout-5');
     cp.style.display = 'block';
-    cp.innerHTML = canvasEmptyHtml(
-      'This page is empty',
-      'Click <b>Generate Page</b> at the top to AI-generate the panel breakdown and art, or add panels manually.',
-      'Generate Page',
-      'gen-from-empty-btn'
-    );
+    cp.innerHTML = canvasEmptyHtml(getNextStep());
     bindCanvasEmptyButtons();
     return;
   }
@@ -3223,27 +3465,134 @@ function panelEmptyHtml(panel) {
   `;
 }
 
-function canvasEmptyHtml(title, sub, ctaText, ctaId) {
+function canvasEmptyHtml(opts) {
+  // Two call shapes:
+  //   • Legacy: canvasEmptyHtml(title, sub, cta, ctaId)
+  //   • New:    canvasEmptyHtml({title, sub, cta, action, steps})
+  // Both produce the same shell; the new form adds a workflow checklist.
+  if (typeof opts === 'string') {
+    opts = { title: opts, sub: arguments[1], cta: arguments[2], ctaId: arguments[3], action: 'generate-page' };
+  }
+  const { title, sub, cta, action = 'generate-page', steps, ctaId = 'gen-from-empty-btn' } = opts;
+  const firstIncomplete = steps ? steps.findIndex(x => !x.done) : -1;
+  const currentStepNum = steps ? (firstIncomplete === -1 ? steps.length : firstIncomplete + 1) : 0;
+  const progress = steps ? `
+    <div class="canvas-empty-progress">
+      <div class="progress-label">Step ${currentStepNum} of ${steps.length}</div>
+      <div class="progress-dots">
+        ${steps.map((s, i) => {
+          const cls = s.done ? 'done' : (i === firstIncomplete ? 'current' : '');
+          return `<div class="progress-dot ${cls}" title="${escAttr(s.label)}"></div>`;
+        }).join('')}
+      </div>
+    </div>` : '';
   return `
     <div class="canvas-empty">
-      <div class="canvas-empty-bg" style="background-image:url('${UI_ASSETS.hero_banner}')"></div>
+      ${progress}
+      <div class="canvas-empty-icon"><img src="${UI_ASSETS.cta_add_page}" alt=""></div>
       <div class="canvas-empty-inner">
         <div class="canvas-empty-title">${escHtml(title)}</div>
         <div class="canvas-empty-sub">${sub}</div>
-        <button class="canvas-empty-cta" id="${ctaId}">
+        <button class="canvas-empty-cta" id="${ctaId}" data-action="${escAttr(action)}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          ${escHtml(ctaText)}
+          ${escHtml(cta)}
         </button>
       </div>
     </div>
   `;
 }
 
+// Determines what the user should do next based on project state.
+// Walks the canonical workflow: name → character → tone → page-desc → generate.
+function getNextStep() {
+  const p = state.project || {};
+  const titleStr = (p.title || '').trim();
+  const hasTitle = titleStr && titleStr.toLowerCase() !== 'untitled comic';
+  const hasSummary = !!(p.summary || '').trim();
+  const hasChars = (state.characters || []).length > 0;
+  const activePageRow = state.pages.find(pg => pg.id === state.activePage) || {};
+  const isCover = activePageRow.is_cover === 1;
+  const hasPageDesc =
+    !!(activePageRow.subtitle || '').trim() ||
+    !!(activePageRow.summary || '').trim() ||
+    !!(activePageRow.description || '').trim();
+
+  const steps = [
+    { key: 'title',   label: 'Name your comic',                                       done: hasTitle },
+    { key: 'char',    label: 'Add a character',                                       done: hasChars },
+    { key: 'summary', label: 'Story summary',                                         done: hasSummary },
+    { key: 'page',    label: isCover ? 'Describe cover' : 'Describe page',            done: hasPageDesc },
+    { key: 'gen',     label: 'Generate ' + (isCover ? 'cover' : 'page'),              done: false },
+  ];
+
+  if (!hasTitle) return {
+    title: 'Start by naming your comic',
+    sub: 'Click the title in the sidebar (currently "Untitled Comic") to rename it. This becomes your project name and shows on the cover.',
+    cta: 'Name it now', action: 'focus-title', steps,
+  };
+  if (!hasChars) return {
+    title: 'Add your first character',
+    sub: "Characters are the heart of your comic. Add at least one so the AI knows who appears in your panels.",
+    cta: 'Add character', action: 'add-char', steps,
+  };
+  if (!hasSummary) return {
+    title: 'Set the story tone',
+    sub: 'Write a short story summary below — the world, the mood, the stakes. The AI uses this to color every page and panel.',
+    cta: 'Add story summary', action: 'focus-summary', steps,
+  };
+  if (!hasPageDesc) return {
+    title: isCover ? 'Design your cover' : 'Describe this page',
+    sub: isCover
+      ? 'Describe the cover scene in the Page Summary panel on the right — who appears, the mood, the setting. Then generate to create the cover art.'
+      : 'Write a brief Page Summary on the right describing what happens here. Then generate to lay out the panels and create the art.',
+    cta: 'Describe ' + (isCover ? 'cover' : 'page'),
+    action: 'focus-page-summary', steps,
+  };
+  return {
+    title: 'Ready to generate',
+    sub: "You've got a title, characters, story tone, and a page description. Click Generate to have AI lay out the panels and create the art.",
+    cta: 'Generate ' + (isCover ? 'Cover' : 'Page'),
+    action: 'generate-page', steps,
+  };
+}
+
 function bindCanvasEmptyButtons() {
   const addFirst = $('#add-first-page-btn');
   if (addFirst) addFirst.onclick = () => addPage();
-  const genEmpty = $('#gen-from-empty-btn');
-  if (genEmpty) genEmpty.onclick = () => generatePageAction(false);
+  const btn = $('#gen-from-empty-btn');
+  if (!btn) return;
+  const action = btn.dataset.action || 'generate-page';
+  btn.onclick = () => {
+    if (action === 'focus-title') {
+      const el = $('#sb-project-title');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+        // Select all so the user can type to replace immediately
+        try {
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } catch (_) {}
+      }
+    } else if (action === 'add-char') {
+      openCharModal();
+      setTimeout(() => {
+        const addRow = $('#add-char-row');
+        if (addRow) addRow.click();
+      }, 60);
+    } else if (action === 'focus-summary') {
+      const el = $('#bot-summary');
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus(); }
+    } else if (action === 'focus-page-summary') {
+      const el = $('#page-summary');
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus(); }
+    } else {
+      generatePageAction(false);
+    }
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════
@@ -3336,8 +3685,11 @@ function bindProjectFields() {
   const elSummary = $('#bot-summary');
   if (elTitle) {
     elTitle.addEventListener('input', () => {
-      debouncedSaveProject({ title: elTitle.textContent.trim() || 'Untitled Comic' });
+      const v = elTitle.textContent.trim() || 'Untitled Comic';
+      if (state.project) state.project.title = v;
+      debouncedSaveProject({ title: v });
       renderCover();
+      maybeRefreshEmptyState();
     });
   }
   if (elIssue) {
@@ -3348,8 +3700,31 @@ function bindProjectFields() {
   }
   if (elSummary) {
     elSummary.addEventListener('input', () => {
-      debouncedSaveProject({ summary: elSummary.textContent.trim() });
+      const v = elSummary.textContent.trim();
+      if (state.project) state.project.summary = v;
+      debouncedSaveProject({ summary: v });
+      maybeRefreshEmptyState();
     });
+  }
+  // Page Summary textarea — drives the "Describe page" step
+  const elPageSum = $('#page-summary');
+  if (elPageSum) {
+    elPageSum.addEventListener('input', () => {
+      const pg = state.pages.find(p => p.id === state.activePage);
+      if (pg) pg.summary = elPageSum.value;
+      maybeRefreshEmptyState();
+    });
+  }
+}
+
+// Re-render the contextual canvas-empty if (and only if) the user is
+// currently looking at an empty page. Used after the user satisfies a
+// checklist step so the next prompt appears immediately.
+function maybeRefreshEmptyState() {
+  const cp = document.querySelector('#comic-page');
+  if (!cp) return;
+  if (cp.querySelector('.canvas-empty')) {
+    if (typeof renderComicPage === 'function') renderComicPage();
   }
 }
 
