@@ -1070,7 +1070,8 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    versions since there's room here. */
 .modal-actions{
     position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
-    z-index:11;display:flex;gap:8px;
+    z-index:11;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;
+    max-width:calc(100vw - 48px);
     background:rgba(17,17,20,.92);backdrop-filter:blur(8px);
     border:1px solid var(--border);border-radius:10px;
     padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);
@@ -1088,10 +1089,54 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .modal-action-btn.busy{
     opacity:.7;cursor:wait;animation:pulse 1s infinite;pointer-events:none;
 }
-/* On narrow screens the labels disappear to keep all four buttons in view. */
+/* Mode-assignment buttons (Camera / Edit / Create) sit in the
+   lightbox action bar same as the regular action buttons but with a
+   subtle gold border so they read as a related group. */
+.modal-action-btn.modal-act-mode{
+    border-color:var(--border);
+}
+.modal-action-btn.modal-act-mode:hover{
+    background:var(--gold-dim);color:var(--gold);border-color:var(--gold);
+}
+
+/* Inline reactions strip on the lightbox action bar. Compact chip row
+   that lives between the share button and the mode buttons. Each chip
+   = one primary emoji + its count, with a + at the end for the full
+   picker. Mirrors the in-card reaction strip but sized for the larger
+   action-bar background. */
+.modal-act-reactions{
+    display:inline-flex;align-items:center;gap:3px;
+    padding:2px 4px;
+    border:1px solid var(--border);border-radius:8px;
+    background:rgba(0,0,0,.25);
+}
+.modal-reaction{
+    display:inline-flex;align-items:center;gap:3px;
+    background:transparent;border:1px solid transparent;
+    border-radius:6px;padding:4px 7px;cursor:pointer;
+    color:var(--text);transition:all .12s;
+    font-family:var(--font-mono);font-size:10px;
+    line-height:1;
+}
+.modal-reaction:hover{background:var(--surface-3);border-color:var(--border)}
+.modal-reaction.viewer{
+    background:var(--gold-dim);border-color:var(--gold);color:var(--gold);
+}
+.modal-reaction-emoji{font-size:14px;line-height:1}
+.modal-reaction-count{font-weight:700;min-width:8px;text-align:left}
+.modal-reaction-add{
+    width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    border-radius:50%;background:var(--surface-3);border:1px solid var(--border);
+    color:var(--text-muted);cursor:pointer;transition:all .12s;
+    font-size:12px;line-height:1;flex-shrink:0;padding:0;
+}
+.modal-reaction-add:hover{border-color:var(--gold);color:var(--gold)}
+
+/* On narrow screens the labels disappear to keep all buttons in view. */
 @media (max-width: 640px) {
     .modal-action-btn span{display:none}
     .modal-action-btn{padding:8px;font-size:14px}
+    .modal-act-reactions .modal-reaction-count{display:none}
 }
 
 /* Full-history modal */
@@ -2312,6 +2357,29 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     letter-spacing:.5px;
 }
 .lbc-creator-when{color:var(--text-muted);font-size:9px;letter-spacing:.5px;margin-left:auto}
+
+/* Image-stats inline strip — sits inside the creator block, between
+   the author header and the title/caption. Shows mode, dimensions,
+   total reactions, comment count, tip total — at-a-glance summary
+   so viewers can see "this image earned X" without scrolling. */
+.lbc-stats{
+    display:flex;flex-wrap:wrap;gap:6px;
+    padding:4px 0;
+    margin:2px 0 4px;
+    border-top:1px dashed rgba(232,169,23,.15);
+    border-bottom:1px dashed rgba(232,169,23,.15);
+}
+.lbc-stat{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:2px 7px;background:rgba(0,0,0,.25);
+    border:1px solid var(--border);border-radius:10px;
+    font-family:var(--font-mono);font-size:10px;
+    color:var(--text-muted);
+}
+.lbc-stat-icon{font-size:11px;line-height:1}
+.lbc-stat-value{
+    color:var(--text);font-weight:700;letter-spacing:.3px;
+}
 .lbc-creator-title{
     color:var(--text);font-size:14px;font-weight:600;line-height:1.3;
 }
@@ -4712,10 +4780,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              Clicking toggles share state via /api/studio/job/:id/share or
              /unshare. Hidden when no jobId is bound. -->
         <button class="modal-action-btn" id="modalActShare" title="Share to Community Gallery" style="display:none">🌐<span id="modalActShareLabel">Share</span></button>
-        <!-- Gallery-specific buttons — visible when the lightbox was
-             opened from a gallery card (ctx.type === 'galleryItem').
-             Remix charges 5 tokens to the viewer and credits the
-             author. Like is free + toggleable. Tip sends 10 tokens. -->
+        <!-- Gallery-specific buttons. The viewer can react with any
+             emoji (chip strip rendered into modalActReactions by JS),
+             route the image into any of the three workspace modes
+             (the three buttons below), tip the creator, and read the
+             discussion. Visibility is wired by openModal based on
+             ctx.mine and login state. -->
+        <span class="modal-act-reactions" id="modalActReactions" style="display:none"></span>
+        <button class="modal-action-btn modal-act-mode" id="modalActRemixCamera" title="Pose this image in Camera mode" style="display:none">🎥<span>Camera</span></button>
+        <button class="modal-action-btn modal-act-mode" id="modalActRemixEdit" title="Open this image in Edit mode" style="display:none">✏️<span>Edit</span></button>
+        <button class="modal-action-btn modal-act-mode" id="modalActRemixCreate" title="Use as reference in Create mode" style="display:none">✨<span>Create</span></button>
         <button class="modal-action-btn modal-act-remix" id="modalActRemix" title="Remix this image (5 tokens to author)" style="display:none">🎨<span>Remix · 5</span></button>
         <button class="modal-action-btn modal-act-like" id="modalActLike" title="Thumbs up" style="display:none">🤍<span id="modalActLikeCount">0</span></button>
         <button class="modal-action-btn modal-act-tip" id="modalActTip" title="Tip the author 10 tokens" style="display:none">💰<span>Tip · 10</span></button>
@@ -8458,7 +8532,8 @@ function openModal(src, filename, ctx){
         // Hide every action button first; each context turns on the ones
         // it supports. Avoids stale visibility from the previous open.
         ['modalActCritique','modalActEdit','modalActToCamera','modalActToCreate','modalActShare',
-         'modalActRemix','modalActLike','modalActTip','modalActComments']
+         'modalActRemix','modalActRemixCamera','modalActRemixEdit','modalActRemixCreate',
+         'modalActLike','modalActTip','modalActComments','modalActReactions']
             .forEach(id => { const b = $(id); if (b) b.style.display = 'none'; });
     }
     // Always close any open comments panel on a new modal open so it
@@ -8531,16 +8606,28 @@ function openModal(src, filename, ctx){
         actionBar.style.display = '';
         actionBar.dataset.jobId = ctx.jobId;
         actionBar.dataset.galleryItem = '1';
-        // Always show like + comments; tip + remix hidden when the
-        // viewer owns this item OR isn't logged in (can't tip yourself,
-        // can't transact without an account).
+        // Always show like + comments. Reactions strip + 3 mode
+        // buttons + tip require a logged-in viewer (anonymous viewers
+        // can't transact and can't store a reaction); only mode/tip
+        // additionally require it not be the viewer's own image
+        // (well — own work CAN still be remixed for free, so the mode
+        // buttons stay visible even for own work; tip alone hides
+        // since you can't tip yourself).
         ['modalActLike', 'modalActComments'].forEach(id => {
             const b = $(id); if (b) b.style.display = '';
         });
-        if (_user && !ctx.mine) {
-            ['modalActRemix', 'modalActTip'].forEach(id => {
+        if (_user) {
+            // Reactions chip strip + 3 mode buttons — always visible
+            // to logged-in viewers. Tip is hidden on own work.
+            const reactionsEl = $('modalActReactions');
+            if (reactionsEl) reactionsEl.style.display = '';
+            ['modalActRemixCamera','modalActRemixEdit','modalActRemixCreate'].forEach(id => {
                 const b = $(id); if (b) b.style.display = '';
             });
+            if (!ctx.mine) {
+                const tipBtn = $('modalActTip');
+                if (tipBtn) tipBtn.style.display = '';
+            }
         }
         // Initial paint: use whatever counts came on the ctx (from the
         // gallery feed response). Server is the source of truth — when
@@ -8548,9 +8635,10 @@ function openModal(src, filename, ctx){
         // and refresh.
         renderLightboxLikeButton(ctx.jobId, ctx.viewer_liked ? 1 : 0, ctx.likes_count || 0, wireBtn);
         renderLightboxCommentsButton(ctx.jobId, ctx.comments_count || 0, wireBtn);
-        if (_user && !ctx.mine) {
-            renderLightboxRemixButton(ctx.jobId, wireBtn);
-            renderLightboxTipButton(ctx.jobId, wireBtn);
+        if (_user) {
+            renderLightboxModeButtons(ctx.jobId, ctx.mine, wireBtn);
+            renderLightboxReactions(ctx, wireBtn);
+            if (!ctx.mine) renderLightboxTipButton(ctx.jobId, wireBtn);
         }
         // Mine items still get the share toggle so the owner can
         // unshare from the lightbox.
@@ -8673,6 +8761,98 @@ function renderLightboxTipButton(jobId, wireBtn){
         fresh.addEventListener('click', h); return fresh;
     });
     _wire('modalActTip', () => tipGalleryItem(jobId));
+}
+
+// Wire the three direct mode-assignment buttons (Camera / Edit /
+// Create) on the lightbox action bar. Each routes through
+// remixGalleryItem(jobId, mode) — free for own work, 5 tokens to
+// creator otherwise. No menu, no confirm dialog.
+function renderLightboxModeButtons(jobId, isMine, wireBtn){
+    const _wire = wireBtn || ((id, h) => {
+        const o = $(id); if (!o) return null;
+        const fresh = o.cloneNode(true);
+        o.parentNode.replaceChild(fresh, o);
+        fresh.addEventListener('click', h); return fresh;
+    });
+    const mode2id = {
+        camera: 'modalActRemixCamera',
+        edit:   'modalActRemixEdit',
+        create: 'modalActRemixCreate',
+    };
+    Object.entries(mode2id).forEach(([mode, id]) => {
+        const b = $(id);
+        if (!b) return;
+        b.style.display = '';
+        // Tooltip reflects the cost so users know the price before
+        // clicking. Title attribute updates each render (in case the
+        // same lightbox is reused across own and not-own items).
+        const costSuffix = isMine ? '(free — your own work)' : '· 5 tokens to creator';
+        const titles = {
+            camera: `Pose in Camera ${costSuffix}`,
+            edit:   `Open in Edit ${costSuffix}`,
+            create: `Reference in Create ${costSuffix}`,
+        };
+        b.title = titles[mode];
+        _wire(id, () => remixGalleryItem(jobId, mode));
+    });
+}
+
+// Build the inline reactions strip on the lightbox action bar. Mirrors
+// the card's reaction strip — five primary emojis always shown with
+// counts, any extra emojis someone used, plus a + that opens the
+// full categorized picker. Lives in #modalActReactions which is a
+// flex container inserted into the action bar HTML.
+function renderLightboxReactions(ctx, wireBtn){
+    const wrap = $('modalActReactions');
+    if (!wrap) return;
+    wrap.style.display = '';
+    const it = _findGalleryItem(ctx.jobId) || ctx;
+    const counts = _normalizeReactionCounts(it.reactions || {});
+    const viewerKind = _normalizeReactionKind(it.viewer_reaction || null);
+
+    // Primary chips always visible, even with 0 counts (Civitai-style
+    // visual rhythm). Then any extra emojis someone reacted with that
+    // aren't in the primary list, shown only when count > 0.
+    const primarySet = new Set(CARD_REACTION_KINDS);
+    const primaryHtml = CARD_REACTION_KINDS.map((emoji) => {
+        const cnt = counts[emoji] || 0;
+        const isViewer = viewerKind === emoji;
+        return `
+            <button class="modal-reaction ${isViewer ? 'viewer' : ''}"
+                    data-emoji="${emoji}"
+                    title="${isViewer ? 'Remove ' + emoji : 'React with ' + emoji}">
+                <span class="modal-reaction-emoji">${emoji}</span>
+                <span class="modal-reaction-count">${cnt}</span>
+            </button>
+        `;
+    }).join('');
+    const extraHtml = Object.keys(counts)
+        .filter((e) => !primarySet.has(e) && (counts[e] || 0) > 0)
+        .map((emoji) => {
+            const cnt = counts[emoji] || 0;
+            const isViewer = viewerKind === emoji;
+            return `
+                <button class="modal-reaction ${isViewer ? 'viewer' : ''}"
+                        data-emoji="${emoji}"
+                        title="${isViewer ? 'Remove ' + emoji : 'React with ' + emoji}">
+                    <span class="modal-reaction-emoji">${emoji}</span>
+                    <span class="modal-reaction-count">${cnt}</span>
+                </button>
+            `;
+        }).join('');
+    wrap.innerHTML = primaryHtml + extraHtml + `
+        <button class="modal-reaction-add" id="modalReactionAdd"
+                title="Add a different emoji reaction">+</button>
+    `;
+    // Wire each chip via fresh click handlers (no clone trick needed —
+    // we just emitted the HTML so there are no stale listeners).
+    wrap.querySelectorAll('.modal-reaction').forEach((btn) => {
+        btn.onclick = () => toggleCardReaction(ctx.jobId, btn.dataset.emoji);
+    });
+    const addBtn = wrap.querySelector('#modalReactionAdd');
+    if (addBtn) {
+        addBtn.onclick = () => openReactionPicker(addBtn, ctx.jobId);
+    }
 }
 
 // Cross-surface patch — when the lightbox like count or comments count
@@ -15614,7 +15794,6 @@ function _buildGalleryCard(it, surface){
             ${authorOverlay}
             ${revealOverlay}
         </div>
-        ${title ? `<div class="gc-title-strip">${escapeHtml(title)}</div>` : ''}
         <div class="gc-action-row">
             ${reactionsHtml}
             ${modeActions}
@@ -15934,6 +16113,14 @@ function _repaintCardReactions(jobId){
             card.insertAdjacentHTML('beforeend', html);
         }
     });
+    // Mirror into the lightbox reaction strip if the same job is open
+    // there. Pull the latest from cached state so the optimistic patch
+    // already made by toggleCardReaction is reflected.
+    const lbBar = $('modalActions');
+    if (lbBar && lbBar.dataset.jobId === jobId
+        && typeof renderLightboxReactions === 'function') {
+        renderLightboxReactions({ jobId, reactions: it.reactions, viewer_reaction: it.viewer_reaction });
+    }
 }
 
 // ── Floating reaction picker ────────────────────────────────────────
@@ -16948,6 +17135,44 @@ function renderLightboxComments(opts){
             : '';
         const authorLabel = (typeof c.author_name === 'string' && c.author_name.length > 0)
             ? c.author_name : (c.author || '@anon');
+
+        // Image stats block — pulled from the cached gallery item
+        // (whichever surface has it). Shows the model/mode, image
+        // dimensions, total reactions, comments, tips, time since
+        // publish. Helps the viewer see "this image earned X reactions
+        // and Y tokens" at a glance without scrolling the comment
+        // thread for context.
+        const cachedItem = _findGalleryItem(_lbcJobId);
+        const stats = cachedItem || {};
+        const modeLabel = ({
+            camera: '🎥 Camera', edit: '✏️ Edit', batch: '📚 Batch',
+            generate: '✨ Create', 'agent-image-gen': '✨ Create',
+        }[stats.mode] || (stats.mode ? stats.mode.toUpperCase() : ''));
+        const dims = (stats.w && stats.h) ? `${stats.w}×${stats.h}` : '';
+        const totalReactions = (() => {
+            const r = stats.reactions || {};
+            let s = 0;
+            for (const k of Object.keys(r)) s += r[k] || 0;
+            return s + (stats.likes_count || 0);
+        })();
+        const tipsTotal = stats.tips_total || 0;
+        const commentsCount = stats.comments_count || _lbcComments.length || 0;
+        const statRow = (icon, label, value) => value
+            ? `<div class="lbc-stat" title="${escapeHtml(label)}">
+                 <span class="lbc-stat-icon">${icon}</span>
+                 <span class="lbc-stat-value">${escapeHtml(String(value))}</span>
+               </div>`
+            : '';
+        const statsHtml = `
+            <div class="lbc-stats">
+                ${statRow('🎨', 'Generation mode', modeLabel)}
+                ${statRow('📐', 'Image dimensions', dims)}
+                ${statRow('⭐', 'Total reactions (likes + emoji)', totalReactions > 0 ? totalReactions : '')}
+                ${statRow('💬', 'Comments', commentsCount > 0 ? commentsCount : '')}
+                ${statRow('⚡', 'Tokens tipped', tipsTotal > 0 ? tipsTotal : '')}
+            </div>
+        `;
+
         const block = document.createElement('div');
         block.className = 'lbc-creator';
         block.innerHTML = `
@@ -16956,6 +17181,7 @@ function renderLightboxComments(opts){
                 ${mineChip}
                 <span class="lbc-creator-when">${escapeHtml(when)}</span>
             </div>
+            ${statsHtml}
             ${titleHtml}
             ${captionHtml}
             ${descriptionHtml}
