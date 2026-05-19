@@ -1486,8 +1486,249 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .gallery-filter-chip:hover .gfc-close{opacity:1}
 
-/* Pending-enrichment toast — small banner that surfaces "image will
-   appear shortly" after share so users aren't confused by the delay. */
+/* ── Filters button + popover ───────────────────────────────────────
+   Replaces the always-visible chip row with a single trigger button
+   that opens a floating menu. Active filters still surface as chips
+   below the search bar (.gallery-filters), but the popover is where
+   you change them. */
+.gallery-filter-btn{
+    display:inline-flex;align-items:center;gap:6px;
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:6px;padding:7px 12px;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    letter-spacing:.5px;color:var(--text-muted);text-transform:uppercase;
+    cursor:pointer;transition:all .12s;flex:0 0 auto;
+    position:relative;
+}
+.gallery-filter-btn:hover{border-color:var(--gold);color:var(--gold)}
+.gallery-filter-btn.has-active{
+    border-color:var(--gold);color:var(--gold);
+}
+.gallery-filter-btn .gfb-badge{
+    display:none;
+    position:absolute;top:-5px;right:-5px;
+    min-width:16px;height:16px;border-radius:8px;padding:0 4px;
+    background:var(--gold);color:#0a0a0c;
+    font-size:9px;font-weight:700;line-height:16px;text-align:center;
+}
+.gallery-filter-btn.has-active .gfb-badge{display:block}
+
+/* Popover panel — fixed-position with absolute fallback. Anchored to
+   the filter button via JS-set left/top. Click-outside closes. */
+.gallery-filter-popover{
+    position:fixed;z-index:10030;
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;padding:14px;
+    box-shadow:0 12px 32px rgba(0,0,0,.5);
+    width:min(340px,calc(100vw - 24px));
+    max-height:min(520px,calc(100vh - 80px));overflow-y:auto;
+    scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;
+    animation:gfp-in .15s ease-out;
+}
+@keyframes gfp-in{
+    from{opacity:0;transform:translateY(-6px)}
+    to{opacity:1;transform:translateY(0)}
+}
+.gallery-filter-popover::-webkit-scrollbar{width:6px}
+.gallery-filter-popover::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px}
+
+.gfp-section{margin-bottom:14px}
+.gfp-section:last-child{margin-bottom:0}
+.gfp-label{
+    font-family:var(--font-mono);font-size:9px;font-weight:700;
+    color:var(--text-muted);letter-spacing:1.5px;text-transform:uppercase;
+    margin-bottom:6px;display:block;
+}
+.gfp-options{display:flex;flex-wrap:wrap;gap:5px}
+.gfp-option{
+    flex:1 1 auto;min-width:60px;text-align:center;
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:5px;padding:6px 10px;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    color:var(--text);cursor:pointer;transition:all .12s;
+    text-transform:capitalize;
+}
+.gfp-option:hover{border-color:var(--gold);color:var(--gold)}
+.gfp-option.selected{
+    background:var(--gold-dim);border-color:var(--gold);color:var(--gold);
+}
+.gfp-option.danger.selected{
+    background:rgba(239,68,68,.12);border-color:var(--red);color:var(--red);
+}
+.gfp-toggle-row{
+    display:flex;align-items:center;justify-content:space-between;
+    gap:10px;padding:6px 0;
+}
+.gfp-toggle-label{
+    font-size:12px;color:var(--text);font-weight:500;
+}
+.gfp-toggle-sub{
+    font-family:var(--font-mono);font-size:9px;color:var(--text-muted);
+    margin-top:2px;letter-spacing:.3px;
+}
+.gfp-footer{
+    margin-top:12px;padding-top:10px;border-top:1px solid var(--border);
+    display:flex;justify-content:space-between;gap:8px;
+}
+.gfp-reset{
+    background:transparent;border:1px solid var(--border);
+    color:var(--text-muted);
+    border-radius:5px;padding:6px 12px;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    letter-spacing:.5px;text-transform:uppercase;cursor:pointer;
+    transition:all .12s;
+}
+.gfp-reset:hover{border-color:var(--red);color:var(--red)}
+.gfp-apply{
+    background:var(--gold);color:#0a0a0c;border:none;
+    border-radius:5px;padding:6px 14px;
+    font-family:var(--font-mono);font-size:10px;font-weight:700;
+    letter-spacing:.5px;text-transform:uppercase;cursor:pointer;
+    transition:all .12s;
+}
+.gfp-apply:hover{background:var(--gold-light)}
+
+/* ── Share / Publish dialog ──────────────────────────────────────────
+   Opens when a user clicks Share. Has title + caption + auto-extracted
+   tags with chip editing. Reuses the .modal backdrop convention. */
+.share-dialog-panel{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;max-width:min(680px,94vw);
+    width:100%;display:flex;flex-direction:column;
+    max-height:90vh;
+    box-shadow:0 20px 60px rgba(0,0,0,.6);
+}
+.share-dialog-head{
+    flex:0 0 auto;padding:14px 18px;
+    border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:10px;
+}
+.share-dialog-title{
+    flex:1;font-family:var(--font-mono);font-size:13px;font-weight:700;
+    color:var(--text);letter-spacing:.5px;
+}
+.share-dialog-body{
+    flex:1 1 auto;overflow-y:auto;
+    padding:16px 18px;display:flex;gap:16px;
+    scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;
+}
+.share-dialog-body::-webkit-scrollbar{width:6px}
+.share-dialog-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px}
+.share-dialog-preview{
+    flex:0 0 220px;display:flex;flex-direction:column;gap:8px;
+}
+.share-dialog-preview img{
+    width:100%;border-radius:6px;border:1px solid var(--border);
+    object-fit:cover;background:var(--surface-2);
+}
+.share-dialog-preview-meta{
+    font-family:var(--font-mono);font-size:9px;color:var(--text-muted);
+    letter-spacing:.3px;
+}
+.share-dialog-fields{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+.share-dialog-field{display:flex;flex-direction:column;gap:5px}
+.share-dialog-field-label{
+    font-family:var(--font-mono);font-size:9px;font-weight:700;
+    color:var(--text-muted);letter-spacing:1.5px;text-transform:uppercase;
+    display:flex;justify-content:space-between;
+}
+.share-dialog-field-counter{
+    color:var(--text-muted);font-weight:500;letter-spacing:.5px;font-size:9px;
+}
+.share-dialog-field-counter.warn{color:var(--red)}
+.share-dialog-field input,
+.share-dialog-field textarea{
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:5px;padding:8px 10px;
+    color:var(--text);font-family:var(--font-body);font-size:13px;
+    outline:none;transition:border-color .15s;
+    resize:vertical;
+}
+.share-dialog-field input:focus,
+.share-dialog-field textarea:focus{border-color:var(--gold)}
+.share-dialog-field textarea{min-height:60px;font-size:12px;line-height:1.45}
+
+.share-dialog-tags{
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:5px;padding:8px 10px;
+    display:flex;flex-wrap:wrap;gap:5px;align-items:center;
+    min-height:42px;
+}
+.share-dialog-tag{
+    display:inline-flex;align-items:center;gap:5px;
+    background:var(--gold-dim);border:1px solid var(--gold);
+    color:var(--gold);
+    border-radius:12px;padding:3px 8px 3px 10px;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    letter-spacing:.3px;
+}
+.share-dialog-tag-remove{
+    background:transparent;border:none;color:inherit;
+    cursor:pointer;font-size:14px;line-height:1;padding:0;
+    opacity:.7;transition:opacity .12s;
+}
+.share-dialog-tag-remove:hover{opacity:1;color:var(--red)}
+.share-dialog-tag-input{
+    flex:1;min-width:80px;
+    background:transparent;border:none;outline:none;
+    color:var(--text);font-family:var(--font-body);font-size:12px;
+    padding:2px 4px;
+}
+.share-dialog-tags-empty{
+    font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
+    padding:4px 6px;
+}
+.share-dialog-tags-loading{
+    font-family:var(--font-mono);font-size:10px;color:var(--gold);
+    padding:4px 6px;letter-spacing:.5px;
+}
+.share-dialog-tags-hint{
+    font-family:var(--font-mono);font-size:9px;color:var(--text-muted);
+    margin-top:4px;letter-spacing:.3px;
+}
+.share-dialog-tags-regen{
+    background:transparent;border:none;color:var(--gold);
+    font-family:var(--font-mono);font-size:9px;font-weight:600;
+    cursor:pointer;letter-spacing:.3px;padding:0;
+    text-decoration:underline;text-underline-offset:2px;
+}
+.share-dialog-tags-regen:hover{color:var(--gold-light)}
+.share-dialog-tags-regen:disabled{opacity:.5;cursor:not-allowed;text-decoration:none}
+
+.share-dialog-foot{
+    flex:0 0 auto;padding:12px 18px;
+    border-top:1px solid var(--border);
+    display:flex;justify-content:flex-end;gap:8px;
+}
+.share-dialog-cancel{
+    background:transparent;border:1px solid var(--border);
+    color:var(--text-muted);
+    border-radius:5px;padding:8px 16px;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;
+    letter-spacing:.5px;text-transform:uppercase;cursor:pointer;
+    transition:all .12s;
+}
+.share-dialog-cancel:hover{border-color:var(--text);color:var(--text)}
+.share-dialog-publish{
+    background:var(--gold);color:#0a0a0c;border:none;
+    border-radius:5px;padding:8px 18px;
+    font-family:var(--font-mono);font-size:10px;font-weight:700;
+    letter-spacing:.5px;text-transform:uppercase;cursor:pointer;
+    transition:all .12s;
+}
+.share-dialog-publish:hover:not(:disabled){background:var(--gold-light)}
+.share-dialog-publish:disabled{opacity:.4;cursor:not-allowed}
+
+/* Mobile — stack the preview above the fields. */
+@media (max-width: 600px){
+    .share-dialog-body{flex-direction:column;gap:12px}
+    .share-dialog-preview{flex:0 0 auto}
+    .share-dialog-preview img{max-height:200px;object-fit:contain}
+}
+
+/* ── Pending-enrichment toast ───────────────────────────────────────
+   Small banner that surfaces "image will appear shortly" after share
+   so users aren't confused by the delay. */
 .gallery-pending-toast{
     position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
     z-index:10025;
@@ -3364,8 +3605,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <input type="text" id="stageGallerySearch" class="gallery-search-input" placeholder="Search the gallery…" autocomplete="off" spellcheck="false">
                     <button type="button" id="stageGallerySearchClear" class="gallery-search-clear" title="Clear search" onclick="clearStageGallerySearch()">×</button>
                 </div>
+                <button class="gallery-filter-btn" id="stageGalleryFilterBtn" type="button" onclick="toggleFilterPopover('stage', this)" title="Filters">
+                    🎛 Filters<span class="gfb-badge" id="stageGalleryFilterBadge">0</span>
+                </button>
                 <button type="button" class="sg-expand-btn" onclick="openGalleryModal()" title="Open full-screen gallery">⛶ Expand</button>
-                <!-- Filter chip row — wraps to its own line via flex-basis:100% -->
+                <!-- Active-filter chip row — rendered by JS. -->
                 <div class="gallery-filters" id="stageGalleryFilters"></div>
             </div>
             <!-- Scrollable body — observer for infinite scroll lives here. -->
@@ -3651,11 +3895,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <input type="text" id="gallerySearchInput" class="gallery-search-input" placeholder="Search images, prompts, captions…" autocomplete="off" spellcheck="false">
                 <button type="button" id="gallerySearchClear" class="gallery-search-clear" title="Clear search" onclick="clearGallerySearch()">×</button>
             </div>
+            <!-- Filters button — sits next to the search bar, opens a
+                 popover with all filter dimensions (sort/time/mode/mine/nsfw).
+                 The badge dot appears when any non-default filter is active. -->
+            <button class="gallery-filter-btn" id="galleryFilterBtn" type="button" onclick="toggleFilterPopover('modal', this)" title="Filters">
+                🎛 Filters<span class="gfb-badge" id="galleryFilterBadge">0</span>
+            </button>
             <button class="modal-close" onclick="closeGalleryModal()">×</button>
-            <!-- Filter chip row — sits on its own line under the search via
-                 the .gallery-filters{flex-basis:100%;order:100} CSS. Chips
-                 are rendered by JS so the keyword filter can show / hide
-                 and label dynamically based on viewer state. -->
+            <!-- Active-filter chip row — rendered by JS. Shows quick-
+                 remove chips for each non-default filter currently in
+                 effect, plus the active query chip. -->
             <div class="gallery-filters" id="galleryFilters"></div>
         </div>
         <div class="history-modal-body">
@@ -3688,6 +3937,57 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 </div>
+
+<!-- ─── SHARE / PUBLISH DIALOG ───────────────────────────────────────
+     Opens before any new share happens (not on unshare). Lets the user
+     review the title, caption, and auto-extracted tags before the
+     image goes public. Submit → POST /share with the full payload. -->
+<div id="shareDialog" class="modal" style="display:none" onclick="if(event.target===this) closeShareDialog()">
+    <div class="share-dialog-panel" onclick="event.stopPropagation()">
+        <div class="share-dialog-head">
+            <div class="share-dialog-title">🌐 Publish to Gallery</div>
+            <button class="modal-close" onclick="closeShareDialog()">×</button>
+        </div>
+        <div class="share-dialog-body">
+            <div class="share-dialog-preview">
+                <img id="shareDialogPreview" alt="">
+                <div class="share-dialog-preview-meta" id="shareDialogMeta"></div>
+            </div>
+            <div class="share-dialog-fields">
+                <div class="share-dialog-field">
+                    <label class="share-dialog-field-label" for="shareDialogTitle">
+                        Title <span class="share-dialog-field-counter" id="shareDialogTitleCounter">0 / 80</span>
+                    </label>
+                    <input id="shareDialogTitle" type="text" maxlength="80" placeholder="Optional · short headline">
+                </div>
+                <div class="share-dialog-field">
+                    <label class="share-dialog-field-label" for="shareDialogCaption">
+                        Caption <span class="share-dialog-field-counter" id="shareDialogCaptionCounter">0 / 280</span>
+                    </label>
+                    <textarea id="shareDialogCaption" maxlength="280" rows="2" placeholder="Optional · describe the moment or technique"></textarea>
+                </div>
+                <div class="share-dialog-field">
+                    <label class="share-dialog-field-label">
+                        Tags
+                        <button type="button" class="share-dialog-tags-regen" id="shareDialogRegen" onclick="regenerateShareTags()" title="Re-extract tags from your prompt">↻ Regenerate</button>
+                    </label>
+                    <div class="share-dialog-tags" id="shareDialogTags" onclick="document.getElementById('shareDialogTagInput')?.focus()">
+                        <span class="share-dialog-tags-loading" id="shareDialogTagsLoading">Extracting…</span>
+                        <input id="shareDialogTagInput" class="share-dialog-tag-input" type="text" placeholder="" onkeydown="onShareTagInputKey(event)" style="display:none">
+                    </div>
+                    <div class="share-dialog-tags-hint">Tags help others find your work in search. Type Enter to add custom ones.</div>
+                </div>
+            </div>
+        </div>
+        <div class="share-dialog-foot">
+            <button class="share-dialog-cancel" onclick="closeShareDialog()">Cancel</button>
+            <button class="share-dialog-publish" id="shareDialogPublish" onclick="confirmPublishFromDialog()">🌐 Publish</button>
+        </div>
+    </div>
+</div>
+
+<!-- Filter popover anchor — appended to body when opened so it can
+     escape stacking contexts and overlay everything. Built dynamically. -->
 
 <!-- IMAGE MODAL -->
 <div class="img-modal" id="imgModal" onclick="closeModal()">
@@ -7518,13 +7818,24 @@ function renderModalShareButton(jobId, isShared, wireBtn){
     const fresh = wireBtn ? wireBtn('modalActShare', async () => {
         const liveBtn = $('modalActShare');
         if (!liveBtn) return;
+        // Going public → open the share dialog so the user can review
+        // tags/title/caption first. Going private → direct API call.
+        if (!isShared) {
+            // Pull whatever we can from the surrounding context to seed
+            // the dialog (image URL from the modal img, prompt from the
+            // outImg dataset if this is the current result).
+            const modalImg = $('modalImg');
+            const outImg = $('outImg');
+            openShareDialog(jobId, {
+                imageUrl: modalImg?.src || '',
+                prompt: outImg?.dataset?.prompt || '',
+            });
+            return;
+        }
         liveBtn.classList.add('busy');
         try {
-            const next = await toggleShareJob(jobId, !isShared);
+            const next = await toggleShareJob(jobId, false);
             if (next !== null) {
-                // Re-paint with the authoritative server state. Pass
-                // wireBtn back in so the click handler is refreshed
-                // around the new isShared closure.
                 renderModalShareButton(jobId, next === 1, (id, h) => {
                     const o = $(id);
                     if (!o) return null;
@@ -7545,18 +7856,28 @@ function renderModalShareButton(jobId, isShared, wireBtn){
 // Hit POST /api/studio/job/:id/share or /unshare and return the new
 // is_public flag (0|1) on success, or null on failure. Reused by the
 // modal share button AND by history-card share toggles.
-async function toggleShareJob(jobId, makePublic){
+async function toggleShareJob(jobId, makePublic, payload){
     if (!jobId) return null;
     if (!_user) {
         showNotif('Sign in to share images to the gallery.', 'info');
         return null;
     }
     const path = makePublic ? 'share' : 'unshare';
+    // Body: when publishing, forward whatever the dialog supplied so
+    // the server can persist title / caption / tags in one POST. When
+    // unpublishing, body is always empty (server takes no params).
+    const body = (makePublic && payload && typeof payload === 'object')
+        ? JSON.stringify({
+            title: payload.title || null,
+            caption: payload.caption || null,
+            tags: Array.isArray(payload.tags) ? payload.tags : null,
+          })
+        : JSON.stringify({});
     try {
         const r = await fetchT(`${API}/api/studio/job/${encodeURIComponent(jobId)}/${path}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
+            body,
         }, 8000);
         const d = await r.json();
         if (!d.ok) {
@@ -7629,6 +7950,257 @@ function showGalleryPendingToast(){
     }, 7000);
 }
 
+// ════════════════════════════════════════════════════════════════════
+// ── SHARE / PUBLISH DIALOG ──────────────────────────────────────────
+//
+// Opens before any "make this public" share. Lets the user review and
+// edit the title, caption, and auto-extracted tags before the image
+// hits the gallery feed. On Publish, calls toggleShareJob with the
+// full payload so the server can persist everything in one POST.
+//
+// Tag extraction fires immediately on open via /api/studio/extract-tags
+// — typically returns in ~1s and replaces the loading state with chips.
+// Users can remove individual chips, type new ones (Enter to commit),
+// or hit "Regenerate" to re-extract from a different prompt slice.
+// ════════════════════════════════════════════════════════════════════
+
+let _shareDialogJobId = null;
+let _shareDialogTags = [];
+let _shareDialogPrompt = '';
+let _shareDialogImageUrl = '';
+
+async function openShareDialog(jobId, opts){
+    if (!_user) {
+        showNotif('Sign in to publish to the gallery.', 'info');
+        return;
+    }
+    if (!jobId) return;
+    opts = opts || {};
+    _shareDialogJobId = jobId;
+    _shareDialogTags = [];
+    _shareDialogPrompt = opts.prompt || '';
+    _shareDialogImageUrl = opts.imageUrl || '';
+
+    // Paint the dialog with what we have so it shows immediately —
+    // even before tag extraction returns. Fields default to empty
+    // strings; the user fills them in.
+    const preview = $('shareDialogPreview');
+    if (preview) preview.src = _shareDialogImageUrl;
+    const meta = $('shareDialogMeta');
+    if (meta) {
+        // Truncated prompt as a hint of what they're publishing —
+        // helps users remember which gen this is across the title/
+        // caption fields.
+        meta.textContent = _shareDialogPrompt
+            ? `Prompt: ${_shareDialogPrompt.slice(0, 140)}${_shareDialogPrompt.length > 140 ? '…' : ''}`
+            : '';
+    }
+    const titleEl = $('shareDialogTitle');
+    if (titleEl) { titleEl.value = ''; _updateShareDialogCounters(); }
+    const capEl = $('shareDialogCaption');
+    if (capEl) capEl.value = '';
+    _updateShareDialogCounters();
+
+    // Show the modal + start tag extraction.
+    const dlg = $('shareDialog');
+    if (dlg) dlg.style.display = 'flex';
+    _kickoffShareTagExtraction();
+
+    // Wire counter updates so the user can see how close they are to
+    // the title/caption limits. addEventListener so repeated dialog
+    // opens don't stack handlers (we use oninput which overwrites).
+    if (titleEl) titleEl.oninput = _updateShareDialogCounters;
+    if (capEl) capEl.oninput = _updateShareDialogCounters;
+}
+
+function closeShareDialog(){
+    const dlg = $('shareDialog');
+    if (dlg) dlg.style.display = 'none';
+    _shareDialogJobId = null;
+    _shareDialogTags = [];
+    _shareDialogPrompt = '';
+    _shareDialogImageUrl = '';
+    const tagInput = $('shareDialogTagInput');
+    if (tagInput) tagInput.value = '';
+    // Reset publish button state for next open.
+    const pubBtn = $('shareDialogPublish');
+    if (pubBtn) { pubBtn.disabled = false; pubBtn.textContent = '🌐 Publish'; }
+}
+
+function _updateShareDialogCounters(){
+    const titleEl = $('shareDialogTitle');
+    const capEl = $('shareDialogCaption');
+    const titleCnt = $('shareDialogTitleCounter');
+    const capCnt = $('shareDialogCaptionCounter');
+    if (titleEl && titleCnt) {
+        const n = titleEl.value.length;
+        titleCnt.textContent = `${n} / 80`;
+        titleCnt.classList.toggle('warn', n > 75);
+    }
+    if (capEl && capCnt) {
+        const n = capEl.value.length;
+        capCnt.textContent = `${n} / 280`;
+        capCnt.classList.toggle('warn', n > 270);
+    }
+}
+
+// Fires the tag-extraction call. Server takes prompt + title + caption
+// and returns 6-10 suggested tags. Falls back to a regex extraction if
+// the API key isn't configured, so the dialog still shows something
+// useful even with no upstream LLM.
+async function _kickoffShareTagExtraction(){
+    const tagsBox = $('shareDialogTags');
+    const loadingEl = $('shareDialogTagsLoading');
+    const tagInput = $('shareDialogTagInput');
+    const regenBtn = $('shareDialogRegen');
+    if (!tagsBox) return;
+    if (loadingEl) { loadingEl.style.display = ''; loadingEl.textContent = 'Extracting…'; }
+    if (tagInput) tagInput.style.display = 'none';
+    if (regenBtn) regenBtn.disabled = true;
+
+    // Capture jobId at call time so a late response from a previous
+    // dialog can't paint into a new one.
+    const jobIdAtCall = _shareDialogJobId;
+    try {
+        // Include current title/caption text in the extraction request
+        // so the user gets richer tags after they've typed something.
+        const title = $('shareDialogTitle')?.value || '';
+        const caption = $('shareDialogCaption')?.value || '';
+        const r = await fetchT(`${API}/api/studio/extract-tags`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt: _shareDialogPrompt,
+                title, caption,
+            }),
+        }, 12000);
+        const d = await r.json();
+        if (_shareDialogJobId !== jobIdAtCall) return;  // stale
+        if (!d.ok) {
+            if (loadingEl) loadingEl.textContent = 'No suggestions — type your own below.';
+            if (tagInput) tagInput.style.display = '';
+            if (regenBtn) regenBtn.disabled = false;
+            return;
+        }
+        _shareDialogTags = Array.isArray(d.tags) ? [...d.tags] : [];
+        _renderShareTagChips();
+    } catch (e) {
+        if (loadingEl) loadingEl.textContent = 'Tag extraction failed — type your own below.';
+        if (tagInput) tagInput.style.display = '';
+    } finally {
+        if (regenBtn) regenBtn.disabled = false;
+    }
+}
+
+// "Regenerate" link → re-run extraction. Useful after the user has
+// typed a more specific title or caption and wants tags refreshed.
+function regenerateShareTags(){
+    _shareDialogTags = [];
+    _renderShareTagChips();
+    _kickoffShareTagExtraction();
+}
+
+function _renderShareTagChips(){
+    const tagsBox = $('shareDialogTags');
+    const loadingEl = $('shareDialogTagsLoading');
+    const tagInput = $('shareDialogTagInput');
+    if (!tagsBox) return;
+    // Hide loading row, surface the input, then rebuild chips. We
+    // rebuild the chip nodes from scratch each call — small list, fast
+    // operation, simpler than diffing.
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (tagInput) tagInput.style.display = '';
+
+    // Remove any existing chips (preserve the loading element + input).
+    Array.from(tagsBox.querySelectorAll('.share-dialog-tag, .share-dialog-tags-empty'))
+        .forEach((n) => n.remove());
+
+    if (!_shareDialogTags.length) {
+        // Empty state — sits before the input so the user has a visual
+        // cue that the area is empty and ready for typing.
+        const empty = document.createElement('span');
+        empty.className = 'share-dialog-tags-empty';
+        empty.textContent = 'No tags yet — type and press Enter';
+        if (tagInput) tagsBox.insertBefore(empty, tagInput);
+        else tagsBox.appendChild(empty);
+    } else {
+        // Insert chips before the input so they read left-to-right with
+        // the input as the trailing affordance.
+        for (let i = 0; i < _shareDialogTags.length; i++) {
+            const tag = _shareDialogTags[i];
+            const chip = document.createElement('span');
+            chip.className = 'share-dialog-tag';
+            chip.innerHTML = `${escapeHtml(tag)}<button type="button" class="share-dialog-tag-remove" data-idx="${i}" title="Remove">×</button>`;
+            chip.querySelector('.share-dialog-tag-remove').onclick = (ev) => {
+                ev.stopPropagation();
+                _shareDialogTags.splice(i, 1);
+                _renderShareTagChips();
+            };
+            if (tagInput) tagsBox.insertBefore(chip, tagInput);
+            else tagsBox.appendChild(chip);
+        }
+    }
+}
+
+// Enter (or comma) commits the current text as a new tag. Backspace
+// on an empty input removes the last chip — common chip-input pattern.
+function onShareTagInputKey(ev){
+    const input = ev.target;
+    if (ev.key === 'Enter' || ev.key === ',') {
+        ev.preventDefault();
+        const raw = (input.value || '').trim().toLowerCase();
+        // Allow multi-tag paste — split on commas.
+        const candidates = raw.split(',').map((t) => t.trim()).filter(Boolean);
+        let added = 0;
+        for (const c of candidates) {
+            if (c.length > 30) continue;
+            if (_shareDialogTags.includes(c)) continue;
+            if (_shareDialogTags.length >= 30) break;
+            _shareDialogTags.push(c);
+            added++;
+        }
+        input.value = '';
+        if (added) _renderShareTagChips();
+    } else if (ev.key === 'Backspace' && !input.value && _shareDialogTags.length) {
+        // Pop the last chip on backspace into an empty input.
+        _shareDialogTags.pop();
+        _renderShareTagChips();
+    }
+}
+
+// Publish handler — assembles the dialog state into a payload and
+// posts it through toggleShareJob, which already knows how to mirror
+// the change onto every visible surface (history sidebar, modal, etc.)
+// and to surface the enrichment-pending toast.
+async function confirmPublishFromDialog(){
+    if (!_shareDialogJobId) return;
+    const jobId = _shareDialogJobId;
+    const title = ($('shareDialogTitle')?.value || '').trim();
+    const caption = ($('shareDialogCaption')?.value || '').trim();
+    // Any unsubmitted text in the tag input gets pushed first — so
+    // someone typing one last tag without pressing Enter doesn't lose
+    // it on Publish.
+    const pendingInput = ($('shareDialogTagInput')?.value || '').trim().toLowerCase();
+    if (pendingInput && !_shareDialogTags.includes(pendingInput) && pendingInput.length <= 30) {
+        _shareDialogTags.push(pendingInput);
+    }
+    const tags = [..._shareDialogTags];
+
+    const pubBtn = $('shareDialogPublish');
+    if (pubBtn) { pubBtn.disabled = true; pubBtn.textContent = 'Publishing…'; }
+    const result = await toggleShareJob(jobId, true, { title, caption, tags });
+    if (result === null) {
+        // toggleShareJob already showed an error notification. Re-enable
+        // the publish button so the user can retry.
+        if (pubBtn) { pubBtn.disabled = false; pubBtn.textContent = '🌐 Publish'; }
+        return;
+    }
+    closeShareDialog();
+    // toggleShareJob handles the showGalleryPendingToast call itself
+    // (it sees enrichment_pending in the response), so no extra
+    // notification here.
+}
+
 function closeModal(){
     $('imgModal').classList.remove('open');
     // Hide the action toolbar so the next non-batch open doesn't flash it.
@@ -7640,7 +8212,16 @@ function closeModal(){
     }
 }
 document.addEventListener('keydown',e=>{
-    if(e.key==='Escape'){ closeModal(); closeBuyModal(); closeGalleryModal(); if(_markup && _markup.active) closeMarkupModal(false); }
+    if(e.key==='Escape'){
+        closeModal();
+        closeBuyModal();
+        closeGalleryModal();
+        // Also dismiss the publish dialog and any open filter popover —
+        // both feel like overlays the user expects Escape to clear.
+        if (typeof closeShareDialog === 'function') closeShareDialog();
+        if (typeof closeFilterPopover === 'function') closeFilterPopover();
+        if(_markup && _markup.active) closeMarkupModal(false);
+    }
 });
 
 // ── Use output as input ───────────────────────────
@@ -13520,9 +14101,19 @@ async function deleteHistoryItem(jobId){
 async function toggleHistoryItemShare(jobId, makePublic){
     // makePublic comes from the click site as 0|1 — coerce to bool.
     const want = !!makePublic;
-    await toggleShareJob(jobId, want);
-    // toggleShareJob already mirrors the change onto _historyItems and
-    // re-renders the modal if it's open. Nothing else to do here.
+    if (want) {
+        // Going public — open the share dialog so the user can review
+        // title/caption/tags first. Find this job in the local history
+        // cache so we can seed the dialog with its image URL + prompt.
+        const j = _historyItems.find(x => x.id === jobId);
+        openShareDialog(jobId, {
+            imageUrl: j?.url || '',
+            prompt: j?.prompt || '',
+        });
+        return;
+    }
+    await toggleShareJob(jobId, false);
+    // toggleShareJob mirrors onto _historyItems and re-renders.
 }
 
 // Batch share — fan out to every job in the batch. Sequential so we don't
@@ -13588,6 +14179,9 @@ function openGalleryModal(){
     _galleryTotal = 0;
     _galleryQuery = ($('gallerySearchInput')?.value || '').trim();
     updateGallerySearchClearVisibility();
+    // Paint the filter badge so the user sees how many filters are
+    // currently active without opening the popover. Cheap, idempotent.
+    updateFilterBadge('modal');
     const grid = $('galleryGrid');
     if (grid) grid.innerHTML = `<div class="gallery-empty">Loading the gallery…</div>`;
     loadGalleryPage(0).then(() => {
@@ -13658,6 +14252,7 @@ async function loadGalleryPage(offset){
         params.set('limit', String(GALLERY_PAGE_SIZE));
         params.set('offset', String(offset));
         if (_galleryQuery) params.set('q', _galleryQuery);
+        _applyFiltersToParams(params, _galleryFilters);
         const r = await fetchT(`${API}/api/studio/gallery?${params.toString()}`, null, 10000);
         const d = await r.json();
         // Stale-response guard: if the user has issued a newer request
@@ -13831,10 +14426,74 @@ function _buildGalleryCard(it, surface){
 //   - "Show NSFW" toggle, only when viewer is logged in (anon viewers
 //     have no opt-in path; we don't show a chip they can't use)
 //   - Active keyword filter (when the search came from a chip click)
+// ── Gallery filter state ────────────────────────────────────────────
+//
+// Each surface (modal + stage) keeps an independent filter object so
+// the user can have different filters running in each view. The shape
+// matches what the server accepts via query params. The defaults map
+// to "no filter applied" — sort=new, all the rest unset.
+function _defaultGalleryFilters(){
+    return { sort: 'new', time: '', mode: '', mine: 0, nsfw: '' };
+}
+let _galleryFilters = _defaultGalleryFilters();
+let _stageGalleryFilters = _defaultGalleryFilters();
+
+// Count of non-default filters on a surface — drives the badge on the
+// Filters button. Sort=new is the default so doesn't count; sort=anything
+// else does. Same logic for the others.
+function _countActiveFilters(f){
+    let n = 0;
+    if (f.sort && f.sort !== 'new') n++;
+    if (f.time) n++;
+    if (f.mode) n++;
+    if (f.mine) n++;
+    if (f.nsfw) n++;  // only counts when explicit override is set
+    return n;
+}
+
+// Append filter state to a URLSearchParams object. Centralized so the
+// modal + stage gallery loaders stay in lockstep with the popover UI.
+function _applyFiltersToParams(params, f){
+    if (f.sort && f.sort !== 'new') params.set('sort', f.sort);
+    if (f.time) params.set('time', f.time);
+    if (f.mode) params.set('mode', f.mode);
+    if (f.mine) params.set('mine', '1');
+    if (f.nsfw) params.set('nsfw', f.nsfw);
+}
+
 function _renderGalleryFilters(containerId, surface){
     const el = document.getElementById(containerId);
     if (!el) return;
     const chips = [];
+    const f = surface === 'stage' ? _stageGalleryFilters : _galleryFilters;
+    const clearFnFor = (key, val) => {
+        const refreshFn = surface === 'stage'
+            ? 'refreshStageGalleryFromScratch()'
+            : 'refreshGalleryFromScratch()';
+        const stateName = surface === 'stage' ? '_stageGalleryFilters' : '_galleryFilters';
+        // Set the cleared key back to default, then refresh + re-render.
+        return `(function(){ ${stateName}.${key}=${typeof val === 'string' ? `'${val}'` : val}; ${refreshFn}; updateFilterBadge('${surface}'); })()`;
+    };
+
+    // Sort chip — only shown when non-default. "Newest" is default so
+    // we hide the chip in that case to avoid noise.
+    if (f.sort && f.sort !== 'new') {
+        const label = ({old:'Oldest', likes:'Most liked', tips:'Most tipped', remix:'Most remixed'})[f.sort] || f.sort;
+        chips.push(`<button class="gallery-filter-chip active" onclick="${clearFnFor('sort','new')}" title="Reset sort">Sort: ${escapeHtml(label)}<span class="gfc-close">×</span></button>`);
+    }
+    if (f.time) {
+        const label = ({day:'Last 24h', week:'Past week', month:'Past month'})[f.time] || f.time;
+        chips.push(`<button class="gallery-filter-chip active" onclick="${clearFnFor('time','')}" title="Clear time filter">${escapeHtml(label)}<span class="gfc-close">×</span></button>`);
+    }
+    if (f.mode) {
+        chips.push(`<button class="gallery-filter-chip active" onclick="${clearFnFor('mode','')}" title="Clear mode filter">Mode: ${escapeHtml(f.mode)}<span class="gfc-close">×</span></button>`);
+    }
+    if (f.mine) {
+        chips.push(`<button class="gallery-filter-chip active" onclick="${clearFnFor('mine',0)}" title="Show everyone's work">My shares only<span class="gfc-close">×</span></button>`);
+    }
+    // NSFW chip — derived from the user pref, with the override option.
+    // Shown for logged-in users so they can see / flip the current state
+    // even when they're not opening the popover.
     if (_user) {
         const nsfwOn = !!_user.nsfw_enabled;
         chips.push(
@@ -13858,6 +14517,217 @@ function _renderGalleryFilters(containerId, surface){
         );
     }
     el.innerHTML = chips.join('');
+}
+
+// ── Filter popover ─────────────────────────────────────────────────
+//
+// Floating panel anchored to the Filters button. Same DOM structure
+// works for both surfaces — the surface name determines which state
+// object to read/write. Only one popover open at a time; clicking
+// outside closes it.
+
+let _filterPopoverEl = null;
+let _filterPopoverSurface = null;
+let _filterPopoverDraft = null;  // working copy until Apply
+
+function toggleFilterPopover(surface, anchorEl){
+    if (_filterPopoverEl) {
+        // Same anchor → close. Different anchor → close + reopen.
+        const sameSurface = _filterPopoverSurface === surface;
+        closeFilterPopover();
+        if (sameSurface) return;
+    }
+    openFilterPopover(surface, anchorEl);
+}
+
+function openFilterPopover(surface, anchorEl){
+    _filterPopoverSurface = surface;
+    const current = surface === 'stage' ? _stageGalleryFilters : _galleryFilters;
+    _filterPopoverDraft = { ...current };  // working copy
+
+    const pop = document.createElement('div');
+    pop.className = 'gallery-filter-popover';
+    pop.onclick = (ev) => ev.stopPropagation();
+    pop.innerHTML = `
+        <div class="gfp-section">
+            <span class="gfp-label">Sort by</span>
+            <div class="gfp-options" data-key="sort">
+                <button class="gfp-option" data-val="new">Newest</button>
+                <button class="gfp-option" data-val="old">Oldest</button>
+                <button class="gfp-option" data-val="likes">Most liked</button>
+                <button class="gfp-option" data-val="tips">Most tipped</button>
+                <button class="gfp-option" data-val="remix">Most remixed</button>
+            </div>
+        </div>
+        <div class="gfp-section">
+            <span class="gfp-label">Time range</span>
+            <div class="gfp-options" data-key="time">
+                <button class="gfp-option" data-val="">All</button>
+                <button class="gfp-option" data-val="day">24h</button>
+                <button class="gfp-option" data-val="week">Week</button>
+                <button class="gfp-option" data-val="month">Month</button>
+            </div>
+        </div>
+        <div class="gfp-section">
+            <span class="gfp-label">Generation mode</span>
+            <div class="gfp-options" data-key="mode">
+                <button class="gfp-option" data-val="">Any</button>
+                <button class="gfp-option" data-val="camera">Camera</button>
+                <button class="gfp-option" data-val="create">Create</button>
+                <button class="gfp-option" data-val="edit">Edit</button>
+                <button class="gfp-option" data-val="batch">Batch</button>
+                <button class="gfp-option" data-val="agent">Agent</button>
+            </div>
+        </div>
+        ${_user ? `
+        <div class="gfp-section">
+            <span class="gfp-label">Author</span>
+            <div class="gfp-toggle-row">
+                <div>
+                    <div class="gfp-toggle-label">Only my shares</div>
+                    <div class="gfp-toggle-sub">Hide everyone else's work</div>
+                </div>
+                <label class="pref-switch">
+                    <input type="checkbox" id="gfpMineToggle">
+                    <span class="pref-switch-track"></span>
+                </label>
+            </div>
+        </div>
+        <div class="gfp-section">
+            <span class="gfp-label">Content rating</span>
+            <div class="gfp-toggle-row">
+                <div>
+                    <div class="gfp-toggle-label">Show NSFW content</div>
+                    <div class="gfp-toggle-sub">Reveal flagged images (saved to profile)</div>
+                </div>
+                <label class="pref-switch">
+                    <input type="checkbox" id="gfpNsfwToggle" ${_user.nsfw_enabled ? 'checked' : ''}>
+                    <span class="pref-switch-track"></span>
+                </label>
+            </div>
+        </div>` : ''}
+        <div class="gfp-footer">
+            <button class="gfp-reset" type="button">Reset all</button>
+            <button class="gfp-apply" type="button">Apply</button>
+        </div>
+    `;
+    document.body.appendChild(pop);
+    _filterPopoverEl = pop;
+
+    // Wire option buttons. Selecting an option mutates the draft and
+    // re-paints the selected state. Apply commits to the real filter
+    // state and triggers a refresh; Cancel just closes.
+    const paintSelections = () => {
+        pop.querySelectorAll('.gfp-options').forEach((box) => {
+            const key = box.dataset.key;
+            const cur = _filterPopoverDraft[key] || '';
+            box.querySelectorAll('.gfp-option').forEach((b) => {
+                const v = b.dataset.val || '';
+                b.classList.toggle('selected', v === cur);
+                // Visual cue for NSFW-style sorts? None for now.
+            });
+        });
+        const mineToggle = pop.querySelector('#gfpMineToggle');
+        if (mineToggle) mineToggle.checked = !!_filterPopoverDraft.mine;
+    };
+    paintSelections();
+    pop.querySelectorAll('.gfp-option').forEach((btn) => {
+        btn.onclick = () => {
+            const key = btn.closest('.gfp-options').dataset.key;
+            _filterPopoverDraft[key] = btn.dataset.val || '';
+            paintSelections();
+        };
+    });
+    const mineToggle = pop.querySelector('#gfpMineToggle');
+    if (mineToggle) {
+        mineToggle.onchange = () => { _filterPopoverDraft.mine = mineToggle.checked ? 1 : 0; };
+    }
+    // NSFW toggle is a profile preference — flipping it goes straight
+    // to toggleNsfwPref so it persists. The popover doesn't include the
+    // NSFW state in the draft; the chip below the search shows the
+    // current state.
+    const nsfwToggle = pop.querySelector('#gfpNsfwToggle');
+    if (nsfwToggle) {
+        nsfwToggle.onchange = () => {
+            toggleNsfwPref(nsfwToggle.checked);
+            // Brief delay then close so the user sees the visual ack.
+            setTimeout(() => closeFilterPopover(), 200);
+        };
+    }
+
+    pop.querySelector('.gfp-reset').onclick = () => {
+        _filterPopoverDraft = _defaultGalleryFilters();
+        paintSelections();
+    };
+    pop.querySelector('.gfp-apply').onclick = () => {
+        if (_filterPopoverSurface === 'stage') {
+            _stageGalleryFilters = { ..._filterPopoverDraft };
+            refreshStageGalleryFromScratch();
+        } else {
+            _galleryFilters = { ..._filterPopoverDraft };
+            refreshGalleryFromScratch();
+        }
+        updateFilterBadge(_filterPopoverSurface);
+        closeFilterPopover();
+    };
+
+    // Position next to the anchor button. Right-align so the popover
+    // doesn't drift off-screen on the right edge of the gallery head.
+    const rect = anchorEl.getBoundingClientRect();
+    requestAnimationFrame(() => {
+        const popW = pop.offsetWidth;
+        const popH = pop.offsetHeight;
+        let left = rect.right - popW;
+        if (left < 10) left = 10;
+        if (left + popW > window.innerWidth - 10) left = window.innerWidth - popW - 10;
+        let top = rect.bottom + 6;
+        if (top + popH > window.innerHeight - 10) {
+            // Flip above the button if there's no room below.
+            top = Math.max(10, rect.top - popH - 6);
+        }
+        pop.style.left = `${left}px`;
+        pop.style.top = `${top}px`;
+    });
+
+    // Outside-click closes. Defer so the click that opened doesn't
+    // immediately close it.
+    setTimeout(() => {
+        document.addEventListener('mousedown', _filterPopoverOutside, true);
+    }, 0);
+}
+
+function _filterPopoverOutside(ev){
+    if (!_filterPopoverEl) return;
+    if (_filterPopoverEl.contains(ev.target)) return;
+    // Ignore clicks on the filter button itself — toggleFilterPopover
+    // handles that case.
+    if (ev.target.closest('.gallery-filter-btn')) return;
+    closeFilterPopover();
+}
+
+function closeFilterPopover(){
+    if (_filterPopoverEl) {
+        _filterPopoverEl.remove();
+        _filterPopoverEl = null;
+    }
+    _filterPopoverSurface = null;
+    _filterPopoverDraft = null;
+    document.removeEventListener('mousedown', _filterPopoverOutside, true);
+}
+
+// Paint the badge dot on the Filters button to reflect how many
+// non-default filters are active on that surface. Called after every
+// Apply and after the chip-row × buttons clear individual filters.
+function updateFilterBadge(surface){
+    const f = surface === 'stage' ? _stageGalleryFilters : _galleryFilters;
+    const btnId = surface === 'stage' ? 'stageGalleryFilterBtn' : 'galleryFilterBtn';
+    const badgeId = surface === 'stage' ? 'stageGalleryFilterBadge' : 'galleryFilterBadge';
+    const btn = document.getElementById(btnId);
+    const badge = document.getElementById(badgeId);
+    if (!btn || !badge) return;
+    const count = _countActiveFilters(f);
+    btn.classList.toggle('has-active', count > 0);
+    badge.textContent = String(count);
 }
 
 // Keyword-chip click → fires a fresh search on that surface. Splits
@@ -14004,6 +14874,7 @@ function _syncStageGalleryVisibility(){
     // images immediately on landing. Subsequent toggles reuse cache.
     if (phVisible && !_stageGalleryFirstLoaded) {
         _stageGalleryFirstLoaded = true;
+        updateFilterBadge('stage');
         loadStageGalleryPage(0).then(() => {
             renderStageGallery();
             setupStageGalleryInfiniteScroll();
@@ -14022,6 +14893,7 @@ async function loadStageGalleryPage(offset){
         params.set('limit', String(STAGE_GALLERY_PAGE_SIZE));
         params.set('offset', String(offset));
         if (_stageGalleryQuery) params.set('q', _stageGalleryQuery);
+        _applyFiltersToParams(params, _stageGalleryFilters);
         const r = await fetchT(`${API}/api/studio/gallery?${params.toString()}`, null, 10000);
         const d = await r.json();
         if (reqId !== _stageGalleryReqId) return;  // stale
@@ -14915,6 +15787,10 @@ function showResult(d){
     else outImg.removeAttribute('data-job-id');
     if (d.is_public) outImg.dataset.isPublic = '1';
     else outImg.removeAttribute('data-is-public');
+    // Stash the prompt too — the publish dialog uses it to seed the
+    // tag-extraction call so users see relevant suggestions on open.
+    if (d.prompt) outImg.dataset.prompt = d.prompt;
+    else outImg.removeAttribute('data-prompt');
     $('outPh').style.display='none';
     $('rngSeed').value=d.seed; $('vSeed').value=d.seed;
     $('resultBar').style.display='flex';
@@ -14956,19 +15832,28 @@ function updateShareResultButton(){
     }
 }
 
-// Click-handler for the result-bar Share button. One-shot toggle —
-// flips share state and refreshes both the button and the outImg
-// dataset so future modal opens reflect the new state. Doesn't open
-// any UI; the user already sees what they're sharing.
+// Click-handler for the result-bar Share button. Flips share state.
+// Going public opens the publish dialog (so the user can edit title/
+// caption/tags); going private posts the unshare directly.
 async function shareCurrentResult(){
     const outImg = $('outImg');
     if (!outImg) return;
     const jobId = outImg.dataset.jobId;
     if (!jobId) return;
     const isPublic = outImg.dataset.isPublic === '1';
+    if (!isPublic) {
+        // Opening the dialog — pre-seed with the image URL and the
+        // prompt that produced it (stored on the outImg dataset by
+        // showResult so it's available without a server fetch).
+        openShareDialog(jobId, {
+            imageUrl: outImg.src,
+            prompt: outImg.dataset.prompt || '',
+        });
+        return;
+    }
     const btn = $('btnShareResult');
     if (btn) btn.disabled = true;
-    const next = await toggleShareJob(jobId, !isPublic);
+    const next = await toggleShareJob(jobId, false);
     if (btn) btn.disabled = false;
     if (next === null) return;
     if (next === 1) outImg.dataset.isPublic = '1';
