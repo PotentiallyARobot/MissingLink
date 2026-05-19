@@ -1874,29 +1874,6 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .reaction-picker-btn:hover{background:var(--surface-2);transform:scale(1.2)}
 .reaction-picker-btn.viewer{background:var(--gold-dim);transform:scale(1.1)}
 
-/* ── Remix icon on gallery cards ────────────────────────────────────
-   Top-right corner button — kicks off the same 5-token remix flow
-   that the lightbox button does. Visible on hover (or always on
-   touch) so the card stays clean by default. */
-.gc-remix-icon{
-    position:absolute;top:6px;right:6px;z-index:4;
-    width:32px;height:32px;border-radius:50%;
-    background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);
-    color:#fff;font-size:14px;cursor:pointer;
-    display:flex;align-items:center;justify-content:center;
-    transition:all .15s;opacity:0;line-height:1;padding:0;
-    backdrop-filter:blur(8px);
-}
-.gallery-card:hover .gc-remix-icon{opacity:1}
-.gc-remix-icon:hover{
-    background:var(--gold);border-color:var(--gold);color:#0a0a0c;
-    transform:scale(1.08);
-}
-@media (hover: none){
-    /* Touch devices — no hover state, so always show. */
-    .gc-remix-icon{opacity:.85}
-}
-
 /* Author handle pill at the bottom-left of the image (overlay style
    like the screenshot reference). Subtle backdrop so it stays legible
    on bright images without dominating the composition. */
@@ -3481,7 +3458,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <div class="sec mode-sec">
         <div class="mode-toggle">
-            <button class="mode-btn active" id="btnModeCamera" onclick="setMode('camera')">🎥 Camera</button>
+            <button class="mode-btn" id="btnModeCamera" onclick="setMode('camera')">🎥 Camera</button>
             <button class="mode-btn" id="btnModeEdit" onclick="setMode('edit')">✏️ Edit</button>
             <button class="mode-btn" id="btnModeBatch" onclick="setMode('batch')">📚 Batch</button>
             <!-- Create mode: direct image generation without going through
@@ -3489,8 +3466,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                  generation per click. Output lands in the batch grid so the
                  user can refine it (send to camera/edit, find issues, etc.).
                  Internal mode value stays 'generate' to avoid widespread
-                 renames; only the user-facing button text says "Create". -->
-            <button class="mode-btn" id="btnModeGenerate" onclick="setMode('generate')">✨ Create</button>
+                 renames; only the user-facing button text says "Create".
+                 Marked active by default — Create is the lowest-friction
+                 entry point (no upload needed) so we land first-time
+                 visitors here. -->
+            <button class="mode-btn active" id="btnModeGenerate" onclick="setMode('generate')">✨ Create</button>
         </div>
     </div>
 
@@ -4777,7 +4757,7 @@ const API=''; // same origin
 let _user=null;
 let imageId=null,imageUrl=null;
 let hwOpen=true;
-let currentMode='camera';
+let currentMode='generate';
 let slots=[null,null,null];
 let myJobs=[]; // {id, status, mode, thumb, result}
 let pollTimers={}; // jobId → interval
@@ -7179,6 +7159,10 @@ async function doGenerateMode(_autoRetried){
         showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
         return;
     }
+    // Generation is starting — pull the user out of Gallery view so
+    // the result image lands where they're looking. Safe to call
+    // unconditionally; no-op when already in Studio.
+    _switchToStudioForOutput();
     // ── Pre-flight ref ownership validation ─────────────────────────
     // The cleanest place to validate is before we even build refIds.
     // Run a quick check-ownership round trip (typically <100ms) to scrub
@@ -9017,6 +9001,13 @@ async function doGenerate(){
         return;
     }
 
+    // Generation is starting — switch the stage from Gallery to Studio
+    // so the result lands where the user is looking. No-op if already
+    // on Studio. Called here after preflight so failed submissions
+    // (insufficient tokens, queue full, etc.) don't kick the user out
+    // of the gallery view.
+    _switchToStudioForOutput();
+
     // GPU wake — if the container is sleeping (idle scaledown) or we
     // think it's cold, fire the warmup endpoint to bring it back up.
     // The job submission below proceeds normally; Modal's autoscaler
@@ -10849,6 +10840,9 @@ async function generateBatchEdits(){
         showNotif(`Not enough queue slots. You need ${selected.length} free, have ${MAX_QUEUED - activeCount}.`, 'error');
         return;
     }
+    // Batch generation is starting — flip to Studio so the user sees
+    // the tile grid populating. No-op when already on Studio.
+    _switchToStudioForOutput();
 
     // GPU wake — same logic as doGenerate. Batch jobs all hit Qwen,
     // so we want the container alive before they start dequeuing.
@@ -11187,6 +11181,10 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
         showNotif(`Queue is full (${activeCount}/12). Wait for some jobs to finish.`, 'error');
         return;
     }
+    // Multi-angle batch is starting — flip the stage to Studio so the
+    // batch tile grid renders where the user can see it. No-op when
+    // already on Studio.
+    _switchToStudioForOutput();
 
     // Shared generation params — match current sidebar settings. Elevation
     // and distance are now part of the shot spec, NOT read from the sidebar,
@@ -15109,7 +15107,6 @@ function _buildGalleryCard(it, surface){
         if (ev.target.closest('.gc-unshare')) return;
         if (ev.target.closest('.gc-reveal-overlay')) return;
         if (ev.target.closest('.gc-keyword')) return;
-        if (ev.target.closest('.gc-remix-icon')) return;
         if (ev.target.closest('.gc-reactions')) return;
         openModal(it.url, null, ctx);
     };
@@ -15141,13 +15138,11 @@ function _buildGalleryCard(it, surface){
            </div>`
         : '';
 
-    // ── Remix icon (top-right) ──────────────────────────────────────
-    // Always present — viewers tapping this kick off the 5-token remix
-    // flow that loads the image into Create mode as a reference. Owners
-    // see it too (so they can use their own work as input for a new gen
-    // without paying themselves). On hover-capable devices it fades in
-    // on card hover; on touch it's always visible (CSS handles both).
-    const remixIcon = `<button class="gc-remix-icon" title="Remix this image (5 tokens to creator)" onclick="event.stopPropagation(); remixGalleryItem('${it.id}')">🎨</button>`;
+    // Remix has its own dedicated button in the reactions bar at the
+    // bottom of the card (added in a later iteration) — clearer CTA
+    // than a hover-only icon, and avoids overlapping the unshare ×
+    // on the user's own posts. The previous top-right paint-brush
+    // icon is gone; the reactions-bar button is the canonical entry.
 
     // ── Author overlay (bottom-left of thumb) ──────────────────────
     // Deterministic avatar color from the author hash so the same user
@@ -15186,7 +15181,6 @@ function _buildGalleryCard(it, surface){
             <img src="${it.url}" loading="lazy" alt="">
             ${nsfwBadge}
             ${mineBadge}
-            ${remixIcon}
             ${unshareBtn}
             ${authorOverlay}
             ${revealOverlay}
@@ -16031,6 +16025,16 @@ function setStageView(view){
     // Drive visibility. _syncStageGalleryVisibility reads window._stageView
     // and acts accordingly.
     _syncStageGalleryVisibility();
+}
+
+// Called from every generate-submit code path right after preflight
+// passes. Flips the stage from Gallery to Studio so the result lands
+// where the user is looking. No-op when already on Studio. Pulled out
+// as a helper because there are several entry points (doGenerate,
+// doGenerateMode, generateAngleBatch, generateBatchEdits) and we
+// want a single line at each call site.
+function _switchToStudioForOutput(){
+    if (window._stageView !== 'studio') setStageView('studio');
 }
 
 // Show / hide the inline stage gallery. Behavior depends on
@@ -17219,6 +17223,12 @@ document.addEventListener('DOMContentLoaded',()=>{
     initSlots();
     restorePersistedInputs();
     restoreGenerateState();
+    // Force the sidebar into Create-mode state on every fresh load.
+    // currentMode is initialized to 'generate' at the top of the file
+    // and the Create button is the one marked .active in HTML, but the
+    // .sec.*-only sections need an explicit setMode call to flip their
+    // display from the HTML defaults (which still show camera-only).
+    setMode('generate');
     // Two-way binding for all slider / number-input pairs
     // Seed: no slider (useless across a 0–2^31 range), keep rngSeed hidden
     //       input in sync with vSeed so legacy code reading rngSeed still works.
