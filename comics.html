@@ -223,7 +223,7 @@ input,textarea{font-family:inherit;color:inherit}
 /* ─── Main canvas ──────────────────────────────────────────────── */
 .canvas{padding:18px 22px 14px;overflow-y:auto;display:flex;flex-direction:column;min-width:0;min-height:0}
 .canvas-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;flex-shrink:0}
-.canvas > #comic-page{flex:1;min-height:0}
+.canvas > #comic-page{flex:1 0 auto;min-height:0}
 .canvas > #page-strip{flex-shrink:0;margin-top:8px}
 .canvas-title-wrap{flex:1;min-width:0}
 .canvas-title{
@@ -234,17 +234,51 @@ input,textarea{font-family:inherit;color:inherit}
 .canvas-title svg:hover{color:var(--gold)}
 .canvas-subtitle{font-size:12px;color:var(--text-muted);margin-top:2px}
 
-.canvas-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.canvas-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:relative}
 .ctrl-select{
   display:flex;align-items:center;gap:8px;
   padding:8px 12px;border-radius:6px;
   background:var(--surface);border:1px solid var(--border);
   font-size:12px;color:var(--text);transition:all .15s;
+  cursor:pointer;font-family:inherit;
 }
 .ctrl-select:hover{border-color:var(--border-strong)}
+.ctrl-select.open{border-color:var(--gold);color:var(--gold)}
+.ctrl-select.open .ctrl-icon,
+.ctrl-select.open .ctrl-chev{color:var(--gold)}
 .ctrl-select .ctrl-icon{width:14px;height:14px;color:var(--text-muted)}
 .ctrl-select .ctrl-dot{width:10px;height:10px;border-radius:50%;background:var(--purple)}
 .ctrl-select .ctrl-chev{width:11px;height:11px;color:var(--text-muted);margin-left:2px}
+
+/* Popover menu attached to a ctrl-select. Positioned absolutely beneath
+   the button via JS. Lists options + (optional) explanatory subtitle. */
+.ctrl-popover{
+  position:absolute;
+  top:100%;left:0;margin-top:6px;
+  min-width:280px;max-width:340px;
+  background:var(--surface-2);border:1px solid var(--border-strong);
+  border-radius:8px;padding:6px;
+  box-shadow:0 12px 36px rgba(0,0,0,.55);
+  z-index:50;
+  display:none;
+}
+.ctrl-popover.open{display:block}
+.ctrl-popover-header{
+  padding:8px 10px 4px;font-family:var(--font-mono);
+  font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--text-muted);
+}
+.ctrl-option{
+  display:flex;flex-direction:column;gap:2px;
+  padding:9px 12px;border-radius:6px;cursor:pointer;
+  transition:background .12s;
+}
+.ctrl-option:hover{background:var(--surface-3)}
+.ctrl-option.active{background:rgba(232,169,23,.10);box-shadow:inset 0 0 0 1px rgba(232,169,23,.35)}
+.ctrl-option-label{font-size:12.5px;color:var(--text);font-weight:600}
+.ctrl-option.active .ctrl-option-label{color:var(--gold)}
+.ctrl-option-sub{font-size:10.5px;color:var(--text-muted);line-height:1.4;font-family:var(--font-mono)}
+.ctrl-popover hr{border:0;border-top:1px solid var(--border);margin:4px 6px}
 .btn{
   display:flex;align-items:center;gap:7px;
   padding:8px 14px;border-radius:6px;
@@ -257,6 +291,20 @@ input,textarea{font-family:inherit;color:inherit}
 .btn-primary{background:var(--gold);color:var(--black)}
 .btn-primary:hover{background:var(--gold-light);box-shadow:0 0 16px var(--gold-glow)}
 .btn-primary svg{width:13px;height:13px}
+
+/* Small caption next to Generate Page that explains what it does.
+   Wraps to its own line if the controls row doesn't have space. */
+.gen-explain{
+  display:flex;align-items:center;gap:6px;
+  font-size:11px;color:var(--text-muted);
+  font-style:italic;line-height:1.4;
+  max-width:280px;
+  flex-basis:100%;margin-top:2px;
+}
+.gen-explain svg{
+  width:13px;height:13px;flex-shrink:0;
+  color:var(--text-muted);
+}
 
 /* ─── Comic page grid (5-panel layout) ─────────────────────────── */
 .comic-page{
@@ -283,6 +331,45 @@ input,textarea{font-family:inherit;color:inherit}
 .panel[data-panel="3"]{grid-area:p3}
 .panel[data-panel="4"]{grid-area:p4}
 .panel[data-panel="5"]{grid-area:p5}
+.panel[data-panel="6"]{grid-area:p6}
+.panel[data-panel="7"]{grid-area:p7}
+.panel[data-panel="8"]{grid-area:p8}
+.panel[data-panel="9"]{grid-area:p9}
+
+/* Panel-count layouts. Each is a grid-template-areas map. The
+   grid-template-rows are tuned for ~600px canvas heights; rows
+   stretch to fill if more space is available. */
+.comic-page.layout-2{
+  grid-template-columns:1fr; grid-template-rows: 1fr 1fr;
+  grid-template-areas:"p1" "p2";
+}
+.comic-page.layout-3{
+  grid-template-columns:1fr 1fr; grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "p1 p1"
+    "p2 p3";
+}
+.comic-page.layout-4{
+  grid-template-columns:1fr 1fr; grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "p1 p2"
+    "p3 p4";
+}
+/* layout-5 stays the default rule above */
+.comic-page.layout-6{
+  grid-template-columns:1fr 1fr; grid-template-rows: 1fr 1fr 1fr;
+  grid-template-areas:
+    "p1 p2"
+    "p3 p4"
+    "p5 p6";
+}
+.comic-page.layout-9{
+  grid-template-columns:1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr;
+  grid-template-areas:
+    "p1 p2 p3"
+    "p4 p5 p6"
+    "p7 p8 p9";
+}
 
 /* Per-panel empty slot — shown when the panel has no image_url yet */
 .panel-empty{
@@ -319,22 +406,22 @@ input,textarea{font-family:inherit;color:inherit}
    dashed box that exaggerates how empty it feels. */
 .canvas-empty{
   position:relative;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:14px;
-  min-height:380px;
+  align-items:center;justify-content:center;gap:10px;
+  min-height:320px;
   width:100%;max-width:520px;margin:0 auto;
-  padding:28px 28px;
+  padding:20px 28px;
   text-align:center;
 }
 .canvas-empty-icon{
-  width:112px;height:112px;border-radius:18px;overflow:hidden;
+  width:88px;height:88px;border-radius:16px;overflow:hidden;
   flex-shrink:0;
   background:
     radial-gradient(ellipse at 50% 35%, rgba(232,169,23,.10) 0%, rgba(232,169,23,.02) 70%),
     var(--surface);
   border:1px solid rgba(232,169,23,.22);
-  padding:10px;display:flex;align-items:center;justify-content:center;
+  padding:8px;display:flex;align-items:center;justify-content:center;
   margin-bottom:2px;
-  box-shadow:0 8px 32px rgba(0,0,0,.5), 0 0 28px rgba(232,169,23,.12);
+  box-shadow:0 6px 24px rgba(0,0,0,.45), 0 0 22px rgba(232,169,23,.10);
 }
 .canvas-empty-icon img{width:100%;height:100%;object-fit:contain;display:block;flex-shrink:0}
 .canvas-empty-inner{
@@ -1435,24 +1522,39 @@ input,textarea{font-family:inherit;color:inherit}
           <div class="canvas-subtitle editable" id="page-subtitle" contenteditable="true" spellcheck="false" data-placeholder="Add subtitle…"></div>
         </div>
         <div class="canvas-controls">
-          <button class="ctrl-select">
+          <button class="ctrl-select" id="layout-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
             <svg class="ctrl-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-            Layout: 5 Panels
+            <span id="layout-btn-label">Layout: 5 Panels</span>
             <svg class="ctrl-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-          <button class="ctrl-select">
-            <span class="ctrl-dot"></span>
-            Mood: Dark / Epic
+          <button class="ctrl-select" id="mood-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <span class="ctrl-dot" id="mood-dot"></span>
+            <span id="mood-btn-label">Mood: Dark / Epic</span>
             <svg class="ctrl-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-          <button class="btn btn-secondary" id="regen-page-btn">
+          <button class="ctrl-select" id="engine-btn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choose the image model and any LoRAs">
+            <svg class="ctrl-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+            <span id="engine-btn-label">Engine: Auto</span>
+            <svg class="ctrl-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <button class="btn btn-secondary" id="regen-page-btn" title="Regenerate art only — keeps the panel breakdown and dialogue as-is">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             Regenerate Page
           </button>
-          <button class="btn btn-primary" id="gen-page-btn">
+          <button class="btn btn-primary" id="gen-page-btn" title="Lay out panels and generate AI art for this page from your story summary, characters, and style">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             Generate Page
           </button>
+          <div class="gen-explain" id="gen-explain">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span id="gen-explain-text">Generates panel layout + AI art using your characters, style, and page summary</span>
+          </div>
+          <!-- Popovers for the three ctrl-select buttons above. Inside
+               canvas-controls so absolute positioning anchors to the
+               relative parent. -->
+          <div class="ctrl-popover" id="layout-popover" role="listbox"></div>
+          <div class="ctrl-popover" id="mood-popover" role="listbox"></div>
+          <div class="ctrl-popover" id="engine-popover" role="listbox"></div>
         </div>
       </div>
 
@@ -2137,8 +2239,15 @@ async function generatePageAction(isRegen) {
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Generating…`;
 
   try {
+    const meta = (typeof activePageMeta === 'function') ? activePageMeta() : {};
     const res = await api.post(
-      '/api/comics/pages/' + encodeURIComponent(state.activePage) + '/generate'
+      '/api/comics/pages/' + encodeURIComponent(state.activePage) + '/generate',
+      {
+        layout: meta.layout || 5,
+        mood: meta.mood || 'dark_epic',
+        engine: meta.engine || 'auto',  // 'auto' | 'qwen-2511' | 'gpt-image-2'
+        regenerate: !!isRegen,
+      }
     );
     if (res && res.error) throw new Error(res.error);
 
@@ -2179,6 +2288,175 @@ async function generatePageAction(isRegen) {
 }
 $('#gen-page-btn').addEventListener('click', () => generatePageAction(false));
 $('#regen-page-btn').addEventListener('click', () => generatePageAction(true));
+
+// ═════════════════════════════════════════════════════════════════
+// Page-level controls: Layout, Mood, Engine
+//
+// Each ctrl-select button opens a popover with options. Selection
+// updates the corresponding page (Layout / Mood) or project-level
+// engine field, persists via PATCH, and re-renders the comic page
+// with the right layout class.
+//
+// The Engine selector exposes the model + LoRA routing the backend
+// uses for image generation. "Auto" lets the backend pick — qwen-2511
+// for camera-angle-heavy panels, gpt-image-2 for general scenes.
+// The user can override either way; the override is sent on each
+// /generate call and carried per-page.
+// ═════════════════════════════════════════════════════════════════
+
+const LAYOUTS = [
+  { v: 2, name: '2 Panels',  sub: 'Splash + reveal — high impact moments' },
+  { v: 3, name: '3 Panels',  sub: 'Establishing shot + two reactions' },
+  { v: 4, name: '4 Panels',  sub: 'Standard 2×2 — pacing and dialogue' },
+  { v: 5, name: '5 Panels',  sub: 'Hero shot + scene + closer (default)' },
+  { v: 6, name: '6 Panels',  sub: 'Manga 2×3 — denser storytelling' },
+  { v: 9, name: '9 Panels',  sub: 'Watchmen grid — slow, deliberate rhythm' },
+];
+const MOODS = [
+  { v: 'dark_epic',     name: 'Dark / Epic',      sub: 'High contrast, dramatic lighting, somber palette',     dot: '#b794f4' },
+  { v: 'tense_noir',    name: 'Tense / Noir',     sub: 'Deep shadows, low key, neon accents',                  dot: '#4fd1c5' },
+  { v: 'light_hopeful', name: 'Light / Hopeful',  sub: 'Soft light, warm palette, open compositions',          dot: '#f6e05e' },
+  { v: 'gritty_real',   name: 'Gritty / Realistic', sub: 'Muted, grounded color, documentary framing',         dot: '#a0aec0' },
+  { v: 'whimsical',     name: 'Whimsical',        sub: 'Saturated, playful, storybook lighting',               dot: '#f687b3' },
+];
+const ENGINES = [
+  { v: 'auto',         name: 'Auto (recommended)',  sub: 'Backend picks per panel: Qwen-2511 for camera-angle-heavy shots, GPT-Image-2 for general scenes' },
+  { v: 'qwen-2511',    name: 'Qwen-2511',           sub: 'Camera-angle model — best for action, dynamic POV, dramatic framing' },
+  { v: 'gpt-image-2',  name: 'GPT-Image-2',         sub: 'OpenAI image model — best for portraits, environments, painterly scenes' },
+];
+
+// Read the active page's stored layout/mood, or fall back to defaults.
+function activePageMeta() {
+  const pg = state.pages.find(p => p.id === state.activePage) || {};
+  return {
+    layout: pg.layout || (state.project && state.project.default_layout) || 5,
+    mood:   pg.mood   || (state.project && state.project.default_mood)   || 'dark_epic',
+    engine: (state.project && state.project.engine_model) || 'auto',
+  };
+}
+
+function applyPageMetaToUI() {
+  const m = activePageMeta();
+  const layoutOpt = LAYOUTS.find(l => l.v === +m.layout) || LAYOUTS[3];
+  const moodOpt   = MOODS.find(x => x.v === m.mood)      || MOODS[0];
+  const engineOpt = ENGINES.find(x => x.v === m.engine)  || ENGINES[0];
+  const lbl1 = $('#layout-btn-label'); if (lbl1) lbl1.textContent = 'Layout: ' + layoutOpt.name;
+  const lbl2 = $('#mood-btn-label');   if (lbl2) lbl2.textContent = 'Mood: ' + moodOpt.name;
+  const lbl3 = $('#engine-btn-label'); if (lbl3) lbl3.textContent = 'Engine: ' + (engineOpt.v === 'auto' ? 'Auto' : engineOpt.name);
+  const dot = $('#mood-dot'); if (dot) dot.style.background = moodOpt.dot;
+  // Apply layout class to comic-page so the grid template matches.
+  const cp = $('#comic-page');
+  if (cp) {
+    cp.classList.forEach(c => { if (c.startsWith('layout-')) cp.classList.remove(c); });
+    cp.classList.add('layout-' + (+m.layout || 5));
+  }
+  // Update the explain caption based on current selection.
+  const exp = $('#gen-explain-text');
+  if (exp) {
+    let engineLabel;
+    if (engineOpt.v === 'auto') {
+      engineLabel = 'Qwen-2511 or GPT-Image-2 (auto-routed per panel)';
+    } else {
+      engineLabel = engineOpt.name;
+    }
+    exp.textContent = `Lays out ${layoutOpt.v} panels and generates art with ${engineLabel}, using your characters, story summary, and selected style.`;
+  }
+}
+
+function buildPopover(popId, btnId, options, getCurrentV, onPick, headerText) {
+  const pop = document.getElementById(popId);
+  const btn = document.getElementById(btnId);
+  if (!pop || !btn) return;
+  const currentV = getCurrentV();
+  pop.innerHTML = (headerText ? `<div class="ctrl-popover-header">${headerText}</div>` : '') +
+    options.map(o => `
+      <div class="ctrl-option ${String(o.v) === String(currentV) ? 'active' : ''}" data-v="${o.v}" role="option">
+        <div class="ctrl-option-label">${escHtml(o.name)}</div>
+        <div class="ctrl-option-sub">${escHtml(o.sub)}</div>
+      </div>
+    `).join('');
+  // Position popover under the button (canvas-controls is position:relative)
+  pop.style.left = btn.offsetLeft + 'px';
+  pop.style.top  = (btn.offsetTop + btn.offsetHeight) + 'px';
+  pop.querySelectorAll('.ctrl-option').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const v = el.dataset.v;
+      closeAllPopovers();
+      onPick(v);
+    });
+  });
+}
+
+function openPopover(popId, btnId) {
+  closeAllPopovers();
+  const pop = document.getElementById(popId);
+  const btn = document.getElementById(btnId);
+  if (!pop || !btn) return;
+  pop.classList.add('open');
+  btn.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+}
+
+function closeAllPopovers() {
+  document.querySelectorAll('.ctrl-popover.open').forEach(p => p.classList.remove('open'));
+  document.querySelectorAll('.ctrl-select.open').forEach(b => {
+    b.classList.remove('open');
+    b.setAttribute('aria-expanded', 'false');
+  });
+}
+
+// Close any open popover when clicking outside the controls area
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.canvas-controls') && !e.target.closest('.ctrl-popover')) {
+    closeAllPopovers();
+  }
+});
+
+// Wire each ctrl-select button to build + open its popover
+function wirePageControls() {
+  const layoutBtn = $('#layout-btn');
+  const moodBtn   = $('#mood-btn');
+  const engineBtn = $('#engine-btn');
+  if (layoutBtn) layoutBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (document.getElementById('layout-popover').classList.contains('open')) { closeAllPopovers(); return; }
+    buildPopover('layout-popover', 'layout-btn', LAYOUTS, () => activePageMeta().layout,
+      (v) => savePageMeta({ layout: +v }), 'Panel layout (this page)');
+    openPopover('layout-popover', 'layout-btn');
+  });
+  if (moodBtn) moodBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (document.getElementById('mood-popover').classList.contains('open')) { closeAllPopovers(); return; }
+    buildPopover('mood-popover', 'mood-btn', MOODS, () => activePageMeta().mood,
+      (v) => savePageMeta({ mood: v }), 'Mood (this page)');
+    openPopover('mood-popover', 'mood-btn');
+  });
+  if (engineBtn) engineBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (document.getElementById('engine-popover').classList.contains('open')) { closeAllPopovers(); return; }
+    buildPopover('engine-popover', 'engine-btn', ENGINES, () => activePageMeta().engine,
+      (v) => saveEngineChoice(v), 'Image generation engine (project-wide)');
+    openPopover('engine-popover', 'engine-btn');
+  });
+}
+
+async function savePageMeta(patch) {
+  const pg = state.pages.find(p => p.id === state.activePage);
+  if (!pg) return;
+  Object.assign(pg, patch);
+  applyPageMetaToUI();
+  try { await api.patch('/api/comics/pages/' + encodeURIComponent(pg.id), patch); } catch (_) {}
+}
+async function saveEngineChoice(v) {
+  if (!state.project) state.project = {};
+  state.project.engine_model = v;
+  applyPageMetaToUI();
+  try { await api.patch('/api/comics/projects/' + encodeURIComponent(state.projectId), { engine_model: v }); } catch (_) {}
+}
+
+wirePageControls();
+applyPageMetaToUI();
 
 // spin keyframe for the generate spinner
 const sty = document.createElement('style');
@@ -3392,6 +3670,7 @@ setActivePage = function(id) {
   if (typeof renderComicPage === 'function') renderComicPage();
   if (typeof renderPanelList === 'function') renderPanelList();
   if (typeof renderPanelCast === 'function') renderPanelCast();
+  if (typeof applyPageMetaToUI === 'function') applyPageMetaToUI();
 };
 
 // ═════════════════════════════════════════════════════════════════
