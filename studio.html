@@ -12425,7 +12425,19 @@ function restoreFromHistory(j){
     }
     // Camera / Edit / Batch — original behavior.
     showResult({ url: j.url, w: j.w, h: j.h, prompt: j.prompt, seed: j.seed, elapsed: j.elapsed, mode: j.mode });
-    if ($('promptInput') && j.prompt) $('promptInput').value = j.prompt;
+    // Route the restored prompt by the job's actual mode. Same reasoning
+    // as restoreJobState: writing j.prompt blindly into promptInput meant
+    // an Edit/Batch history click polluted the Camera prompt bar. Only
+    // touch the field that owns prompts for this mode.
+    if (j.prompt) {
+        if (j.mode === 'camera' && $('promptInput')) {
+            $('promptInput').value = j.prompt;
+        } else if (j.mode === 'edit' && $('customPrompt')) {
+            $('customPrompt').value = j.prompt;
+        } else if (j.mode === 'batch' && $('batchPrompt')) {
+            $('batchPrompt').value = j.prompt;
+        }
+    }
     if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
 }
@@ -12646,8 +12658,24 @@ function restoreJobState(jobId){
             probe.src = slot0.url;
         }
     }
-    if($('promptInput')) $('promptInput').value=s.prompt||'';
-    if($('customPrompt')) $('customPrompt').value=s.prompt||'';
+    // Route the restored prompt to the field that owns it for this job's
+    // mode. Writing s.prompt into BOTH promptInput and customPrompt
+    // unconditionally (previous behavior) leaked Edit prompts into the
+    // Camera prompt bar — a user who later switched to Camera mode would
+    // find their edit text sitting there in place of the camera SKS prompt.
+    // Camera's prompt is a structured "<sks> {az} {el} {dist}" string that
+    // the camera-pose widget rewrites on the fly, so a stray edit prompt
+    // there is doubly wrong: wrong content AND it gets clobbered the next
+    // time the user nudges the camera.
+    if (s.mode === 'camera') {
+        if ($('promptInput')) $('promptInput').value = s.prompt || '';
+    } else if (s.mode === 'edit') {
+        if ($('customPrompt')) $('customPrompt').value = s.prompt || '';
+    } else if (s.mode === 'batch') {
+        if ($('batchPrompt')) $('batchPrompt').value = s.prompt || '';
+    } else if (s.mode === 'generate') {
+        if ($('generatePrompt')) $('generatePrompt').value = s.prompt || '';
+    }
     if($('negPrompt')) $('negPrompt').value=s.negative_prompt||'';
     $('rngSeed').value=s.seed||42; $('vSeed').value=s.seed||42;
     $('rngCfg').value=s.guidance_scale||1; $('vCfg').value=s.guidance_scale||1;
