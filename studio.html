@@ -1678,6 +1678,10 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    Compact modal for setting the user's display name. Smaller than
    the publish dialog (one input + a live preview chip), centered,
    dark surface to match the rest of the app. */
+/* Profile dialog opens via the user menu in the header — same
+   z-index treatment as the share dialog so it never gets hidden
+   under the lightbox or popovers. */
+#profileDialog{z-index:10050}
 .profile-dialog-panel{
     background:var(--surface);border:1px solid var(--border);
     border-radius:10px;width:min(440px, calc(100vw - 32px));
@@ -1773,6 +1777,13 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .profile-dialog-btn.primary:hover{background:var(--gold-hover, #f0b829);color:#0a0a0c}
 .profile-dialog-btn:disabled{opacity:.5;cursor:not-allowed}
 
+/* ── Share / Publish dialog ─────────────────────────────────────────
+   The publish flow opens from the lightbox (which sits at z-index
+   9999), so the share dialog needs to layer ABOVE it — otherwise
+   the lightbox image and its action bar bleed through. We use a
+   high z-index (10050) so it also clears popovers (filter, picker,
+   remix menu — all 10040) and the lightbox-comments side panel. */
+#shareDialog{z-index:10050}
 .share-dialog-panel{
     background:var(--surface);border:1px solid var(--border);
     border-radius:8px;max-width:min(680px,94vw);
@@ -5245,13 +5256,27 @@ function closeMobileSidebar(){
     if (sb) sb.classList.remove('open');
     if (sc) sc.classList.remove('open');
 }
-// Close drawer when user taps a mode button or generates — interactions that
-// imply they want to see the output, not keep the menu in their face.
+// Close drawer when user taps a mode button or any generate button —
+// interactions that imply they want to see the output, not keep the
+// menu in their face. The selector includes:
+//   .mode-btn        — Camera/Edit/Batch/Create switcher in sidebar
+//   .gen-btn         — every primary action button (Generate, Create,
+//                      All Angles 6/20/96, etc.) — they all share
+//                      this class so one selector covers them all
+//   #btnGen          — the original Camera-mode Generate button
+//   #btnGenerateMode — Create-mode entry
+//   .hdr-mode-btn    — the new mobile header mode switcher
+// Anything else (sliders, dropdowns, file pickers) leaves the drawer
+// open so users can keep configuring.
 document.addEventListener('click', (e) => {
     if (window.innerWidth > 900) return;
     const target = e.target;
     if (!target) return;
-    if (target.closest('.mode-btn') || target.closest('#btnGenerate')) {
+    if (target.closest('.mode-btn')
+        || target.closest('.hdr-mode-btn')
+        || target.closest('.gen-btn')
+        || target.closest('#btnGen')
+        || target.closest('#btnGenerateMode')) {
         closeMobileSidebar();
     }
 });
@@ -16918,12 +16943,17 @@ function _syncStageGalleryVisibility(){
         sg.style.display = 'none';
         return;
     }
-    // Gallery mode — show the feed unless a real result is up.
-    const phVisible = ph.style.display !== 'none';
-    sg.style.display = phVisible ? 'flex' : 'none';
+    // Gallery mode — ALWAYS show the feed, regardless of whether
+    // there's an active output or batch on the stage. The user
+    // explicitly asked for the gallery; covering the workspace is
+    // intentional. .stage-gallery is position:absolute and lives in
+    // the main output area, so it naturally overlays the batch grid /
+    // focused output below. Picking the Studio tab again reveals the
+    // workspace exactly as it was — nothing is destroyed.
+    sg.style.display = 'flex';
     // First-time visible → fire the initial page fetch so users see
     // images immediately on landing. Subsequent toggles reuse cache.
-    if (phVisible && !_stageGalleryFirstLoaded) {
+    if (!_stageGalleryFirstLoaded) {
         _stageGalleryFirstLoaded = true;
         updateFilterBadge('stage');
         // Paint skeleton tiles so the user sees image-shaped boxes
