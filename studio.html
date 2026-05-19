@@ -2596,6 +2596,39 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     .hdr-stage-tabs{margin-left:8px}
 }
 
+/* ── Mobile mode switcher (top bar) ─────────────────────────────────
+   Three prominent buttons — Camera / Edit / Create — that surface
+   the primary mode picker on phones where the sidebar is a hidden
+   drawer. Hidden on desktop (sidebar already exposes the same
+   controls). Stretches to fill the available space so each button
+   has a generous tap target; Create is highlighted by default. */
+.hdr-mode-switcher{
+    display:none;  /* desktop: hidden; mobile media query un-hides */
+}
+.hdr-mode-btn{
+    flex:1 1 0;
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    background:var(--surface-2);border:1px solid var(--border);
+    color:var(--text-muted);cursor:pointer;
+    padding:8px 6px;border-radius:7px;
+    font-family:var(--font-mono);font-size:10px;font-weight:700;
+    letter-spacing:.5px;text-transform:uppercase;
+    transition:all .15s;line-height:1;
+    min-width:0;
+}
+.hdr-mode-btn:hover{color:var(--text);border-color:var(--gold-dim)}
+.hdr-mode-btn.active{
+    background:var(--gold);color:var(--black);
+    border-color:var(--gold);
+    box-shadow:0 0 0 1px var(--gold) inset, 0 2px 8px rgba(232,169,23,.25);
+}
+.hdr-mode-btn.active:hover{background:var(--gold);color:var(--black)}
+.hdr-mode-icon{font-size:13px;line-height:1}
+.hdr-mode-label{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    letter-spacing:.5px;
+}
+
 .stage-gallery{
     position:absolute;inset:0;z-index:5;
     display:flex;flex-direction:column;
@@ -3383,6 +3416,24 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     .hdr-right #userEmail { display: none; }
     .hdr-right .user-avatar { display: none; }
     #btnGpu { display: none; }
+    /* Hide the title text entirely on mobile — the mode switcher
+       takes its slot. Logo image stays for branding. The stage tabs
+       (Gallery/Studio) are also dropped here since the new mode
+       switcher already implies Studio when picked, and the Gallery
+       overlay is reachable from the buy/auth menu and gallery
+       header chrome. */
+    .app-header h1 { display: none; }
+    .app-header .hdr-stage-tabs { display: none; }
+    /* Mobile mode switcher: visible, full-width filler between
+       hamburger and auth controls. Three buttons, equal width,
+       Create active by default. */
+    .hdr-mode-switcher {
+        display: flex;
+        flex: 1 1 auto;
+        min-width: 0;
+        gap: 4px;
+        margin: 0 6px;
+    }
     /* Gallery header button: shrink to icon-only on phones to make room
        for the auth controls. The 🎨 emoji is the affordance; "Gallery"
        label drops on narrow widths. */
@@ -3610,6 +3661,26 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <button class="stage-tab" data-view="studio" onclick="setStageView('studio')" title="Your workspace">
             <span class="stage-tab-icon">🎨</span>
             <span class="stage-tab-label">Studio</span>
+        </button>
+    </div>
+    <!-- ── MOBILE MODE SWITCHER ───────────────────────────────────────
+         On phones the sidebar mode buttons are hidden behind the
+         drawer, so we surface a parallel control here that lets the
+         user flip between Camera / Edit / Create from the top bar
+         without opening the drawer. The same setMode + onMobileSetMode
+         pair runs so the sidebar buttons stay in sync if the user
+         opens the drawer afterwards. Defaults to Create (matches
+         currentMode='generate' at file top). Desktop hides this
+         block via the media query in CSS. -->
+    <div class="hdr-mode-switcher" id="hdrModeSwitcher">
+        <button class="hdr-mode-btn" data-mode="camera" onclick="onMobileSetMode('camera')" title="Camera mode">
+            <span class="hdr-mode-icon">🎥</span><span class="hdr-mode-label">Camera</span>
+        </button>
+        <button class="hdr-mode-btn" data-mode="edit" onclick="onMobileSetMode('edit')" title="Edit mode">
+            <span class="hdr-mode-icon">✏️</span><span class="hdr-mode-label">Edit</span>
+        </button>
+        <button class="hdr-mode-btn active" data-mode="generate" onclick="onMobileSetMode('generate')" title="Create mode">
+            <span class="hdr-mode-icon">✨</span><span class="hdr-mode-label">Create</span>
         </button>
     </div>
     <div class="hdr-right">
@@ -4773,7 +4844,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="modal-actions" id="modalActions" style="display:none" onclick="event.stopPropagation()">
         <button class="modal-action-btn" id="modalActCritique" title="Critique this result">🔬<span>Critique</span></button>
         <button class="modal-action-btn" id="modalActEdit" title="Edit this view">✎<span>Edit</span></button>
-        <button class="modal-action-btn" id="modalActToCamera" title="Use as Camera input">📷<span>To Camera</span></button>
+        <button class="modal-action-btn" id="modalActToCamera" title="Use as Camera input">🎥<span>To Camera</span></button>
+        <button class="modal-action-btn" id="modalActToEdit" title="Use as Edit input">✏️<span>To Edit</span></button>
         <button class="modal-action-btn" id="modalActToCreate" title="Use as reference in Create mode">✨<span>To Create</span></button>
         <!-- Share button — visible whenever the modal was opened with a
              jobId. Class toggles to .shared (gold) when is_public=1.
@@ -5131,6 +5203,30 @@ let _queueMinimized = (() => {
 let lastResult=null;
 let lastOutputFilename=null;
 window._promptLocked=false;
+
+// ── Mobile mode switcher ──────────────────────────────────────────
+// Header-bar version of the three primary modes (Camera / Edit /
+// Create). Surfaces what's normally behind the drawer so phone
+// users can switch modes without opening the menu. Also closes the
+// drawer if it was left open, flips the stage to Studio so the
+// user sees the working area for the mode they just picked, and
+// runs the same setMode() that the sidebar buttons run — that
+// handles the heavy lifting (panel visibility, batch grid
+// preservation, etc.).
+function onMobileSetMode(mode){
+    if (!['camera', 'edit', 'generate'].includes(mode)) return;
+    setMode(mode);
+    // The Studio stage is where the mode's working area lives, so any
+    // explicit mode pick implies "show me Studio." Cheap when already
+    // there.
+    if (typeof setStageView === 'function' && window._stageView !== 'studio') {
+        setStageView('studio');
+    }
+    // Close the drawer if it's open — picking a mode is also a
+    // dismiss signal. No-op on desktop since the drawer never opens
+    // outside of the mobile breakpoint.
+    if (typeof closeMobileSidebar === 'function') closeMobileSidebar();
+}
 
 // ── Mobile sidebar drawer ─────────────────────────────────────────
 // On narrow screens the sidebar is positioned fixed, off-canvas. These
@@ -6057,6 +6153,15 @@ function setMode(mode, opts){
     if (btnBatch) btnBatch.classList.toggle('active', mode === 'batch');
     const btnGen = $('btnModeGenerate');
     if (btnGen) btnGen.classList.toggle('active', mode === 'generate');
+    // Keep the mobile header switcher in lockstep with the sidebar
+    // mode buttons. Batch has no header counterpart (rarely used on
+    // phones), so when the user switches into batch via the sidebar
+    // we leave the header switcher untouched — none of the three is
+    // marked active, signaling "not in any of the three quick-pick
+    // modes" without crashing the layout.
+    document.querySelectorAll('.hdr-mode-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+    });
     document.querySelectorAll('.camera-only').forEach(el => el.style.display = mode === 'camera' ? '' : 'none');
     document.querySelectorAll('.edit-only').forEach(el => el.style.display = mode === 'edit' ? '' : 'none');
     document.querySelectorAll('.batch-only').forEach(el => el.style.display = mode === 'batch' ? '' : 'none');
@@ -8531,7 +8636,7 @@ function openModal(src, filename, ctx){
         actionBar.removeAttribute('data-gallery-item');
         // Hide every action button first; each context turns on the ones
         // it supports. Avoids stale visibility from the previous open.
-        ['modalActCritique','modalActEdit','modalActToCamera','modalActToCreate','modalActShare',
+        ['modalActCritique','modalActEdit','modalActToCamera','modalActToEdit','modalActToCreate','modalActShare',
          'modalActRemix','modalActRemixCamera','modalActRemixEdit','modalActRemixCreate',
          'modalActLike','modalActTip','modalActComments','modalActReactions']
             .forEach(id => { const b = $(id); if (b) b.style.display = 'none'; });
@@ -8545,7 +8650,7 @@ function openModal(src, filename, ctx){
         actionBar.dataset.slotIdx = String(slotIdx);
         actionBar.style.display = '';
         // Show the four batch buttons; share visibility decided below.
-        ['modalActCritique','modalActEdit','modalActToCamera','modalActToCreate']
+        ['modalActCritique','modalActEdit','modalActToCamera','modalActToEdit','modalActToCreate']
             .forEach(id => { const b = $(id); if (b) b.style.display = ''; });
         wireBtn('modalActCritique', () => {
             if (!_activeBatch) return;
@@ -8566,6 +8671,22 @@ function openModal(src, filename, ctx){
                 if (inp) {
                     closeModal();
                     sendBatchInputToCamera(inp);
+                }
+            } finally {
+                btn.classList.remove('busy');
+            }
+        });
+        wireBtn('modalActToEdit', async () => {
+            if (!_activeBatch) return;
+            const shot = _activeBatch.shots[slotIdx];
+            if (!shot || !shot.url) return;
+            const btn = $('modalActToEdit');
+            btn.classList.add('busy');
+            try {
+                const inp = await prepareBatchShotForReuse(shot, slotIdx);
+                if (inp) {
+                    closeModal();
+                    sendBatchInputToEdit(inp);
                 }
             } finally {
                 btn.classList.remove('busy');
@@ -18122,6 +18243,20 @@ document.addEventListener('DOMContentLoaded',()=>{
     // .sec.*-only sections need an explicit setMode call to flip their
     // display from the HTML defaults (which still show camera-only).
     setMode('generate');
+    // On mobile (width <= 900px) the sidebar is a fixed off-canvas
+    // drawer. Default it to OPEN on first paint so users immediately
+    // see the workspace controls instead of an empty stage with a
+    // hamburger they have to discover. They can tap the scrim, hit
+    // the X / hamburger, or pick a mode to dismiss — at which point
+    // it stays closed for the rest of the session (no localStorage
+    // here: we don't want a stuck-open drawer to follow them across
+    // sessions, but a first-paint reveal is high-value for discovery).
+    if (window.innerWidth <= 900) {
+        const sb = document.querySelector('.sidebar');
+        const sc = $('sidebarScrim');
+        if (sb) sb.classList.add('open');
+        if (sc) sc.classList.add('open');
+    }
     // Two-way binding for all slider / number-input pairs
     // Seed: no slider (useless across a 0–2^31 range), keep rngSeed hidden
     //       input in sync with vSeed so legacy code reading rngSeed still works.
