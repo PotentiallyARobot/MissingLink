@@ -305,6 +305,45 @@ input,textarea{font-family:inherit;color:inherit}
   color:var(--text-muted);padding:4px 0;
 }
 
+/* Environment picker — like char chips but each chip has an image
+   thumb of the environment (starter or AI-generated). Click to set
+   as the page's environment_id; clicking the active one unsets. */
+.env-picker-chips{
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+}
+.env-chip{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:4px 12px 4px 4px;border-radius:22px;
+  background:var(--surface-2);border:1px solid var(--border);
+  font-size:12px;color:var(--text-dim);cursor:pointer;
+  transition:all .15s;
+}
+.env-chip:hover{border-color:var(--border-strong);color:var(--text)}
+.env-chip.active{
+  background:rgba(232,169,23,.12);border-color:var(--gold);color:var(--gold);
+}
+.env-chip-img{
+  width:32px;height:24px;border-radius:4px;flex-shrink:0;
+  overflow:hidden;background:var(--surface-3);
+  border:1px solid var(--border);
+}
+.env-chip.active .env-chip-img{border-color:var(--gold)}
+.env-chip-img img{width:100%;height:100%;object-fit:cover;display:block}
+.env-chip-add{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:5px 11px;border-radius:22px;
+  background:transparent;border:1px dashed var(--border-strong);
+  font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+  cursor:pointer;transition:all .15s;letter-spacing:.3px;
+}
+.env-chip-add:hover{border-color:var(--gold);color:var(--gold);background:rgba(232,169,23,.05)}
+.env-chip-add svg{width:11px;height:11px}
+
+/* Inline environment create form (reuses .field-row / .text-input
+   styles from the char modal). */
+.env-create-form{display:flex;flex-direction:column;gap:14px}
+.env-create-form .field-row textarea.text-input{min-height:96px}
+
 /* Advanced — collapsed by default. The chevron rotates when open. */
 .compose-advanced{
   border:1px solid var(--border);border-radius:8px;
@@ -1709,6 +1748,19 @@ input,textarea{font-family:inherit;color:inherit}
           </div>
         </div>
 
+        <!-- Setting — environment picker. Click an env chip to use it
+             as this page's setting. + Create opens an inline form to
+             generate a new one. -->
+        <div class="compose-field">
+          <label class="compose-label">
+            <span>Setting</span>
+            <span class="compose-label-hint">— where this page takes place</span>
+          </label>
+          <div class="env-picker-chips" id="env-picker-chips">
+            <!-- populated by JS -->
+          </div>
+        </div>
+
         <!-- Advanced — collapsed by default. Layout / Mood / Engine
              live here so they don't dominate the form. -->
         <details class="compose-advanced">
@@ -2236,7 +2288,6 @@ $('#add-page-btn').addEventListener('click', addPage);
 $$('.nav-tab').forEach(t => t.addEventListener('click', () => {
   $$('.nav-tab').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
-  if (t.dataset.tab !== 'comics') toast(t.textContent.trim() + ' coming soon');
 }));
 
 // ─── Script/Art tabs ──────────────────────────────────────────
@@ -2299,14 +2350,6 @@ $$('.sb-tab').forEach(t => t.addEventListener('click', () => {
   t.classList.add('active');
 }));
 
-// ─── Toggles ──────────────────────────────────────────────────
-$$('.consistency-row').forEach(r => r.addEventListener('click', () => {
-  const t = r.querySelector('.toggle');
-  t.classList.toggle('on');
-  const name = r.querySelector('span').textContent;
-  toast(name + ' consistency ' + (t.classList.contains('on') ? 'on' : 'off'));
-}));
-
 // ─── Char counters ────────────────────────────────────────────
 function bindCounter(ta, counter){
   const el = document.querySelector(ta);
@@ -2316,15 +2359,6 @@ function bindCounter(ta, counter){
 }
 bindCounter('#dialogue-text', '#dialogue-count');
 bindCounter('#narration-text', '#narration-count');
-
-// ─── Tool buttons (AI tools) ──────────────────────────────────
-$$('.tool-btn').forEach(b => b.addEventListener('click', () => {
-  const label = b.querySelector('.tool-btn-text').textContent.replace(/\s+/g, ' ').trim();
-  toast(label + '…');
-}));
-$$('.regen-btn').forEach(b => b.addEventListener('click', () => {
-  toast(b.textContent.trim() + '…');
-}));
 
 // ─── Generate page (the big gold button) ──────────────────────
 // Calls POST /api/comics/pages/:pgid/generate. The backend gathers all
@@ -2344,19 +2378,21 @@ async function generatePageAction(isRegen) {
 
   try {
     const meta = (typeof activePageMeta === 'function') ? activePageMeta() : {};
+    const pg = state.pages.find(p => p.id === state.activePage) || {};
     const res = await api.post(
       '/api/comics/pages/' + encodeURIComponent(state.activePage) + '/generate',
       {
         layout: meta.layout || 5,
         mood: meta.mood || 'dark_epic',
         engine: meta.engine || 'auto',  // 'auto' | 'qwen-2511' | 'gpt-image-2'
+        environment_id: pg.environment_id || null,
+        character_ids: pg.character_ids || [],
         regenerate: !!isRegen,
       }
     );
     if (res && res.error) throw new Error(res.error);
 
     // Update local page status so the sidebar checkmark appears.
-    const pg = state.pages.find(p => p.id === state.activePage);
     if (pg) {
       pg.status = (res && res.status) || 'generated';
       PAGES = PAGES_VIEW();
@@ -2364,15 +2400,55 @@ async function generatePageAction(isRegen) {
       renderStrip();
     }
 
-    // If the backend returned panel-level results (OpenAI fallback
-    // path), update the panel image_urls so future renders show them.
+    // Sync the panels the server returned into state.panels. The local
+    // handler returns synthetic panels with placeholder image_urls; a
+    // real backend returns the actual generated panels. Either way the
+    // shape is the same — { panels: [{ panel_id, ok, image_url }] }
+    // plus a full panel list from a list endpoint isn't required here
+    // because we re-fetch from the local store via state.panels (which
+    // the local handler already wrote to localStorage).
     if (res && Array.isArray(res.panels)) {
-      for (const r of res.panels) {
-        if (!r.ok) continue;
-        const pn = state.panels.find(p => p.id === r.panel_id);
-        if (pn) pn.image_url = r.image_url;
+      // Pull fresh panels from local storage / server. In local mode the
+      // store was already updated by the generate handler, so we re-read.
+      try {
+        const refreshed = await api.get('/api/comics/pages/' + encodeURIComponent(state.activePage) + '/panels');
+        if (refreshed && Array.isArray(refreshed.panels)) {
+          // Replace this page's panels in state.panels
+          state.panels = state.panels.filter(p => p.page_id !== state.activePage);
+          state.panels.push(...refreshed.panels);
+        }
+      } catch (_) {
+        // Fall back: merge image_urls into existing state.panels
+        for (const r of res.panels) {
+          if (!r.ok) continue;
+          let pn = state.panels.find(p => p.id === r.panel_id);
+          if (!pn && r.panel_id) {
+            // New panel from local generate — add it
+            pn = { id: r.panel_id, page_id: state.activePage, position: state.panels.filter(p => p.page_id === state.activePage).length + 1, image_url: r.image_url };
+            state.panels.push(pn);
+          } else if (pn) {
+            pn.image_url = r.image_url;
+          }
+        }
       }
     }
+
+    // Re-render the comic page so the new panels are visible, then
+    // scroll them into view so the user actually SEES the result.
+    renderComicPage();
+    if (typeof renderPanelList === 'function') renderPanelList();
+    if (typeof renderPanelCast === 'function') renderPanelCast();
+    if (typeof setActivePanel === 'function') setActivePanel(1);
+    requestAnimationFrame(() => {
+      const cpEl = $('#comic-page');
+      if (cpEl && !cpEl.hidden) {
+        cpEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      // Collapse the Advanced disclosure if it was open — the user is
+      // done picking settings; focus shifts to the rendered page.
+      const adv = document.querySelector('.compose-advanced');
+      if (adv && adv.open) adv.open = false;
+    });
 
     const cast = state.panels
       .filter(p => p.page_id === state.activePage)
@@ -2700,6 +2776,12 @@ const api = (() => {
       writeLocal(store);
       return { ok: true };
     }
+    // GET /api/comics/pages/:pgid/panels — list panels for a page.
+    // Used after Generate to refresh the local panel state.
+    if (method === 'GET' && (m = path.match(/^\/api\/comics\/pages\/([^/]+)\/panels$/))) {
+      const pgid = m[1];
+      return { panels: store.panels.filter(p => p.page_id === pgid) };
+    }
     // POST /api/comics/projects/:pid/characters
     if (method === 'POST' && (m = path.match(/^\/api\/comics\/projects\/([^/]+)\/characters$/))) {
       const t = Math.floor(Date.now() / 1000);
@@ -2791,13 +2873,69 @@ const api = (() => {
       return { ok: true };
     }
     // POST /api/comics/pages/:pgid/generate
+    //
+    // Local-mode generate: we can't call image models without a backend,
+    // so we synthesize N panels (per the requested layout) and assign
+    // each one a placeholder image cycled from the available environment
+    // and style thumbnails. The user sees a populated comic page that
+    // looks structurally like the real thing; the actual image-gen call
+    // happens server-side when a real backend is wired up.
     if (method === 'POST' && (m = path.match(/^\/api\/comics\/pages\/([^/]+)\/generate$/))) {
       const pg = store.pages.find(p => p.id === m[1]);
       if (!pg) return { error: 'Not found' };
+      const layout = (body && +body.layout) || 5;
+      const regenerate = !!(body && body.regenerate);
+
+      // Pick placeholder thumbnails — prefer the selected environment,
+      // fall back to style thumbs.
+      const envIds = ['env_misty_forest', 'env_throne_room', 'env_ruined_kingdom'];
+      const styleKeys = ['style_dark_fantasy', 'style_cyberpunk_noir', 'style_watercolor', 'style_manga'];
+      const envId = body && body.environment_id;
+      const ASSETS = (typeof UI_ASSETS !== 'undefined') ? UI_ASSETS : {};
+      const envImg = envId && ASSETS[envId];
+
+      // Remove existing panels for this page (if regenerating) or only
+      // create new ones if none exist
+      const existing = store.panels.filter(p => p.page_id === pg.id);
+      if (regenerate || existing.length === 0) {
+        store.panels = store.panels.filter(p => p.page_id !== pg.id);
+        const newPanels = [];
+        for (let i = 1; i <= layout; i++) {
+          // Cycle placeholder art: selected env > rotating envs > style thumbs
+          const fallbackKey = envIds[(i - 1) % envIds.length];
+          const styleFallback = styleKeys[(i - 1) % styleKeys.length];
+          const placeholderImg = envImg
+            || ASSETS[fallbackKey]
+            || ASSETS[styleFallback];
+          newPanels.push({
+            id: localId('pn'),
+            page_id: pg.id,
+            position: i,
+            description: '',
+            dialogue: '',
+            narration: '',
+            character_ids: (body && body.character_ids) || [],
+            environment_id: envId || null,
+            image_url: placeholderImg || null,
+            created_at: Math.floor(Date.now() / 1000),
+          });
+        }
+        store.panels.push(...newPanels);
+      }
+
       pg.status = 'generated';
+      pg.layout = layout;
+      if (body && body.mood)   pg.mood   = body.mood;
+      if (body && body.engine) pg.engine = body.engine;  // not used here; backend uses it
       pg.updated_at = Math.floor(Date.now() / 1000);
       writeLocal(store);
-      return { ok: true, status: 'generated', local: true };
+      const returnedPanels = store.panels.filter(p => p.page_id === pg.id);
+      return {
+        ok: true,
+        status: 'generated',
+        local: true,
+        panels: returnedPanels.map(p => ({ panel_id: p.id, ok: true, image_url: p.image_url })),
+      };
     }
     // POST /api/comics/projects/:pid/environments
     // Local-mode: pick a starter image as the placeholder since we can't
@@ -3495,7 +3633,6 @@ Example: Late 30s, tall and lean, salt-and-pepper hair tied back, deep-set green
             payload
           );
           state.characters.push(savedChar);
-          toast('Created ' + name + ' · generating portrait…');
         } else {
           const res = await api.patch(
             '/api/comics/characters/' + encodeURIComponent(existing.id),
@@ -3506,7 +3643,6 @@ Example: Late 30s, tall and lean, salt-and-pepper hair tied back, deep-set green
             ? res.character
             : { ...state.characters[idx], ...payload };
           if (idx >= 0) state.characters[idx] = savedChar;
-          toast('Saved ' + name);
         }
         body.classList.remove('saving');
         renderCharList();
@@ -3880,6 +4016,8 @@ function updateComposeForm() {
   // Character chips — one chip per project character, active if the
   // character is on this page's cast.
   renderCharPickerChips();
+  // Environment chips — one chip per available environment.
+  renderEnvPickerChips();
 }
 
 // renderCharPickerChips — chip per project character; clicking toggles
@@ -3937,6 +4075,128 @@ function renderCharPickerChips() {
       }, 0);
     }
   });
+}
+
+// renderEnvPickerChips — same pattern as char chips but for the
+// page's environment_id. Single-select: clicking the active chip
+// unsets; clicking a different chip swaps. + Create environment
+// opens an inline form (no native prompt()).
+function renderEnvPickerChips() {
+  const wrap = $('#env-picker-chips');
+  if (!wrap) return;
+  const pg = state.pages.find(p => p.id === state.activePage);
+  if (!pg) { wrap.innerHTML = ''; return; }
+  const envs = (typeof allEnvironments === 'function') ? allEnvironments() : [];
+  const activeId = pg.environment_id || null;
+
+  const chipsHtml = envs.map(e => {
+    const src = (typeof UI_ASSETS !== 'undefined' && e.img && UI_ASSETS[e.img]) || e.url || '';
+    return `
+      <button class="env-chip ${e.id === activeId ? 'active' : ''}" data-eid="${escAttr(e.id)}" type="button">
+        <span class="env-chip-img">${src ? `<img src="${escAttr(src)}" alt="">` : ''}</span>
+        ${escHtml(e.name)}
+      </button>`;
+  }).join('');
+
+  wrap.innerHTML = chipsHtml + `
+    <button class="env-chip-add" id="add-env-from-compose" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Create environment
+    </button>
+  `;
+
+  wrap.querySelectorAll('.env-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const eid = chip.dataset.eid;
+      // Toggle: clicking the active chip unsets, otherwise replace
+      pg.environment_id = (pg.environment_id === eid) ? null : eid;
+      renderEnvPickerChips();
+      try { api.patch('/api/comics/pages/' + encodeURIComponent(pg.id), { environment_id: pg.environment_id }); } catch (_) {}
+    });
+  });
+  const addBtn = $('#add-env-from-compose');
+  if (addBtn) addBtn.addEventListener('click', openCreateEnvForm);
+}
+
+// openCreateEnvForm — inline modal asking name + description. Replaces
+// the old browser-native prompt() chain (which the user correctly
+// called out as awful UX). Uses the existing env-modal shell.
+function openCreateEnvForm() {
+  // Render a focused create-mode body inside the env modal
+  const body = $('#env-modal-body');
+  const foot = $('#env-modal-foot') || $('#env-modal').querySelector('.modal-foot');
+  $('#env-modal-title').textContent = 'New environment';
+  body.innerHTML = `
+    <div class="env-create-form">
+      <div class="field-row">
+        <label class="field-label">Name</label>
+        <input type="text" class="text-input" id="env-create-name" maxlength="80" placeholder="e.g. Rooftop at dusk, Coastal tavern, LV-426 surface">
+      </div>
+      <div class="field-row">
+        <label class="field-label">
+          Visual description
+          <span class="field-hint">— the AI uses this to generate the location image</span>
+        </label>
+        <textarea class="text-input" id="env-create-desc" maxlength="500" rows="4" placeholder="Describe the setting: time of day, weather, key visual landmarks, mood. Be specific enough that every panel rendered here feels like the same place."></textarea>
+      </div>
+    </div>
+  `;
+  // Replace the footer with Cancel + Generate buttons
+  if (foot) {
+    foot.innerHTML = `
+      <div class="spacer"></div>
+      <button class="btn btn-secondary" id="env-create-cancel" type="button">Cancel</button>
+      <button class="btn btn-primary" id="env-create-go" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Create &amp; generate
+      </button>
+    `;
+  }
+  $('#env-modal').classList.add('open');
+  setTimeout(() => { const n = $('#env-create-name'); if (n) n.focus(); }, 0);
+
+  $('#env-create-cancel').onclick = () => {
+    $('#env-modal').classList.remove('open');
+  };
+  $('#env-create-go').onclick = async () => {
+    const name = ($('#env-create-name').value || '').trim();
+    const description = ($('#env-create-desc').value || '').trim();
+    if (!name) {
+      const n = $('#env-create-name'); n.focus();
+      n.style.borderColor = 'var(--gold)';
+      setTimeout(() => { n.style.borderColor = ''; }, 1500);
+      return;
+    }
+    const goBtn = $('#env-create-go');
+    goBtn.disabled = true;
+    goBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Generating…';
+    try {
+      const res = await api.post(
+        '/api/comics/projects/' + encodeURIComponent(state.projectId) + '/environments',
+        { name, description }
+      );
+      if (res && res.environment) {
+        state.environments = state.environments || [];
+        state.environments.push(res.environment);
+        const cc = $('#sb-envs-count');
+        if (cc) cc.textContent = String(allEnvironments().length);
+        // Auto-assign to the current page
+        const pg = state.pages.find(p => p.id === state.activePage);
+        if (pg) {
+          pg.environment_id = res.environment.id;
+          try { api.patch('/api/comics/pages/' + encodeURIComponent(pg.id), { environment_id: pg.environment_id }); } catch (_) {}
+        }
+        renderEnvPickerChips();
+        $('#env-modal').classList.remove('open');
+      } else if (res && res.error) {
+        goBtn.innerHTML = 'Failed — try again';
+        setTimeout(() => { goBtn.disabled = false; goBtn.textContent = 'Create & generate'; }, 1500);
+      }
+    } catch (err) {
+      goBtn.disabled = false;
+      goBtn.innerHTML = 'Failed — ' + (err.message || 'try again');
+    }
+  };
 }
 
 function panelEmptyHtml(panel) {
@@ -4310,7 +4570,7 @@ async function selectStyle(key) {
       '/api/comics/projects/' + encodeURIComponent(state.projectId),
       { style_key: key, style: preset.name, style_sub: preset.sub }
     );
-    toast('Style: ' + preset.name);
+    // Silent success — the gold ring on the selected style is feedback enough.
   } catch (err) {
     toast('Style update not saved: ' + err.message);
   }
@@ -4393,35 +4653,15 @@ async function assignEnvironment(envId) {
       '/api/comics/panels/' + encodeURIComponent(panel.id),
       { environment_id: panel.environment_id }
     );
-    const e = allEnvironments().find(x => x.id === panel.environment_id);
-    toast(panel.environment_id ? 'Environment set: ' + (e ? e.name : envId) : 'Environment cleared');
+    // Silent — the chip / card's active state shows the selection.
   } catch (err) {
     toast('Env update not saved: ' + err.message);
   }
 }
 
 async function generateNewEnvironment() {
-  const name = prompt('Name this environment (e.g. "Coastal Tavern"):');
-  if (!name || !name.trim()) return;
-  const description = prompt('Briefly describe the scene:', '') || '';
-  toast('Generating environment…');
-  try {
-    const res = await api.post(
-      '/api/comics/projects/' + encodeURIComponent(state.projectId) + '/environments',
-      { name: name.trim(), description }
-    );
-    if (res && res.environment) {
-      state.environments = state.environments || [];
-      state.environments.push(res.environment);
-      $('#sb-envs-count').textContent = allEnvironments().length;
-      renderEnvModal();
-      toast('Generated: ' + res.environment.name);
-    } else if (res && res.error) {
-      throw new Error(res.error);
-    }
-  } catch (err) {
-    toast('Env generation failed: ' + err.message);
-  }
+  // Forward to the inline create form (no more native prompt() dialogs).
+  if (typeof openCreateEnvForm === 'function') openCreateEnvForm();
 }
 
 // ═════════════════════════════════════════════════════════════════
