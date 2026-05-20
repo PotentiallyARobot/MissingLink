@@ -279,10 +279,70 @@ input,textarea{font-family:inherit;color:inherit}
   background:var(--surface-2);border:1px solid var(--border);
   font-size:12px;color:var(--text-dim);cursor:pointer;
   transition:all .15s;
+  position:relative;            /* for the ⋯ menu button */
 }
 .char-chip:hover{border-color:var(--border-strong);color:var(--text)}
 .char-chip.active{
   background:rgba(232,169,23,.12);border-color:var(--gold);color:var(--gold);
+}
+
+/* ⋯ action button on chips — opens a popover for swap-image actions.
+   Visible on hover (desktop) and always visible on touch devices so
+   the user can tap it without hovering. */
+.char-chip-menu-btn{
+  display:flex; align-items:center; justify-content:center;
+  width:18px; height:18px; padding:0;
+  margin-left:2px; margin-right:-4px;
+  background:transparent; border:none;
+  color:var(--text-muted); cursor:pointer;
+  border-radius:50%;
+  opacity:0;
+  transition:opacity .15s, color .15s, background .15s;
+}
+.char-chip:hover .char-chip-menu-btn,
+.char-chip:focus-within .char-chip-menu-btn,
+.char-chip.active .char-chip-menu-btn{ opacity:1; }
+.char-chip-menu-btn:hover{ color:var(--gold); background:rgba(232,169,23,.12); }
+.char-chip-menu-btn svg{ width:12px; height:12px; }
+/* On touch, always show */
+@media (hover:none){
+  .char-chip-menu-btn{ opacity:.8; }
+}
+
+/* Character action popover — anchored to the chip the user clicked. */
+.char-action-popover{
+  position:absolute; z-index:200;
+  min-width:180px; max-width:240px;
+  background:var(--surface-2); border:1px solid var(--border-strong);
+  border-radius:8px; padding:4px;
+  box-shadow:0 14px 38px rgba(0,0,0,.6);
+  display:none; flex-direction:column; gap:1px;
+  font-family:inherit;
+}
+.char-action-popover.open{ display:flex; }
+.char-action-popover-head{
+  font-family:var(--font-mono); font-size:10px; font-weight:700;
+  color:var(--text-muted); letter-spacing:.5px; text-transform:uppercase;
+  padding:7px 9px 4px;
+}
+.char-action-btn{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 10px; border-radius:5px;
+  font-size:12.5px; color:var(--text); font-weight:500;
+  text-align:left; cursor:pointer; transition:background .12s;
+  background:transparent; border:none; width:100%;
+}
+.char-action-btn:hover{ background:var(--surface-3); }
+.char-action-btn.danger:hover{ background:rgba(239,68,68,.10); color:var(--red); }
+.char-action-btn svg{ width:13px; height:13px; flex-shrink:0; color:var(--text-muted); }
+.char-action-btn:hover svg{ color:var(--gold); }
+.char-action-btn.danger:hover svg{ color:var(--red); }
+.char-action-btn.busy{ pointer-events:none; opacity:.6; }
+.char-action-btn.busy svg{ animation:spin 1s linear infinite; }
+.char-action-popover-sub{
+  font-family:var(--font-mono); font-size:10px;
+  color:var(--text-muted); padding:0 10px 6px;
+  font-style:italic; line-height:1.4;
 }
 .char-chip-av{
   width:22px;height:22px;border-radius:50%;flex-shrink:0;
@@ -4986,6 +5046,9 @@ function renderCharPickerChips() {
         <button class="char-chip ${on ? 'active' : ''}" data-cid="${escAttr(c.id)}" type="button">
           <span class="char-chip-av">${charImageHtml(c)}</span>
           ${escHtml(c.name || 'Unnamed')}
+          <span class="char-chip-menu-btn" data-menu-cid="${escAttr(c.id)}" role="button" tabindex="0" title="Change image">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+          </span>
         </button>`;
     }).join('') + `
       <button class="char-chip-add" id="add-char-from-compose" type="button">
@@ -4994,9 +5057,11 @@ function renderCharPickerChips() {
       </button>`;
   }
 
-  // Toggle chip — flips active state, updates page.character_ids
+  // Toggle chip — flips active state, updates page.character_ids.
+  // Skip if the click was on the ⋯ menu button (that has its own handler).
   wrap.querySelectorAll('.char-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
+    chip.addEventListener('click', (e) => {
+      if (e.target.closest('.char-chip-menu-btn')) return;  // menu handled separately
       const cid = chip.dataset.cid;
       pg.character_ids = pg.character_ids || [];
       const idx = pg.character_ids.indexOf(cid);
@@ -5005,6 +5070,18 @@ function renderCharPickerChips() {
       chip.classList.toggle('active');
       // Persist via existing page PATCH endpoint
       try { api.patch('/api/comics/pages/' + encodeURIComponent(pg.id), { character_ids: pg.character_ids }); } catch (_) {}
+    });
+  });
+  // ⋯ menu button — opens the character action popover (regenerate /
+  // upload / edit). Uses click + Enter/Space for keyboard support.
+  wrap.querySelectorAll('.char-chip-menu-btn').forEach(btn => {
+    const open = (e) => {
+      e.stopPropagation();
+      openCharActionPopover(btn.dataset.menuCid, btn);
+    };
+    btn.addEventListener('click', open);
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e); }
     });
   });
   const addBtn = $('#add-char-from-compose');
@@ -5663,6 +5740,190 @@ function bindSidebarTabs() {
 // fill in. Once the stream ends, the dock returns to idle and the
 // user can chat again to refine ("redo panel 3 closer up", etc.).
 // ═════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════
+// CHARACTER ACTION POPOVER
+//
+// Opens a small popover anchored to a character chip's ⋯ button.
+// Lets the user swap the character's image without leaving the page:
+//
+//   • Regenerate portrait — calls /api/comics/characters/:cid/generate-portrait
+//   • Upload custom image — file picker → /api/comics/characters/:cid/replace-image
+//   • Edit details — opens the existing character modal
+//
+// The image swap happens in place — once the new ref_image_url is set,
+// renderCharList + renderCharPickerChips re-render and the chip's
+// avatar updates immediately.
+// ═════════════════════════════════════════════════════════════════
+
+(function setupCharActionPopover() {
+  let currentCid = null;
+  let popoverEl = null;
+  let fileInput = null;
+
+  function ensurePopover() {
+    if (popoverEl) return popoverEl;
+    popoverEl = document.createElement('div');
+    popoverEl.className = 'char-action-popover';
+    popoverEl.id = 'char-action-popover';
+    document.body.appendChild(popoverEl);
+    fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/png,image/jpeg,image/webp';
+    fileInput.style.display = 'none';
+    document.body.appendChild(fileInput);
+    fileInput.addEventListener('change', handleUploadFile);
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!popoverEl.classList.contains('open')) return;
+      if (popoverEl.contains(e.target)) return;
+      if (e.target.closest('.char-chip-menu-btn')) return;
+      closePopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closePopover();
+    });
+    return popoverEl;
+  }
+
+  function positionPopover(anchorEl) {
+    const r = anchorEl.getBoundingClientRect();
+    const w = 200, h = 180;
+    let left = r.left;
+    let top  = r.bottom + 6;
+    // Flip up if there's no room below
+    if (top + h > window.innerHeight - 8) top = r.top - h - 6;
+    // Constrain horizontally
+    if (left + w > window.innerWidth - 8)  left = window.innerWidth - w - 8;
+    if (left < 8) left = 8;
+    popoverEl.style.left = left + 'px';
+    popoverEl.style.top  = top  + 'px';
+  }
+
+  function closePopover() {
+    if (popoverEl) popoverEl.classList.remove('open');
+    currentCid = null;
+  }
+
+  function render() {
+    if (!popoverEl) return;
+    const ch = state.characters.find(c => c.id === currentCid);
+    if (!ch) { closePopover(); return; }
+    popoverEl.innerHTML = `
+      <div class="char-action-popover-head">${escHtml(ch.name || 'Character')}</div>
+      <button class="char-action-btn" data-act="regen" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Regenerate portrait
+      </button>
+      <button class="char-action-btn" data-act="upload" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload custom image
+      </button>
+      <button class="char-action-btn" data-act="edit" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Edit details
+      </button>
+      <div class="char-action-popover-sub">
+        New image will replace the portrait everywhere.
+      </div>
+    `;
+    popoverEl.querySelectorAll('.char-action-btn').forEach(b => {
+      b.addEventListener('click', () => runAction(b.dataset.act, b));
+    });
+  }
+
+  async function runAction(act, btn) {
+    if (!currentCid) return;
+    if (act === 'regen') {
+      btn.classList.add('busy');
+      try {
+        const res = await api.post(
+          '/api/comics/characters/' + encodeURIComponent(currentCid) + '/generate-portrait'
+        );
+        if (res && res.character) {
+          const idx = state.characters.findIndex(c => c.id === currentCid);
+          if (idx >= 0) state.characters[idx] = res.character;
+          if (typeof renderCharList === 'function') renderCharList();
+          if (typeof renderCharPickerChips === 'function') renderCharPickerChips();
+          if (typeof renderPanelCast === 'function') renderPanelCast();
+          toast('Portrait regenerated');
+          closePopover();
+        } else if (res && res.error) {
+          throw new Error(res.error);
+        }
+      } catch (e) {
+        toast('Regenerate failed: ' + e.message);
+      } finally {
+        btn.classList.remove('busy');
+      }
+    } else if (act === 'upload') {
+      fileInput.click();
+    } else if (act === 'edit') {
+      closePopover();
+      if (typeof openCharModal === 'function') {
+        state.editingCharId = currentCid;
+        openCharModal();
+      }
+    }
+  }
+
+  async function handleUploadFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';                  // reset so same file can be picked again
+    if (!file || !currentCid) return;
+    if (!/^image\//.test(file.type)) {
+      toast('Please pick an image file');
+      return;
+    }
+    if (file.size > 6 * 1024 * 1024) {
+      toast('Image too large (max 6MB)');
+      return;
+    }
+    try {
+      // Read as base64
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result).split(',')[1] || '');
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(file);
+      });
+      const res = await api.post(
+        '/api/comics/characters/' + encodeURIComponent(currentCid) + '/replace-image',
+        { data: b64, mime: file.type || 'image/png' }
+      );
+      if (res && res.image_url) {
+        const idx = state.characters.findIndex(c => c.id === currentCid);
+        if (idx >= 0) {
+          state.characters[idx].ref_image_url = res.image_url;
+          state.characters[idx].ref_count = (state.characters[idx].ref_count || 0) + 1;
+        }
+        if (typeof renderCharList === 'function') renderCharList();
+        if (typeof renderCharPickerChips === 'function') renderCharPickerChips();
+        if (typeof renderPanelCast === 'function') renderPanelCast();
+        toast('Portrait updated');
+        closePopover();
+      } else {
+        throw new Error((res && res.error) || 'Upload failed');
+      }
+    } catch (err) {
+      toast('Upload failed: ' + err.message);
+    }
+  }
+
+  // Public entrypoint — called by renderCharPickerChips when a chip's
+  // ⋯ button is clicked.
+  window.openCharActionPopover = function(cid, anchorEl) {
+    ensurePopover();
+    if (currentCid === cid && popoverEl.classList.contains('open')) {
+      closePopover();
+      return;
+    }
+    currentCid = cid;
+    render();
+    positionPopover(anchorEl);
+    popoverEl.classList.add('open');
+  };
+})();
 
 const agent = (() => {
   // Per-conversation state. Reset when the user opens a different
