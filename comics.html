@@ -1672,10 +1672,591 @@ input,textarea{font-family:inherit;color:inherit}
   .env-grid{ grid-template-columns:1fr; }
 }
 
+/* ═════════════════════════════════════════════════════════════════
+   PANEL OVERLAYS — speech bubbles + narration caption boxes that
+   render on top of generated panel art. The image generation prompt
+   explicitly excludes text/lettering ("No text, no speech bubbles,
+   no captions") because we render dialogue and narration as HTML
+   so they stay editable, sharp at any zoom, and don't pull AI
+   text artifacts into the art.
+
+   Two visual styles:
+   • .panel-narration — top-of-panel caption box (parchment-like,
+     italic serif, for narration captions like "Three days later…").
+   • .panel-dialogue  — speech bubble with tail (white/cream, comic
+     sans-style font, attribution under the line).
+
+   Both use compact sizing so the art still reads. They scale down
+   on small panels via CSS clamp() so they remain proportional.
+   ═════════════════════════════════════════════════════════════════ */
+
+.panel{ position:relative; }   /* required for absolute-positioned overlays */
+
+.panel-overlays{
+  position:absolute; inset:0;
+  pointer-events:none;          /* don't block panel click-to-select */
+  display:flex; flex-direction:column;
+  justify-content:space-between;
+  padding:8px;
+  z-index:5;
+}
+.panel-overlays > *{ pointer-events:auto; }
+
+/* Narration caption — tops the panel. Slight skew + drop shadow for
+   that hand-printed feel. The yellow-cream is intentional: comic
+   readers expect caption boxes to be a different palette from
+   speech bubbles. */
+.panel-narration{
+  align-self:flex-start;
+  max-width:80%;
+  padding:5px 9px;
+  background:linear-gradient(180deg, #fbf2c8 0%, #e6d39a 100%);
+  border:1.5px solid #1a1009;
+  border-radius:3px;
+  font-family:'Crimson Text', Georgia, serif;
+  font-size:clamp(9px, 1.1vw, 12px);
+  line-height:1.3;
+  font-style:italic;
+  font-weight:600;
+  color:#1a0f08;
+  letter-spacing:.1px;
+  box-shadow:
+    1.5px 1.5px 0 #1a1009,
+    0 2px 6px rgba(0,0,0,.5);
+}
+
+/* Speech bubble — floats near the bottom of the panel by default.
+   The ::after pseudo-element draws the tail; data-tail="left|right"
+   swaps which side. */
+.panel-dialogue{
+  align-self:flex-start;
+  margin-top:auto;             /* push to bottom of overlays flex column */
+  max-width:75%;
+  padding:6px 11px;
+  background:#fffef0;
+  border:1.8px solid #0a0809;
+  border-radius:14px;
+  font-family:'Bangers', 'Comic Neue', 'Trebuchet MS', sans-serif;
+  font-size:clamp(9.5px, 1.15vw, 13px);
+  line-height:1.25;
+  font-weight:600;
+  color:#0a0809;
+  letter-spacing:.4px;
+  box-shadow:
+    1.5px 1.5px 0 #0a0809,
+    0 3px 8px rgba(0,0,0,.55);
+  position:relative;
+  text-shadow: 0 1px 0 rgba(255,255,255,.4);
+}
+.panel-dialogue::after,
+.panel-dialogue::before{
+  /* tail = two stacked triangles, outer = border, inner = fill */
+  content:''; position:absolute;
+  width:0; height:0;
+  border:9px solid transparent;
+  border-top-color:#0a0809;
+  border-bottom:0;
+  bottom:-9px; left:22px;
+}
+.panel-dialogue::before{
+  border-top-color:#fffef0;
+  bottom:-6.5px; left:23px;
+  border-width:8px; border-bottom:0;
+  z-index:1;
+}
+.panel-dialogue[data-tail="right"]::after{ left:auto; right:22px; }
+.panel-dialogue[data-tail="right"]::before{ left:auto; right:23px; }
+
+.panel-dialogue-speaker{
+  display:block;
+  font-family:'JetBrains Mono', monospace;
+  font-size:clamp(8px, .85vw, 10px);
+  font-weight:700;
+  color:#5a3a14;
+  text-transform:uppercase;
+  letter-spacing:.6px;
+  margin-bottom:1px;
+  text-shadow:none;
+}
+.panel-dialogue-text{
+  display:block;
+  /* The Bangers font is great for impact but isn't always loaded;
+     the body-font fallback keeps readability if it doesn't load. */
+}
+
+/* Cover panels are bigger and get larger overlays. */
+.cover-panel .panel-narration{ font-size:clamp(12px, 1.4vw, 16px); padding:7px 12px; }
+.cover-panel .panel-dialogue{ font-size:clamp(12px, 1.4vw, 16px); padding:8px 14px; }
+.cover-panel .panel-overlays{ padding:14px; }
+
+/* Hide overlays in the right-side small panel-list thumbnails;
+   they're already cramped at 56px square. */
+.panel-row-thumb .panel-narration,
+.panel-row-thumb .panel-dialogue{ display:none; }
+
 ::-webkit-scrollbar{width:8px;height:8px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
-::-webkit-scrollbar-thumb:hover{background:var(--surface-4)}
+
+/* ═════════════════════════════════════════════════════════════════
+   AI AGENT DOCK — sticky bottom-of-canvas chat that drives the
+   end-to-end page generation agent. Two-state component:
+
+   • Collapsed (default): a single input row. Subtle gold ring,
+     drop-target hint, attach + send buttons. ~70px tall.
+   • Expanded: chat history above the input row. ~420px tall.
+     Toggled by clicking the header chevron OR sending the first
+     message.
+
+   File drag-and-drop hovers over the dock at all times (not just
+   when expanded) so the user can sketch + drop a reference image
+   without first opening anything. The drop-overlay visualizes the
+   active drop zone with a dashed gold border.
+
+   The dock is part of the .canvas grid (not absolutely positioned)
+   so it doesn't overlay the script panel on the right — the script
+   panel keeps its full vertical real estate, the canvas's own grid
+   reflows to make room.
+   ═════════════════════════════════════════════════════════════════ */
+
+.canvas{
+  /* Re-declare with explicit row template so the dock anchors to the
+     bottom of the canvas column. The compose form + comic page
+     scroll in row 1; the dock sits in row 2 and never scrolls away. */
+  display:grid;
+  grid-template-rows: 1fr auto;
+  grid-template-columns: 1fr;
+  /* leave existing padding from earlier rule untouched */
+}
+.canvas-scroll{
+  overflow-y:auto;
+  min-height:0;
+  /* push content above the dock so the last item is reachable */
+  padding-bottom:8px;
+  display:flex; flex-direction:column;
+}
+
+.agent-dock{
+  flex-shrink:0;
+  margin-top:10px;
+  background:var(--surface);
+  border:1px solid var(--border-strong);
+  border-radius:12px;
+  box-shadow:
+    0 -6px 24px rgba(0,0,0,.35),
+    inset 0 1px 0 rgba(255,255,255,.03);
+  display:flex; flex-direction:column;
+  position:relative;
+  transition:border-color .2s, box-shadow .2s;
+}
+.agent-dock:focus-within{
+  border-color:var(--gold);
+  box-shadow:
+    0 -6px 28px rgba(0,0,0,.45),
+    0 0 0 3px rgba(232,169,23,.08),
+    inset 0 1px 0 rgba(255,255,255,.04);
+}
+.agent-dock.expanded{
+  border-color:var(--border-strong);
+}
+.agent-dock.drop-active{
+  border-color:var(--gold);
+  border-style:dashed;
+  background:rgba(232,169,23,.04);
+}
+
+/* Header strip — title + status badge + expand/collapse chevron.
+   Visible in both states; collapsing returns the dock to its idle
+   row form. */
+.agent-dock-head{
+  display:flex; align-items:center; gap:10px;
+  padding:9px 14px 9px 14px;
+  border-bottom:1px solid transparent;
+  cursor:pointer;
+  user-select:none;
+  flex-shrink:0;
+}
+.agent-dock.expanded .agent-dock-head{
+  border-bottom-color:var(--border);
+}
+.agent-dock-icon{
+  width:26px; height:26px; border-radius:50%;
+  background:radial-gradient(circle at 35% 35%, var(--gold-light), var(--gold) 55%, var(--gold-dark));
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 10px var(--gold-glow);
+  flex-shrink:0;
+}
+.agent-dock-icon svg{ width:14px; height:14px; color:var(--black); }
+.agent-dock.busy .agent-dock-icon{
+  animation:agent-pulse 1.6s ease-in-out infinite;
+}
+@keyframes agent-pulse{
+  0%, 100% { box-shadow: 0 0 10px var(--gold-glow); transform:scale(1); }
+  50%      { box-shadow: 0 0 22px rgba(232,169,23,.55); transform:scale(1.06); }
+}
+.agent-dock-title{
+  font-family:var(--font-display); font-size:12px; font-weight:700;
+  color:var(--text); letter-spacing:1px; text-transform:uppercase;
+}
+.agent-dock-tag{
+  font-family:var(--font-mono); font-size:9.5px; font-weight:600;
+  color:var(--gold); letter-spacing:.6px; text-transform:uppercase;
+  padding:2px 7px; border-radius:10px;
+  background:rgba(232,169,23,.10);
+  border:1px solid rgba(232,169,23,.25);
+}
+.agent-dock-status{
+  flex:1 1 auto;
+  font-size:11.5px; color:var(--text-muted);
+  font-family:var(--font-mono); letter-spacing:.3px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.agent-dock-status.live{ color:var(--gold); }
+.agent-dock-chev{
+  width:14px; height:14px; color:var(--text-muted);
+  transition:transform .2s; flex-shrink:0;
+}
+.agent-dock.expanded .agent-dock-chev{ transform:rotate(180deg); }
+
+/* Chat history — only visible when expanded. Auto-scrolls to bottom
+   as new messages stream in. */
+.agent-dock-body{
+  display:none;
+  flex-direction:column;
+  max-height:340px;
+  overflow-y:auto;
+  padding:14px 14px 4px;
+  gap:10px;
+}
+.agent-dock.expanded .agent-dock-body{ display:flex; }
+
+.agent-msg{
+  display:flex; gap:9px; align-items:flex-start;
+  animation:agent-msg-in .25s ease-out;
+}
+@keyframes agent-msg-in{
+  from { opacity:0; transform:translateY(4px); }
+  to   { opacity:1; transform:none; }
+}
+.agent-msg-av{
+  width:24px; height:24px; border-radius:50%;
+  flex-shrink:0; display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-mono); font-size:10px; font-weight:700;
+}
+.agent-msg.user .agent-msg-av{
+  background:linear-gradient(135deg, #6b4f2a, #2a1f12);
+  border:1px solid var(--border-light); color:var(--gold);
+}
+.agent-msg.ai .agent-msg-av{
+  background:radial-gradient(circle at 35% 35%, var(--gold-light), var(--gold) 55%, var(--gold-dark));
+  color:var(--black);
+}
+.agent-msg-body{
+  flex:1; min-width:0;
+  font-size:13px; line-height:1.5; color:var(--text);
+}
+.agent-msg-body .msg-text{
+  white-space:pre-wrap; word-wrap:break-word;
+}
+.agent-msg-body .msg-meta{
+  font-family:var(--font-mono); font-size:10px;
+  color:var(--text-muted); margin-top:3px; letter-spacing:.3px;
+}
+.agent-msg.user .agent-msg-body{ color:var(--text-dim); }
+
+/* Inline file attachment thumbnails inside a user message */
+.agent-msg-files{
+  display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;
+}
+.agent-msg-file{
+  width:44px; height:44px; border-radius:5px; overflow:hidden;
+  background:var(--surface-3); border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center;
+  position:relative;
+}
+.agent-msg-file img{ width:100%; height:100%; object-fit:cover; display:block; }
+.agent-msg-file .ext{
+  font-family:var(--font-mono); font-size:9px; font-weight:700;
+  color:var(--text-muted); text-transform:uppercase;
+}
+
+/* Agent step list — shown inside an AI message while it's working.
+   Each step is a row with: spinner/check/cross icon + label. */
+.agent-steps{
+  display:flex; flex-direction:column; gap:5px;
+  margin-top:8px; padding:8px 10px;
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:7px;
+}
+.agent-step{
+  display:flex; align-items:center; gap:8px;
+  font-family:var(--font-mono); font-size:11px;
+  color:var(--text-muted); letter-spacing:.3px;
+}
+.agent-step.running{ color:var(--text); }
+.agent-step.done{ color:var(--green); }
+.agent-step.error{ color:var(--red); }
+.agent-step-icon{
+  width:13px; height:13px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+.agent-step.running .agent-step-icon svg{
+  animation:spin 1s linear infinite;
+  color:var(--gold);
+}
+.agent-step.done   .agent-step-icon{ color:var(--green); }
+.agent-step.error  .agent-step-icon{ color:var(--red); }
+.agent-step-label{ flex:1; }
+.agent-step-detail{
+  font-size:10px; color:var(--text-muted); opacity:.75;
+}
+
+/* Result card — when agent finishes, summarize what was produced
+   with action buttons. */
+.agent-result{
+  margin-top:10px;
+  background:linear-gradient(180deg, rgba(232,169,23,.06), rgba(232,169,23,0));
+  border:1px solid rgba(232,169,23,.25);
+  border-radius:8px;
+  padding:11px 12px;
+  display:flex; flex-direction:column; gap:8px;
+}
+.agent-result-title{
+  font-family:var(--font-mono); font-size:10.5px; font-weight:700;
+  color:var(--gold); letter-spacing:.7px; text-transform:uppercase;
+}
+.agent-result-stats{
+  display:flex; gap:14px; font-size:12px; color:var(--text);
+}
+.agent-result-stat{ display:flex; gap:5px; align-items:baseline; }
+.agent-result-stat b{ color:var(--gold); font-family:var(--font-mono); font-weight:700; }
+.agent-result-actions{
+  display:flex; gap:6px; flex-wrap:wrap;
+}
+.agent-pill-btn{
+  display:inline-flex; align-items:center; gap:5px;
+  padding:5px 10px; border-radius:14px;
+  background:var(--surface-2); border:1px solid var(--border-light);
+  font-family:var(--font-mono); font-size:10.5px; font-weight:600;
+  color:var(--text); letter-spacing:.3px;
+  cursor:pointer; transition:all .15s;
+}
+.agent-pill-btn:hover{
+  border-color:var(--gold); color:var(--gold);
+  background:rgba(232,169,23,.06);
+}
+.agent-pill-btn svg{ width:11px; height:11px; }
+
+/* Input row — always visible. Holds: attach button, textarea, send.
+   Lives at the bottom of the dock in both collapsed and expanded
+   states. */
+.agent-dock-input-row{
+  display:flex; align-items:flex-end; gap:8px;
+  padding:10px 12px 12px;
+  flex-shrink:0;
+}
+.agent-attach-btn{
+  width:36px; height:36px; border-radius:8px;
+  background:var(--surface-2); border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-dim); cursor:pointer; transition:all .15s;
+  flex-shrink:0;
+}
+.agent-attach-btn:hover{ border-color:var(--gold); color:var(--gold); }
+.agent-attach-btn svg{ width:16px; height:16px; }
+
+.agent-input-wrap{
+  flex:1; position:relative;
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:8px;
+  transition:border-color .15s;
+  min-height:36px;
+}
+.agent-input-wrap:focus-within{ border-color:var(--gold); }
+.agent-input{
+  width:100%; resize:none;
+  background:transparent; border:none; outline:none;
+  padding:9px 12px; padding-right:12px;
+  font-family:inherit; font-size:13px; line-height:1.45;
+  color:var(--text);
+  min-height:36px; max-height:140px;
+  /* hide default scrollbar styling on the textarea */
+}
+.agent-input::placeholder{ color:var(--text-muted); font-style:italic; }
+
+/* Files-staged tray — shown above the input row when files are
+   attached but not yet sent. */
+.agent-staged-files{
+  display:none;
+  flex-wrap:wrap; gap:6px;
+  padding:8px 12px 0;
+}
+.agent-dock.has-staged .agent-staged-files{ display:flex; }
+.agent-staged-file{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 6px 4px 4px; border-radius:6px;
+  background:var(--surface-3); border:1px solid var(--border);
+  font-size:11px; color:var(--text);
+}
+.agent-staged-thumb{
+  width:28px; height:28px; border-radius:4px; overflow:hidden;
+  background:var(--surface-4); flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+.agent-staged-thumb img{ width:100%; height:100%; object-fit:cover; }
+.agent-staged-thumb .ext{
+  font-family:var(--font-mono); font-size:8.5px; font-weight:700;
+  color:var(--text-muted); text-transform:uppercase;
+}
+.agent-staged-name{
+  max-width:120px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; font-family:var(--font-mono); font-size:10.5px;
+  color:var(--text-dim); letter-spacing:.2px;
+}
+.agent-staged-x{
+  width:16px; height:16px; border-radius:50%;
+  background:var(--surface-4); border:none;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-muted); cursor:pointer; transition:all .15s;
+}
+.agent-staged-x:hover{ background:var(--red); color:#fff; }
+.agent-staged-x svg{ width:9px; height:9px; }
+
+.agent-send-btn{
+  width:36px; height:36px; border-radius:8px;
+  background:var(--gold); color:var(--black);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:all .15s; flex-shrink:0;
+}
+.agent-send-btn:hover:not(:disabled){
+  background:var(--gold-light); box-shadow:0 0 14px var(--gold-glow);
+}
+.agent-send-btn:disabled{
+  background:var(--surface-3); color:var(--text-muted);
+  cursor:not-allowed;
+}
+.agent-send-btn svg{ width:15px; height:15px; }
+.agent-send-btn.busy svg{ animation:spin 1s linear infinite; }
+@keyframes spin{ to { transform:rotate(360deg); } }
+
+/* Drop overlay — appears across the whole dock when a file is being
+   dragged over the page. Pointer-events live on the dock itself
+   (not the overlay) so the dragleave behavior is reliable. */
+.agent-drop-overlay{
+  position:absolute; inset:0;
+  background:rgba(232,169,23,.08);
+  border:2px dashed var(--gold);
+  border-radius:12px;
+  display:none;
+  align-items:center; justify-content:center;
+  pointer-events:none;
+  z-index:10;
+}
+.agent-dock.drop-active .agent-drop-overlay{ display:flex; }
+.agent-drop-overlay-inner{
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  font-family:var(--font-mono); font-size:12px; font-weight:700;
+  color:var(--gold); text-transform:uppercase; letter-spacing:1px;
+}
+.agent-drop-overlay-inner svg{ width:22px; height:22px; }
+
+/* When the dock is busy generating, dim the rest of the page form
+   slightly so the user's eye is drawn to the dock's progress feed. */
+.canvas.agent-busy .compose{ opacity:.55; pointer-events:none; transition:opacity .25s; }
+.canvas.agent-busy #comic-page{ opacity:.65; transition:opacity .25s; }
+
+/* Mobile: dock takes a bit less padding, smaller text. */
+@media (max-width:640px){
+  .agent-dock-head{ padding:8px 10px; gap:7px; }
+  .agent-dock-icon{ width:22px; height:22px; }
+  .agent-dock-icon svg{ width:11px; height:11px; }
+  .agent-dock-title{ font-size:10.5px; letter-spacing:.5px; }
+  .agent-dock-status{ font-size:10.5px; }
+  .agent-dock-tag{ display:none; }
+  .agent-dock-input-row{ padding:8px 8px 10px; gap:6px; }
+  .agent-attach-btn, .agent-send-btn{ width:34px; height:34px; }
+  .agent-input{ font-size:14px; padding:8px 10px; }  /* iOS no-zoom = 16px ideal but 14 still safe */
+  .agent-dock-body{ max-height:240px; padding:10px 10px 4px; }
+  .agent-msg-av{ width:22px; height:22px; font-size:9px; }
+  .agent-msg-body{ font-size:12px; }
+  .agent-result-stats{ flex-wrap:wrap; gap:10px; }
+  .agent-result-actions{ gap:5px; }
+  .agent-pill-btn{ padding:4px 8px; font-size:10px; }
+}
+
+/* Mobile layout fixes for the canvas redefinition.
+   On mobile the .app becomes flex-column and .workarea flex-column;
+   our 2-row grid on .canvas would lock the dock to canvas-height
+   which the user can scroll *past*. We want the dock fixed to the
+   viewport bottom on mobile so it's always reachable, AND we add
+   bottom padding to body so the script-panel + page-strip aren't
+   hidden behind the dock. */
+@media (max-width:860px){
+  .canvas{
+    display:flex; flex-direction:column;
+    grid-template-rows:none; grid-template-columns:none;
+    min-width:0;            /* prevent horizontal overflow */
+  }
+  .canvas-scroll{
+    overflow:visible;       /* mobile scrolls the whole page, not just the canvas */
+    min-width:0;
+  }
+  .canvas > .canvas-scroll > * { min-width:0; max-width:100%; }
+  /* Keep the compose form's wide controls from forcing horizontal scroll */
+  .compose-actions{ flex-wrap:wrap; }
+  .canvas-controls{ flex-wrap:wrap; }
+  .page-strip{ overflow-x:auto; }  /* let the strip scroll horizontally on its own */
+
+  /* Dock fixed to viewport bottom — always reachable. We don't use
+     sticky because the workarea stacks above a long script-panel; a
+     sticky dock would slide off when scrolling into the script panel.
+     Fixed + body padding-bottom keeps the dock pinned to the screen. */
+  .agent-dock{
+    position:fixed;
+    left:0; right:0; bottom:0;
+    margin-top:0;
+    z-index:55;
+    border-radius:14px 14px 0 0;       /* round only the top corners */
+    border-bottom:none;
+    /* Solid bg + extra shadow so it reads as a separate UI layer */
+    background:var(--surface);
+    box-shadow:
+      0 -10px 32px rgba(0,0,0,.7),
+      inset 0 1px 0 rgba(255,255,255,.04);
+    /* iOS safe-area insets so the dock clears the home-indicator */
+    padding-bottom:env(safe-area-inset-bottom, 0);
+  }
+  /* Reserve space at the bottom of the page so the dock never covers
+     the last actual content. ~72px = collapsed dock height + a margin. */
+  body{
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0));
+  }
+  /* When expanded, the dock can grow up to ~half the viewport. The
+     scrollable chat history inside still scrolls independently. */
+  .agent-dock.expanded .agent-dock-body{
+    max-height: 38vh;
+  }
+}
+
+/* Phone (≤480px) — even tighter */
+@media (max-width:480px){
+  .agent-dock-head{ padding:7px 9px; gap:6px; }
+  .agent-dock-tag{ display:none; }
+  .agent-dock-status{ font-size:10px; }
+  .agent-dock-title{ font-size:10px; }
+  .agent-dock-input-row{ padding:7px 7px 10px; gap:5px; }
+  .agent-attach-btn, .agent-send-btn{ width:32px; height:32px; }
+  .agent-input{ min-height:32px; padding:7px 9px; font-size:13.5px; }
+  .agent-input-wrap{ min-height:32px; }
+  .agent-msg-files{ gap:4px; }
+  .agent-msg-file{ width:36px; height:36px; }
+  .agent-staged-thumb{ width:24px; height:24px; }
+  .agent-staged-name{ max-width:80px; font-size:10px; }
+  /* The collapsed status line takes whatever room is left; truncate
+     more aggressively so the chevron stays visible. */
+  .agent-dock:not(.expanded) .agent-dock-status{ max-width:42vw; }
+  body{
+    padding-bottom: calc(68px + env(safe-area-inset-bottom, 0));
+  }
+}
 </style>
 </head>
 <body>
@@ -1818,6 +2399,7 @@ input,textarea{font-family:inherit;color:inherit}
   <!-- ─── WORKAREA (canvas + script panel) ─── -->
   <main class="workarea">
     <section class="canvas">
+      <div class="canvas-scroll" id="canvas-scroll">
       <!-- Compact page label — no subtitle (pages don't need them).
            Shows "Cover" or "Page N". The ⋯ menu has page actions
            (rename, duplicate, delete). -->
@@ -1929,6 +2511,65 @@ input,textarea{font-family:inherit;color:inherit}
 
       <!-- page strip thumbnails -->
       <div class="page-strip" id="page-strip"><!-- populated by JS --></div>
+      </div><!-- /.canvas-scroll -->
+
+      <!-- ─── AI AGENT DOCK ─────────────────────────────────────────
+           Drop reference images, scripts, or just describe what you
+           want — the agent plans the page, fills out panels, dialogue,
+           characters, setting, layout, and kicks off art generation
+           in one shot. After it runs, every field is editable so you
+           keep fine-grained control per panel.
+
+           Local mode: if there's no backend, the dock simulates the
+           agent flow (planning, dialogue gen, art) using the same
+           local-mode placeholder pipeline used by Generate Page.
+           ───────────────────────────────────────────────────────── -->
+      <div class="agent-dock" id="agent-dock">
+        <div class="agent-drop-overlay">
+          <div class="agent-drop-overlay-inner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Drop files to attach</span>
+          </div>
+        </div>
+
+        <!-- Header: title + status + chevron. Clicking anywhere on the
+             header toggles expand/collapse. -->
+        <div class="agent-dock-head" id="agent-dock-head" role="button" tabindex="0" aria-expanded="false">
+          <div class="agent-dock-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <div class="agent-dock-title">AI Agent</div>
+          <div class="agent-dock-tag">Beta</div>
+          <div class="agent-dock-status" id="agent-dock-status">Drop files or describe the page — the agent builds it end-to-end.</div>
+          <svg class="agent-dock-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        </div>
+
+        <!-- Chat history — empty until first send. -->
+        <div class="agent-dock-body" id="agent-dock-body" aria-live="polite">
+          <!-- populated by JS -->
+        </div>
+
+        <!-- Files staged for the next send (not yet uploaded) -->
+        <div class="agent-staged-files" id="agent-staged-files"><!-- populated by JS --></div>
+
+        <!-- Input row: attach + textarea + send. Always visible. -->
+        <div class="agent-dock-input-row">
+          <button class="agent-attach-btn" id="agent-attach-btn" title="Attach reference images, scripts, or notes" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="agent-file-input" hidden multiple accept="image/*,.txt,.md,.pdf,.json">
+          <div class="agent-input-wrap">
+            <textarea
+              id="agent-input"
+              class="agent-input"
+              rows="1"
+              placeholder="Describe the page — or drop a reference image, script snippet, or storyboard. The AI handles panels, dialogue, art."></textarea>
+          </div>
+          <button class="agent-send-btn" id="agent-send-btn" disabled title="Send (Ctrl/⌘ + Enter)" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
     </section>
 
     <!-- ─── SCRIPT/ART PANEL ─── -->
@@ -4227,13 +4868,37 @@ function renderComicPage() {
 
   // Regular page — grid of panels, layout class set by applyPageMetaToUI()
   panels = panels.slice(0, 9);
-  cp.innerHTML = panels.map(p => `
+  cp.innerHTML = panels.map(p => {
+    // Speaker name resolution for the bubble label.
+    let speakerName = p.dialogue_speaker || '';
+    if (!speakerName && p.character_ids && p.character_ids.length) {
+      // No explicit speaker → assume the first character listed
+      const first = state.characters.find(c => c.id === p.character_ids[0]);
+      if (first) speakerName = first.name;
+    }
+    // Pick tail side based on position parity so adjacent bubbles
+    // don't all point the same way — small touch that reads better.
+    const tailSide = (p.position % 2 === 0) ? 'right' : 'left';
+    const hasOverlay = p.narration || p.dialogue;
+    return `
     <div class="panel ${p.position === state.activePanel ? 'selected' : ''}" data-panel="${p.position}" data-pnid="${escAttr(p.id)}">
       ${p.image_url
         ? `<img class="panel-art" src="${escAttr(p.image_url)}" alt="Panel ${p.position}">`
         : panelEmptyHtml(p)}
+      ${hasOverlay ? `
+        <div class="panel-overlays">
+          ${p.narration ? `<div class="panel-narration">${escHtml(p.narration)}</div>` : ''}
+          ${p.dialogue ? `
+            <div class="panel-dialogue" data-tail="${tailSide}">
+              ${speakerName ? `<div class="panel-dialogue-speaker">${escHtml(speakerName)}</div>` : ''}
+              <div class="panel-dialogue-text">${escHtml(p.dialogue)}</div>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   // Wire panel selection
   cp.querySelectorAll('.panel').forEach(el => {
@@ -4969,7 +5634,1072 @@ function bindSidebarTabs() {
   updateCounts();
 }
 
+// ═════════════════════════════════════════════════════════════════
+// AI AGENT DOCK
+//
+// A bottom-of-canvas chat that drives an end-to-end "build this
+// page" agent. The user can type, drop files, or both; the agent
+// plans the page, fills out panels (description, dialogue,
+// narration, character_ids), creates missing characters, sets the
+// environment, picks a layout, and kicks off art generation.
+//
+// Wire model:
+//   • POST /api/comics/pages/:pgid/agent   (backend; NDJSON stream)
+//   • Local-mode fallback synthesizes the same stream client-side
+//     so the UX works even without a backend (using the same
+//     placeholder pipeline as the existing Generate Page handler).
+//
+// Stream events the dock understands (one JSON object per line):
+//   { type:"step", id, label, status:"running"|"done"|"error", detail? }
+//   { type:"page_update", summary?, layout?, mood?, environment_id?, character_ids? }
+//   { type:"character_create", character:{ id?, name, role?, description?, appearance? } }
+//   { type:"panel_update", panel:{ id?, position, description?, dialogue?, dialogue_speaker?, narration?, character_ids?, shot_type? } }
+//   { type:"art_done", panels:[{ panel_id, image_url }] }
+//   { type:"final", message?, stats? }
+//   { type:"error", message }
+//
+// All event handling is additive — we re-render the relevant slice
+// of the UI as each event arrives so the user can watch the page
+// fill in. Once the stream ends, the dock returns to idle and the
+// user can chat again to refine ("redo panel 3 closer up", etc.).
+// ═════════════════════════════════════════════════════════════════
+
+const agent = (() => {
+  // Per-conversation state. Reset when the user opens a different
+  // page so each page gets its own thread (this matches the
+  // expectation that an agent "thread" is scoped to the artifact
+  // it's building).
+  let thread = {
+    pageId: null,           // which page this conversation belongs to
+    messages: [],           // [{ role:'user'|'ai', text, files?, steps?, result? }]
+    busy: false,
+    files: [],              // staged files awaiting send
+  };
+  let lastStepsMsg = null;  // ref to the current AI message's steps DOM
+
+  // ── DOM refs (cached lazily; the dock is in the markup but the
+  // canvas can render before this runs) ──
+  const els = () => ({
+    dock:     $('#agent-dock'),
+    head:     $('#agent-dock-head'),
+    status:   $('#agent-dock-status'),
+    body:     $('#agent-dock-body'),
+    staged:   $('#agent-staged-files'),
+    input:    $('#agent-input'),
+    send:     $('#agent-send-btn'),
+    attach:   $('#agent-attach-btn'),
+    fileInp:  $('#agent-file-input'),
+    canvas:   document.querySelector('.canvas'),
+    canvasScroll: $('#canvas-scroll'),
+  });
+
+  // ── Expand / collapse ──
+  function setExpanded(open) {
+    const { dock, head } = els();
+    if (!dock) return;
+    dock.classList.toggle('expanded', !!open);
+    if (head) head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) requestAnimationFrame(scrollBodyToEnd);
+  }
+  function toggleExpanded() {
+    const { dock } = els();
+    if (!dock) return;
+    setExpanded(!dock.classList.contains('expanded'));
+  }
+
+  // ── Status line (collapsed-state subtitle) ──
+  function setStatus(text, live) {
+    const { status } = els();
+    if (!status) return;
+    status.textContent = text;
+    status.classList.toggle('live', !!live);
+  }
+  function setBusy(busy) {
+    thread.busy = busy;
+    const { dock, send, canvas } = els();
+    if (dock) dock.classList.toggle('busy', !!busy);
+    if (send) {
+      send.disabled = busy || (!els().input.value.trim() && !thread.files.length);
+      send.classList.toggle('busy', !!busy);
+    }
+    if (canvas) canvas.classList.toggle('agent-busy', !!busy);
+  }
+
+  // ── File staging (drag-drop + attach button) ──
+  function fmtBytes(n) {
+    if (n < 1024) return n + 'B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + 'KB';
+    return (n / (1024 * 1024)).toFixed(1) + 'MB';
+  }
+  async function fileToBase64(f) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1] || '');
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(f);
+    });
+  }
+  async function fileToDataUrl(f) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(f);
+    });
+  }
+  async function fileToText(f) {
+    return await f.text();
+  }
+  async function stageFiles(fileList) {
+    const allowed = [...fileList].slice(0, 6); // cap per-message
+    for (const f of allowed) {
+      const entry = {
+        name: f.name || 'file',
+        mime: f.type || 'application/octet-stream',
+        size: f.size || 0,
+        isImage: (f.type || '').startsWith('image/'),
+        previewUrl: null,
+        data: null,         // base64 (images) or text content
+      };
+      try {
+        if (entry.isImage) {
+          entry.previewUrl = await fileToDataUrl(f);
+          entry.data = entry.previewUrl.split(',')[1] || '';
+        } else if (/^(text|application\/json|application\/xml)/.test(entry.mime) || /\.(txt|md|json|xml|csv)$/i.test(entry.name)) {
+          entry.data = await fileToText(f);
+        } else {
+          entry.data = await fileToBase64(f);
+        }
+      } catch (_) { /* skip unreadable */ }
+      thread.files.push(entry);
+    }
+    renderStaged();
+    // Make sure Send becomes clickable now that files are staged
+    setBusy(thread.busy);
+  }
+  function clearStaged() {
+    thread.files = [];
+    renderStaged();
+  }
+  function removeStaged(i) {
+    thread.files.splice(i, 1);
+    renderStaged();
+    setBusy(thread.busy);
+  }
+  function renderStaged() {
+    const { dock, staged } = els();
+    if (!dock || !staged) return;
+    dock.classList.toggle('has-staged', thread.files.length > 0);
+    staged.innerHTML = thread.files.map((f, i) => {
+      const thumb = f.isImage && f.previewUrl
+        ? `<img src="${escAttr(f.previewUrl)}" alt="">`
+        : `<span class="ext">${escHtml((f.name.split('.').pop() || 'file').slice(0, 4))}</span>`;
+      return `
+        <div class="agent-staged-file" data-i="${i}">
+          <div class="agent-staged-thumb">${thumb}</div>
+          <span class="agent-staged-name" title="${escAttr(f.name)}">${escHtml(f.name)}</span>
+          <button class="agent-staged-x" data-i="${i}" type="button" title="Remove">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      `;
+    }).join('');
+    staged.querySelectorAll('.agent-staged-x').forEach(b => {
+      b.onclick = e => { e.stopPropagation(); removeStaged(+b.dataset.i); };
+    });
+  }
+
+  // ── Drag-and-drop wiring on the dock itself ──
+  // Window-level dragenter sets drop-active on the dock so the
+  // overlay appears even when dragging from far outside; dragleave
+  // requires a counter to handle nested children correctly.
+  let dragCounter = 0;
+  function bindDnD() {
+    const { dock } = els();
+    if (!dock) return;
+    const onDragEnter = (e) => {
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+      dragCounter++;
+      dock.classList.add('drop-active');
+    };
+    const onDragLeave = (e) => {
+      dragCounter = Math.max(0, dragCounter - 1);
+      if (dragCounter === 0) dock.classList.remove('drop-active');
+    };
+    const onDragOver = (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+    const onDrop = (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      dragCounter = 0;
+      dock.classList.remove('drop-active');
+      stageFiles(e.dataTransfer.files);
+      setExpanded(true);
+      els().input.focus();
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+  }
+
+  // ── Chat rendering ──
+  function renderMessage(m, index) {
+    const initial = m.role === 'user' ? 'YOU' : 'AI';
+    const filesHtml = m.files && m.files.length ? `
+      <div class="agent-msg-files">
+        ${m.files.map(f => f.isImage && f.previewUrl
+          ? `<div class="agent-msg-file"><img src="${escAttr(f.previewUrl)}" alt=""></div>`
+          : `<div class="agent-msg-file"><span class="ext">${escHtml((f.name.split('.').pop() || 'file').slice(0, 4))}</span></div>`
+        ).join('')}
+      </div>` : '';
+    const stepsHtml = m.steps && m.steps.length ? `<div class="agent-steps" data-msg="${index}"></div>` : '';
+    const resultHtml = m.result ? renderResultCard(m.result) : '';
+    return `
+      <div class="agent-msg ${m.role}" data-msg="${index}">
+        <div class="agent-msg-av">${initial}</div>
+        <div class="agent-msg-body">
+          <div class="msg-text">${m.text ? escHtml(m.text) : '<em style="color:var(--text-muted)">(no message)</em>'}</div>
+          ${filesHtml}
+          ${stepsHtml}
+          ${resultHtml}
+        </div>
+      </div>
+    `;
+  }
+  function renderResultCard(r) {
+    const stats = [];
+    if (r.panels)     stats.push(`<div class="agent-result-stat"><b>${r.panels}</b><span>panels</span></div>`);
+    if (r.characters) stats.push(`<div class="agent-result-stat"><b>${r.characters}</b><span>characters</span></div>`);
+    if (r.environment) stats.push(`<div class="agent-result-stat"><b>${r.environment}</b><span>setting</span></div>`);
+    return `
+      <div class="agent-result">
+        <div class="agent-result-title">✓ Page Built</div>
+        <div class="agent-result-stats">${stats.join('')}</div>
+        <div class="agent-result-actions">
+          <button class="agent-pill-btn" data-act="focus-panels">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Edit panels
+          </button>
+          <button class="agent-pill-btn" data-act="regen-art">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg>
+            Redo art
+          </button>
+          <button class="agent-pill-btn" data-act="suggest-next">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            Next page
+          </button>
+        </div>
+      </div>
+    `;
+  }
+  function renderStep(s) {
+    const icon = s.status === 'done'
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+      : s.status === 'error'
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+    const detail = s.detail ? ` <span class="agent-step-detail">· ${escHtml(s.detail)}</span>` : '';
+    return `
+      <div class="agent-step ${s.status}" data-step="${escAttr(s.id)}">
+        <span class="agent-step-icon">${icon}</span>
+        <span class="agent-step-label">${escHtml(s.label || s.id)}${detail}</span>
+      </div>
+    `;
+  }
+  function renderAll() {
+    const { body } = els();
+    if (!body) return;
+    body.innerHTML = thread.messages.map(renderMessage).join('') || `
+      <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);
+                  text-align:center;padding:14px;letter-spacing:.3px;">
+        Start a conversation — try "build a tense interrogation scene with the Queen and prisoner girl"
+      </div>
+    `;
+    // Re-render every steps block
+    thread.messages.forEach((m, i) => {
+      const wrap = body.querySelector(`.agent-steps[data-msg="${i}"]`);
+      if (wrap && m.steps) wrap.innerHTML = m.steps.map(renderStep).join('');
+    });
+    // Wire result-card actions on the most recent AI message
+    body.querySelectorAll('.agent-pill-btn').forEach(b => {
+      b.onclick = () => handleResultAction(b.dataset.act);
+    });
+    scrollBodyToEnd();
+  }
+  function scrollBodyToEnd() {
+    const { body } = els();
+    if (body) body.scrollTop = body.scrollHeight;
+  }
+
+  function handleResultAction(act) {
+    if (act === 'focus-panels') {
+      // Scroll the panel list into view and focus panel 1.
+      const list = $('#panel-list');
+      if (list) list.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (typeof setActivePanel === 'function') setActivePanel(1);
+    } else if (act === 'regen-art') {
+      // Use the existing Regenerate Page button.
+      if (typeof generatePageAction === 'function') generatePageAction(true);
+    } else if (act === 'suggest-next') {
+      els().input.value = 'Plan the next page that follows from this one — different beat, same characters where it makes sense.';
+      els().input.dispatchEvent(new Event('input'));
+      els().input.focus();
+    }
+  }
+
+  // ── Sending a message ──
+  // Pulls staged files + input value, pushes a user message into the
+  // thread, then starts the stream (real or simulated). Each
+  // streamed event updates the in-progress AI message and the rest
+  // of the UI in parallel.
+  async function sendMessage() {
+    if (thread.busy) return;
+    const { input } = els();
+    const text = (input.value || '').trim();
+    const files = thread.files.slice();
+    if (!text && !files.length) return;
+    if (!state.activePage) { toast('No page selected'); return; }
+
+    // Reset thread if the page changed since last message
+    if (thread.pageId !== state.activePage) {
+      thread.pageId = state.activePage;
+      thread.messages = [];
+    }
+
+    // Push the user message
+    thread.messages.push({
+      role: 'user',
+      text,
+      files: files.map(f => ({ name: f.name, isImage: f.isImage, previewUrl: f.previewUrl })),
+    });
+    // Reserve an AI message that will fill in as the stream arrives
+    const aiMsg = { role: 'ai', text: '', steps: [], result: null };
+    thread.messages.push(aiMsg);
+
+    input.value = '';
+    autoresizeInput();
+    clearStaged();
+    setExpanded(true);
+    renderAll();
+    setBusy(true);
+    setStatus('Working — planning your page…', true);
+
+    try {
+      await runAgentStream({
+        message: text,
+        files,
+        aiMsg,
+      });
+      setStatus('Page built. Click a panel to refine, or chat to iterate.', false);
+    } catch (err) {
+      aiMsg.steps.push({ id: 'fatal', label: 'Agent error', status: 'error', detail: err.message });
+      renderAll();
+      setStatus('Agent failed — try again or simplify your request.', false);
+      toast('Agent error: ' + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Dispatcher: try the real backend first; on 401/404/network
+  // failure, fall back to a local-mode simulation that uses the
+  // same placeholder pipeline as Generate Page.
+  async function runAgentStream({ message, files, aiMsg }) {
+    if (api.isLocal && api.isLocal()) {
+      return runLocalAgent({ message, files, aiMsg });
+    }
+    try {
+      const res = await fetch(
+        '/api/comics/pages/' + encodeURIComponent(state.activePage) + '/agent',
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            message,
+            files: files.map(f => ({
+              name: f.name, mime: f.mime, size: f.size,
+              isImage: f.isImage, data: f.data,
+            })),
+            conversation: thread.messages
+              .slice(0, -1) // exclude the in-progress AI message
+              .map(m => ({ role: m.role, text: m.text })),
+            context: {
+              project_id: state.projectId,
+              active_panel: state.activePanel,
+              character_ids: state.characters.map(c => c.id),
+            },
+          }),
+        }
+      );
+      if (res.status === 401 || res.status === 404 || res.status === 503) {
+        return runLocalAgent({ message, files, aiMsg, reason: 'backend unavailable' });
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+
+      // NDJSON stream — each line is one event.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          try { handleEvent(JSON.parse(line), aiMsg); }
+          catch (e) { console.warn('agent: bad line', line); }
+        }
+      }
+      // Flush trailing partial
+      const tail = buffer.trim();
+      if (tail) { try { handleEvent(JSON.parse(tail), aiMsg); } catch (_) {} }
+    } catch (e) {
+      // Network error → simulate locally so the user still sees a
+      // working flow rather than a dead dock.
+      console.warn('[agent] backend failed, simulating locally:', e.message);
+      return runLocalAgent({ message, files, aiMsg, reason: e.message });
+    }
+  }
+
+  // Event handler — same shape used by both real and local streams.
+  // Each event mutates thread/state/DOM enough to make the change
+  // visible immediately, then re-renders the affected slice.
+  function handleEvent(ev, aiMsg) {
+    if (!ev || !ev.type) return;
+    switch (ev.type) {
+      case 'step': {
+        const existing = aiMsg.steps.find(s => s.id === ev.id);
+        if (existing) {
+          Object.assign(existing, ev);
+        } else {
+          aiMsg.steps.push({ id: ev.id, label: ev.label, status: ev.status || 'running', detail: ev.detail });
+        }
+        // Surface the latest running step in the collapsed status line
+        const running = aiMsg.steps.find(s => s.status === 'running');
+        if (running) setStatus(running.label || running.id, true);
+        renderAll();
+        break;
+      }
+      case 'text': {
+        aiMsg.text = (aiMsg.text || '') + (ev.text || '');
+        renderAll();
+        break;
+      }
+      case 'page_update': {
+        applyPageUpdate(ev);
+        break;
+      }
+      case 'character_create': {
+        applyCharacterCreate(ev.character || {});
+        break;
+      }
+      case 'character_image': {
+        // A portrait finished rendering for a character. Update the
+        // character row's ref_image_url so the sidebar avatar + panel
+        // chips swap from the procedural SVG to the real portrait.
+        applyCharacterImage(ev.character_id, ev.image_url);
+        break;
+      }
+      case 'environment_image': {
+        // The agent generated a fresh environment image (not one of
+        // the three starters). Show it as a chip in the env picker
+        // and mark it as the page's setting.
+        applyEnvironmentImage(ev.image_url, ev.name || 'Custom Setting');
+        break;
+      }
+      case 'panel_update': {
+        applyPanelUpdate(ev.panel || {});
+        break;
+      }
+      case 'art_done': {
+        applyArtDone(ev.panels || []);
+        break;
+      }
+      case 'final': {
+        if (ev.message) aiMsg.text = (aiMsg.text || '') + (aiMsg.text ? '\n\n' : '') + ev.message;
+        if (ev.stats) aiMsg.result = ev.stats;
+        renderAll();
+        break;
+      }
+      case 'error': {
+        aiMsg.steps.push({ id: 'err', label: ev.message || 'Error', status: 'error' });
+        renderAll();
+        break;
+      }
+    }
+  }
+
+  // ── Event appliers — touch the same state mutators the rest of
+  // the app uses, so changes are persistent and the existing
+  // renderers know how to reflect them. ──
+  function applyPageUpdate(ev) {
+    const pg = state.pages.find(p => p.id === state.activePage);
+    if (!pg) return;
+    if (typeof ev.summary === 'string') {
+      pg.summary = ev.summary;
+      // Push into the compose textarea so the user sees it filled in
+      const ta = $('#page-prompt-main');
+      if (ta) {
+        ta.value = ev.summary;
+        const counter = $('#prompt-counter');
+        if (counter) counter.textContent = String(ev.summary.length);
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+    if (typeof ev.layout === 'number' || typeof ev.layout === 'string') {
+      pg.layout = ev.layout;
+    }
+    if (typeof ev.mood === 'string') pg.mood = ev.mood;
+    if (typeof ev.environment_id !== 'undefined') {
+      pg.environment_id = ev.environment_id;
+    }
+    if (Array.isArray(ev.character_ids)) {
+      pg.character_ids = ev.character_ids.slice();
+    }
+    // Persist (best-effort, debounced via the existing patch path)
+    try {
+      api.patch('/api/comics/pages/' + encodeURIComponent(pg.id), {
+        summary: pg.summary,
+        layout: pg.layout,
+        mood: pg.mood,
+        environment_id: pg.environment_id,
+        character_ids: pg.character_ids,
+      });
+    } catch (_) { /* non-fatal */ }
+    if (typeof renderComicPage === 'function') renderComicPage();
+    if (typeof updateComposeForm === 'function') updateComposeForm();
+  }
+
+  function applyCharacterCreate(ch) {
+    if (!ch || !ch.name) return;
+    // Skip if a character with this name already exists (case-insensitive)
+    const lname = ch.name.trim().toLowerCase();
+    if (state.characters.some(c => (c.name || '').trim().toLowerCase() === lname)) return;
+    const local = {
+      id: ch.id || ('ch_local_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
+      project_id: state.projectId,
+      name: ch.name,
+      role: ch.role || '',
+      description: ch.description || '',
+      appearance: ch.appearance || {},
+      ref_image_url: ch.ref_image_url || null,
+      ref_count: 0,
+      position: state.characters.length,
+      created_at: Math.floor(Date.now() / 1000),
+      updated_at: Math.floor(Date.now() / 1000),
+    };
+    state.characters.push(local);
+    // Best-effort persist to backend; local-mode will store in localStorage
+    try {
+      api.post('/api/comics/projects/' + encodeURIComponent(state.projectId) + '/characters', {
+        name: local.name, role: local.role,
+        description: local.description, appearance: local.appearance,
+      });
+    } catch (_) {}
+    if (typeof renderCharList === 'function') renderCharList();
+    if (typeof renderCharChips === 'function') renderCharChips();
+  }
+
+  // A character portrait finished rendering. Find the character (by
+  // id; fall back to lowercased-name lookup since the local-mode
+  // path generates client-side IDs that may not match what the
+  // backend chose) and update ref_image_url. The renderers then
+  // swap the procedural avatar for the real portrait.
+  function applyCharacterImage(charId, imageUrl) {
+    if (!imageUrl) return;
+    let ch = state.characters.find(c => c.id === charId);
+    if (!ch) return;
+    ch.ref_image_url = imageUrl;
+    ch.ref_count = (ch.ref_count || 0) + 1;
+    if (typeof renderCharList === 'function') renderCharList();
+    if (typeof renderCharChips === 'function') renderCharChips();
+    // Also re-render the comic page since cast chips inside panels
+    // (when wired up) read from character.ref_image_url too.
+    if (typeof renderPanelCast === 'function') renderPanelCast();
+  }
+
+  // The agent generated a one-off environment for this page (not
+  // one of the three starters). Surface it as a chip and select it
+  // so the user sees the agent's choice. We register it in the
+  // project's environment list so subsequent pages can reuse it.
+  function applyEnvironmentImage(imageUrl, name) {
+    if (!imageUrl) return;
+    state.environments = state.environments || [];
+    // Don't add duplicates if the agent ever emits twice for the
+    // same page (defensive against re-runs)
+    const dup = state.environments.find(e => e.url === imageUrl);
+    const envId = dup ? dup.id : ('env_local_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    if (!dup) {
+      state.environments.push({
+        id: envId,
+        project_id: state.projectId,
+        name: name || 'Custom Setting',
+        description: '',
+        img: null,        // no UI_ASSETS key for AI-generated envs
+        url: imageUrl,    // direct URL (R2 or data:)
+        created_at: Math.floor(Date.now() / 1000),
+      });
+    }
+    // Set as the page's environment
+    const pg = state.pages.find(p => p.id === state.activePage);
+    if (pg) pg.environment_id = envId;
+    try {
+      api.patch('/api/comics/pages/' + encodeURIComponent(state.activePage), {
+        environment_id: envId,
+      });
+    } catch (_) {}
+    // Refresh the env chip strip + sidebar count
+    if (typeof renderEnvChips === 'function') renderEnvChips();
+    if (typeof bindSidebarTabs === 'function') {
+      const ec = $('#sb-envs-count');
+      if (ec) ec.textContent = (state.environments.length + 3); // +3 starters
+    }
+  }
+
+  function applyPanelUpdate(p) {
+    if (!p || typeof p.position !== 'number') return;
+    // Ensure a panel row exists for this position on the active page
+    let panel = state.panels.find(x => x.page_id === state.activePage && x.position === p.position);
+    if (!panel) {
+      panel = {
+        id: p.id || ('pn_local_' + state.activePage + '_' + p.position),
+        page_id: state.activePage,
+        position: p.position,
+        description: '', dialogue: '', narration: '',
+        character_ids: [], image_url: null,
+      };
+      state.panels.push(panel);
+    }
+    // Resolve any character names → ids (the agent may emit names
+    // when it doesn't know IDs yet)
+    let charIds = panel.character_ids || [];
+    if (Array.isArray(p.character_ids)) {
+      charIds = p.character_ids.map(x => {
+        if (typeof x !== 'string') return null;
+        // Already an ID?
+        const byId = state.characters.find(c => c.id === x);
+        if (byId) return byId.id;
+        // Match by name (case-insensitive)
+        const byName = state.characters.find(c => (c.name || '').toLowerCase() === x.toLowerCase());
+        return byName ? byName.id : null;
+      }).filter(Boolean);
+    }
+    Object.assign(panel, {
+      description: p.description ?? panel.description,
+      dialogue: p.dialogue ?? panel.dialogue,
+      dialogue_speaker: p.dialogue_speaker ?? panel.dialogue_speaker,
+      narration: p.narration ?? panel.narration,
+      shot_type: p.shot_type ?? panel.shot_type,
+      character_ids: charIds,
+    });
+    // Persist
+    try {
+      api.patch('/api/comics/panels/' + encodeURIComponent(panel.id), {
+        description: panel.description,
+        dialogue: panel.dialogue,
+        dialogue_speaker: panel.dialogue_speaker,
+        narration: panel.narration,
+        shot_type: panel.shot_type,
+        character_ids: panel.character_ids,
+      });
+    } catch (_) {}
+    if (typeof renderPanelList === 'function') renderPanelList();
+    // If this is the active panel, refresh its inspector inputs
+    if (panel.position === state.activePanel) {
+      const desc = $('#panel-desc-text');
+      if (desc && document.activeElement !== desc) {
+        desc.value = panel.description || '';
+        const c = $('#panel-desc-count'); if (c) c.textContent = String((panel.description || '').length);
+      }
+      const dlg = document.querySelector('#panel-dialogue, [data-panel-field="dialogue"]');
+      if (dlg && document.activeElement !== dlg) dlg.value = panel.dialogue || '';
+      const nar = document.querySelector('#panel-narration, [data-panel-field="narration"]');
+      if (nar && document.activeElement !== nar) nar.value = panel.narration || '';
+    }
+  }
+
+  function applyArtDone(panels) {
+    for (const r of panels) {
+      if (!r || !r.image_url) continue;
+      let panel = state.panels.find(x => x.id === r.panel_id);
+      if (!panel && typeof r.position === 'number') {
+        panel = state.panels.find(x => x.page_id === state.activePage && x.position === r.position);
+      }
+      if (panel) panel.image_url = r.image_url;
+    }
+    // Mark the page as generated so the sidebar checkmark appears
+    const pg = state.pages.find(p => p.id === state.activePage);
+    if (pg) {
+      pg.status = 'generated';
+      if (typeof PAGES_VIEW === 'function') { PAGES = PAGES_VIEW(); }
+      if (typeof renderPagesList === 'function') renderPagesList();
+      if (typeof renderStrip === 'function') renderStrip();
+    }
+    if (typeof renderComicPage === 'function') renderComicPage();
+    if (typeof renderPanelList === 'function') renderPanelList();
+  }
+
+  // ── Local agent (no backend) ──
+  // Pretends to be the backend stream by emitting a plausible
+  // sequence of events with timed delays, using the local generate
+  // pipeline (placeholder images cycled from env/style thumbs) for
+  // panel art. The point is to make the UX testable end-to-end even
+  // when comics.html is opened standalone — same flow, same
+  // applier functions, no DB.
+  async function runLocalAgent({ message, files, aiMsg, reason }) {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+    function emit(ev) { handleEvent(ev, aiMsg); }
+
+    if (reason) console.info('[agent local]', reason);
+
+    // ── Step 1: intent ──
+    emit({ type: 'step', id: 'intent', label: 'Understanding your request', status: 'running' });
+    await wait(550);
+    const hasFiles = !!files.length;
+    const desc = (message || '').slice(0, 240) || 'A pivotal scene that advances the story.';
+    emit({ type: 'step', id: 'intent', label: 'Understanding your request', status: 'done',
+           detail: hasFiles ? `${files.length} reference${files.length === 1 ? '' : 's'}` : 'text prompt' });
+
+    // ── Step 2: plan ──
+    emit({ type: 'step', id: 'plan', label: 'Planning panel breakdown', status: 'running' });
+    await wait(700);
+
+    // Heuristic plan: 5 panels by default; widen to 6 if the user
+    // mentions "action" / "fight", narrow to 3 for "quiet" / "intimate".
+    // Cover pages are ALWAYS 1 panel (matches the backend's behavior
+    // and the existing /generate handler's special-case).
+    const m = (message || '').toLowerCase();
+    const activePageRow = state.pages.find(p => p.id === state.activePage);
+    const isCover = !!(activePageRow && activePageRow.is_cover);
+    let layout;
+    if (isCover) {
+      layout = 1;
+    } else if (/(fight|battle|action|chase|combat)/.test(m)) {
+      layout = 6;
+    } else if (/(quiet|intimate|portrait|stillness|conversation)/.test(m)) {
+      layout = 3;
+    } else {
+      layout = 5;
+    }
+
+    // Pick an environment hint
+    let envId = null;
+    if (/(throne|royal|court|king|queen)/.test(m)) envId = 'env_throne_room';
+    else if (/(forest|wood|wilds|trees|mist)/.test(m))   envId = 'env_misty_forest';
+    else if (/(ruins?|kingdom|fall|wasteland|city)/.test(m)) envId = 'env_ruined_kingdom';
+
+    // Pick a mood
+    let mood = (state.pages.find(p => p.id === state.activePage) || {}).mood || 'dark_epic';
+    if (/(noir|cyber|neon)/.test(m)) mood = 'cyberpunk';
+    if (/(quiet|tender|hope|warmth)/.test(m)) mood = 'somber';
+
+    emit({ type: 'step', id: 'plan', label: 'Planning panel breakdown', status: 'done',
+           detail: `${layout} panels · ${envId ? envId.replace('env_', '').replace('_', ' ') : 'no setting'}` });
+
+    // Apply the page-level update
+    emit({
+      type: 'page_update',
+      summary: desc,
+      layout,
+      mood,
+      environment_id: envId,
+      character_ids: state.characters.map(c => c.id),
+    });
+
+    // ── Step 3: characters ──
+    // Extract referenced character names from the message. Crude:
+    // pick proper-noun-looking words that aren't already in the
+    // roster. The real backend will do this much better.
+    emit({ type: 'step', id: 'chars', label: 'Resolving cast', status: 'running' });
+    await wait(450);
+    const known = new Set(state.characters.map(c => (c.name || '').toLowerCase()));
+    const candidates = [];
+    // Common false positives at sentence start (verbs in imperative mood,
+    // pronouns, articles). Skip these even when capitalized. We also skip
+    // words that appear as the very first word of a sentence — too likely
+    // to be a verb like "Show" or "Make".
+    const stopwords = new Set([
+      'the','and','but','with','from','they','when','then','that','this','there',
+      'show','make','create','draw','write','give','tell','let','have','build',
+      'add','put','set','find','plan','start','open','close','take','use',
+      'now','also','about','before','after','while','during','where','what',
+      'her','his','their','our','this','these','those',
+      'he','she','it','we','i','you',
+    ]);
+    // Find sentence boundaries to know which words are sentence-initial.
+    const sentenceStarts = new Set();
+    const text = message || '';
+    let pos = 0;
+    while (pos < text.length) {
+      // Skip leading whitespace
+      while (pos < text.length && /\s/.test(text[pos])) pos++;
+      sentenceStarts.add(pos);
+      // Advance to next sentence
+      const dot = text.slice(pos).search(/[.!?]\s+/);
+      if (dot < 0) break;
+      pos += dot + 1;
+    }
+
+    const properNoun = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?)\b/g;
+    let mm;
+    while ((mm = properNoun.exec(text)) !== null) {
+      const n = mm[1].trim();
+      const matchStart = mm.index;
+      if (n.length < 3) continue;
+      if (stopwords.has(n.toLowerCase())) continue;
+      // Skip sentence-initial words (high false-positive rate for verbs)
+      // unless they're multi-word (e.g. "Queen Elizabeth" is fine).
+      if (sentenceStarts.has(matchStart) && !n.includes(' ')) continue;
+      if (known.has(n.toLowerCase())) continue;
+      if (candidates.includes(n)) continue;
+      candidates.push(n);
+    }
+    for (const name of candidates.slice(0, 3)) {
+      emit({ type: 'character_create', character: { name, role: '', description: 'Introduced via agent.' } });
+    }
+    emit({ type: 'step', id: 'chars', label: 'Resolving cast', status: 'done',
+           detail: candidates.length ? `+${candidates.slice(0, 3).length} new` : 'reuse existing' });
+
+    // ── Step 4: per-panel breakdown ──
+    emit({ type: 'step', id: 'panels', label: 'Writing panel descriptions and dialogue', status: 'running' });
+    await wait(400);
+
+    const allCharIds = state.characters.map(c => c.id);
+    const shotTypes = ['Wide establishing', 'Medium two-shot', 'Close-up', 'Over-the-shoulder', 'Low angle', 'Reaction shot', 'Tracking shot'];
+    for (let i = 1; i <= layout; i++) {
+      const cast = allCharIds.length
+        ? allCharIds.slice(0, Math.min(2, allCharIds.length))
+        : [];
+      const beat = i === 1 ? 'Opening beat — set the stage'
+        : i === layout ? 'Closing beat — emotional landing'
+        : `Beat ${i} — escalation`;
+      const desc2 = `${beat}. ${describePanel(message, i, layout)}`;
+      const dialogue = i === 2 || i === Math.floor(layout / 2) + 1
+        ? generateDialogue(message, i)
+        : '';
+      const narration = i === 1 ? generateNarration(message) : '';
+      emit({
+        type: 'panel_update',
+        panel: {
+          position: i,
+          description: desc2,
+          dialogue,
+          dialogue_speaker: dialogue ? (state.characters[0]?.name || '') : '',
+          narration,
+          shot_type: shotTypes[(i - 1) % shotTypes.length],
+          character_ids: cast,
+        }
+      });
+      await wait(180);
+    }
+    emit({ type: 'step', id: 'panels', label: 'Writing panel descriptions and dialogue', status: 'done', detail: `${layout} panels` });
+
+    // ── Step 5: art ──
+    emit({ type: 'step', id: 'art', label: 'Generating panel art', status: 'running' });
+    // Re-use the existing /generate handler — it produces placeholder
+    // art in local mode, which is what we want. The handler also
+    // syncs panel image_urls into the store.
+    try {
+      const res = await api.post(
+        '/api/comics/pages/' + encodeURIComponent(state.activePage) + '/generate',
+        { layout, mood, environment_id: envId, regenerate: true }
+      );
+      if (res && Array.isArray(res.panels)) {
+        // Pull refreshed panels (they have real IDs + image_urls)
+        try {
+          const fresh = await api.get('/api/comics/pages/' + encodeURIComponent(state.activePage) + '/panels');
+          if (fresh && Array.isArray(fresh.panels)) {
+            // Capture prior per-panel writes (description, dialogue,
+            // etc.) BEFORE we filter them out of state.panels. The local
+            // generate handler recreates panels with fresh IDs, so we
+            // match on (page_id, position) to carry copy across.
+            const priorByPos = new Map();
+            for (const p of state.panels) {
+              if (p.page_id === state.activePage) priorByPos.set(p.position, p);
+            }
+            state.panels = state.panels.filter(p => p.page_id !== state.activePage);
+            for (const np of fresh.panels) {
+              const prior = priorByPos.get(np.position);
+              state.panels.push({
+                ...np,
+                description: (prior && prior.description) || np.description,
+                dialogue: (prior && prior.dialogue) || np.dialogue,
+                dialogue_speaker: (prior && prior.dialogue_speaker) || np.dialogue_speaker,
+                narration: (prior && prior.narration) || np.narration,
+                shot_type: (prior && prior.shot_type) || np.shot_type,
+                character_ids: (prior && prior.character_ids && prior.character_ids.length)
+                  ? prior.character_ids
+                  : (np.character_ids || []),
+              });
+            }
+            // Persist the carried-over fields to localStorage so a
+            // refresh doesn't lose them. We patch each panel by ID.
+            for (const p of state.panels.filter(p => p.page_id === state.activePage)) {
+              try {
+                api.patch('/api/comics/panels/' + encodeURIComponent(p.id), {
+                  description: p.description,
+                  dialogue: p.dialogue,
+                  dialogue_speaker: p.dialogue_speaker,
+                  narration: p.narration,
+                  shot_type: p.shot_type,
+                  character_ids: p.character_ids,
+                });
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+        emit({ type: 'art_done', panels: res.panels });
+      }
+    } catch (e) {
+      emit({ type: 'step', id: 'art', label: 'Generating panel art', status: 'error', detail: e.message });
+      throw e;
+    }
+    emit({ type: 'step', id: 'art', label: 'Generating panel art', status: 'done', detail: `${layout} images` });
+
+    // ── Final ──
+    const charsAdded = candidates.slice(0, 3).length;
+    emit({
+      type: 'final',
+      message: charsAdded
+        ? `Built the page with ${layout} panels and added ${charsAdded} new character${charsAdded === 1 ? '' : 's'}. Click any panel to refine.`
+        : `Built the page with ${layout} panels. Click any panel to refine — or chat to iterate.`,
+      stats: {
+        panels: layout,
+        characters: charsAdded || state.characters.length,
+        environment: envId ? 1 : 0,
+      },
+    });
+  }
+
+  // Local-mode helpers for generating plausible panel copy from the
+  // user's prompt. These are deliberately simple — the real backend
+  // will use Claude / GPT for much better output. We just want
+  // something readable that proves the wiring works end-to-end.
+  function describePanel(prompt, i, total) {
+    const promptShort = (prompt || '').slice(0, 80) || 'the scene';
+    if (i === 1)        return `Wide angle on the setting. ${promptShort}.`;
+    if (i === total)    return `Final reaction — hold on the emotional center. Tension at its peak.`;
+    if (i === 2)        return `Tighter framing. We see the consequence taking shape.`;
+    return `Push in on the action. Beat ${i} of ${total}.`;
+  }
+  function generateDialogue(prompt, i) {
+    const lines = [
+      'You don\'t know what you\'ve done.',
+      'It\'s already too late.',
+      'Then let it begin.',
+      'We were never given a choice.',
+      'Look at me when I\'m speaking to you.',
+    ];
+    return lines[(i + (prompt || '').length) % lines.length];
+  }
+  function generateNarration(prompt) {
+    const tones = [
+      'Somewhere between the old world and the next, the door opens.',
+      'They told her the price. She did not flinch.',
+      'The kingdom would remember this hour.',
+      'There are nights the gods themselves look away.',
+    ];
+    return tones[Math.floor(Math.random() * tones.length)];
+  }
+
+  // ── Input wiring ──
+  function autoresizeInput() {
+    const { input } = els();
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+    const { send } = els();
+    if (send) send.disabled = thread.busy || (!input.value.trim() && !thread.files.length);
+  }
+
+  function bind() {
+    const { head, input, send, attach, fileInp } = els();
+    if (!head) { console.warn('[agent] dock not in DOM'); return; }
+
+    // Header toggles expand/collapse
+    head.addEventListener('click', toggleExpanded);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(); }
+    });
+
+    // Input behavior
+    input.addEventListener('input', autoresizeInput);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault(); sendMessage();
+      } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        // Plain Enter sends; Shift+Enter inserts newline.
+        // (Consistent with chat conventions; users expecting Ctrl/⌘+Enter
+        // still works via the branch above.)
+        e.preventDefault(); sendMessage();
+      }
+    });
+    input.addEventListener('focus', () => setExpanded(true));
+
+    // Send
+    send.addEventListener('click', sendMessage);
+
+    // Attach
+    attach.addEventListener('click', () => fileInp.click());
+    fileInp.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length) {
+        stageFiles(e.target.files);
+        setExpanded(true);
+      }
+      // reset input so the same file can be re-selected later
+      e.target.value = '';
+    });
+
+    bindDnD();
+
+    // Initial state
+    renderStaged();
+    setBusy(false);
+    setStatus('Drop files or describe the page — the agent builds it end-to-end.');
+  }
+
+  // Reset thread when active page changes (so each page gets its own
+  // conversation history). We monkey-patch the existing setActivePage
+  // — if it exists — to flush the dock's history.
+  function hookPageSwitch() {
+    if (typeof window.setActivePage !== 'function') return;
+    const orig = window.setActivePage;
+    window.setActivePage = function(...args) {
+      const ret = orig.apply(this, args);
+      if (thread.pageId !== state.activePage) {
+        thread.pageId = state.activePage;
+        thread.messages = [];
+        renderAll();
+        setStatus('Drop files or describe the page — the agent builds it end-to-end.');
+      }
+      return ret;
+    };
+  }
+
+  return {
+    bind,
+    hookPageSwitch,
+    // exposed for debugging / future hooks
+    _thread: thread,
+  };
+})();
+
 boot();
+
+// Wire up the AI Agent dock after the rest of the app has booted.
+// hookPageSwitch() needs setActivePage to already be defined.
+agent.bind();
+agent.hookPageSwitch();
 </script>
 </body>
 </html>
