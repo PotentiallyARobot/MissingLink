@@ -326,21 +326,24 @@ body.mode-create .batch-input-tile:not(.pending) img{
     max-height:calc(100vh - 220px);
     object-fit:contain;display:block
 }
-/* Placeholders in Create mode take up the same generous stage area
-   as the finished image, so the loading state feels like "the image
-   is forming here" rather than "a tiny spinner sits in the middle of
-   an empty void". Same max-width / max-height as the real-image tile,
-   1:1 aspect-ratio so the placeholder is roughly square (we don't yet
-   know the actual output dims). The progress UI inside scales up via
-   its own selector below to fit the larger surface. */
+/* Placeholder tile in Create mode: FILL the available stage area so the
+   loading state feels like "the image is forming here, full-screen"
+   rather than a small floating card. The tile takes the full output
+   area (capped by the same constraints as Camera mode's outImg).
+   No border, no card background — just the spinner + label + bar
+   sitting on the bare stage so the visual treatment matches Camera. */
 body.mode-create .batch-input-tile.pending{
-    aspect-ratio:1/1;
-    width:min(720px, 90vw);
-    max-width:min(720px, 90vw);
-    max-height:calc(100vh - 220px);
-    /* Cap by max-height too so on short viewports the square shrinks
-       proportionally — width follows because aspect-ratio:1/1 ties
-       them together. */
+    aspect-ratio:auto;
+    width:100%;
+    max-width:100%;
+    min-height:min(720px, calc(100vh - 200px));
+    max-height:calc(100vh - 200px);
+    background:transparent;
+    border:none;
+    box-shadow:none;
+}
+body.mode-create .batch-input-tile.pending:hover{
+    border:none;
 }
 /* Inside a Create-mode placeholder the spinner + label + progress bar
    should be larger to match the larger surface — at the default 80%
@@ -3252,46 +3255,84 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    and input row with a dark gradient backdrop so the lock CTA is the
    only interactive element. Pointer-events:auto on the veil itself
    blocks clicks from reaching the agent input underneath. */
-.agent-lock{
-    position:absolute;inset:0;z-index:20;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    text-align:center;gap:10px;padding:20px;
-    background:linear-gradient(180deg,
-        rgba(17,17,20,.85) 0%,
-        rgba(17,17,20,.95) 50%,
-        rgba(17,17,20,.98) 100%);
-    backdrop-filter:blur(4px);
-    border-radius:5px;
-    pointer-events:auto;
+/* ── Batch subscription lock ───────────────────────────────────────
+   Full-area lock that covers the entire batch workspace (sidebar
+   controls + stage + agent panel) when the user isn't subscribed.
+   Sits below the header (offset by --header-h) and uses
+   backdrop-filter:blur to dim everything underneath so the eye is
+   drawn to the centered feature card. */
+#batchLockOverlay{
+    position:fixed;
+    top:var(--header-h, 48px);
+    left:0;right:0;bottom:0;
+    z-index:150;  /* above sidebar (z 100ish) + main + agent overlay (z 10) */
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;
+    background:rgba(8,8,10,.55);
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
 }
-.agent-lock-icon{
-    font-size:32px;line-height:1;
-    filter:drop-shadow(0 0 16px rgba(232,169,23,.4));
+#batchLockOverlay.open{display:flex}
+.batch-lock-card{
+    background:var(--surface);
+    border:1px solid var(--gold);
+    border-radius:14px;
+    padding:32px 36px 28px;
+    width:min(520px, calc(100vw - 48px));
+    max-height:calc(100vh - var(--header-h, 48px) - 48px);
+    overflow:auto;
+    text-align:center;
+    box-shadow:0 24px 72px rgba(0,0,0,.7), 0 0 32px rgba(232,169,23,.15);
+    display:flex;flex-direction:column;gap:12px;align-items:stretch;
 }
-.agent-lock-title{
-    font-family:var(--font-mono);font-size:13px;font-weight:700;
-    letter-spacing:1px;color:var(--gold);text-transform:uppercase;
+.batch-lock-icon{
+    font-size:40px;line-height:1;
+    filter:drop-shadow(0 0 18px rgba(232,169,23,.45));
+    margin-bottom:4px;
 }
-.agent-lock-blurb{
-    font-size:11px;line-height:1.5;color:var(--text-muted);
-    max-width:280px;
+.batch-lock-title{
+    font-family:var(--font-mono);font-size:14px;font-weight:700;
+    letter-spacing:1.5px;color:var(--gold);text-transform:uppercase;
 }
-.agent-lock-cta{
-    background:var(--gold);color:#0a0a0c;
-    border:none;border-radius:6px;padding:8px 16px;
+.batch-lock-blurb{
+    font-size:13px;line-height:1.5;color:var(--text);
+    margin:2px auto 8px;max-width:420px;
+    font-family:var(--font-body);
+}
+.batch-lock-features{
+    list-style:none;margin:6px 0 10px;padding:0;
+    display:flex;flex-direction:column;gap:8px;
+    text-align:left;
+}
+.batch-lock-features li{
+    display:flex;gap:10px;align-items:flex-start;
+    background:rgba(0,0,0,.25);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:10px 12px;
+    font-size:12px;line-height:1.45;color:var(--text-muted);
+    font-family:var(--font-body);
+}
+.batch-lock-features li b{color:var(--text);font-weight:600}
+.batch-lock-features .bl-emoji{
+    flex-shrink:0;font-size:16px;line-height:1.3;
+    width:22px;text-align:center;
+}
+.batch-lock-cta{
+    background:var(--gold);color:#0a0a0c;border:none;
+    border-radius:7px;padding:12px 20px;
     font-family:var(--font-mono);font-size:11px;font-weight:700;
-    letter-spacing:1px;text-transform:uppercase;cursor:pointer;
-    transition:all .15s;
-    box-shadow:0 4px 12px rgba(232,169,23,.3);
-    margin-top:4px;
+    letter-spacing:1.2px;text-transform:uppercase;cursor:pointer;
+    transition:all .15s;margin-top:6px;
+    box-shadow:0 4px 14px rgba(232,169,23,.35);
 }
-.agent-lock-cta:hover{
+.batch-lock-cta:hover{
     background:var(--gold-light, #f0b829);
     transform:translateY(-1px);
-    box-shadow:0 6px 16px rgba(232,169,23,.4);
+    box-shadow:0 6px 18px rgba(232,169,23,.45);
 }
-.agent-lock-foot{
-    font-size:9.5px;color:var(--text-dim);font-style:italic;
+.batch-lock-foot{
+    font-size:10px;color:var(--text-dim);font-style:italic;
     letter-spacing:.3px;margin-top:6px;
 }
 .agent-send{background:var(--gold);border:none;color:var(--black);font-size:12px;font-weight:700;width:32px;height:32px;border-radius:5px;cursor:pointer;flex-shrink:0;transition:all .12s;display:flex;align-items:center;justify-content:center}
@@ -4733,22 +4774,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                         <button id="agentMinBtn" onclick="toggleAgentMinimized()" class="q-clear" title="Minimize">▼ Hide</button>
                     </span>
                 </div>
-                <!-- Subscribe-to-unlock veil — shown to non-subscribers
-                     by syncAgentSubscriptionLock() (in JS) when
-                     _user.subscription_status is not 'active'/'past_due'.
-                     Sits absolutely positioned over the agent body and
-                     input row with a dimming gradient so the lock CTA
-                     is the only interactive element. Subscribers and
-                     past-due users see this veil hidden. Anonymous
-                     users see a sign-in nudge that routes to the
-                     Google sign-in flow. -->
-                <div class="agent-lock" id="agentLock" style="display:none">
-                    <div class="agent-lock-icon">🔒</div>
-                    <div class="agent-lock-title">Agent is a Pro feature</div>
-                    <div class="agent-lock-blurb">Subscribe to chat with the agent — generate batches, refine images, and orchestrate edits in plain English.</div>
-                    <button class="agent-lock-cta" id="agentLockCta" onclick="agentLockClick()">Subscribe to unlock</button>
-                    <div class="agent-lock-foot" id="agentLockFoot"></div>
-                </div>
+                <!-- Subscribe-to-unlock veil used to live here; it now
+                     sits at the app level as #batchLockOverlay so it
+                     can blur the WHOLE batch view (sidebar controls +
+                     stage + agent panel together) instead of just the
+                     agent panel body. See syncAgentSubscriptionLock. -->
                 <div class="agent-body" id="agentBody">
                     <div class="agent-empty">Tell me what to do with the batch — generate, edit, filter, organize. e.g. "<em>generate 4 dragon concept sketches</em>", "<em>find images that look like swords and make them glow blue</em>".</div>
                 </div>
@@ -5334,6 +5364,29 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 </div>
 
 <!-- JOB QUEUE (inside main area) -->
+
+<!-- ── BATCH SUBSCRIPTION LOCK ─────────────────────────────────────
+     Full-area lock overlay shown when the user is in Batch mode AND
+     not subscribed. Sits absolutely over the workspace (below the
+     header), blurs everything beneath it, and centers a feature card
+     with the Subscribe CTA. Toggled by syncAgentSubscriptionLock()
+     based on currentMode + _user.subscription_status. -->
+<div id="batchLockOverlay" style="display:none">
+    <div class="batch-lock-card" onclick="event.stopPropagation()">
+        <div class="batch-lock-icon">🔒</div>
+        <div class="batch-lock-title" id="batchLockTitle">Batch &amp; Agent are Pro features</div>
+        <div class="batch-lock-blurb" id="batchLockBlurb">Unlock the agent and batch tools to work on dozens of images at once with one prompt.</div>
+        <ul class="batch-lock-features">
+            <li><span class="bl-emoji">✨</span><div><b>Agent chat</b> — orchestrate edits in plain English ("generate 4 cover variants", "make every armor red")</div></li>
+            <li><span class="bl-emoji">🖼️</span><div><b>Batch edits</b> — apply one prompt to many images cheaply, in parallel</div></li>
+            <li><span class="bl-emoji">🔬</span><div><b>Consistency audit</b> — LLM-grade every output so you only keep the good ones</div></li>
+            <li><span class="bl-emoji">🏷️</span><div><b>Caption for LoRA</b> — auto-tag a whole set for training datasets</div></li>
+            <li><span class="bl-emoji">🔞</span><div><b>NSFW-capable model</b> — dedicated pipeline for adult content</div></li>
+        </ul>
+        <button class="batch-lock-cta" id="batchLockCta" onclick="agentLockClick()">Subscribe to unlock</button>
+        <div class="batch-lock-foot">Camera, Edit, and Create still work without a subscription.</div>
+    </div>
+</div>
 
 </div>
 
@@ -6103,48 +6156,56 @@ function updateUserMenuSubState(){
     }
 }
 
-// Shows / hides the lock veil over the agent panel. Called whenever
-// auth or subscription state changes, plus once during DOMContentLoaded
-// so the lock paints correctly on first load. Logic:
-//   - no _user             → show veil with "Sign in" CTA
-//   - sub active/past_due  → hide veil entirely
-//   - any other status     → show veil with "Subscribe to unlock" CTA
-// Past-due subscribers keep access so they have a chance to update
-// their card without losing the workflow they're in.
+// Shows / hides the full-batch subscription lock. Called whenever:
+//   - auth or subscription state changes (post-/auth/me, post-signout)
+//   - mode changes (setMode)
+//   - on DOMContentLoaded for first paint
+//
+// Logic:
+//   - currentMode !== 'batch' → hide unconditionally (lock only
+//     applies to Batch; other modes are free to all)
+//   - not signed in            → show with "Sign in" CTA
+//   - sub active/past_due      → hide
+//   - signed in, unsubscribed  → show with "Subscribe to unlock"
+//
+// The overlay covers the full workspace (sidebar + stage + agent
+// panel) with a blur so users see what they're unlocking without
+// being able to interact with the controls underneath.
 function syncAgentSubscriptionLock(){
-    const lock = document.getElementById('agentLock');
-    const cta = document.getElementById('agentLockCta');
-    const foot = document.getElementById('agentLockFoot');
-    const blurb = document.querySelector('#agentLock .agent-lock-blurb');
-    if (!lock) return;
+    const overlay = document.getElementById('batchLockOverlay');
+    if (!overlay) return;
+    const cta = document.getElementById('batchLockCta');
+    const title = document.getElementById('batchLockTitle');
+    const blurb = document.getElementById('batchLockBlurb');
+
+    // Only enforce the lock in Batch mode. Other modes paint the
+    // workspace normally — the lock would be confusing in Camera /
+    // Edit / Create where the feature is fully available.
+    if (typeof currentMode !== 'undefined' && currentMode !== 'batch') {
+        overlay.style.display = 'none';
+        return;
+    }
+
     if (!_user) {
-        // Not signed in — the veil functions as a sign-in nudge first;
-        // once they're signed in we'll re-check the subscription state.
-        lock.style.display = '';
-        lock.dataset.mode = 'signin';
+        overlay.style.display = 'flex';
+        if (title) title.textContent = 'Sign in to use Batch & Agent';
+        if (blurb) blurb.textContent = 'Sign in, then subscribe to unlock the agent + batch tools.';
         if (cta) cta.textContent = 'Sign in to continue';
-        if (blurb) blurb.textContent = 'Sign in to access the agent — it can generate batches, refine images, and orchestrate edits in plain English.';
-        if (foot) foot.textContent = '';
         return;
     }
     const status = _user.subscription_status;
     if (status === 'active' || status === 'past_due') {
-        // Subscriber — no veil. Past-due also passes so the user can
-        // continue working while their card update propagates.
-        lock.style.display = 'none';
-        lock.dataset.mode = '';
+        overlay.style.display = 'none';
         return;
     }
-    // Signed in but no subscription → upsell.
-    lock.style.display = '';
-    lock.dataset.mode = 'subscribe';
+    // Signed in, no sub → upsell card with feature list.
+    overlay.style.display = 'flex';
+    if (title) title.textContent = 'Batch & Agent are Pro features';
+    if (blurb) blurb.textContent = 'Unlock the agent and batch tools to work on dozens of images at once with one prompt.';
     if (cta) cta.textContent = 'Subscribe to unlock';
-    if (blurb) blurb.textContent = 'Subscribe to chat with the agent — generate batches, refine images, and orchestrate edits in plain English.';
-    if (foot) foot.textContent = 'Camera, Edit, and Create modes work without a subscription.';
 }
 
-// CTA click handler for the lock veil. Routes based on whether the
-// user is signed in: anonymous → sign-in modal; signed in but
+// CTA click handler — anonymous → sign-in modal; signed-in
 // unsubscribed → Stripe checkout via doSubscribe.
 function agentLockClick(){
     if (!_user) {
@@ -6706,6 +6767,10 @@ function setMode(mode, opts){
     // when they switch to Create — they'd see "GPU warming up" over
     // the Create workspace even though Create doesn't use the GPU.
     if (typeof renderStartupOverlay === 'function') renderStartupOverlay();
+    // Re-evaluate the batch subscription lock. Entering batch as a
+    // non-subscriber should reveal the lock; leaving batch should
+    // hide it regardless of subscription state.
+    if (typeof syncAgentSubscriptionLock === 'function') syncAgentSubscriptionLock();
     $('btnModeCamera').classList.toggle('active', mode === 'camera');
     $('btnModeEdit').classList.toggle('active', mode === 'edit');
     const btnBatch = $('btnModeBatch');
