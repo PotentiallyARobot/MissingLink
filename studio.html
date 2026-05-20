@@ -5736,11 +5736,10 @@ async function checkAuth(){
             _user.age_ack_at = (typeof d.age_ack_at === 'number' && d.age_ack_at > 0)
                 ? d.age_ack_at : null;
             if (typeof _updateProfileMenuSub === 'function') _updateProfileMenuSub();
-            // Show the age-gate as soon as we know the user's state.
-            // No-op if they've already acknowledged. Fires on every
-            // /auth/me hydration (initial + post-signin), which is
-            // idempotent — already-ack'd users see nothing.
-            if (typeof maybeShowAgeGate === 'function') maybeShowAgeGate();
+            // Age gate is NOT shown here anymore — it only fires the
+            // first time the NSFW classifier detects NSFW intent
+            // (uploaded ref OR NSFW prompt). Most users never trigger
+            // it. See _checkNsfwBeforeCreate for the gating logic.
             const tog = $('prefNsfwToggle');
             if (tog) tog.checked = !!d.nsfw_enabled;
             // GPU warmup used to fire automatically on the logged-out
@@ -6174,36 +6173,27 @@ async function doLogout(){
     // Re-paint the agent lock veil — anonymous users see the sign-in
     // nudge variant rather than the subscribe variant.
     if (typeof syncAgentSubscriptionLock === 'function') syncAgentSubscriptionLock();
+    // Clear the per-session NSFW dismissal so the next user who signs
+    // in on this tab gets a fresh screen.
+    _nsfwAdvisoryDismissed = false;
     log('Signed out');
 }
 
 // ── Workflow primer modal ────────────────────────────────────────
 //
-// Shows the recommended-workflow image once per user account. Keyed
-// by user id in localStorage so:
-//   - Same user on the same browser: shown once, then suppressed
-//   - Same browser, different account: each account sees it once
-//   - Same user on a fresh browser: shown again (localStorage is
-//     scoped to origin + browser profile)
-// Called from the post-login transition path in checkAuth so it
-// fires exactly once at the moment of sign-in (not on subsequent
-// page reloads of an already-active session).
-// Called from DOMContentLoaded so it fires exactly once at first
-// page load (not on subsequent reloads). Anonymous and signed-in
-// users both see it on their first visit — it teaches the basic
-// workflow before they engage with the app, so it shouldn't be
-// gated on auth.
-const WORKFLOW_PRIMER_KEY = 'studio_workflow_seen';
+// Shown on EVERY page load, regardless of auth state. Anonymous
+// visitors and signed-in users alike see the recommended-workflow
+// image the moment the page is ready. No localStorage gate, no user
+// scoping — just a fresh paint each visit. Dismissal: ×, backdrop
+// click, Escape, or the "Got it" CTA.
+//
+// Called from DOMContentLoaded so it fires once per page-load, not
+// after auth completes — that way a signed-out viewer hitting the
+// landing page sees it just like a signed-in user does.
 function maybeShowWorkflowPrimer(){
-    try {
-        if (localStorage.getItem(WORKFLOW_PRIMER_KEY)) return;  // already seen
-    } catch (e) { /* localStorage unavailable — just show */ }
     const m = document.getElementById('workflowModal');
     if (!m) return;
     m.classList.add('open');
-    // Mark immediately rather than on-close so a refresh during the
-    // modal doesn't keep re-showing if the user opens it then bails.
-    try { localStorage.setItem(WORKFLOW_PRIMER_KEY, String(Date.now())); } catch (e) {}
 }
 function closeWorkflowModal(){
     const m = document.getElementById('workflowModal');
@@ -6222,7 +6212,11 @@ function closeWorkflowModal(){
 // We deliberately don't wire a close-on-Escape or backdrop-click
 // handler — the gate is meant to block usage until ack'd. Sign-out
 // is the only way past it without acknowledging.
-function maybeShowAgeGate(){
+//
+// Gate is NOT shown on login anymore — it only fires when the NSFW
+// classifier detects NSFW intent (prompt or uploaded ref) and the
+// user hasn't yet ack'd. Most users never trigger it.
+function openAgeGate(){
     if (!_user) return;
     // Already acknowledged → no-op. Server is the source of truth;
     // we read the value off the in-memory _user that /auth/me hydrates.
@@ -6231,6 +6225,9 @@ function maybeShowAgeGate(){
     if (!m) return;
     m.classList.add('open');
 }
+// Back-compat shim — older call sites used maybeShowAgeGate; route
+// to the new name. (Safe to delete after we confirm no callers.)
+function maybeShowAgeGate(){ openAgeGate(); }
 
 function closeAgeGate(){
     const m = document.getElementById('ageGateModal');
@@ -6262,6 +6259,19 @@ async function acknowledgeAgeGate(){
         // doesn't re-open the gate.
         _user.age_ack_at = d.age_ack_at;
         closeAgeGate();
+        // If we arrived at the age gate via the NSFW classifier, the
+        // user's intent was to do something NSFW-flavored. Continue
+        // the flow by surfacing the NSFW advisory (which routes them
+        // toward Camera/Edit or the subscribe upsell). Defer a tick so
+        // the close transition runs first.
+        if (_ageGateThenNsfwAdvisory) {
+            _ageGateThenNsfwAdvisory = false;
+            setTimeout(() => {
+                if (typeof openNsfwAdvisoryModal === 'function') {
+                    openNsfwAdvisoryModal();
+                }
+            }, 120);
+        }
     } catch (e) {
         showNotif('Network error — please try again.', 'error');
     } finally {
@@ -7757,47 +7767,83 @@ async function genUploadToSlot(i, file){
         // chosen a size (preset click or manual W/H edit) so we don't
         // clobber their intent.
         _autoFitSizeToLargestRef();
-        // NSFW advisory — fire-and-forget classifier on the uploaded
-        // ref. If it comes back positive, surface the advisory modal
-        // (informational only, doesn't block the upload). Subscribers
-        // skip the modal since they presumably have access to a model
-        // that handles NSFW; everyone else gets the upsell. Only fires
-        // in Create mode (matches the spec — Camera/Edit don't show
-        // this advisory since NSFW is permitted there).
-        if (currentMode === 'generate') {
-            _maybeFireNsfwAdvisoryForRef(d.url);
-        }
+        // (NSFW classification used to fire here on upload, but the
+        // advisory modal popping on every upload was noisy. Moved to
+        // doGenerateMode so we only screen when the user actually
+        // tries to generate — see _checkNsfwBeforeCreate.)
     } catch (e) {
         showNotif('Upload failed. Check your connection and try again.', 'error');
     }
 }
 
-// Classifier-then-modal flow for an uploaded ref. Suppressed when
-// the user is already a subscriber (status active/past_due) — they
-// presumably have access to a model that handles NSFW. The classifier
-// call is fire-and-forget; any failure silently passes (the modal is
-// purely informational, never a gate).
-async function _maybeFireNsfwAdvisoryForRef(imageUrl){
-    if (!imageUrl) return;
-    // Subscribers don't need the upsell; they presumably can route to
-    // the NSFW model. (When that model is wired in we may want to
-    // change this to "subscribers see a different routing modal".)
-    const sub = _user && _user.subscription_status;
-    if (sub === 'active' || sub === 'past_due') return;
+// Pre-generate NSFW screen. Called from doGenerateMode AFTER preflight
+// passes but BEFORE the actual job is submitted. Screens the prompt
+// text + every uploaded reference image for NSFW signals. If anything
+// trips, pops the advisory modal and returns true (caller should
+// abort). If everything's clean (or the classifier is unavailable),
+// returns false and the caller proceeds normally.
+//
+// Subscribers skip the screen — they presumably have access to a
+// model that handles NSFW, so the modal is purely an upsell and
+// showing it to people who'd convert nothing is noise.
+//
+// Fail-open: any classifier error returns false (no advisory), so a
+// network blip can't block legitimate generations. The advisory is
+// soft-block UX (it routes users elsewhere), not hard safety.
+// Session-scoped flag: true once the user has dismissed the NSFW
+// advisory at least once this session. We stop screening + popping
+// the modal after that — they've seen the policy, no need to
+// re-interrupt every generation. Resets on page reload (not persisted),
+// which is the right scope: a fresh tab means a fresh acknowledgement
+// of "yes I know NSFW goes to Edit/Camera." Cleared on signout below.
+let _nsfwAdvisoryDismissed = false;
+
+async function _checkNsfwBeforeCreate(prompt){
+    if (!_user) return false;
+    const sub = _user.subscription_status;
+    if (sub === 'active' || sub === 'past_due') return false;
+    // User has already seen and dismissed the advisory this session —
+    // don't re-interrupt them on every generation. They know.
+    if (_nsfwAdvisoryDismissed) return false;
+    const refUrls = _generateRefs
+        .map((r) => r && r.url ? r.url : null)
+        .filter(Boolean);
     try {
         const r = await fetchT(`${API}/api/studio/classify-nsfw`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_url: imageUrl }),
-        }, 12000);
+            body: JSON.stringify({ prompt: prompt || '', image_urls: refUrls }),
+        }, 15000);
         const d = await r.json();
         if (d && d.ok && d.nsfw) {
-            openNsfwAdvisoryModal();
+            // NSFW intent detected. Two-stage gate:
+            //   1. If the user has never acknowledged they're 18+, show
+            //      the age gate FIRST. We need that acknowledgement on
+            //      record before exposing them to anything NSFW-adjacent.
+            //   2. Once age-ack'd, show the NSFW advisory (routes to
+            //      Camera/Edit or the subscribe upsell).
+            // The age gate's CTA handler is wired to re-trigger the
+            // advisory after a successful ack so the user lands on the
+            // same flow they would have gotten if they'd already ack'd.
+            if (!_user.age_ack_at) {
+                _ageGateThenNsfwAdvisory = true;
+                openAgeGate();
+            } else {
+                openNsfwAdvisoryModal();
+            }
+            return true;
         }
     } catch (e) {
-        // Silent — classifier unavailable doesn't block uploads.
+        // Silent — classifier unavailable doesn't block generation.
     }
+    return false;
 }
+
+// Flag set by _checkNsfwBeforeCreate when it has to route through the
+// age gate. After the user acknowledges, the gate's success handler
+// reads this flag and opens the NSFW advisory so the user lands on
+// the same modal they would have seen if they'd already been ack'd.
+let _ageGateThenNsfwAdvisory = false;
 
 function openNsfwAdvisoryModal(){
     const m = document.getElementById('nsfwAdvisoryModal');
@@ -7806,10 +7852,16 @@ function openNsfwAdvisoryModal(){
 function closeNsfwAdvisoryModal(){
     const m = document.getElementById('nsfwAdvisoryModal');
     if (m) m.classList.remove('open');
+    // Mark as dismissed so the screen doesn't fire again this session.
+    // Applies whether they closed via × / Close / Escape / backdrop —
+    // any explicit dismissal is acknowledgement.
+    _nsfwAdvisoryDismissed = true;
 }
 // CTA inside the modal — routes to the existing Stripe checkout via
 // doSubscribe so the user can flip to a subscriber and unlock the
-// NSFW-specialized model (when it's wired in).
+// NSFW-specialized model (when it's wired in). Picking the CTA is
+// also a dismissal — they won't re-see the modal this session if
+// they bounce out of checkout.
 function nsfwAdvisorySubscribe(){
     closeNsfwAdvisoryModal();
     if (typeof doSubscribe === 'function') doSubscribe();
@@ -8432,6 +8484,17 @@ async function doGenerateMode(_autoRetried){
     // the result image lands where they're looking. Safe to call
     // unconditionally; no-op when already in Studio.
     _switchToStudioForOutput();
+    // Pre-flight NSFW screen — checks the prompt text and any uploaded
+    // references. If anything trips, the advisory modal opens and we
+    // abort the generation. Subscribers and users with no key bypass
+    // (returns false in those cases). The check is a soft block — it
+    // routes users toward Camera/Edit (which permit NSFW) or the
+    // subscribe CTA, rather than silently failing. Skipped on the
+    // auto-retry path so we don't double-show.
+    if (!_autoRetried) {
+        const blocked = await _checkNsfwBeforeCreate(prompt);
+        if (blocked) return;
+    }
     // ── Pre-flight ref ownership validation ─────────────────────────
     // The cleanest place to validate is before we even build refIds.
     // Run a quick check-ownership round trip (typically <100ms) to scrub
@@ -18992,13 +19055,13 @@ document.addEventListener('DOMContentLoaded',()=>{
         if (sb) sb.classList.add('open');
         if (sc) sc.classList.add('open');
     }
-    // Show the workflow-recommendation primer modal on the user's
-    // first-ever page load (per browser). Browser-wide localStorage
-    // key — doesn't depend on auth state, so anonymous visitors and
-    // signed-in users alike see the workflow guidance the first time
-    // they land, then it stays dismissed for subsequent visits. The
-    // check + show is internal to maybeShowWorkflowPrimer; the call
-    // is idempotent.
+    // Show the workflow-recommendation primer modal on every page
+    // load. Fires for anonymous AND signed-in users — no auth check,
+    // no localStorage gate. The modal teaches the basic Create →
+    // Edit → Camera flow and is single-click to dismiss, so showing
+    // it every visit costs the user almost nothing while keeping the
+    // guidance in view for landing-page visitors who haven't signed
+    // in yet.
     if (typeof maybeShowWorkflowPrimer === 'function') {
         maybeShowWorkflowPrimer();
     }
