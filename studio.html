@@ -3376,6 +3376,70 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 .popup-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10000;align-items:center;justify-content:center;padding:20px}
 .popup-modal.open{display:flex}
 .popup-card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:400px;width:100%;text-align:center;font-family:var(--font-mono)}
+
+/* ── Workflow primer modal ─────────────────────────────────────────
+   Centered, image-first dialog shown once per user account on first
+   sign-in. The image is the content; the card just provides a frame
+   + close affordances + a CTA. Sized to comfortably fit the 1672×941
+   asset on common viewport widths while still cropping nicely on
+   mobile. */
+#workflowModal{z-index:10055}  /* above share/profile (10050) */
+.workflow-card{
+    position:relative;
+    background:var(--surface);
+    border:1px solid var(--gold-dim);
+    border-radius:14px;
+    padding:16px;
+    width:min(960px, calc(100vw - 40px));
+    max-height:calc(100vh - 40px);
+    overflow:auto;
+    text-align:center;
+    box-shadow:0 24px 64px rgba(0,0,0,.7);
+    display:flex;flex-direction:column;gap:14px;align-items:stretch;
+}
+.workflow-card img{
+    display:block;width:100%;height:auto;
+    border-radius:8px;
+    background:#0a0a0c;
+}
+/* Text fallback shown if the asset 404s. Hidden by default; revealed
+   via the .img-missing class which onerror on the img sets. */
+.workflow-fallback{display:none;padding:20px;text-align:left;
+    font-family:var(--font-body);color:var(--text);
+}
+.workflow-fallback h2{
+    font-family:var(--font-mono);font-size:14px;font-weight:700;
+    letter-spacing:1px;color:var(--gold);text-transform:uppercase;
+    margin:0 0 14px;
+}
+.workflow-fallback ol{margin:0;padding-left:22px;line-height:1.7;font-size:13px}
+.workflow-fallback b{color:var(--gold)}
+.workflow-card.img-missing img{display:none}
+.workflow-card.img-missing .workflow-fallback{display:block}
+
+.workflow-close{
+    position:absolute;top:12px;right:12px;z-index:2;
+    width:32px;height:32px;border-radius:50%;
+    background:rgba(0,0,0,.65);border:1px solid var(--border);
+    color:#fff;font-size:18px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    transition:all .12s;padding:0;
+}
+.workflow-close:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+
+.workflow-cta{
+    align-self:center;
+    background:var(--gold);color:#0a0a0c;border:none;
+    border-radius:7px;padding:10px 24px;
+    font-family:var(--font-mono);font-size:11px;font-weight:700;
+    letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;
+    transition:all .15s;
+    box-shadow:0 4px 12px rgba(232,169,23,.3);
+}
+.workflow-cta:hover{
+    background:var(--gold-light, #f0b829);
+    transform:translateY(-1px);
+}
 .popup-card h2{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text);margin:12px 0 8px}
 .popup-balance{color:var(--text-muted);font-size:11px;margin-bottom:20px}
 .popup-icon{font-size:36px;margin-bottom:4px}
@@ -4157,26 +4221,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <div class="sec generate-only" style="display:none">
-        <div class="sec-label"><span class="icon">🤖</span> MODEL</div>
-        <!-- Model selector — three GPT Image variants with meaningfully
-             different cost/feature profiles. The dropdown is the right
-             affordance here (vs. a chip row): the labels are long
-             ("Quality (gpt-image-2)" doesn't fit in a 60px chip), and
-             a dropdown reads as a "less common" choice — most users
-             will leave the default and never expand it. The native
-             <select> styling matches the rest of the studio's dark
-             chrome. Model choice gates which size/background options
-             are valid, which the JS handles when the value changes. -->
-        <select id="genModelSelect" class="model-select" onchange="genSetModel(this.value)">
-            <option value="gpt-image-2">🎨 Quality — gpt-image-2 (best, default)</option>
-            <option value="gpt-image-1-mini">⚡ Fast — gpt-image-1-mini (~4× cheaper)</option>
-            <option value="gpt-image-1.5">🪟 Transparent — gpt-image-1.5 (alpha PNG support)</option>
-        </select>
-        <div class="size-hint" id="genModelHint">
-            Latest model. Best photorealism + text rendering.
-        </div>
-    </div>
+    <!-- Model selector UI removed — gpt-image-2 is now hardcoded as
+         the only supported Create model. The hidden <select> below
+         keeps the historical contract intact: JS elsewhere reads
+         genModelSelect.value to decide which size/background options
+         are valid + what to send in the request payload. Anything that
+         called genSetModel() still works (it's a no-op for the
+         hidden element since the value never changes). -->
+    <select id="genModelSelect" style="display:none">
+        <option value="gpt-image-2" selected>gpt-image-2</option>
+    </select>
 
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">📐</span> OUTPUT SIZE</div>
@@ -5063,6 +5117,34 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
+<!-- ── WORKFLOW PRIMER MODAL ────────────────────────────────────────
+     Shown once per user account on first sign-in (and not again on
+     subsequent sessions). Centered image-only modal that walks users
+     through the Create → Edit → Camera workflow. Asset lives on the
+     missinglink.build static origin; the modal degrades gracefully
+     if the image fails to load (the close button still works and the
+     dialog auto-closes after a short delay).
+     User can dismiss via the X, clicking the dim backdrop, or
+     pressing Escape. -->
+<div class="popup-modal" id="workflowModal" onclick="if(event.target===this) closeWorkflowModal()">
+    <div class="workflow-card" onclick="event.stopPropagation()">
+        <button class="workflow-close" onclick="closeWorkflowModal()" aria-label="Close" title="Close">×</button>
+        <img id="workflowImg"
+             src="https://www.missinglink.build/workflow.png"
+             alt="Recommended workflow: Create → Edit → Camera"
+             onerror="this.parentElement.classList.add('img-missing')">
+        <div class="workflow-fallback">
+            <h2>Welcome — here's the recommended workflow</h2>
+            <ol>
+                <li><b>Create</b> — generate an image from a prompt</li>
+                <li><b>Edit</b> — refine it with unfiltered edit prompts</li>
+                <li><b>Camera</b> — perfect the angle</li>
+            </ol>
+        </div>
+        <button class="workflow-cta" onclick="closeWorkflowModal()">Got it — let's go</button>
+    </div>
+</div>
+
 <!-- JOB QUEUE (inside main area) -->
 
 </div>
@@ -5485,6 +5567,15 @@ async function checkAuth(){
                 // depends on _user; refresh it now so the user sees the
                 // affordance without re-rendering anything else.
                 if (typeof updateShareResultButton === 'function') updateShareResultButton();
+                // Show the workflow primer modal once per user-account.
+                // Keyed by user id so a different account on the same
+                // browser still gets the primer. Fires only on the
+                // logged-out → logged-in transition (this branch) so a
+                // returning user with a live session doesn't re-see it
+                // every page load.
+                if (typeof maybeShowWorkflowPrimer === 'function') {
+                    maybeShowWorkflowPrimer();
+                }
             }
         } else {
             _user=null;
@@ -5891,6 +5982,39 @@ async function doLogout(){
     // nudge variant rather than the subscribe variant.
     if (typeof syncAgentSubscriptionLock === 'function') syncAgentSubscriptionLock();
     log('Signed out');
+}
+
+// ── Workflow primer modal ────────────────────────────────────────
+//
+// Shows the recommended-workflow image once per user account. Keyed
+// by user id in localStorage so:
+//   - Same user on the same browser: shown once, then suppressed
+//   - Same browser, different account: each account sees it once
+//   - Same user on a fresh browser: shown again (localStorage is
+//     scoped to origin + browser profile)
+// Called from the post-login transition path in checkAuth so it
+// fires exactly once at the moment of sign-in (not on subsequent
+// page reloads of an already-active session).
+function _workflowPrimerKey(){
+    const uid = _user && _user.id;
+    return uid ? ('studio_workflow_seen_' + uid) : null;
+}
+function maybeShowWorkflowPrimer(){
+    const key = _workflowPrimerKey();
+    if (!key) return;
+    try {
+        if (localStorage.getItem(key)) return;  // already seen
+    } catch (e) { /* localStorage unavailable — just show */ }
+    const m = document.getElementById('workflowModal');
+    if (!m) return;
+    m.classList.add('open');
+    // Mark immediately rather than on-close so a refresh during the
+    // modal doesn't keep re-showing if the user opens it then bails.
+    try { localStorage.setItem(key, String(Date.now())); } catch (e) {}
+}
+function closeWorkflowModal(){
+    const m = document.getElementById('workflowModal');
+    if (m) m.classList.remove('open');
 }
 
 // ── NSFW preference toggle ─────────────────────────────────────────
@@ -7838,6 +7962,20 @@ function restoreGenerateState(){
         if (typeof d.model === 'string' && _GEN_MODEL_CAPS[d.model]) {
             _generateModel = d.model;
         }
+        // gpt-image-2 is now the only supported Create model. Force-
+        // upgrade any older persisted preference so users who picked
+        // gpt-image-1-mini or gpt-image-1.5 in a previous session
+        // don't get stuck on a model the UI no longer exposes.
+        if (_generateModel !== 'gpt-image-2') {
+            _generateModel = 'gpt-image-2';
+            // Snap an incompatible background choice while we're here
+            // (mini doesn't support transparent — neither do the
+            // others in this mode, but defense-in-depth).
+            if (_generateBackground === 'transparent'
+                && !(_GEN_MODEL_CAPS['gpt-image-2']?.supportsTransparent)) {
+                _generateBackground = 'auto';
+            }
+        }
         if (typeof d.customW === 'number') _generateCustomW = d.customW;
         if (typeof d.customH === 'number') _generateCustomH = d.customH;
         if (typeof d.quality === 'string') _generateQuality = d.quality;
@@ -9779,6 +9917,7 @@ document.addEventListener('keydown',e=>{
         // both feel like overlays the user expects Escape to clear.
         if (typeof closeShareDialog === 'function') closeShareDialog();
         if (typeof closeProfileDialog === 'function') closeProfileDialog();
+        if (typeof closeWorkflowModal === 'function') closeWorkflowModal();
         if (typeof closeFilterPopover === 'function') closeFilterPopover();
         if (typeof closeReactionPicker === 'function') closeReactionPicker();
         if (typeof closeRemixMenu === 'function') closeRemixMenu();
