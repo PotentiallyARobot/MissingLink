@@ -3247,11 +3247,58 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .agent-input{flex:1;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:6px 8px;resize:none;outline:none;transition:border-color .12s;line-height:1.4}
 .agent-input:focus{border-color:var(--gold)}
 .agent-input:disabled{opacity:.5;cursor:wait}
+
+/* Subscribe-to-unlock veil over the agent panel. Sits above the body
+   and input row with a dark gradient backdrop so the lock CTA is the
+   only interactive element. Pointer-events:auto on the veil itself
+   blocks clicks from reaching the agent input underneath. */
+.agent-lock{
+    position:absolute;inset:0;z-index:20;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;gap:10px;padding:20px;
+    background:linear-gradient(180deg,
+        rgba(17,17,20,.85) 0%,
+        rgba(17,17,20,.95) 50%,
+        rgba(17,17,20,.98) 100%);
+    backdrop-filter:blur(4px);
+    border-radius:5px;
+    pointer-events:auto;
+}
+.agent-lock-icon{
+    font-size:32px;line-height:1;
+    filter:drop-shadow(0 0 16px rgba(232,169,23,.4));
+}
+.agent-lock-title{
+    font-family:var(--font-mono);font-size:13px;font-weight:700;
+    letter-spacing:1px;color:var(--gold);text-transform:uppercase;
+}
+.agent-lock-blurb{
+    font-size:11px;line-height:1.5;color:var(--text-muted);
+    max-width:280px;
+}
+.agent-lock-cta{
+    background:var(--gold);color:#0a0a0c;
+    border:none;border-radius:6px;padding:8px 16px;
+    font-family:var(--font-mono);font-size:11px;font-weight:700;
+    letter-spacing:1px;text-transform:uppercase;cursor:pointer;
+    transition:all .15s;
+    box-shadow:0 4px 12px rgba(232,169,23,.3);
+    margin-top:4px;
+}
+.agent-lock-cta:hover{
+    background:var(--gold-light, #f0b829);
+    transform:translateY(-1px);
+    box-shadow:0 6px 16px rgba(232,169,23,.4);
+}
+.agent-lock-foot{
+    font-size:9.5px;color:var(--text-dim);font-style:italic;
+    letter-spacing:.3px;margin-top:6px;
+}
 .agent-send{background:var(--gold);border:none;color:var(--black);font-size:12px;font-weight:700;width:32px;height:32px;border-radius:5px;cursor:pointer;flex-shrink:0;transition:all .12s;display:flex;align-items:center;justify-content:center}
 .agent-send:hover:not(:disabled){background:var(--gold-light);transform:translateY(-1px)}
 .agent-send:disabled{background:var(--surface-3);color:var(--text-muted);cursor:not-allowed}
 .q-section.minimized .agent-body, .q-section.minimized .agent-input-row{display:none}
-.q-section{background:rgba(17,17,19,.92);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
+.q-section{position:relative;background:rgba(17,17,19,.92);border:1px solid var(--border);border-radius:8px;backdrop-filter:blur(8px);overflow:hidden}
 .q-header{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:1px;color:var(--text-muted);padding:8px 10px 6px;display:flex;align-items:center;gap:6px}
 /* Headers tagged as drag handles get a grab cursor and a faint hover hint
    so it's obvious they're movable. The actual drag wiring is in JS — see
@@ -4496,6 +4543,22 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                         <button id="agentMinBtn" onclick="toggleAgentMinimized()" class="q-clear" title="Minimize">▼ Hide</button>
                     </span>
                 </div>
+                <!-- Subscribe-to-unlock veil — shown to non-subscribers
+                     by syncAgentSubscriptionLock() (in JS) when
+                     _user.subscription_status is not 'active'/'past_due'.
+                     Sits absolutely positioned over the agent body and
+                     input row with a dimming gradient so the lock CTA
+                     is the only interactive element. Subscribers and
+                     past-due users see this veil hidden. Anonymous
+                     users see a sign-in nudge that routes to the
+                     Google sign-in flow. -->
+                <div class="agent-lock" id="agentLock" style="display:none">
+                    <div class="agent-lock-icon">🔒</div>
+                    <div class="agent-lock-title">Agent is a Pro feature</div>
+                    <div class="agent-lock-blurb">Subscribe to chat with the agent — generate batches, refine images, and orchestrate edits in plain English.</div>
+                    <button class="agent-lock-cta" id="agentLockCta" onclick="agentLockClick()">Subscribe to unlock</button>
+                    <div class="agent-lock-foot" id="agentLockFoot"></div>
+                </div>
                 <div class="agent-body" id="agentBody">
                     <div class="agent-empty">Tell me what to do with the batch — generate, edit, filter, organize. e.g. "<em>generate 4 dragon concept sketches</em>", "<em>find images that look like swords and make them glow blue</em>".</div>
                 </div>
@@ -5400,12 +5463,15 @@ async function checkAuth(){
             if (typeof _updateProfileMenuSub === 'function') _updateProfileMenuSub();
             const tog = $('prefNsfwToggle');
             if (tog) tog.checked = !!d.nsfw_enabled;
-            // Pre-warm the GPU so cold-start happens while the user is
-            // uploading and picking a pose, not after they click Generate.
-            // Only fire on the logged-out → logged-in transition, or on first
-            // checkAuth after page load (wasLoggedIn is false either way).
+            // GPU warmup used to fire automatically on the logged-out
+            // → logged-in transition (and on every page load for an
+            // already-signed-in user). That was wasteful for users
+            // who never enter Camera/Edit — Create mode runs on a
+            // different backend (gpt-image-2) and doesn't need the
+            // Modal GPU. Warmup is now triggered exclusively from
+            // setMode('camera'|'edit') when the user has tokens.
+            // See _maybeWarmupForMode below.
             if(!wasLoggedIn){
-                warmupGpu();
                 syncHistory();  // hydrate history sidebar from server
                 pollQueue();    // hydrate active queue from server
                 // Scrub any reference-image slots whose IDs don't belong
@@ -5734,6 +5800,12 @@ function updateUserMenuSubState(){
     const statusLine = $('userMenuSubStatus');
     if (subBtn) subBtn.style.display = isLive ? 'none' : '';
     if (mngBtn) mngBtn.style.display = isLive ? '' : 'none';
+    // Whenever the user-menu sub state changes, also reconcile the
+    // agent lock veil so the agent panel paints correctly without
+    // waiting for the next mode change.
+    if (typeof syncAgentSubscriptionLock === 'function') {
+        syncAgentSubscriptionLock();
+    }
     if (statusLine) {
         if (status === 'active') {
             statusLine.textContent = '👑 Pro · active';
@@ -5746,6 +5818,58 @@ function updateUserMenuSubState(){
             statusLine.classList.remove('subscribed');
         }
     }
+}
+
+// Shows / hides the lock veil over the agent panel. Called whenever
+// auth or subscription state changes, plus once during DOMContentLoaded
+// so the lock paints correctly on first load. Logic:
+//   - no _user             → show veil with "Sign in" CTA
+//   - sub active/past_due  → hide veil entirely
+//   - any other status     → show veil with "Subscribe to unlock" CTA
+// Past-due subscribers keep access so they have a chance to update
+// their card without losing the workflow they're in.
+function syncAgentSubscriptionLock(){
+    const lock = document.getElementById('agentLock');
+    const cta = document.getElementById('agentLockCta');
+    const foot = document.getElementById('agentLockFoot');
+    const blurb = document.querySelector('#agentLock .agent-lock-blurb');
+    if (!lock) return;
+    if (!_user) {
+        // Not signed in — the veil functions as a sign-in nudge first;
+        // once they're signed in we'll re-check the subscription state.
+        lock.style.display = '';
+        lock.dataset.mode = 'signin';
+        if (cta) cta.textContent = 'Sign in to continue';
+        if (blurb) blurb.textContent = 'Sign in to access the agent — it can generate batches, refine images, and orchestrate edits in plain English.';
+        if (foot) foot.textContent = '';
+        return;
+    }
+    const status = _user.subscription_status;
+    if (status === 'active' || status === 'past_due') {
+        // Subscriber — no veil. Past-due also passes so the user can
+        // continue working while their card update propagates.
+        lock.style.display = 'none';
+        lock.dataset.mode = '';
+        return;
+    }
+    // Signed in but no subscription → upsell.
+    lock.style.display = '';
+    lock.dataset.mode = 'subscribe';
+    if (cta) cta.textContent = 'Subscribe to unlock';
+    if (blurb) blurb.textContent = 'Subscribe to chat with the agent — generate batches, refine images, and orchestrate edits in plain English.';
+    if (foot) foot.textContent = 'Camera, Edit, and Create modes work without a subscription.';
+}
+
+// CTA click handler for the lock veil. Routes based on whether the
+// user is signed in: anonymous → sign-in modal; signed in but
+// unsubscribed → Stripe checkout via doSubscribe.
+function agentLockClick(){
+    if (!_user) {
+        const m = document.getElementById('loginModal');
+        if (m) m.classList.add('open');
+        return;
+    }
+    if (typeof doSubscribe === 'function') doSubscribe();
 }
 
 async function doLogout(){
@@ -5763,6 +5887,9 @@ async function doLogout(){
         localStorage.removeItem('studio_slots');
     } catch (e) {}
     updateGenButton();
+    // Re-paint the agent lock veil — anonymous users see the sign-in
+    // nudge variant rather than the subscribe variant.
+    if (typeof syncAgentSubscriptionLock === 'function') syncAgentSubscriptionLock();
     log('Signed out');
 }
 
@@ -6172,6 +6299,21 @@ function setMode(mode, opts){
         }
     }
     currentMode = mode;
+    // Conditional GPU warmup. The Modal GPU only serves Camera and
+    // Edit modes (Qwen-based pipeline). Create mode uses gpt-image-2
+    // upstream and doesn't need this container, so warming for Create
+    // is wasted compute. We also skip when the user isn't signed in
+    // OR has 0 tokens — no point spinning up a GPU they can't use.
+    // Past-due / fresh-signed-in users with credits do warm; the GPU
+    // is the slowest part of the loop so we want it cold-starting
+    // while they pick poses + upload references rather than after
+    // they hit Generate.
+    if ((mode === 'camera' || mode === 'edit')
+        && _user
+        && (_user.tokens || 0) > 0
+        && typeof warmupGpu === 'function') {
+        warmupGpu();
+    }
     $('btnModeCamera').classList.toggle('active', mode === 'camera');
     $('btnModeEdit').classList.toggle('active', mode === 'edit');
     const btnBatch = $('btnModeBatch');
@@ -14907,6 +15049,17 @@ async function _agentRunTurn(){
 async function sendAgentMessage(){
     if (_agentRunning) return;
     if (!_user) { document.getElementById('loginModal').classList.add('open'); return; }
+    // Agent is a Pro feature — non-subscribers see the lock veil
+    // covering the agent UI. If they somehow bypass the veil (e.g.
+    // via the DOM inspector) we still refuse here. Past-due
+    // subscribers keep access so they have a window to update their
+    // card without losing their workflow.
+    const subStatus = _user && _user.subscription_status;
+    if (subStatus !== 'active' && subStatus !== 'past_due') {
+        if (typeof syncAgentSubscriptionLock === 'function') syncAgentSubscriptionLock();
+        showNotif('Subscribe to use the agent — agent chat is a Pro feature.', 'info');
+        return;
+    }
     const input = document.getElementById('agentInput');
     const sendBtn = document.getElementById('agentSendBtn');
     if (!input) return;
