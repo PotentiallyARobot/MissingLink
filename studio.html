@@ -6451,6 +6451,12 @@ function setMode(mode, opts){
         && typeof warmupGpu === 'function') {
         warmupGpu();
     }
+    // Re-evaluate the cold-boot overlay's visibility now that
+    // currentMode has changed. Without this, a warming-up overlay
+    // that was painted while the user was in Camera would persist
+    // when they switch to Create — they'd see "GPU warming up" over
+    // the Create workspace even though Create doesn't use the GPU.
+    if (typeof renderStartupOverlay === 'function') renderStartupOverlay();
     $('btnModeCamera').classList.toggle('active', mode === 'camera');
     $('btnModeEdit').classList.toggle('active', mode === 'edit');
     const btnBatch = $('btnModeBatch');
@@ -6849,19 +6855,28 @@ function renderStartupOverlay(){
     if (!overlay) return;
     const _gs = _gpuState;
     // Audience gate. The cold-boot overlay only makes sense when the
-    // user is going to actually USE the GPU — that means logged in
-    // AND has at least one token. For everyone else:
+    // user is going to actually USE the Modal GPU — that means:
+    //   - logged in
+    //   - has at least one token
+    //   - is in a mode that USES the GPU (Camera or Edit). Create
+    //     mode uses gpt-image-2 upstream which doesn't touch our
+    //     Modal container at all; showing a "GPU warming up" panel
+    //     to Create-mode users was confusing and inaccurate. Batch
+    //     mode dispatches the agent (also unrelated to the GPU
+    //     state) so it's excluded too.
+    // For everyone else:
     //   - Not logged in → they'll see the login modal first when they
     //     click GENERATE; warming up the GPU before they auth would be
-    //     premature, and the overlay would be a confusing "what's this
-    //     loading screen?" experience on first visit.
+    //     premature.
     //   - Logged in with 0 tokens → they'll see the buy modal next;
     //     same logic, no point showing them a warming overlay for a
     //     generation they can't run.
-    // The /status endpoint is unauthenticated so it returns gpu.state
-    // for everyone, which is fine — we just don't paint the overlay
-    // unless the viewer is in the population that can use the result.
-    const audienceShouldSee = _user && _user.tokens > 0;
+    //   - Create / Batch mode → GPU state is irrelevant to what they
+    //     can do right now; don't pop a warming overlay over their
+    //     workspace.
+    const modeUsesGpu = (typeof currentMode !== 'undefined')
+        && (currentMode === 'camera' || currentMode === 'edit');
+    const audienceShouldSee = _user && _user.tokens > 0 && modeUsesGpu;
     if (!audienceShouldSee) {
         overlay.style.display = 'none';
         _startupFirstSeen = null;
