@@ -1,0 +1,1856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Comic Studio · Simple</title>
+<!--
+  ════════════════════════════════════════════════════════════════════
+  COMIC STUDIO — SIMPLIFIED ONE-OFF UI
+
+  A standalone, self-contained page that builds a comic page entirely
+  from a chat bar at the bottom. The generation pipeline is:
+
+    1. PLAN        — one LLM call decides environment, characters,
+                     panels, dialogue, and (for edits) what to change.
+    2. ENVIRONMENT — gpt-image-2 renders the setting (parallel-safe).
+    3. CHARACTERS  — gpt-image-2 renders each character base portrait
+                     (parallel-safe, runs alongside the environment).
+    4. ANGLES      — for each character, the Qwen-Image-Edit-2511
+                     "multiple-angles" LoRA renders the camera angle
+                     each panel needs (azimuth / elevation / zoom).
+    5. PANELS      — for each panel, the environment image + the
+                     correct character images (at the correct angle) +
+                     the panel's action prompt are sent to gpt-image-2,
+                     producing the final panel image.
+    6. DIALOGUE    — speech + narration are attached and rendered as
+                     HTML overlays (never drawn into the image).
+
+  After a build, each panel is addressable: the user can type
+  "make panel 3 a close-up" or "change the queen's hair to red" and
+  the planner decides the minimal set of regeneration steps.
+
+  This file talks to ONE backend endpoint:
+     POST /api/comics-simple/run   (NDJSON stream)
+  The server file `comics_simple_routes.ts` implements it. If the
+  backend is unreachable the page runs in LOCAL MODE — it simulates
+  the same event stream with placeholder art so the UX is testable
+  standalone.
+  ════════════════════════════════════════════════════════════════════
+-->
+<style>
+  /* ─── Fonts ─────────────────────────────────────────────────── */
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  :root{
+    --bg:#0c0a08;
+    --bg-2:#13100c;
+    --surface:#1a1612;
+    --surface-2:#221d17;
+    --surface-3:#2c2620;
+    --surface-4:#3a332a;
+    --border:#332c24;
+    --border-strong:#473e32;
+    --border-light:#5a4f3f;
+    --text:#f0e6d6;
+    --text-dim:#bcae98;
+    --text-muted:#7d7263;
+    --gold:#e8a917;
+    --gold-light:#f4c542;
+    --gold-dark:#b6810d;
+    --gold-glow:rgba(232,169,23,.35);
+    --red:#e0573e;
+    --green:#5cae72;
+    --blue:#5b9bd5;
+    --font-display:'Cinzel', serif;
+    --font-body:'Spectral', Georgia, serif;
+    --font-mono:'JetBrains Mono', monospace;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; }
+  body{
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(232,169,23,.06), transparent 70%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;       /* the app manages its own scroll regions */
+  }
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background:var(--surface-3); border-radius:5px; }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--surface-4); }
+
+  button{ font-family:inherit; cursor:pointer; }
+  input,textarea{ font-family:inherit; }
+
+  /* ─── App shell ─────────────────────────────────────────────── */
+  .app{
+    height:100vh;
+    height:100dvh;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* ─── Header ────────────────────────────────────────────────── */
+  .hdr{
+    flex-shrink:0;
+    height:58px;
+    display:flex; align-items:center; gap:14px;
+    padding:0 20px;
+    border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, var(--bg-2), var(--bg));
+  }
+  .hdr-mark{
+    width:30px; height:30px; border-radius:7px;
+    background:radial-gradient(circle at 35% 30%, var(--gold-light), var(--gold) 55%, var(--gold-dark));
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 0 16px var(--gold-glow);
+    flex-shrink:0;
+  }
+  .hdr-mark svg{ width:17px; height:17px; color:var(--bg); }
+  .hdr-title{
+    font-family:var(--font-display); font-size:16px; font-weight:700;
+    letter-spacing:2.5px; text-transform:uppercase; color:var(--text);
+  }
+  .hdr-title b{ color:var(--gold); font-weight:700; }
+  .hdr-sub{
+    font-family:var(--font-mono); font-size:10px; color:var(--text-muted);
+    letter-spacing:1.5px; text-transform:uppercase;
+    padding:3px 8px; border:1px solid var(--border-strong); border-radius:10px;
+  }
+  .hdr-spacer{ flex:1; }
+  .hdr-mode{
+    font-family:var(--font-mono); font-size:10.5px; letter-spacing:.5px;
+    color:var(--text-muted);
+    display:flex; align-items:center; gap:6px;
+  }
+  .hdr-mode .dot{
+    width:7px; height:7px; border-radius:50%;
+    background:var(--text-muted);
+  }
+  .hdr-mode.online .dot{ background:var(--green); box-shadow:0 0 8px var(--green); }
+  .hdr-mode.local  .dot{ background:var(--gold);  box-shadow:0 0 8px var(--gold); }
+
+  /* ─── Main area: page canvas (scrolls) + chat dock (fixed) ──── */
+  .main{
+    flex:1;
+    min-height:0;
+    display:flex;
+    flex-direction:column;
+  }
+  .canvas{
+    flex:1;
+    min-height:0;
+    overflow-y:auto;
+    padding:26px 22px 18px;
+  }
+  .canvas-inner{
+    max-width:1080px;
+    margin:0 auto;
+  }
+
+  /* ─── Empty state ───────────────────────────────────────────── */
+  .empty{
+    display:flex; flex-direction:column; align-items:center;
+    text-align:center;
+    padding:8vh 20px 4vh;
+    gap:20px;
+  }
+  .empty-mark{
+    width:78px; height:78px; border-radius:18px;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(244,197,66,.25), transparent 60%),
+      var(--surface-2);
+    border:1px solid var(--border-strong);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04), 0 16px 40px rgba(0,0,0,.5);
+  }
+  .empty-mark svg{ width:34px; height:34px; color:var(--gold); }
+  .empty h1{
+    font-family:var(--font-display); font-size:25px; font-weight:600;
+    letter-spacing:1px; color:var(--text);
+  }
+  .empty p{
+    color:var(--text-dim); max-width:440px; font-size:15px;
+    line-height:1.6;
+  }
+  .empty-examples{
+    display:flex; flex-direction:column; gap:8px;
+    width:100%; max-width:520px; margin-top:8px;
+  }
+  .empty-example{
+    text-align:left;
+    padding:13px 16px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:11px;
+    color:var(--text-dim);
+    font-size:14px;
+    transition:all .16s;
+    display:flex; align-items:center; gap:11px;
+  }
+  .empty-example:hover{
+    border-color:var(--gold);
+    background:var(--surface-2);
+    color:var(--text);
+    transform:translateX(3px);
+  }
+  .empty-example svg{ width:15px; height:15px; color:var(--gold); flex-shrink:0; }
+  .empty-example .ex-label{
+    font-family:var(--font-mono); font-size:9.5px;
+    color:var(--gold); letter-spacing:1px; text-transform:uppercase;
+    margin-right:auto; opacity:.7;
+  }
+
+  /* ─── Page header (after a build) ───────────────────────────── */
+  .page-head{
+    display:flex; align-items:flex-start; gap:14px;
+    margin-bottom:20px;
+  }
+  .page-head-info{ flex:1; min-width:0; }
+  .page-head-title{
+    font-family:var(--font-display); font-size:21px; font-weight:600;
+    color:var(--text); letter-spacing:.5px;
+  }
+  .page-head-summary{
+    color:var(--text-dim); font-size:14px; margin-top:5px;
+    line-height:1.55;
+  }
+  .page-head-meta{
+    display:flex; flex-wrap:wrap; gap:7px; margin-top:10px;
+  }
+  .meta-pill{
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-dim); letter-spacing:.4px;
+    padding:3px 9px; border-radius:11px;
+    background:var(--surface-2); border:1px solid var(--border);
+    display:inline-flex; align-items:center; gap:5px;
+  }
+  .meta-pill svg{ width:10px; height:10px; color:var(--gold); }
+
+  /* ─── Assets row: environment + character cards ─────────────── */
+  .assets{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(124px, 1fr));
+    gap:11px;
+    margin-bottom:24px;
+  }
+  .asset-card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:11px;
+    overflow:hidden;
+    position:relative;
+    transition:border-color .15s, transform .15s;
+  }
+  .asset-card:hover{ border-color:var(--border-strong); }
+  .asset-card.is-env{ grid-column:span 2; }
+  .asset-thumb{
+    width:100%; aspect-ratio:1/1;
+    background:var(--surface-3);
+    position:relative;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .asset-card.is-env .asset-thumb{ aspect-ratio:2/1; }
+  .asset-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .asset-thumb-empty{
+    display:flex; flex-direction:column; align-items:center; gap:7px;
+    color:var(--text-muted);
+  }
+  .asset-thumb-empty svg{ width:22px; height:22px; }
+  .asset-thumb-empty span{
+    font-family:var(--font-mono); font-size:9px; letter-spacing:.8px;
+    text-transform:uppercase;
+  }
+  /* shimmer while a card is generating */
+  .asset-thumb.loading::after{
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(100deg,
+      transparent 30%, rgba(232,169,23,.13) 50%, transparent 70%);
+    background-size:220% 100%;
+    animation:shimmer 1.4s linear infinite;
+  }
+  @keyframes shimmer{ to { background-position:-220% 0; } }
+  .asset-label{
+    padding:7px 9px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .asset-label-text{
+    flex:1; min-width:0;
+    font-size:12px; font-weight:600; color:var(--text);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .asset-kind{
+    font-family:var(--font-mono); font-size:8px;
+    letter-spacing:.7px; text-transform:uppercase;
+    color:var(--text-muted);
+    padding:2px 5px; border-radius:5px;
+    background:var(--surface-3);
+  }
+  .asset-card.is-env .asset-kind{ color:var(--blue); }
+  /* status dot on a card */
+  .asset-status{
+    position:absolute; top:7px; right:7px;
+    width:20px; height:20px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(12,10,8,.85);
+    backdrop-filter:blur(4px);
+  }
+  .asset-status svg{ width:11px; height:11px; }
+  .asset-status.done svg{ color:var(--green); }
+  .asset-status.running svg{ color:var(--gold); animation:spin 1s linear infinite; }
+  .asset-status.error svg{ color:var(--red); }
+  @keyframes spin{ to { transform:rotate(360deg); } }
+
+  /* angle-variant strip under a character card */
+  .asset-angles{
+    display:flex; gap:3px; padding:0 7px 7px;
+    flex-wrap:wrap;
+  }
+  .angle-chip{
+    font-family:var(--font-mono); font-size:8px;
+    color:var(--text-muted); letter-spacing:.3px;
+    padding:2px 5px; border-radius:4px;
+    background:var(--surface-3); border:1px solid var(--border);
+    display:inline-flex; align-items:center; gap:3px;
+  }
+  .angle-chip.ready{ color:var(--gold); border-color:var(--gold-dark); }
+  .angle-chip .ac-dot{
+    width:4px; height:4px; border-radius:50%;
+    background:var(--text-muted);
+  }
+  .angle-chip.ready .ac-dot{ background:var(--gold); }
+
+  .section-label{
+    font-family:var(--font-mono); font-size:10.5px;
+    font-weight:700; letter-spacing:1.4px; text-transform:uppercase;
+    color:var(--text-muted);
+    margin-bottom:11px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .section-label::after{
+    content:''; flex:1; height:1px;
+    background:linear-gradient(90deg, var(--border), transparent);
+  }
+
+  /* ─── Panel grid ────────────────────────────────────────────── */
+  .panels{
+    display:grid;
+    grid-template-columns:repeat(2, 1fr);
+    gap:14px;
+  }
+  .panel{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:13px;
+    overflow:hidden;
+    position:relative;
+    transition:border-color .15s, box-shadow .15s;
+    cursor:pointer;
+  }
+  .panel:hover{ border-color:var(--border-strong); }
+  .panel.active{
+    border-color:var(--gold);
+    box-shadow:0 0 0 3px rgba(232,169,23,.12);
+  }
+  .panel-art-wrap{
+    width:100%; aspect-ratio:1/1;
+    background:var(--surface-3);
+    position:relative;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .panel-art-wrap img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .panel-art-wrap.loading::after{
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(100deg,
+      transparent 30%, rgba(232,169,23,.13) 50%, transparent 70%);
+    background-size:220% 100%;
+    animation:shimmer 1.4s linear infinite;
+  }
+  .panel-art-empty{
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    color:var(--text-muted); text-align:center; padding:16px;
+  }
+  .panel-art-empty svg{ width:26px; height:26px; }
+  .panel-art-empty .pae-stage{
+    font-family:var(--font-mono); font-size:9.5px;
+    letter-spacing:.6px; text-transform:uppercase;
+  }
+  /* panel number badge */
+  .panel-num{
+    position:absolute; top:9px; left:9px;
+    width:25px; height:25px; border-radius:7px;
+    background:rgba(12,10,8,.82);
+    backdrop-filter:blur(4px);
+    border:1px solid var(--border-strong);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-mono); font-size:12px; font-weight:700;
+    color:var(--gold);
+    z-index:6;
+  }
+  /* panel status badge */
+  .panel-stage-badge{
+    position:absolute; top:9px; right:9px;
+    font-family:var(--font-mono); font-size:8.5px;
+    letter-spacing:.5px; text-transform:uppercase;
+    padding:3px 7px; border-radius:8px;
+    background:rgba(12,10,8,.82);
+    backdrop-filter:blur(4px);
+    color:var(--text-dim);
+    display:flex; align-items:center; gap:5px;
+    z-index:6;
+  }
+  .panel-stage-badge svg{ width:9px; height:9px; }
+  .panel-stage-badge.running svg{ color:var(--gold); animation:spin 1s linear infinite; }
+  .panel-stage-badge.done{ color:var(--green); }
+  .panel-stage-badge.done svg{ color:var(--green); }
+
+  /* ── panel overlays — dialogue + narration ── */
+  .panel-overlays{
+    position:absolute; inset:0;
+    pointer-events:none;
+    display:flex; flex-direction:column; justify-content:space-between;
+    padding:9px;
+    z-index:5;
+  }
+  .panel-narration{
+    align-self:flex-start;
+    max-width:82%;
+    margin-top:30px;       /* clear the panel-num badge */
+    padding:5px 9px;
+    background:linear-gradient(180deg, #fbf2c8, #e6d39a);
+    border:1.5px solid #1a1009;
+    border-radius:3px;
+    font-family:var(--font-body);
+    font-size:clamp(9px, 1.05vw, 12px);
+    font-style:italic; font-weight:600;
+    line-height:1.32; color:#1a0f08;
+    box-shadow:1.5px 1.5px 0 #1a1009, 0 2px 6px rgba(0,0,0,.5);
+  }
+  .panel-dialogue{
+    align-self:flex-start;
+    margin-top:auto;
+    max-width:78%;
+    padding:6px 11px;
+    background:#fffef0;
+    border:1.8px solid #0a0809;
+    border-radius:14px;
+    font-family:var(--font-mono);
+    font-size:clamp(9px, 1.05vw, 12px);
+    font-weight:600; line-height:1.3; color:#0a0809;
+    box-shadow:1.5px 1.5px 0 #0a0809, 0 3px 8px rgba(0,0,0,.55);
+    position:relative;
+  }
+  .panel-dialogue::after, .panel-dialogue::before{
+    content:''; position:absolute;
+    width:0; height:0; border:9px solid transparent;
+    border-top-color:#0a0809; border-bottom:0;
+    bottom:-9px; left:22px;
+  }
+  .panel-dialogue::before{
+    border-top-color:#fffef0;
+    bottom:-6.5px; left:23px;
+    border-width:8px; border-bottom:0; z-index:1;
+  }
+  .panel-dialogue[data-tail="right"]::after{ left:auto; right:22px; }
+  .panel-dialogue[data-tail="right"]::before{ left:auto; right:23px; }
+  .panel-dialogue-speaker{
+    display:block;
+    font-size:8.5px; font-weight:700;
+    color:#5a3a14; text-transform:uppercase; letter-spacing:.6px;
+    margin-bottom:1px;
+  }
+
+  /* ─── Panel inspector (slide-in detail) ─────────────────────── */
+  .inspector{
+    position:fixed; top:0; right:0; bottom:0;
+    width:340px; max-width:88vw;
+    background:var(--bg-2);
+    border-left:1px solid var(--border-strong);
+    box-shadow:-20px 0 50px rgba(0,0,0,.6);
+    transform:translateX(100%);
+    transition:transform .24s cubic-bezier(.4,0,.2,1);
+    z-index:80;
+    display:flex; flex-direction:column;
+  }
+  .inspector.open{ transform:translateX(0); }
+  .inspector-head{
+    flex-shrink:0;
+    padding:16px 18px;
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:10px;
+  }
+  .inspector-head h3{
+    font-family:var(--font-display); font-size:15px; font-weight:600;
+    letter-spacing:.6px; flex:1;
+  }
+  .inspector-close{
+    width:28px; height:28px; border-radius:7px;
+    background:var(--surface-2); border:1px solid var(--border);
+    color:var(--text-dim);
+    display:flex; align-items:center; justify-content:center;
+    transition:all .14s;
+  }
+  .inspector-close:hover{ border-color:var(--gold); color:var(--gold); }
+  .inspector-close svg{ width:14px; height:14px; }
+  .inspector-body{
+    flex:1; overflow-y:auto;
+    padding:16px 18px;
+    display:flex; flex-direction:column; gap:16px;
+  }
+  .inspector-preview{
+    width:100%; aspect-ratio:1/1;
+    border-radius:10px; overflow:hidden;
+    background:var(--surface-3);
+    border:1px solid var(--border);
+  }
+  .inspector-preview img{ width:100%; height:100%; object-fit:cover; }
+  .insp-field{ display:flex; flex-direction:column; gap:5px; }
+  .insp-field-label{
+    font-family:var(--font-mono); font-size:9.5px;
+    font-weight:700; letter-spacing:1px; text-transform:uppercase;
+    color:var(--text-muted);
+  }
+  .insp-field-value{
+    font-size:13.5px; color:var(--text-dim); line-height:1.5;
+  }
+  .insp-field-value.mono{ font-family:var(--font-mono); font-size:11.5px; }
+  .insp-tag{
+    display:inline-block;
+    font-family:var(--font-mono); font-size:10px;
+    padding:3px 8px; border-radius:9px;
+    background:var(--surface-2); border:1px solid var(--border);
+    color:var(--text-dim); margin:0 4px 4px 0;
+  }
+  .insp-hint{
+    font-family:var(--font-mono); font-size:10.5px;
+    color:var(--text-muted); font-style:italic;
+    line-height:1.5;
+    padding:10px;
+    background:var(--surface);
+    border:1px dashed var(--border-strong);
+    border-radius:8px;
+  }
+
+  /* ─── Chat dock ─────────────────────────────────────────────── */
+  .dock{
+    flex-shrink:0;
+    border-top:1px solid var(--border);
+    background:linear-gradient(180deg, var(--bg-2), var(--bg));
+    padding:0;
+  }
+  .dock-inner{
+    max-width:1080px;
+    margin:0 auto;
+    padding:14px 22px 16px;
+  }
+  /* progress feed — visible while the agent is working */
+  .feed{
+    display:none;
+    flex-direction:column; gap:5px;
+    margin-bottom:11px;
+    max-height:178px;
+    overflow-y:auto;
+    padding:11px 13px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:11px;
+  }
+  .feed.show{ display:flex; }
+  .feed-step{
+    display:flex; align-items:center; gap:9px;
+    font-family:var(--font-mono); font-size:11.5px;
+    color:var(--text-muted); letter-spacing:.2px;
+  }
+  .feed-step.running{ color:var(--text); }
+  .feed-step.done{ color:var(--green); }
+  .feed-step.error{ color:var(--red); }
+  .feed-step-icon{
+    width:13px; height:13px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .feed-step.running .feed-step-icon svg{ animation:spin 1s linear infinite; color:var(--gold); }
+  .feed-step-label{ flex:1; }
+  .feed-step-detail{ font-size:10px; color:var(--text-muted); opacity:.7; }
+  .feed-msg{
+    font-size:13px; color:var(--text-dim); line-height:1.5;
+    padding:7px 2px 2px;
+    border-top:1px solid var(--border);
+    margin-top:4px;
+  }
+  .feed-msg.ai-line{ color:var(--gold); }
+
+  /* the input row itself */
+  .dock-row{
+    display:flex; align-items:flex-end; gap:9px;
+  }
+  .dock-input-wrap{
+    flex:1;
+    background:var(--surface);
+    border:1px solid var(--border-strong);
+    border-radius:13px;
+    transition:border-color .15s, box-shadow .15s;
+    display:flex; align-items:flex-end;
+  }
+  .dock-input-wrap:focus-within{
+    border-color:var(--gold);
+    box-shadow:0 0 0 3px rgba(232,169,23,.08);
+  }
+  .dock-input{
+    flex:1;
+    background:transparent; border:none; outline:none; resize:none;
+    color:var(--text);
+    font-size:14.5px; line-height:1.5;
+    padding:13px 15px;
+    min-height:50px; max-height:160px;
+  }
+  .dock-input::placeholder{ color:var(--text-muted); font-style:italic; }
+  .dock-send{
+    flex-shrink:0;
+    width:50px; height:50px; border-radius:13px;
+    background:var(--gold); color:var(--bg);
+    display:flex; align-items:center; justify-content:center;
+    border:none;
+    transition:all .15s;
+  }
+  .dock-send:hover:not(:disabled){
+    background:var(--gold-light);
+    box-shadow:0 0 18px var(--gold-glow);
+  }
+  .dock-send:disabled{
+    background:var(--surface-3); color:var(--text-muted);
+    cursor:not-allowed;
+  }
+  .dock-send svg{ width:19px; height:19px; }
+  .dock-send.busy svg{ animation:spin 1s linear infinite; }
+  /* hint line under the input */
+  .dock-hint{
+    font-family:var(--font-mono); font-size:10px;
+    color:var(--text-muted);
+    margin-top:7px;
+    display:flex; align-items:center; gap:7px;
+    letter-spacing:.3px;
+  }
+  .dock-hint kbd{
+    font-family:var(--font-mono); font-size:9px;
+    padding:1px 5px; border-radius:4px;
+    background:var(--surface-3); border:1px solid var(--border);
+    color:var(--text-dim);
+  }
+  .dock-hint .hint-sep{ color:var(--border-light); }
+
+  /* toast */
+  .toast{
+    position:fixed; bottom:22px; left:50%;
+    transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);
+    border:1px solid var(--border-strong);
+    border-radius:10px;
+    padding:11px 18px;
+    font-size:13px; color:var(--text);
+    box-shadow:0 14px 38px rgba(0,0,0,.6);
+    opacity:0; pointer-events:none;
+    transition:opacity .2s, transform .2s;
+    z-index:200;
+    max-width:90vw;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ─── Responsive / mobile ───────────────────────────────────── */
+  @media (max-width:680px){
+    .hdr{ padding:0 13px; height:52px; gap:9px; }
+    .hdr-title{ font-size:13px; letter-spacing:1.5px; }
+    .hdr-sub{ display:none; }
+    .canvas{ padding:16px 12px 12px; }
+    .panels{ grid-template-columns:1fr; gap:11px; }
+    .assets{ grid-template-columns:repeat(auto-fill, minmax(96px,1fr)); gap:8px; }
+    .asset-card.is-env{ grid-column:span 2; }
+    .dock-inner{ padding:11px 12px 13px; }
+    .dock-input{ font-size:15px; min-height:46px; }  /* 15px+ avoids iOS zoom */
+    .dock-send{ width:46px; height:46px; }
+    .empty{ padding:5vh 14px 3vh; }
+    .empty h1{ font-size:20px; }
+    .inspector{ width:100%; max-width:100%; }
+    .feed{ max-height:140px; }
+    .page-head-title{ font-size:17px; }
+    .dock-hint{ font-size:9px; }
+  }
+  @media (max-width:680px) and (display-mode:standalone){
+    .dock{ padding-bottom:env(safe-area-inset-bottom, 0); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══ HEADER ═══ -->
+  <header class="hdr">
+    <div class="hdr-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </svg>
+    </div>
+    <div class="hdr-title">Comic <b>Studio</b></div>
+    <div class="hdr-sub">Simple</div>
+    <div class="hdr-spacer"></div>
+    <div class="hdr-mode" id="hdr-mode">
+      <span class="dot"></span>
+      <span id="hdr-mode-text">Connecting…</span>
+    </div>
+  </header>
+
+  <!-- ═══ MAIN ═══ -->
+  <div class="main">
+    <div class="canvas" id="canvas">
+      <div class="canvas-inner" id="canvas-inner">
+        <!-- empty state / page render injected by JS -->
+      </div>
+    </div>
+
+    <!-- ═══ CHAT DOCK ═══ -->
+    <div class="dock">
+      <div class="dock-inner">
+        <!-- progress feed -->
+        <div class="feed" id="feed"></div>
+        <!-- input row -->
+        <div class="dock-row">
+          <div class="dock-input-wrap">
+            <textarea
+              id="dock-input"
+              class="dock-input"
+              rows="1"
+              placeholder="Describe the page you want — or ask for an edit, like &ldquo;make panel 3 a low-angle close-up&rdquo;…"></textarea>
+          </div>
+          <button class="dock-send" id="dock-send" disabled title="Send (Enter)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+        <div class="dock-hint">
+          <span><kbd>Enter</kbd> send</span>
+          <span class="hint-sep">·</span>
+          <span><kbd>Shift</kbd>+<kbd>Enter</kbd> newline</span>
+          <span class="hint-sep">·</span>
+          <span id="dock-hint-extra">The agent plans, then generates environment, characters, angles, and panels.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- panel inspector (slide-in) -->
+<div class="inspector" id="inspector">
+  <div class="inspector-head">
+    <h3 id="inspector-title">Panel</h3>
+    <button class="inspector-close" id="inspector-close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="inspector-body" id="inspector-body"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   COMIC STUDIO SIMPLE — client logic
+
+   The whole app is one state object + a render function + an agent
+   runner. The agent runner streams NDJSON events from the backend
+   (or simulates them locally) and mutates `state` as events arrive.
+   ════════════════════════════════════════════════════════════════════ */
+
+const $ = (s, r=document) => r.querySelector(s);
+const esc = (s) => String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+// ─── State ──────────────────────────────────────────────────────────
+const state = {
+  // The page being built. Null until the first build completes enough
+  // to render. Shape:
+  //   { title, summary, mood, layout }
+  page: null,
+  // Environment: { name, prompt, image_url, status }
+  environment: null,
+  // Characters: [{ id, name, role, description, image_prompt,
+  //                base_image_url, angles: { [shotKey]: url }, status }]
+  characters: [],
+  // Panels: [{ position, description, action, shot_type, dialogue,
+  //            dialogue_speaker, narration, character_ids, camera,
+  //            image_url, status }]
+  panels: [],
+  // Conversation history for multi-turn edits
+  history: [],
+  // Runtime
+  busy: false,
+  online: null,            // null = unknown, true = backend, false = local
+  activePanel: null,       // position of the panel open in the inspector
+};
+
+// ─── Boot ───────────────────────────────────────────────────────────
+async function boot() {
+  bindDock();
+  bindInspector();
+  render();
+  // Probe the backend so we can show online/local in the header.
+  probeBackend();
+}
+
+// Probe POST /api/comics-simple/ping — if it 200s we're online.
+async function probeBackend() {
+  try {
+    const r = await fetch('/api/comics-simple/ping', { method: 'GET' });
+    setOnline(r.ok);
+  } catch (_) {
+    setOnline(false);
+  }
+}
+function setOnline(isOnline) {
+  state.online = isOnline;
+  const el = $('#hdr-mode');
+  const txt = $('#hdr-mode-text');
+  el.classList.remove('online', 'local');
+  if (isOnline) {
+    el.classList.add('online');
+    txt.textContent = 'Backend connected';
+  } else {
+    el.classList.add('local');
+    txt.textContent = 'Local mode (demo)';
+  }
+}
+
+// ─── Dock wiring ────────────────────────────────────────────────────
+function bindDock() {
+  const input = $('#dock-input');
+  const send = $('#dock-send');
+
+  const autosize = () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    send.disabled = state.busy || !input.value.trim();
+  };
+  input.addEventListener('input', autosize);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      submit();
+    }
+  });
+  send.addEventListener('click', submit);
+}
+
+function bindInspector() {
+  $('#inspector-close').addEventListener('click', closeInspector);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeInspector();
+  });
+}
+
+// ─── Toast ──────────────────────────────────────────────────────────
+let toastTimer = null;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+// ─── Submit a chat message ──────────────────────────────────────────
+async function submit() {
+  if (state.busy) return;
+  const input = $('#dock-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  $('#dock-send').disabled = true;
+
+  state.history.push({ role: 'user', text });
+  setBusy(true);
+  resetFeed();
+
+  try {
+    await runAgent(text);
+  } catch (err) {
+    feedStep('fatal', 'Agent error', 'error', String(err.message || err));
+    toast('Error: ' + (err.message || err));
+  } finally {
+    setBusy(false);
+  }
+}
+
+function setBusy(b) {
+  state.busy = b;
+  const send = $('#dock-send');
+  send.disabled = b || !$('#dock-input').value.trim();
+  send.classList.toggle('busy', b);
+}
+
+// ─── Feed (progress) ────────────────────────────────────────────────
+function resetFeed() {
+  const feed = $('#feed');
+  feed.innerHTML = '';
+  feed.classList.add('show');
+}
+// add or update a step row in the feed
+function feedStep(id, label, status, detail) {
+  const feed = $('#feed');
+  let row = feed.querySelector(`[data-step="${id}"]`);
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'feed-step';
+    row.dataset.step = id;
+    feed.appendChild(row);
+  }
+  row.className = 'feed-step ' + (status || 'running');
+  const icon = status === 'done'
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+    : status === 'error'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+  row.innerHTML = `
+    <span class="feed-step-icon">${icon}</span>
+    <span class="feed-step-label">${esc(label)}</span>
+    ${detail ? `<span class="feed-step-detail">${esc(detail)}</span>` : ''}
+  `;
+  feed.scrollTop = feed.scrollHeight;
+}
+// add a final summary line to the feed
+function feedMessage(text, isAi) {
+  const feed = $('#feed');
+  const m = document.createElement('div');
+  m.className = 'feed-msg' + (isAi ? ' ai-line' : '');
+  m.textContent = text;
+  feed.appendChild(m);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ─── Agent runner ───────────────────────────────────────────────────
+//
+// Dispatches to the real backend (NDJSON stream) or the local
+// simulator. Both feed the SAME event handler so the UI code has one
+// path. Event shapes:
+//
+//   { t:"plan", title, summary, mood, layout,
+//                environment:{name,prompt},
+//                characters:[{id,name,role,description,image_prompt}],
+//                panels:[{position,description,action,shot_type,
+//                         dialogue,dialogue_speaker,narration,
+//                         character_ids,camera:{horizontal,vertical,zoom}}] }
+//   { t:"step", id, label, status, detail }
+//   { t:"environment_done", image_url }
+//   { t:"character_done", id, base_image_url }
+//   { t:"angle_done", character_id, shot_key, image_url }
+//   { t:"panel_done", position, image_url }
+//   { t:"panel_update", position, ...fields }      // dialogue-only / edits
+//   { t:"final", message }
+//   { t:"error", message }
+//
+async function runAgent(message) {
+  if (state.online) {
+    try {
+      await runAgentBackend(message);
+      return;
+    } catch (e) {
+      // Network failure mid-stream → fall through to local sim so the
+      // user still sees a result.
+      console.warn('[agent] backend failed, simulating locally:', e.message);
+      feedStep('net', 'Backend unreachable — using local demo', 'error', e.message);
+    }
+  }
+  await runAgentLocal(message);
+}
+
+// Backend NDJSON stream
+async function runAgentBackend(message) {
+  const res = await fetch('/api/comics-simple/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      message,
+      // Send the current page state so the planner can do incremental
+      // edits ("change panel 3") instead of always rebuilding.
+      current: serializeState(),
+      history: state.history.slice(-10),
+    }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) {
+        try { handleEvent(JSON.parse(line)); }
+        catch (_) { console.warn('bad NDJSON line', line); }
+      }
+    }
+  }
+  if (buf.trim()) {
+    try { handleEvent(JSON.parse(buf.trim())); } catch (_) {}
+  }
+}
+
+// A compact view of state for the planner to do edits against.
+function serializeState() {
+  if (!state.page) return null;
+  return {
+    page: state.page,
+    environment: state.environment
+      ? { name: state.environment.name, prompt: state.environment.prompt }
+      : null,
+    characters: state.characters.map(c => ({
+      id: c.id, name: c.name, role: c.role, description: c.description,
+    })),
+    panels: state.panels.map(p => ({
+      position: p.position, description: p.description,
+      action: p.action, shot_type: p.shot_type,
+      dialogue: p.dialogue, dialogue_speaker: p.dialogue_speaker,
+      narration: p.narration, character_ids: p.character_ids,
+    })),
+  };
+}
+
+// ─── Event handler ──────────────────────────────────────────────────
+function handleEvent(ev) {
+  if (!ev || !ev.t) return;
+  switch (ev.t) {
+    case 'plan':       applyPlan(ev); break;
+    case 'step':       feedStep(ev.id, ev.label, ev.status, ev.detail); break;
+    case 'environment_done': {
+      if (state.environment) {
+        state.environment.image_url = ev.image_url;
+        state.environment.status = 'done';
+      }
+      render();
+      break;
+    }
+    case 'character_done': {
+      const c = state.characters.find(x => x.id === ev.id);
+      if (c) { c.base_image_url = ev.base_image_url; c.status = 'angles'; }
+      render();
+      break;
+    }
+    case 'angle_done': {
+      const c = state.characters.find(x => x.id === ev.character_id);
+      if (c) {
+        c.angles = c.angles || {};
+        c.angles[ev.shot_key] = ev.image_url;
+      }
+      render();
+      break;
+    }
+    case 'character_ready': {
+      const c = state.characters.find(x => x.id === ev.id);
+      if (c) c.status = 'done';
+      render();
+      break;
+    }
+    case 'panel_done': {
+      const p = state.panels.find(x => x.position === ev.position);
+      if (p) { p.image_url = ev.image_url; p.status = 'done'; }
+      render();
+      break;
+    }
+    case 'panel_stage': {
+      const p = state.panels.find(x => x.position === ev.position);
+      if (p) { p.stage = ev.stage; p.status = 'running'; }
+      render();
+      break;
+    }
+    case 'panel_update': {
+      // Dialogue-only edit or incremental field change.
+      const p = state.panels.find(x => x.position === ev.position);
+      if (p) {
+        for (const k of ['description','action','shot_type','dialogue',
+                          'dialogue_speaker','narration','character_ids',
+                          'camera','image_url']) {
+          if (ev[k] !== undefined) p[k] = ev[k];
+        }
+        render();
+      }
+      break;
+    }
+    case 'final': {
+      if (ev.message) feedMessage(ev.message, true);
+      state.history.push({ role: 'ai', text: ev.message || 'Done.' });
+      render();
+      break;
+    }
+    case 'error': {
+      feedMessage('⚠ ' + (ev.message || 'Unknown error'), false);
+      break;
+    }
+  }
+}
+
+// Apply a plan event — establishes the page + asset skeletons so the
+// UI can show placeholders before the images land.
+function applyPlan(ev) {
+  // For an edit-only plan, the planner may omit page/environment and
+  // only send changed panels. We merge rather than replace.
+  if (ev.title || ev.summary) {
+    state.page = state.page || {};
+    if (ev.title)   state.page.title = ev.title;
+    if (ev.summary) state.page.summary = ev.summary;
+    if (ev.mood)    state.page.mood = ev.mood;
+    if (ev.layout)  state.page.layout = ev.layout;
+  }
+  if (ev.environment) {
+    state.environment = {
+      name: ev.environment.name || 'Setting',
+      prompt: ev.environment.prompt || '',
+      image_url: state.environment && state.environment.image_url || null,
+      status: 'running',
+    };
+  }
+  if (Array.isArray(ev.characters)) {
+    for (const nc of ev.characters) {
+      let c = state.characters.find(x => x.id === nc.id || x.name === nc.name);
+      if (c) {
+        // update existing
+        Object.assign(c, {
+          name: nc.name ?? c.name,
+          role: nc.role ?? c.role,
+          description: nc.description ?? c.description,
+          image_prompt: nc.image_prompt ?? c.image_prompt,
+          status: 'running',
+        });
+      } else {
+        state.characters.push({
+          id: nc.id || ('ch_' + Math.random().toString(36).slice(2, 8)),
+          name: nc.name || 'Character',
+          role: nc.role || '',
+          description: nc.description || '',
+          image_prompt: nc.image_prompt || '',
+          base_image_url: null,
+          angles: {},
+          status: 'running',
+        });
+      }
+    }
+  }
+  if (Array.isArray(ev.panels)) {
+    for (const np of ev.panels) {
+      let p = state.panels.find(x => x.position === np.position);
+      if (p) {
+        Object.assign(p, {
+          description: np.description ?? p.description,
+          action: np.action ?? p.action,
+          shot_type: np.shot_type ?? p.shot_type,
+          dialogue: np.dialogue ?? p.dialogue,
+          dialogue_speaker: np.dialogue_speaker ?? p.dialogue_speaker,
+          narration: np.narration ?? p.narration,
+          character_ids: np.character_ids ?? p.character_ids,
+          camera: np.camera ?? p.camera,
+          status: 'running',
+        });
+      } else {
+        state.panels.push({
+          position: np.position,
+          description: np.description || '',
+          action: np.action || '',
+          shot_type: np.shot_type || 'Medium shot',
+          dialogue: np.dialogue || '',
+          dialogue_speaker: np.dialogue_speaker || '',
+          narration: np.narration || '',
+          character_ids: np.character_ids || [],
+          camera: np.camera || { horizontal: 0, vertical: 0, zoom: 5 },
+          image_url: null,
+          status: 'running',
+          stage: 'queued',
+        });
+      }
+    }
+    // keep panels sorted by position
+    state.panels.sort((a, b) => a.position - b.position);
+  }
+  render();
+}
+
+// ─── Render ─────────────────────────────────────────────────────────
+function render() {
+  const root = $('#canvas-inner');
+  if (!state.page && !state.panels.length) {
+    root.innerHTML = renderEmpty();
+    bindEmptyExamples();
+    return;
+  }
+  root.innerHTML = renderPage();
+  bindPageInteractions();
+}
+
+function renderEmpty() {
+  const examples = [
+    { label: 'Build', text: 'A queen oversees prisoners being marched into a glowing dimensional portal in her throne room' },
+    { label: 'Build', text: 'Two rival knights duel on a crumbling bridge above a misty chasm at dawn' },
+    { label: 'Build', text: 'A lone detective discovers a hidden door behind a bookshelf in a rain-soaked office' },
+  ];
+  return `
+    <div class="empty">
+      <div class="empty-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1"/>
+          <rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/>
+          <rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+      </div>
+      <h1>Describe your comic page</h1>
+      <p>One message builds the whole page — the agent plans it, then generates the environment, the characters, each character's camera angles, and finally every panel with the right cast and dialogue.</p>
+      <div class="empty-examples">
+        ${examples.map(ex => `
+          <button class="empty-example" data-ex="${esc(ex.text)}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+            <span>${esc(ex.text)}</span>
+            <span class="ex-label">${esc(ex.label)}</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+function bindEmptyExamples() {
+  document.querySelectorAll('.empty-example').forEach(b => {
+    b.addEventListener('click', () => {
+      const input = $('#dock-input');
+      input.value = b.dataset.ex;
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+    });
+  });
+}
+
+function renderPage() {
+  const pg = state.page || {};
+  const env = state.environment;
+
+  // ── page header ──
+  const metaPills = [];
+  if (pg.layout) metaPills.push(pillHtml('grid', `${pg.layout} panels`));
+  if (pg.mood)   metaPills.push(pillHtml('mood', String(pg.mood).replace(/_/g,' ')));
+  if (state.characters.length) metaPills.push(pillHtml('user', `${state.characters.length} cast`));
+
+  const head = `
+    <div class="page-head">
+      <div class="page-head-info">
+        <div class="page-head-title">${esc(pg.title || 'Untitled Page')}</div>
+        ${pg.summary ? `<div class="page-head-summary">${esc(pg.summary)}</div>` : ''}
+        ${metaPills.length ? `<div class="page-head-meta">${metaPills.join('')}</div>` : ''}
+      </div>
+    </div>
+  `;
+
+  // ── assets: environment + characters ──
+  let assets = '';
+  if (env || state.characters.length) {
+    const cards = [];
+    if (env) cards.push(renderEnvCard(env));
+    for (const c of state.characters) cards.push(renderCharCard(c));
+    assets = `
+      <div class="section-label">Assets</div>
+      <div class="assets">${cards.join('')}</div>
+    `;
+  }
+
+  // ── panels ──
+  let panelsHtml = '';
+  if (state.panels.length) {
+    panelsHtml = `
+      <div class="section-label">Panels</div>
+      <div class="panels">
+        ${state.panels.map(renderPanel).join('')}
+      </div>
+    `;
+  }
+
+  return head + assets + panelsHtml;
+}
+
+function pillHtml(icon, text) {
+  const icons = {
+    grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    mood: '<circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  };
+  return `<span class="meta-pill">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[icon]||''}</svg>
+    ${esc(text)}
+  </span>`;
+}
+
+function renderEnvCard(env) {
+  const loading = env.status !== 'done' && !env.image_url;
+  return `
+    <div class="asset-card is-env">
+      <div class="asset-thumb ${loading ? 'loading' : ''}">
+        ${env.image_url
+          ? `<img src="${esc(env.image_url)}" alt="${esc(env.name)}">`
+          : `<div class="asset-thumb-empty">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>
+               <span>Setting</span>
+             </div>`}
+        ${statusBadge(env.status)}
+      </div>
+      <div class="asset-label">
+        <span class="asset-label-text">${esc(env.name)}</span>
+        <span class="asset-kind">Env</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderCharCard(c) {
+  const loading = c.status === 'running' && !c.base_image_url;
+  // angle chips — show which camera angles have been derived
+  const angleKeys = Object.keys(c.angles || {});
+  const anglesHtml = angleKeys.length
+    ? `<div class="asset-angles">
+         ${angleKeys.map(k => `
+           <span class="angle-chip ready" title="${esc(k)}">
+             <span class="ac-dot"></span>${esc(shortAngle(k))}
+           </span>`).join('')}
+       </div>`
+    : '';
+  return `
+    <div class="asset-card">
+      <div class="asset-thumb ${loading ? 'loading' : ''}">
+        ${c.base_image_url
+          ? `<img src="${esc(c.base_image_url)}" alt="${esc(c.name)}">`
+          : `<div class="asset-thumb-empty">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+               <span>Portrait</span>
+             </div>`}
+        ${statusBadge(c.status === 'angles' ? 'running' : c.status)}
+      </div>
+      <div class="asset-label">
+        <span class="asset-label-text">${esc(c.name)}</span>
+        <span class="asset-kind">${esc(c.role || 'Cast')}</span>
+      </div>
+      ${anglesHtml}
+    </div>
+  `;
+}
+
+function shortAngle(key) {
+  // key looks like "front_eye_medium" → "front"
+  return String(key).split('_')[0];
+}
+
+function statusBadge(status) {
+  if (status === 'done') {
+    return `<div class="asset-status done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`;
+  }
+  if (status === 'error') {
+    return `<div class="asset-status error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>`;
+  }
+  if (status === 'running' || status === 'angles') {
+    return `<div class="asset-status running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>`;
+  }
+  return '';
+}
+
+function renderPanel(p) {
+  const loading = p.status === 'running' && !p.image_url;
+  const isActive = state.activePanel === p.position;
+
+  // dialogue/narration overlays
+  let overlays = '';
+  if (p.narration || p.dialogue) {
+    const speaker = p.dialogue_speaker
+      || (p.character_ids && p.character_ids.length
+            ? (state.characters.find(c => c.id === p.character_ids[0]) || {}).name
+            : '');
+    const tail = (p.position % 2 === 0) ? 'right' : 'left';
+    overlays = `
+      <div class="panel-overlays">
+        ${p.narration ? `<div class="panel-narration">${esc(p.narration)}</div>` : ''}
+        ${p.dialogue ? `
+          <div class="panel-dialogue" data-tail="${tail}">
+            ${speaker ? `<span class="panel-dialogue-speaker">${esc(speaker)}</span>` : ''}
+            <span>${esc(p.dialogue)}</span>
+          </div>` : ''}
+      </div>
+    `;
+  }
+
+  // stage badge while building
+  let stageBadge = '';
+  if (p.status === 'done') {
+    stageBadge = `<div class="panel-stage-badge done">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      Ready</div>`;
+  } else if (p.status === 'running') {
+    stageBadge = `<div class="panel-stage-badge running">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      ${esc(p.stage || 'working')}</div>`;
+  }
+
+  const empty = `
+    <div class="panel-art-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      <span class="pae-stage">${esc(p.stage || 'queued')}</span>
+    </div>
+  `;
+
+  return `
+    <div class="panel ${isActive ? 'active' : ''}" data-panel="${p.position}">
+      <div class="panel-num">${p.position}</div>
+      ${stageBadge}
+      <div class="panel-art-wrap ${loading ? 'loading' : ''}">
+        ${p.image_url
+          ? `<img src="${esc(p.image_url)}" alt="Panel ${p.position}">`
+          : empty}
+        ${overlays}
+      </div>
+    </div>
+  `;
+}
+
+function bindPageInteractions() {
+  document.querySelectorAll('.panel').forEach(el => {
+    el.addEventListener('click', () => {
+      openInspector(+el.dataset.panel);
+    });
+  });
+}
+
+// ─── Inspector ──────────────────────────────────────────────────────
+function openInspector(position) {
+  const p = state.panels.find(x => x.position === position);
+  if (!p) return;
+  state.activePanel = position;
+  $('#inspector-title').textContent = 'Panel ' + position;
+
+  const cast = (p.character_ids || [])
+    .map(id => (state.characters.find(c => c.id === id) || {}).name)
+    .filter(Boolean);
+
+  const cam = p.camera || {};
+  const camDesc = describeCam(cam);
+
+  $('#inspector-body').innerHTML = `
+    <div class="inspector-preview">
+      ${p.image_url
+        ? `<img src="${esc(p.image_url)}" alt="Panel ${position}">`
+        : `<div class="panel-art-empty" style="height:100%;justify-content:center">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+             <span class="pae-stage">${esc(p.stage || 'not generated')}</span>
+           </div>`}
+    </div>
+    <div class="insp-field">
+      <span class="insp-field-label">Shot type</span>
+      <span class="insp-field-value">${esc(p.shot_type || '—')}</span>
+    </div>
+    <div class="insp-field">
+      <span class="insp-field-label">Camera (Qwen 2511)</span>
+      <span class="insp-field-value mono">${esc(camDesc)}</span>
+    </div>
+    <div class="insp-field">
+      <span class="insp-field-label">Action</span>
+      <span class="insp-field-value">${esc(p.action || p.description || '—')}</span>
+    </div>
+    <div class="insp-field">
+      <span class="insp-field-label">Cast in panel</span>
+      <span class="insp-field-value">
+        ${cast.length ? cast.map(n => `<span class="insp-tag">${esc(n)}</span>`).join('') : '<em>none</em>'}
+      </span>
+    </div>
+    ${p.dialogue ? `
+      <div class="insp-field">
+        <span class="insp-field-label">Dialogue${p.dialogue_speaker ? ' — ' + esc(p.dialogue_speaker) : ''}</span>
+        <span class="insp-field-value">&ldquo;${esc(p.dialogue)}&rdquo;</span>
+      </div>` : ''}
+    ${p.narration ? `
+      <div class="insp-field">
+        <span class="insp-field-label">Narration</span>
+        <span class="insp-field-value">${esc(p.narration)}</span>
+      </div>` : ''}
+    <div class="insp-hint">
+      Edit this panel from the chat bar — e.g. &ldquo;make panel ${position} a low-angle close-up&rdquo;, &ldquo;change panel ${position}'s line to …&rdquo;, or &ldquo;regenerate panel ${position}&rdquo;.
+    </div>
+  `;
+  $('#inspector').classList.add('open');
+  render();  // re-render so the active panel highlights
+}
+function closeInspector() {
+  $('#inspector').classList.remove('open');
+  state.activePanel = null;
+  render();
+}
+
+// Human-readable camera description from azimuth/elevation/zoom.
+function describeCam(cam) {
+  const h = Number(cam.horizontal || 0);
+  const v = Number(cam.vertical || 0);
+  const z = Number(cam.zoom == null ? 5 : cam.zoom);
+  const az =
+    h < 23 || h >= 338 ? 'front' :
+    h < 68  ? 'front-right' :
+    h < 113 ? 'right side' :
+    h < 158 ? 'back-right' :
+    h < 203 ? 'back' :
+    h < 248 ? 'back-left' :
+    h < 293 ? 'left side' : 'front-left';
+  const el =
+    v <= -20 ? 'low-angle' :
+    v < 20   ? 'eye-level' :
+    v < 50   ? 'elevated' :
+    v < 80   ? 'high-angle' : "bird's-eye";
+  const dist = z <= 2 ? 'wide' : z >= 8 ? 'close-up' : 'medium';
+  return `${az} · ${el} · ${dist}  (h${h}° v${v}° z${z})`;
+}
+
+// ─── Local-mode simulator ───────────────────────────────────────────
+//
+// When there's no backend, this reproduces the exact event stream the
+// server would emit, using placeholder SVG images. It mirrors the real
+// pipeline ordering so the UX is faithful:
+//   plan → environment + characters (parallel) → angles → panels → dialogue
+//
+async function runAgentLocal(message) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const emit = (ev) => handleEvent(ev);
+  const m = message.toLowerCase();
+
+  // Detect edit vs build. If we already have a page and the message
+  // references a panel number or an edit verb, treat it as an edit.
+  const isEdit = !!state.page && (
+    /\bpanel\s*\d/.test(m) ||
+    /\b(change|make|redo|regenerate|update|swap|replace|edit|fix|add|remove)\b/.test(m)
+  );
+
+  if (isEdit) return runLocalEdit(message);
+
+  // ── PLAN ──
+  feedStep('plan', 'Planning the page', 'running');
+  await wait(650);
+
+  // crude scene parsing for the demo
+  const layout = /(fight|battle|chase|action)/.test(m) ? 6
+               : /(quiet|intimate|portrait)/.test(m) ? 3 : 5;
+  const mood = /(noir|detective|rain)/.test(m) ? 'tense_noir'
+             : /(hope|dawn|warm)/.test(m) ? 'somber' : 'dark_epic';
+
+  // characters: pull capitalized names, else invent two
+  const names = extractNames(message);
+  const cast = (names.length ? names : ['The Protagonist', 'The Antagonist'])
+    .slice(0, 4)
+    .map((n, i) => ({
+      id: 'ch_' + i + '_' + Math.random().toString(36).slice(2, 6),
+      name: n,
+      role: i === 0 ? 'Protagonist' : (i === 1 ? 'Antagonist' : 'Supporting'),
+      description: 'Introduced from your prompt.',
+      image_prompt: `${n}, detailed character portrait, dark fantasy style`,
+    }));
+
+  const envName = /(throne|palace|court)/.test(m) ? 'Throne Room'
+                : /(forest|wood)/.test(m) ? 'Misty Forest'
+                : /(bridge|chasm)/.test(m) ? 'Crumbling Bridge'
+                : /(office|detective)/.test(m) ? 'Rain-Soaked Office'
+                : 'The Setting';
+
+  // build panels with camera angles
+  const shotTypes = [
+    { name: 'Wide establishing', cam: { horizontal: 0,   vertical: 10, zoom: 1 } },
+    { name: 'Medium two-shot',   cam: { horizontal: 30,  vertical: 0,  zoom: 5 } },
+    { name: 'Close-up',          cam: { horizontal: 0,   vertical: 0,  zoom: 9 } },
+    { name: 'Low angle',         cam: { horizontal: 315, vertical: -28, zoom: 4 } },
+    { name: 'Over-the-shoulder', cam: { horizontal: 200, vertical: 5,  zoom: 6 } },
+    { name: 'High angle',        cam: { horizontal: 45,  vertical: 62, zoom: 3 } },
+  ];
+  const panels = [];
+  for (let i = 1; i <= layout; i++) {
+    const st = shotTypes[(i - 1) % shotTypes.length];
+    const inPanel = cast.slice(0, Math.min(2, cast.length)).map(c => c.id);
+    panels.push({
+      position: i,
+      description: i === 1 ? 'Establish the scene.' : `Beat ${i} of ${layout}.`,
+      action: i === 1 ? `Wide view of ${envName.toLowerCase()}. ${message.slice(0, 90)}`
+                       : `${st.name.toLowerCase()} — the tension escalates.`,
+      shot_type: st.name,
+      dialogue: (i === 2 || i === Math.ceil(layout/2)+1) ? sampleLine(i) : '',
+      dialogue_speaker: (i === 2 || i === Math.ceil(layout/2)+1) ? cast[0].name : '',
+      narration: i === 1 ? sampleNarration() : '',
+      character_ids: inPanel,
+      camera: st.cam,
+    });
+  }
+
+  emit({
+    t: 'plan',
+    title: titleCase(envName) + ' — Page',
+    summary: message.length > 160 ? message.slice(0, 157) + '…' : message,
+    mood, layout,
+    environment: { name: envName, prompt: `${envName}, dramatic lighting, dark fantasy` },
+    characters: cast,
+    panels,
+  });
+  feedStep('plan', 'Planning the page', 'done', `${layout} panels · ${cast.length} cast`);
+
+  // ── ENVIRONMENT + CHARACTERS (parallel) ──
+  feedStep('env', 'Generating environment', 'running');
+  feedStep('chars', 'Generating characters', 'running');
+
+  // environment
+  await wait(700);
+  emit({ t: 'environment_done', image_url: placeholderImg(envName, 'env', 640, 320) });
+  feedStep('env', 'Generating environment', 'done', envName);
+
+  // characters — base portraits
+  for (const c of cast) {
+    await wait(420);
+    emit({ t: 'character_done', id: c.id, base_image_url: placeholderImg(c.name, 'char', 360, 360) });
+  }
+  feedStep('chars', 'Generating characters', 'done', `${cast.length} portraits`);
+
+  // ── CAMERA ANGLES per character ──
+  feedStep('angles', 'Deriving camera angles', 'running');
+  // For each character, derive an angle for each distinct shot the
+  // panels need — this is what the Qwen-2511 multi-angle LoRA does.
+  const neededAngles = [...new Set(panels.map(p => shotKey(p.camera)))];
+  for (const c of cast) {
+    for (const ak of neededAngles) {
+      await wait(180);
+      emit({ t: 'angle_done', character_id: c.id, shot_key: ak,
+             image_url: placeholderImg(c.name + ' ' + ak, 'angle', 280, 280) });
+    }
+    emit({ t: 'character_ready', id: c.id });
+  }
+  feedStep('angles', 'Deriving camera angles', 'done',
+           `${cast.length}×${neededAngles.length} angles`);
+
+  // ── PANELS ──
+  feedStep('panels', 'Composing panels', 'running');
+  for (const p of panels) {
+    emit({ t: 'panel_stage', position: p.position, stage: 'assembling cast' });
+    await wait(260);
+    emit({ t: 'panel_stage', position: p.position, stage: 'gpt-image-2' });
+    await wait(520);
+    emit({ t: 'panel_done', position: p.position,
+           image_url: placeholderImg('Panel ' + p.position, 'panel', 512, 512) });
+  }
+  feedStep('panels', 'Composing panels', 'done', `${panels.length} panels`);
+
+  // ── DIALOGUE (already in plan; this step just confirms) ──
+  feedStep('dialogue', 'Attaching dialogue & narration', 'done',
+           `${panels.filter(p => p.dialogue || p.narration).length} overlays`);
+
+  emit({
+    t: 'final',
+    message: `Built "${state.page.title}" — ${layout} panels with ${cast.length} characters. Click any panel to inspect it, or ask me to change one (e.g. "make panel 3 a low-angle close-up").`,
+  });
+}
+
+// Local edit handler — interprets a follow-up edit message.
+async function runLocalEdit(message) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const emit = (ev) => handleEvent(ev);
+  const m = message.toLowerCase();
+
+  feedStep('plan', 'Planning the edit', 'running');
+  await wait(500);
+
+  // which panel?
+  const panelMatch = m.match(/panel\s*(\d+)/);
+  const panelNum = panelMatch ? +panelMatch[1] : null;
+
+  if (panelNum) {
+    const p = state.panels.find(x => x.position === panelNum);
+    if (!p) {
+      feedStep('plan', 'Planning the edit', 'error', `no panel ${panelNum}`);
+      emit({ t: 'error', message: `There's no panel ${panelNum} on this page.` });
+      return;
+    }
+    feedStep('plan', 'Planning the edit', 'done', `panel ${panelNum}`);
+
+    // dialogue change?
+    const lineMatch = message.match(/(?:line|say|says|dialog(?:ue)?)[^"']*["']([^"']+)["']/i);
+    if (lineMatch) {
+      emit({ t: 'panel_update', position: panelNum, dialogue: lineMatch[1] });
+      feedStep('dialogue', 'Updating dialogue', 'done');
+      emit({ t: 'final', message: `Updated panel ${panelNum}'s dialogue.` });
+      return;
+    }
+
+    // camera change?
+    const newCam = parseCameraFromText(m, p.camera);
+    let shotName = p.shot_type;
+    if (/close-?up/.test(m)) shotName = 'Close-up';
+    else if (/wide/.test(m)) shotName = 'Wide establishing';
+    else if (/low-?angle/.test(m)) shotName = 'Low angle';
+    else if (/high-?angle/.test(m)) shotName = 'High angle';
+    else if (/over-the-shoulder|ots/.test(m)) shotName = 'Over-the-shoulder';
+
+    emit({ t: 'panel_update', position: panelNum,
+           camera: newCam, shot_type: shotName, status: 'running' });
+    emit({ t: 'panel_stage', position: panelNum, stage: 'recomposing' });
+    feedStep('regen', `Regenerating panel ${panelNum}`, 'running',
+             describeCam(newCam));
+    await wait(900);
+    emit({ t: 'panel_done', position: panelNum,
+           image_url: placeholderImg('Panel ' + panelNum + ' v2', 'panel', 512, 512) });
+    feedStep('regen', `Regenerating panel ${panelNum}`, 'done');
+    emit({ t: 'final',
+           message: `Regenerated panel ${panelNum} as a ${shotName.toLowerCase()}.` });
+    return;
+  }
+
+  // character edit?
+  const charNames = extractNames(message);
+  const targetChar = state.characters.find(c =>
+    charNames.some(n => n.toLowerCase() === c.name.toLowerCase()) ||
+    m.includes(c.name.toLowerCase()));
+  if (targetChar) {
+    feedStep('plan', 'Planning the edit', 'done', targetChar.name);
+    feedStep('char', `Regenerating ${targetChar.name}`, 'running');
+    targetChar.status = 'running';
+    render();
+    await wait(850);
+    emit({ t: 'character_done', id: targetChar.id,
+           base_image_url: placeholderImg(targetChar.name + ' v2', 'char', 360, 360) });
+    // re-derive angles
+    const neededAngles = [...new Set(state.panels.map(p => shotKey(p.camera)))];
+    for (const ak of neededAngles) {
+      await wait(120);
+      emit({ t: 'angle_done', character_id: targetChar.id, shot_key: ak,
+             image_url: placeholderImg(targetChar.name + ' ' + ak, 'angle', 280, 280) });
+    }
+    emit({ t: 'character_ready', id: targetChar.id });
+    feedStep('char', `Regenerating ${targetChar.name}`, 'done');
+    // re-render panels that include this character
+    const affected = state.panels.filter(p =>
+      (p.character_ids || []).includes(targetChar.id));
+    if (affected.length) {
+      feedStep('panels', `Updating ${affected.length} affected panels`, 'running');
+      for (const p of affected) {
+        emit({ t: 'panel_stage', position: p.position, stage: 'recomposing' });
+        await wait(420);
+        emit({ t: 'panel_done', position: p.position,
+               image_url: placeholderImg('Panel ' + p.position + ' v2', 'panel', 512, 512) });
+      }
+      feedStep('panels', `Updating ${affected.length} affected panels`, 'done');
+    }
+    emit({ t: 'final',
+           message: `Updated ${targetChar.name} and re-rendered ${affected.length} panel${affected.length===1?'':'s'} they appear in.` });
+    return;
+  }
+
+  // fallback — couldn't localize the edit
+  feedStep('plan', 'Planning the edit', 'done');
+  emit({ t: 'error',
+         message: `I couldn't tell which panel or character to edit. Try "panel 2" or a character's name.` });
+}
+
+// ── local-mode helpers ──
+function extractNames(text) {
+  const out = [];
+  const re = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?)\b/g;
+  const stop = new Set(['The','And','But','With','From','Two','Page','Panel']);
+  let mm;
+  while ((mm = re.exec(text)) !== null) {
+    const n = mm[1].trim();
+    if (stop.has(n)) continue;
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+function titleCase(s) {
+  return String(s).replace(/\w\S*/g, t => t[0].toUpperCase() + t.slice(1));
+}
+function sampleLine(i) {
+  const lines = [
+    "You don't know what you've started.",
+    "It ends here. Tonight.",
+    "Then let them come.",
+    "We were never given a choice.",
+    "Look at me when I speak to you.",
+  ];
+  return lines[i % lines.length];
+}
+function sampleNarration() {
+  const n = [
+    'The hour had come at last.',
+    'Somewhere, a door was opening.',
+    'They would remember this night.',
+  ];
+  return n[Math.floor(Math.random() * n.length)];
+}
+function shotKey(cam) {
+  // a stable key for an angle bucket: azimuth-band_elevation-band_zoom-band
+  const h = Number(cam.horizontal || 0);
+  const v = Number(cam.vertical || 0);
+  const z = Number(cam.zoom == null ? 5 : cam.zoom);
+  const az = h < 45 || h >= 315 ? 'front' : h < 135 ? 'right'
+           : h < 225 ? 'back' : 'left';
+  const el = v <= -15 ? 'low' : v < 25 ? 'eye' : v < 55 ? 'high' : 'top';
+  const di = z <= 3 ? 'wide' : z >= 8 ? 'close' : 'med';
+  return `${az}_${el}_${di}`;
+}
+function parseCameraFromText(m, prev) {
+  const cam = Object.assign({ horizontal: 0, vertical: 0, zoom: 5 }, prev || {});
+  if (/close-?up/.test(m)) cam.zoom = 9;
+  if (/wide/.test(m)) cam.zoom = 1;
+  if (/medium/.test(m)) cam.zoom = 5;
+  if (/low-?angle/.test(m)) cam.vertical = -28;
+  if (/high-?angle/.test(m)) cam.vertical = 62;
+  if (/bird/.test(m)) cam.vertical = 88;
+  if (/eye-?level/.test(m)) cam.vertical = 0;
+  if (/\bback\b/.test(m)) cam.horizontal = 180;
+  if (/left side|from the left/.test(m)) cam.horizontal = 270;
+  if (/right side|from the right/.test(m)) cam.horizontal = 90;
+  if (/front/.test(m)) cam.horizontal = 0;
+  return cam;
+}
+// Deterministic placeholder image — an inline SVG data URI. Used only
+// in local mode; the backend returns real generated image URLs.
+function placeholderImg(label, kind, w, h) {
+  const palettes = {
+    env:   ['#2a2418', '#4a3a1e', '#e8a917'],
+    char:  ['#241c2c', '#3a2a44', '#c9a0e0'],
+    angle: ['#1c2230', '#2a3548', '#7fa8d8'],
+    panel: ['#1a1612', '#2c2620', '#e8a917'],
+  };
+  const pal = palettes[kind] || palettes.panel;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="${pal[0]}"/>
+        <stop offset="1" stop-color="${pal[1]}"/>
+      </linearGradient>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#g)"/>
+    <g opacity="0.14" fill="none" stroke="${pal[2]}" stroke-width="1">
+      ${Array.from({length:8},(_,i)=>`<line x1="0" y1="${i*h/8}" x2="${w}" y2="${i*h/8}"/>`).join('')}
+      ${Array.from({length:8},(_,i)=>`<line x1="${i*w/8}" y1="0" x2="${i*w/8}" y2="${h}"/>`).join('')}
+    </g>
+    <text x="50%" y="50%" fill="${pal[2]}" font-family="monospace" font-size="${Math.round(Math.min(w,h)/14)}"
+      text-anchor="middle" dominant-baseline="middle" opacity="0.85">${esc(label)}</text>
+  </svg>`;
+  return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+}
+
+// ─── Go ─────────────────────────────────────────────────────────────
+boot();
+</script>
+</body>
+</html>
