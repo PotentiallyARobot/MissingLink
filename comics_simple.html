@@ -581,19 +581,55 @@
     margin:0 auto;
     padding:14px 22px 16px;
   }
-  /* progress feed — visible while the agent is working */
+  /* progress feed — a collapsible panel above the input row.
+     While the agent works it auto-expands; once the build finishes
+     it auto-collapses to a one-line summary so it stops covering the
+     page. The user can click the header to expand it again. */
   .feed{
     display:none;
-    flex-direction:column; gap:5px;
+    flex-direction:column;
     margin-bottom:11px;
-    max-height:178px;
-    overflow-y:auto;
-    padding:11px 13px;
     background:var(--surface);
     border:1px solid var(--border);
     border-radius:11px;
+    overflow:hidden;
   }
   .feed.show{ display:flex; }
+  /* clickable header — toggles the body */
+  .feed-head{
+    display:flex; align-items:center; gap:9px;
+    padding:9px 13px;
+    cursor:pointer;
+    user-select:none;
+    flex-shrink:0;
+  }
+  .feed-head:hover{ background:var(--surface-2); }
+  .feed-head-icon{
+    width:14px; height:14px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    color:var(--gold);
+  }
+  .feed.working .feed-head-icon svg{ animation:spin 1s linear infinite; }
+  .feed-head-title{
+    flex:1;
+    font-family:var(--font-mono); font-size:11px; font-weight:700;
+    letter-spacing:.6px; text-transform:uppercase; color:var(--text-dim);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .feed-head-chev{
+    width:13px; height:13px; flex-shrink:0;
+    color:var(--text-muted);
+    transition:transform .2s;
+  }
+  .feed.collapsed .feed-head-chev{ transform:rotate(-90deg); }
+  /* scrollable body — hidden when collapsed */
+  .feed-body{
+    display:flex; flex-direction:column; gap:5px;
+    max-height:170px;
+    overflow-y:auto;
+    padding:4px 13px 11px;
+  }
+  .feed.collapsed .feed-body{ display:none; }
   .feed-step{
     display:flex; align-items:center; gap:9px;
     font-family:var(--font-mono); font-size:11.5px;
@@ -731,7 +767,7 @@
     .empty{ padding:5vh 14px 3vh; }
     .empty h1{ font-size:20px; }
     .inspector{ width:100%; max-width:100%; }
-    .feed{ max-height:140px; }
+    .feed-body{ max-height:120px; }
     .page-head-title{ font-size:17px; }
     .dock-hint{ font-size:9px; }
   }
@@ -770,8 +806,17 @@
     <!-- ═══ CHAT DOCK ═══ -->
     <div class="dock">
       <div class="dock-inner">
-        <!-- progress feed -->
-        <div class="feed" id="feed"></div>
+        <!-- progress feed — collapsible; auto-collapses when done -->
+        <div class="feed" id="feed">
+          <div class="feed-head" id="feed-head">
+            <span class="feed-head-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            </span>
+            <span class="feed-head-title" id="feed-head-title">Working…</span>
+            <svg class="feed-head-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="feed-body" id="feed-body"></div>
+        </div>
         <!-- input row -->
         <div class="dock-row">
           <div class="dock-input-wrap">
@@ -855,6 +900,7 @@ const state = {
 async function boot() {
   bindDock();
   bindInspector();
+  bindFeed();
   render();
   // Probe the backend so we can show online/local in the header.
   probeBackend();
@@ -879,7 +925,12 @@ function setOnline(isOnline) {
     txt.textContent = 'Backend connected';
   } else {
     el.classList.add('local');
-    txt.textContent = 'Local mode (demo)';
+    // Be explicit that demo mode uses placeholder art, so a user
+    // doesn't think image generation is broken.
+    txt.textContent = 'Demo mode — placeholder art';
+    el.title = 'No backend connected. The pipeline runs with placeholder ' +
+      'images. Deploy comics_simple_routes.ts with OPENAI_API_KEY for real ' +
+      'gpt-image-2 generation.';
   }
 }
 
@@ -940,8 +991,16 @@ async function submit() {
   } catch (err) {
     feedStep('fatal', 'Agent error', 'error', String(err.message || err));
     toast('Error: ' + (err.message || err));
+    finishFeed('Agent error');
   } finally {
     setBusy(false);
+    // Safety net: if the run ended without a final/error event
+    // collapsing the feed, collapse it now so it never lingers open
+    // over the page.
+    const feed = $('#feed');
+    if (feed && feed.classList.contains('working')) {
+      finishFeed('Done');
+    }
   }
 }
 
@@ -953,20 +1012,54 @@ function setBusy(b) {
 }
 
 // ─── Feed (progress) ────────────────────────────────────────────────
+//
+// The feed is a compact collapsible bar above the chat input. While
+// the agent works it's expanded and shows step rows; when the build
+// finishes it auto-collapses to a single header line so it stops
+// covering the page. Clicking the header toggles it back open.
+
+// Wire the header toggle once, at boot.
+function bindFeed() {
+  const head = $('#feed-head');
+  if (head) {
+    head.addEventListener('click', () => {
+      $('#feed').classList.toggle('collapsed');
+    });
+  }
+}
+
 function resetFeed() {
   const feed = $('#feed');
-  feed.innerHTML = '';
-  feed.classList.add('show');
+  $('#feed-body').innerHTML = '';
+  feed.classList.add('show', 'working');
+  feed.classList.remove('collapsed');           // expand for a fresh run
+  setFeedTitle('Working…');
 }
-// add or update a step row in the feed
-function feedStep(id, label, status, detail) {
+
+// Update the one-line header summary.
+function setFeedTitle(text) {
+  const t = $('#feed-head-title');
+  if (t) t.textContent = text;
+}
+
+// Collapse the feed to its header and stop the spinner. Called when
+// the run finishes (final event) or errors out.
+function finishFeed(summary) {
   const feed = $('#feed');
-  let row = feed.querySelector(`[data-step="${id}"]`);
+  feed.classList.remove('working');
+  feed.classList.add('collapsed');               // tuck it away
+  setFeedTitle(summary || 'Done');
+}
+
+// add or update a step row in the feed body
+function feedStep(id, label, status, detail) {
+  const body = $('#feed-body');
+  let row = body.querySelector(`[data-step="${id}"]`);
   if (!row) {
     row = document.createElement('div');
     row.className = 'feed-step';
     row.dataset.step = id;
-    feed.appendChild(row);
+    body.appendChild(row);
   }
   row.className = 'feed-step ' + (status || 'running');
   const icon = status === 'done'
@@ -979,16 +1072,19 @@ function feedStep(id, label, status, detail) {
     <span class="feed-step-label">${esc(label)}</span>
     ${detail ? `<span class="feed-step-detail">${esc(detail)}</span>` : ''}
   `;
-  feed.scrollTop = feed.scrollHeight;
+  // While running, surface the active step in the header too.
+  if (status === 'running' || !status) setFeedTitle(label);
+  body.scrollTop = body.scrollHeight;
 }
-// add a final summary line to the feed
+
+// add a final summary line to the feed body
 function feedMessage(text, isAi) {
-  const feed = $('#feed');
+  const body = $('#feed-body');
   const m = document.createElement('div');
   m.className = 'feed-msg' + (isAi ? ' ai-line' : '');
   m.textContent = text;
-  feed.appendChild(m);
-  feed.scrollTop = feed.scrollHeight;
+  body.appendChild(m);
+  body.scrollTop = body.scrollHeight;
 }
 
 // ─── Agent runner ───────────────────────────────────────────────────
@@ -1146,6 +1242,9 @@ function handleEvent(ev) {
     case 'final': {
       if (ev.message) feedMessage(ev.message, true);
       state.history.push({ role: 'ai', text: ev.message || 'Done.' });
+      // Tuck the feed away so it stops covering the page. The header
+      // keeps a short summary; clicking it re-expands the detail.
+      finishFeed(ev.message ? clipTitle(ev.message) : 'Done');
       render();
       break;
     }
@@ -1154,6 +1253,16 @@ function handleEvent(ev) {
       break;
     }
   }
+}
+
+// Shorten a long final message into a one-line feed-header summary.
+function clipTitle(msg) {
+  const s = String(msg).replace(/\s+/g, ' ').trim();
+  // Take the first sentence/clause, cap length.
+  const firstStop = s.search(/[.!?]\s/);
+  let out = firstStop > 0 ? s.slice(0, firstStop) : s;
+  if (out.length > 64) out = out.slice(0, 61) + '…';
+  return out;
 }
 
 // Apply a plan event — establishes the page + asset skeletons so the
@@ -1897,6 +2006,7 @@ function placeholderImg(label, kind, w, h) {
     panel: ['#1a1612', '#2c2620', '#e8a917'],
   };
   const pal = palettes[kind] || palettes.panel;
+  const fs = Math.round(Math.min(w, h) / 14);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
     <defs>
       <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
@@ -1909,8 +2019,11 @@ function placeholderImg(label, kind, w, h) {
       ${Array.from({length:8},(_,i)=>`<line x1="0" y1="${i*h/8}" x2="${w}" y2="${i*h/8}"/>`).join('')}
       ${Array.from({length:8},(_,i)=>`<line x1="${i*w/8}" y1="0" x2="${i*w/8}" y2="${h}"/>`).join('')}
     </g>
-    <text x="50%" y="50%" fill="${pal[2]}" font-family="monospace" font-size="${Math.round(Math.min(w,h)/14)}"
-      text-anchor="middle" dominant-baseline="middle" opacity="0.85">${esc(label)}</text>
+    <text x="50%" y="${h/2 - fs*0.6}" fill="${pal[2]}" font-family="monospace" font-size="${fs}"
+      text-anchor="middle" dominant-baseline="middle" opacity="0.9">${esc(label)}</text>
+    <text x="50%" y="${h/2 + fs*1.0}" fill="${pal[2]}" font-family="monospace"
+      font-size="${Math.round(fs*0.62)}" letter-spacing="2"
+      text-anchor="middle" dominant-baseline="middle" opacity="0.5">DEMO PLACEHOLDER</text>
   </svg>`;
   return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
 }
