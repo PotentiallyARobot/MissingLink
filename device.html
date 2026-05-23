@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Authorize CLI — PromptFlow</title>
+<style>
+  :root {
+    --bg: #0b0b0d; --card: #141417; --line: #2a2a30;
+    --text: #ededf0; --muted: #8a8a93; --gold: #e8b54a;
+    --green: #46c98b; --red: #e5645f; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 460px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 32px;
+  }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; line-height: 1.5; }
+  .codebox {
+    font-family: var(--mono); font-size: 26px; letter-spacing: 3px;
+    text-align: center; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px; margin: 0 0 24px; color: var(--gold);
+  }
+  .row { display: flex; gap: 10px; }
+  button {
+    flex: 1; padding: 12px 16px; border-radius: 9px; font-size: 14px;
+    font-weight: 600; cursor: pointer; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); transition: opacity .15s;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--gold); color: #1a1a1a; border-color: var(--gold); }
+  button.danger:hover { border-color: var(--red); color: var(--red); }
+  .msg { margin-top: 18px; font-size: 13px; line-height: 1.5; }
+  .msg.err { color: var(--red); }
+  .msg.ok { color: var(--green); }
+  .center { text-align: center; }
+  a { color: var(--gold); }
+  .hidden { display: none; }
+  .spin {
+    width: 28px; height: 28px; border: 3px solid var(--line);
+    border-top-color: var(--gold); border-radius: 50%;
+    animation: r 0.8s linear infinite; margin: 8px auto;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <!-- STATE: loading -->
+  <div id="stateLoading">
+    <div class="spin"></div>
+    <p class="sub center">Checking your session…</p>
+  </div>
+
+  <!-- STATE: not signed in -->
+  <div id="stateAnon" class="hidden">
+    <h1>Sign in to authorize the CLI</h1>
+    <p class="sub">
+      A command-line tool is asking to sign in as you. Sign in or create your
+      PromptFlow account first, then come back to this page to approve it.
+    </p>
+    <button class="primary" onclick="goSignIn()">Go to PromptFlow to sign in</button>
+    <p class="msg center" style="color:var(--muted)">
+      After signing in, return here — the link still works.
+    </p>
+  </div>
+
+  <!-- STATE: confirm -->
+  <div id="stateConfirm" class="hidden">
+    <h1>Authorize this device?</h1>
+    <p class="sub">
+      A command-line tool wants to sign in as you. Confirm the code below
+      matches the one shown in your terminal, then approve.
+    </p>
+    <div class="codebox" id="codeDisplay">––––-––––</div>
+    <div class="row">
+      <button class="danger" id="denyBtn" onclick="decide('deny')">Deny</button>
+      <button class="primary" id="approveBtn" onclick="decide('approve')">Approve</button>
+    </div>
+    <div class="msg" id="confirmMsg"></div>
+  </div>
+
+  <!-- STATE: done -->
+  <div id="stateDone" class="hidden">
+    <h1 id="doneTitle"></h1>
+    <p class="sub" id="doneText"></p>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  // ── config ──────────────────────────────────────────────────────────
+  // Same-origin relative paths: this static page is served by GitHub Pages
+  // on missinglink.build, and /api/promptflow/* on that same domain is
+  // routed to the Worker. Exactly how promptflow.html talks to the backend.
+  var API = "/api/promptflow";
+
+  // The short user code arrives in the URL hash: device.html#W2TT-22FH
+  var userCode = (location.hash || "").replace(/^#/, "").trim().toUpperCase();
+
+  // ── element helpers ─────────────────────────────────────────────────
+  function $(id) { return document.getElementById(id); }
+  function show(id) {
+    ["stateLoading", "stateAnon", "stateConfirm", "stateDone"].forEach(function (s) {
+      $(s).classList.add("hidden");
+    });
+    $(id).classList.remove("hidden");
+  }
+  function done(ok, title, text) {
+    $("doneTitle").textContent = title;
+    $("doneTitle").style.color = ok ? "var(--green)" : "var(--red)";
+    $("doneText").textContent = text;
+    show("stateDone");
+  }
+
+  // ── sign-in redirect ────────────────────────────────────────────────
+  // Send the user to the main app to sign in, then bring them back here
+  // (hash preserved) so they can approve.
+  window.goSignIn = function () {
+    var back = encodeURIComponent("/device.html#" + userCode);
+    location.href = "/promptflow.html?return=" + back;
+  };
+
+  // ── approve / deny ──────────────────────────────────────────────────
+  window.decide = function (decision) {
+    $("approveBtn").disabled = true;
+    $("denyBtn").disabled = true;
+    $("confirmMsg").className = "msg";
+    $("confirmMsg").textContent = decision === "approve"
+      ? "Authorizing…" : "Denying…";
+
+    fetch(API + "/device/approve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user_code: userCode, decision: decision }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) {
+          // not_logged_in here means the session expired between load and click.
+          if (j.error === "not_logged_in") { show("stateAnon"); return; }
+          $("approveBtn").disabled = false;
+          $("denyBtn").disabled = false;
+          $("confirmMsg").className = "msg err";
+          $("confirmMsg").textContent = j.message || j.error || "Something went wrong.";
+          return;
+        }
+        if (decision === "deny" || j.status === "denied") {
+          done(false, "Login denied",
+            "The command-line login was rejected. You can close this tab.");
+        } else {
+          done(true, "CLI authorized \u2713",
+            "Your terminal will finish signing in within a few seconds. " +
+            "You can close this tab.");
+        }
+      })
+      .catch(function () {
+        $("approveBtn").disabled = false;
+        $("denyBtn").disabled = false;
+        $("confirmMsg").className = "msg err";
+        $("confirmMsg").textContent = "Network error. Try again.";
+      });
+  };
+
+  // ── boot ────────────────────────────────────────────────────────────
+  function boot() {
+    if (!userCode || !/^[A-Z0-9]{4}-?[A-Z0-9]{4}$/.test(userCode)) {
+      done(false, "Invalid link",
+        "This authorization link is missing its code. Run `promptflow login` " +
+        "again to get a fresh link.");
+      return;
+    }
+    $("codeDisplay").textContent = userCode;
+
+    // Are we signed in? Reuse the same lightweight authenticated endpoint
+    // promptflow.html uses — the session cookie rides along automatically.
+    fetch(API + "/me", { headers: { "accept": "application/json" } })
+      .then(function (r) {
+        if (r.status === 401) { show("stateAnon"); return null; }
+        return r.json();
+      })
+      .then(function (j) {
+        if (j === null) return;            // already handled (anon)
+        if (j && j.ok === false) { show("stateAnon"); return; }
+        show("stateConfirm");              // signed in → let them approve
+      })
+      .catch(function () {
+        done(false, "Couldn't reach PromptFlow",
+          "Check your connection and reload this page.");
+      });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
