@@ -4723,7 +4723,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="startup-card">
                 <div class="startup-spinner"></div>
                 <div class="startup-title" id="startupTitle">Starting GPU…</div>
-                <div class="startup-bonus" id="startupBonus" style="display:none;font-weight:700;margin-bottom:6px"></div>
+                <div class="startup-bonus" id="startupBonus" style="display:none;margin-bottom:6px"></div>
                 <div class="startup-sub" id="startupSub">Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.</div>
                 <div class="startup-bar-outer">
                     <div class="startup-bar-inner" id="startupBarInner"></div>
@@ -7166,7 +7166,7 @@ let _startupCurrentStageEnteredAt = 0;
 let _bootStartedAt = null;
 // Latch: set true once any real server stage has been shown this cycle.
 // Once a real stage has appeared, the label must NEVER fall back to
-// "Provisioning GPU…" again — that pre-code message only makes sense
+// "Provisioning GPU…" again. That pre-code message only makes sense
 // before the first stage arrives. A late/stale poll (stageIsFresh false)
 // would otherwise make the label jump backwards to "Provisioning GPU…",
 // which is the bug where the message reverts mid-boot.
@@ -7424,7 +7424,7 @@ function renderStartupOverlay(){
     } else if (_startupSawRealStage) {
         // A real stage HAS appeared earlier this cycle, but the latest
         // poll carries no fresh stage (a heartbeat gap, or a ping that
-        // timed out). Hold the last known stage label — NEVER fall back
+        // timed out). Hold the last known stage label. NEVER fall back
         // to "Provisioning GPU…", which only makes sense before the very
         // first stage. This is the fix for the label jumping backwards
         // to "Provisioning GPU…" partway through a boot.
@@ -7456,14 +7456,18 @@ function renderStartupOverlay(){
     if (titleEl) {
         titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     }
-    // Bold apology line — shown once the user has received the one-time
-    // cold-boot token grant (coldboot_bonus_at set by the grant endpoint
-    // or carried in from /auth/me on a later visit).
+    // Apology line. Only the token phrase is emphasised (yellow + bold);
+    // the rest of the line is normal weight. Shown once the user has
+    // received the one-time cold-boot token grant (coldboot_bonus_at set
+    // by the grant endpoint or carried in from /auth/me on a later visit).
     const _granted = !!(_user && _user.coldboot_bonus_at);
     if (bonusEl) {
         bonusEl.style.display = _granted ? '' : 'none';
         if (_granted) {
-            bonusEl.textContent = "Cold-boot takes about 90 seconds the first time. Apologies for the wait \u2014 we've added 500 tokens to your account.";
+            // Fixed string, no user input, so innerHTML is safe here.
+            // Only the span is styled; the lead-in sentence stays plain.
+            bonusEl.innerHTML = "Cold-boot takes about 90 seconds the first time. Apologies for the wait, we've "
+                + "<span style=\"color:var(--gold);font-weight:700\">added 500 tokens to your account.</span>";
         }
     }
     if (subEl) {
@@ -7477,7 +7481,7 @@ function renderStartupOverlay(){
 }
 
 // One-time cold-boot token grant. Called while the cold-boot overlay is
-// visible — the user is genuinely waiting on a cold start. The server
+// visible, when the user is genuinely waiting on a cold start. The server
 // credits 500 tokens exactly once per user and is the source of truth;
 // this just triggers it, guarded to one attempt per page load.
 // Best-effort: any failure is swallowed and never surfaces to the user.
@@ -7501,7 +7505,7 @@ async function claimColdbootBonus(){
             // the grant call itself, so there is no loop.
             renderStartupOverlay();
         }
-    } catch (e) { /* best-effort — never block the overlay */ }
+    } catch (e) { /* best-effort, never block the overlay */ }
 }
 
 async function pollQueue(){
