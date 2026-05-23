@@ -4106,9 +4106,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <div class="sec mode-sec">
         <div class="mode-toggle">
-            <button class="mode-btn" id="btnModeCamera" onclick="setMode('camera')">🎥 Camera</button>
-            <button class="mode-btn" id="btnModeEdit" onclick="setMode('edit')">✏️ Edit</button>
-            <button class="mode-btn" id="btnModeBatch" onclick="setMode('batch')">📚 Batch</button>
+            <button class="mode-btn" id="btnModeCamera" onclick="setMode('camera', {switchToStudio:true})">🎥 Camera</button>
+            <button class="mode-btn" id="btnModeEdit" onclick="setMode('edit', {switchToStudio:true})">✏️ Edit</button>
+            <button class="mode-btn" id="btnModeBatch" onclick="setMode('batch', {switchToStudio:true})">📚 Batch</button>
             <!-- Create mode: direct image generation without going through
                  the agent. Prompt + up to 4 reference image slots, single
                  generation per click. Output lands in the batch grid so the
@@ -4118,7 +4118,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                  Marked active by default — Create is the lowest-friction
                  entry point (no upload needed) so we land first-time
                  visitors here. -->
-            <button class="mode-btn active" id="btnModeGenerate" onclick="setMode('generate')">✨ Create</button>
+            <button class="mode-btn active" id="btnModeGenerate" onclick="setMode('generate', {switchToStudio:true})">✨ Create</button>
         </div>
     </div>
 
@@ -6660,6 +6660,17 @@ async function doManageSubscription(){
 function setMode(mode, opts){
     opts = opts || {};
     const prevMode = currentMode;
+    // When a user explicitly clicks a studio mode button (Camera / Edit /
+    // Batch / Create), picking a mode means "show me the workspace" — so
+    // leave the Community Gallery view if it's open. setStageView('studio')
+    // hides the gallery overlay and clears the active state off the
+    // Gallery tab. Gated on opts.switchToStudio so the page-load and
+    // programmatic setMode calls (which pass no such opt) do NOT override
+    // a saved Gallery stage preference.
+    if (opts.switchToStudio && typeof setStageView === 'function'
+        && window._stageView === 'gallery') {
+        setStageView('studio');
+    }
     // If user leaves Edit mode, end any "editing view N" session — a Camera
     // generation should produce a fresh single-image output, not try to
     // update a batch slot.
