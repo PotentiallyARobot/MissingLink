@@ -4723,6 +4723,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="startup-card">
                 <div class="startup-spinner"></div>
                 <div class="startup-title" id="startupTitle">Starting GPU…</div>
+                <div class="startup-bonus" id="startupBonus" style="display:none;font-weight:700;margin-bottom:6px"></div>
                 <div class="startup-sub" id="startupSub">Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.</div>
                 <div class="startup-bar-outer">
                     <div class="startup-bar-inner" id="startupBarInner"></div>
@@ -7163,6 +7164,20 @@ let _startupCurrentStageEnteredAt = 0;
 // runs off this, NOT off _startupFirstSeen — otherwise the bar would
 // advance to 95% while the GPU just sleeps idle and Modal is silent.
 let _bootStartedAt = null;
+// Latch: set true once any real server stage has been shown this cycle.
+// Once a real stage has appeared, the label must NEVER fall back to
+// "Provisioning GPU…" again — that pre-code message only makes sense
+// before the first stage arrives. A late/stale poll (stageIsFresh false)
+// would otherwise make the label jump backwards to "Provisioning GPU…",
+// which is the bug where the message reverts mid-boot.
+let _startupSawRealStage = false;
+// Remembers the last real stage label so a stale-poll gap shows the
+// last known stage instead of a generic fallback.
+let _startupLastStageText = null;
+// Per-page-load guard so the cold-boot token grant is attempted at most
+// once. The server enforces once-per-user regardless; this just avoids
+// spamming the endpoint every render frame.
+let _coldbootGrantTried = false;
 
 function renderStartupOverlay(){
     const overlay = $('startupOverlay');
@@ -7198,6 +7213,8 @@ function renderStartupOverlay(){
         _startupCurrentStage = null;
         _startupCurrentStageEnteredAt = 0;
         _bootStartedAt = null;
+        _startupSawRealStage = false;
+        _startupLastStageText = null;
         return;
     }
     // Trust the server. With the precedence fix in /api/studio/status
@@ -7213,6 +7230,8 @@ function renderStartupOverlay(){
         _startupCurrentStage = null;
         _startupCurrentStageEnteredAt = 0;
         _bootStartedAt = null;
+        _startupSawRealStage = false;
+        _startupLastStageText = null;
         return;
     }
     // Overlay show rule: only fire when the GPU is CONFIRMED OFF.
@@ -7250,6 +7269,8 @@ function renderStartupOverlay(){
         _startupCurrentStage = null;
         _startupCurrentStageEnteredAt = 0;
         _bootStartedAt = null;
+        _startupSawRealStage = false;
+        _startupLastStageText = null;
         return;
     }
 
@@ -7333,15 +7354,17 @@ function renderStartupOverlay(){
         : 0;
     const cycleElapsedSec = cycleElapsedMs / 1000;
 
-    // Piecewise-linear time fallback. First segment paces the booting
-    // phase (0..30% over ~30s); second segment paces the rest of the
-    // boot (30..100% over ~60s). Stage floors below override this
+    // Piecewise-linear time fallback, front-loaded so the bar shows
+    // visible movement immediately instead of crawling. First segment
+    // fills 0..55% over the first 12s (fast, reassures the user something
+    // is happening); second segment eases 55..100% over the remaining
+    // ~78s of a typical cold boot. Stage floors below override this
     // whenever the server has reported a fresh stage.
     let timePct;
-    if (cycleElapsedSec <= 30) {
-        timePct = (cycleElapsedSec / 30) * 30;
+    if (cycleElapsedSec <= 12) {
+        timePct = (cycleElapsedSec / 12) * 55;
     } else if (cycleElapsedSec <= 90) {
-        timePct = 30 + ((cycleElapsedSec - 30) / 60) * 70;
+        timePct = 55 + ((cycleElapsedSec - 12) / 78) * 45;
     } else {
         timePct = BAR_MAX_PCT;
     }
@@ -7384,40 +7407,101 @@ function renderStartupOverlay(){
         ready:                'GPU ready',
     };
     let stageText;
+    // A "real stage" is a fresh, recognised server stage. Latch it: once
+    // any real stage has appeared this cycle, _startupSawRealStage stays
+    // true until the overlay closes.
+    const _realStage = stageIsFresh && stage && !!stageLabels[stage];
+    if (_realStage) _startupSawRealStage = true;
+
     if (_gs.state === 'cold') {
         stageText = 'Connecting…';
     } else if (stageIsFresh && stage === 'registering' && _gs.startup_total > 0) {
         stageText = `Registering · ${_gs.startup_progress}/${_gs.startup_total}`;
-    } else if (stageIsFresh && stage && stageLabels[stage]) {
+        _startupLastStageText = stageText;
+    } else if (_realStage) {
         stageText = stageLabels[stage];
+        _startupLastStageText = stageText;
+    } else if (_startupSawRealStage) {
+        // A real stage HAS appeared earlier this cycle, but the latest
+        // poll carries no fresh stage (a heartbeat gap, or a ping that
+        // timed out). Hold the last known stage label — NEVER fall back
+        // to "Provisioning GPU…", which only makes sense before the very
+        // first stage. This is the fix for the label jumping backwards
+        // to "Provisioning GPU…" partway through a boot.
+        stageText = _startupLastStageText || 'Warming up…';
     } else if (elapsed >= 10) {
         // Modal's own container-provisioning window happens BEFORE our
-        // Python emits any stage, so no server stage can exist yet. After
-        // 10s with still no fresh stage, surface that honestly instead of
-        // the generic "Warming up…" — covers the gap between the click and
-        // the first 'booting' heartbeat landing.
+        // Python emits any stage, so no server stage can exist yet. Shown
+        // only until the first real stage arrives (latched above).
         stageText = 'Provisioning GPU…';
     } else {
         stageText = 'Warming up…';
     }
+
+    // Best-effort one-time cold-boot token grant. The overlay is on
+    // screen here, so the user IS waiting on a cold boot. The server
+    // enforces once-per-user; this is fire-and-forget and never blocks
+    // the render.
+    claimColdbootBonus();
 
     const stageEl = $('startupStage');
     const elapsedEl = $('startupElapsed');
     const barEl = $('startupBarInner');
     const titleEl = $('startupTitle');
     const subEl = $('startupSub');
+    const bonusEl = $('startupBonus');
     if (stageEl) stageEl.textContent = stageText;
     if (elapsedEl) elapsedEl.textContent = `${elapsed}s`;
     if (barEl) barEl.style.width = `${pct.toFixed(1)}%`;
     if (titleEl) {
         titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     }
-    if (subEl) {
-        // Single, fixed message whenever the overlay is up — keeps the
-        // copy stable instead of mutating into "Almost there" at 60s
-        // (which was a lie when the actual elapsed climbed past that).
-        subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+    // Bold apology line — shown once the user has received the one-time
+    // cold-boot token grant (coldboot_bonus_at set by the grant endpoint
+    // or carried in from /auth/me on a later visit).
+    const _granted = !!(_user && _user.coldboot_bonus_at);
+    if (bonusEl) {
+        bonusEl.style.display = _granted ? '' : 'none';
+        if (_granted) {
+            bonusEl.textContent = "Cold-boot takes about 90 seconds the first time. Apologies for the wait \u2014 we've added 500 tokens to your account.";
+        }
     }
+    if (subEl) {
+        // When the bold line is shown it already carries the "~90 seconds"
+        // message, so the sub-text trims to just the tip to avoid saying
+        // it twice. When it isn't shown, the sub keeps the full message.
+        subEl.textContent = _granted
+            ? "You can prepare your prompt and settings while this runs."
+            : "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+    }
+}
+
+// One-time cold-boot token grant. Called while the cold-boot overlay is
+// visible — the user is genuinely waiting on a cold start. The server
+// credits 500 tokens exactly once per user and is the source of truth;
+// this just triggers it, guarded to one attempt per page load.
+// Best-effort: any failure is swallowed and never surfaces to the user.
+async function claimColdbootBonus(){
+    if (_coldbootGrantTried || !_user) return;
+    _coldbootGrantTried = true;
+    try {
+        const r = await fetchT(`${API}/api/studio/coldboot-grant`, { method: 'POST' }, 8000);
+        const d = await r.json().catch(() => ({}));
+        if (d && d.ok) {
+            if (typeof d.tokens === 'number') {
+                _user.tokens = d.tokens;
+                // Keep the visible balance widgets in sync with the new total.
+                const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens;
+                const sb = $('sidebarBalance');
+                if (sb) sb.textContent = `${d.tokens} (${Math.floor(d.tokens / 100)} images)`;
+            }
+            if (d.bonus_at) _user.coldboot_bonus_at = d.bonus_at;
+            // Re-render so the bold bonus line appears immediately. The
+            // _coldbootGrantTried guard makes this re-entry a no-op for
+            // the grant call itself, so there is no loop.
+            renderStartupOverlay();
+        }
+    } catch (e) { /* best-effort — never block the overlay */ }
 }
 
 async function pollQueue(){
