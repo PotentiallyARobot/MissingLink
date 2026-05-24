@@ -85,6 +85,9 @@
     color:var(--text);padding:13px 14px;font-size:14px;resize:none;outline:none;
   }
   textarea:focus,input[type=text]:focus{border-color:var(--accent2)}
+  .field{margin:12px 0}
+  .field label{display:block;font-size:11px;font-weight:700;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
   input[type=date],input[type=time]{
     background:transparent;border:none;color:var(--text);font-size:14px;text-align:right;outline:none;
   }
@@ -356,7 +359,7 @@ const SHOP = {
 const S = {
   loading:true, loggedIn:false, user:null,
   items:[], references:[], looks:[],
-  tab:"wardrobe", wcat:"wardrobe",
+  tab:"wardrobe", wcat:"wardrobe", gender:"female",
   viewItemId:null, lookId:null, lookData:null, chat:[],
   busy:false,
   trending:null, trendingLoaded:false,
@@ -397,12 +400,23 @@ const I={
   bulb:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 00-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0012 2z"/></svg>',
 };
 const CATS=[
-  {k:"wardrobe",label:"Wardrobe",add:"Add Clothing",addsub:"Upload a photo of any clothing item",noun:"clothing item"},
-  {k:"shoes",label:"Shoes",add:"Add Shoes",addsub:"Upload a photo of any pair of shoes",noun:"pair of shoes"},
-  {k:"makeup",label:"Makeup",add:"Add Makeup",addsub:"Upload a photo of any makeup product",noun:"makeup product"},
-  {k:"perfume",label:"Perfume",add:"Add Perfume",addsub:"Upload a photo of any fragrance",noun:"fragrance"},
-  {k:"jewelry",label:"Jewelry",add:"Add Jewelry",addsub:"Upload a photo of any jewelry piece",noun:"jewelry piece"},
+  {k:"wardrobe",label:"Wardrobe",add:"Add Clothing",addsub:"Upload a photo of any clothing item",noun:"clothing item",cats:["wardrobe"]},
+  {k:"shoes",label:"Shoes",add:"Add Shoes",addsub:"Upload a photo of any pair of shoes",noun:"pair of shoes",cats:["shoes"]},
+  {k:"makeup",label:"Makeup",add:"Add Makeup",addsub:"Upload a photo of any makeup product",noun:"makeup product",cats:["makeup"]},
+  {k:"perfume",label:"Perfume",add:"Add Perfume",addsub:"Upload a photo of any fragrance",noun:"fragrance",cats:["perfume"]},
+  {k:"jewelry",label:"Jewelry",add:"Add Jewelry",addsub:"Upload a photo of any jewelry piece",noun:"jewelry piece",cats:["jewelry","accessories"]},
+  {k:"accessories",label:"Accessories",add:"Add Accessory",addsub:"Upload a photo of any accessory",noun:"accessory",cats:["accessories","makeup","perfume","jewelry"]},
 ];
+// Sub-tabs shown per gender. In male mode makeup/perfume/jewelry collapse
+// into a single Accessories tab (which still surfaces any existing items
+// from those categories, so nothing is lost when switching modes).
+const CAT_KEYS={
+  female:["wardrobe","shoes","makeup","perfume","jewelry"],
+  male:["wardrobe","shoes","accessories"],
+};
+function visibleCats(){
+  return (CAT_KEYS[S.gender]||CAT_KEYS.female).map(k=>CATS.find(c=>c.k===k));
+}
 const SUGG=[
   {label:"Tops",seed:"women top blouse",cat:"wardrobe",img:"tops"},
   {label:"Bottoms",seed:"women jeans trousers",cat:"wardrobe",img:"bottoms"},
@@ -453,8 +467,36 @@ async function loadState(){
     S.items=d.items||[];
     S.references=d.references||[];
     S.looks=d.looks||[];
+    if(d.gender){ S.gender=d.gender; applyTheme(d.gender);
+      try{localStorage.setItem("oa_gender",d.gender);}catch(e){} }
   }catch(e){S.loggedIn=false;}
   S.loading=false;render();
+}
+
+/* ── accent theme — pink for female, blue for male ── */
+const THEME={
+  female:{accent:"#EBB7E6",accent2:"#C98BD9"},
+  male:{accent:"#A7C5F2",accent2:"#7C9EE0"}
+};
+function applyTheme(g){
+  const t=THEME[g]||THEME.female;
+  const r=document.documentElement;
+  r.style.setProperty("--accent",t.accent);
+  r.style.setProperty("--accent2",t.accent2);
+}
+async function setGender(g){
+  if(g!=="male"&&g!=="female")return;
+  S.gender=g;
+  applyTheme(g);
+  S.trending=null;S.trendingLoaded=false;   // trends are gender-specific — refetch
+  try{localStorage.setItem("oa_gender",g);}catch(e){}
+  render();
+  try{
+    await api("/api/outfitai/settings",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({gender:g})
+    });
+  }catch(e){ toast("Couldn't save — try again"); }
 }
 function loginGoogle(){ window.location.href=API+"/auth/google?return=/outfitai"; }
 async function logout(){ try{await api("/auth/logout",{method:"POST"});}catch(e){} location.reload(); }
@@ -529,8 +571,10 @@ function renderSignIn(sc){
 
 /* ════════════════ WARDROBE ════════════════ */
 function renderWardrobe(sc){
-  const cat=CATS.find(c=>c.k===S.wcat)||CATS[0];
-  const list=S.items.filter(i=>i.category===S.wcat);
+  const cats=visibleCats();
+  if(!cats.find(c=>c.k===S.wcat)) S.wcat=cats[0].k;
+  const cat=cats.find(c=>c.k===S.wcat)||cats[0];
+  const list=S.items.filter(i=>cat.cats.includes(i.category));
   const empty=list.length===0;
   const banner=trendingBannerHTML();
   sc.innerHTML=`
@@ -541,7 +585,7 @@ function renderWardrobe(sc){
     </div>
     <div class="pad"><div class="sub">Build your closet — the AI styles looks only from what you own.</div></div>
     <div class="tabs" style="margin-top:14px">
-      ${CATS.map(c=>`<div class="tab ${c.k===S.wcat?'on':''}" data-c="${c.k}">${c.label}</div>`).join("")}
+      ${cats.map(c=>`<div class="tab ${c.k===S.wcat?'on':''}" data-c="${c.k}">${c.label}</div>`).join("")}
     </div>
     <div class="pad" style="padding-top:14px">
       ${empty?"":`<button class="addrow" id="addRow">
@@ -604,6 +648,9 @@ function wardrobeEmptyHTML(cat){
     jewelry:{hero:ASSET.accessories,t:"No jewelry yet",
       s:"Add the necklaces, earrings and rings you own so the AI can finish looks with the right sparkle.",
       btn:"Add Jewelry",tip:"Shoot pieces on a plain, light surface so the detail shows."},
+    accessories:{hero:ASSET.accessories,t:"No accessories yet",
+      s:"Add watches, belts, bags, hats and any fragrance you own so the AI can finish every look.",
+      btn:"Add Accessory",tip:"Shoot pieces on a plain, well-lit surface so the detail shows."},
   };
   const m=map[cat]||map.wardrobe;
   return `<div class="emptycard">
@@ -617,12 +664,13 @@ function wardrobeEmptyHTML(cat){
 
 function itemCardHTML(it){
   const analyzing=it.status==="analyzing";
+  const sub=it.type||it.brand||(it.tags&&it.tags[0])||it.category;
   return `<button class="icard" data-id="${it.id}">
     ${analyzing?'<div class="badge">analyzing…</div>':''}
     <img class="ph" src="${esc(it.image_url)}" loading="lazy" referrerpolicy="no-referrer" alt="">
     <div class="meta">
       <div class="nm">${esc(it.name||"Item")}</div>
-      <div class="ct">${(it.tags&&it.tags[0])?esc(it.tags[0]):esc(it.category)}</div>
+      <div class="ct">${esc(sub)}</div>
     </div>
   </button>`;
 }
@@ -646,7 +694,7 @@ async function loadTrending(retry){
   if(S.trendingLoaded && !retry) return;
   S.trendingLoaded=true;
   try{
-    const d=await api("/api/outfitai/trending");
+    const d=await api("/api/outfitai/trending?gender="+encodeURIComponent(S.gender));
     if(d&&d.ok&&Array.isArray(d.items)) S.trending=d.items;
     else if(!retry) S.trending=[];
     // A cold/stale cache means the full AI-picked list is still building
@@ -814,10 +862,11 @@ async function pickSearchResult(cat,imageUrl){
 function renderItemDetail(sc){
   const it=S.items.find(i=>i.id===S.viewItemId);
   if(!it){S.viewItemId=null;return render();}
-  const sec=(title,arr,cls)=>{
+  const analyzing=it.status==="analyzing";
+  const sec=(title,arr)=>{
     if(!arr||!arr.length) return "";
     return `<div class="h2">${title}</div><div class="chips">${
-      arr.map(t=>`<div class="chip ${cls||'tag'}">${esc(t)}</div>`).join("")}</div>`;
+      arr.map(t=>`<div class="chip tag">${esc(t)}</div>`).join("")}</div>`;
   };
   sc.innerHTML=`
     <div class="topbar">
@@ -826,14 +875,28 @@ function renderItemDetail(sc){
     </div>
     <div class="pad">
       <img class="lookimg" style="aspect-ratio:1/1;object-fit:cover" src="${esc(it.image_url)}" alt="">
-      <div class="h2" style="margin-bottom:4px;font-size:18px">${esc(it.name)}</div>
-      <div class="sub" style="text-transform:capitalize">${esc(it.category)}</div>
-      ${it.status==="analyzing"?'<div class="sub" style="margin-top:10px">⏳ Still analyzing this item…</div>':""}
-      <div class="h2">AI Description</div>
-      <div class="sub" style="color:var(--text)">${esc(it.description||"—")}</div>
+      ${analyzing?'<div class="card" style="padding:12px;margin-top:12px"><div class="sub">⏳ The AI is analyzing this item — name, type and brand will fill in shortly.</div></div>':""}
+
+      <div class="h2">Item details</div>
+      <div class="field"><label>Name</label>
+        <input type="text" id="f_name" maxlength="80" value="${esc(it.name||"")}" ${analyzing?"disabled":""}></div>
+      <div class="field"><label>Type</label>
+        <input type="text" id="f_type" maxlength="60" placeholder="e.g. Leather jacket" value="${esc(it.type||"")}" ${analyzing?"disabled":""}></div>
+      <div class="field"><label>Brand</label>
+        <input type="text" id="f_brand" maxlength="60" placeholder="e.g. Levi's — or leave blank" value="${esc(it.brand||"")}" ${analyzing?"disabled":""}></div>
+      <div class="field"><label>Description</label>
+        <textarea id="f_desc" rows="3" maxlength="500" ${analyzing?"disabled":""}>${esc(it.description||"")}</textarea></div>
+
+      <button class="btn" id="save" ${analyzing?"disabled":""} style="width:100%;margin-top:4px">Save changes</button>
+      <button class="btn ghost sm" id="reanalyze" ${analyzing?"disabled":""} style="width:100%;margin-top:10px">
+        ${I.spark}<span>${analyzing?"Analyzing…":"Re-analyze with AI"}</span></button>
+      <div class="sub" style="font-size:11px;margin-top:8px;text-align:center">
+        Let the AI guess the name, type and brand from the photo — or type them in yourself.</div>
+
       ${sec("Tags",it.tags)}
       ${sec("Pairs well with",it.pairs_with)}
       ${sec("Wear it for",it.occasions)}
+
       <div style="height:18px"></div>
       <button class="btn ghost" id="del" style="color:var(--bad)">${I.trash}<span>Delete item</span></button>
       <div style="height:14px"></div>
@@ -845,6 +908,49 @@ function renderItemDetail(sc){
     S.items=S.items.filter(i=>i.id!==it.id);
     S.viewItemId=null;render();toast("Item deleted");
   };
+  if(!analyzing){
+    $("save").onclick=()=>saveItemEdits(it.id);
+    $("reanalyze").onclick=()=>reanalyzeItem(it.id);
+  }
+}
+async function saveItemEdits(id){
+  const payload={
+    name:($("f_name").value||"").trim()||"Untitled item",
+    type:($("f_type").value||"").trim(),
+    brand:($("f_brand").value||"").trim(),
+    description:($("f_desc").value||"").trim(),
+  };
+  const btn=$("save");if(btn){btn.disabled=true;btn.textContent="Saving…";}
+  try{
+    const d=await api("/api/outfitai/item/"+id+"/update",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    if(!d.ok)throw new Error(d.detail||d.error||"failed");
+    const idx=S.items.findIndex(i=>i.id===id);
+    if(idx>=0)S.items[idx]=d.item;
+    render();toast("Saved");
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent="Save changes";}
+    toast("Couldn't save: "+e.message);
+  }
+}
+async function reanalyzeItem(id){
+  const idx=S.items.findIndex(i=>i.id===id);
+  if(idx<0)return;
+  S.items[idx]={...S.items[idx],status:"analyzing"};
+  render();
+  try{
+    const d=await api("/api/outfitai/item/"+id+"/reanalyze",{method:"POST"});
+    if(!d.ok)throw new Error(d.detail||d.error||"failed");
+    const i2=S.items.findIndex(i=>i.id===id);
+    if(i2>=0)S.items[i2]=d.item;
+    render();toast("Re-analyzed ✨");
+  }catch(e){
+    const i2=S.items.findIndex(i=>i.id===id);
+    if(i2>=0)S.items[i2]={...S.items[i2],status:"ready"};
+    render();toast("Re-analysis failed: "+e.message);
+  }
 }
 
 /* ════════════════ PHOTOS (optional photos of the user) ════════════════ */
@@ -1204,6 +1310,16 @@ function renderProfile(sc){
         <div><div style="font-size:20px;font-weight:800">${S.looks.length}</div><div class="uc">Looks</div></div>
       </div>
 
+      <div class="h2">Gender</div>
+      <div class="card" style="padding:14px">
+        <div class="seg" id="genderSeg">
+          <button class="segb ${S.gender==="female"?"on":""}" data-g="female">Female</button>
+          <button class="segb ${S.gender==="male"?"on":""}" data-g="male">Male</button>
+        </div>
+        <div class="sub" style="font-size:11px;margin-top:8px">
+          Tailors every generated look to your style — and themes the app to match.</div>
+      </div>
+
       <div class="h2">Tokens & subscription</div>
       <div class="card" style="padding:14px">
         <div class="sub">Each generated look (and each refinement) costs
@@ -1231,9 +1347,13 @@ function renderProfile(sc){
     </div>`;
   $("out").onclick=logout;
   $("buy").onclick=openSubscribe;
+  sc.querySelectorAll("#genderSeg .segb").forEach(b=>b.onclick=()=>{
+    if(b.dataset.g!==S.gender) setGender(b.dataset.g);
+  });
 }
 
 /* ════════════════ boot ════════════════ */
+try{ const g=localStorage.getItem("oa_gender"); if(g){ S.gender=g; applyTheme(g); } }catch(e){}
 loadState();
 </script>
 </body>
