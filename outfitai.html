@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0B0D">
+<title>WhatShouldIWear — AI Stylist</title>
+<style>
+  :root{
+    --bg:#0B0B0D; --bg2:#141416; --bg3:#1E1E22; --bg4:#26262B;
+    --accent:#EBB7E6; --accent2:#C98BD9;
+    --text:#F4F2F5; --muted:#8C8A92; --line:#262630;
+    --good:#7BD88F; --bad:#E98D8D;
+    --r:18px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%}
+  body{
+    background:#000; color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; justify-content:center;
+  }
+  /* phone-frame column */
+  #app{
+    width:100%; max-width:480px; min-height:100%; background:var(--bg);
+    position:relative; display:flex; flex-direction:column;
+    box-shadow:0 0 80px rgba(0,0,0,.6);
+  }
+  .scroll{flex:1; overflow-y:auto; padding:0 0 96px; -webkit-overflow-scrolling:touch}
+  a{color:var(--accent);text-decoration:none}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,textarea,select{font-family:inherit}
+  ::-webkit-scrollbar{width:0;height:0}
+
+  /* ── top bar ── */
+  .topbar{
+    display:flex;align-items:center;gap:10px;padding:18px 18px 12px;
+    position:sticky;top:0;background:linear-gradient(var(--bg),var(--bg) 70%,transparent);z-index:20;
+  }
+  .topbar h1{font-size:19px;font-weight:700;margin:0;flex:1;letter-spacing:-.2px}
+  .topbar .back{font-size:22px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+    border-radius:50%;background:var(--bg3)}
+  .logo{font-size:22px;font-weight:800;letter-spacing:-.5px}
+  .logo .ai{color:var(--accent)}
+  .pill{background:var(--bg3);border:1px solid var(--line);border-radius:999px;
+    padding:6px 12px;font-size:12px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:5px}
+  .pill b{color:var(--accent)}
+
+  /* ── generic ── */
+  .pad{padding:0 18px}
+  .sub{color:var(--muted);font-size:13px;line-height:1.45}
+  .h2{font-size:15px;font-weight:700;margin:22px 0 12px}
+  .h2.row{display:flex;align-items:center;justify-content:space-between}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r)}
+
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    background:var(--accent);color:#1a121a;font-weight:700;font-size:15px;
+    border-radius:14px;padding:14px;width:100%;transition:transform .08s,opacity .15s;
+  }
+  .btn:active{transform:scale(.98)}
+  .btn.ghost{background:var(--bg3);color:var(--text);border:1px solid var(--line)}
+  .btn.sm{padding:10px 14px;font-size:13px;border-radius:11px;width:auto}
+  .btn[disabled]{opacity:.45;pointer-events:none}
+
+  .chip{
+    background:var(--bg3);border:1px solid var(--line);border-radius:999px;
+    padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--text);white-space:nowrap;
+  }
+  .chip.on{background:var(--accent);color:#1a121a;border-color:var(--accent)}
+  .chip.tag{color:var(--muted);font-weight:500}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+
+  textarea,input[type=text]{
+    width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:14px;
+    color:var(--text);padding:13px 14px;font-size:14px;resize:none;outline:none;
+  }
+  textarea:focus,input[type=text]:focus{border-color:var(--accent2)}
+  input[type=date],input[type=time]{
+    background:transparent;border:none;color:var(--text);font-size:14px;text-align:right;outline:none;
+  }
+  ::placeholder{color:#5c5b63}
+
+  /* ── tabs ── */
+  .tabs{display:flex;gap:22px;padding:4px 18px 0;border-bottom:1px solid var(--line)}
+  .tab{padding:11px 0;font-size:14px;font-weight:600;color:var(--muted);position:relative}
+  .tab.on{color:var(--text)}
+  .tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2.5px;
+    background:var(--accent);border-radius:2px}
+
+  /* ── grid of item cards ── */
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .grid.two{grid-template-columns:1fr 1fr}
+  .icard{
+    background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    position:relative;text-align:left;
+  }
+  .icard .ph{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:var(--bg4)}
+  .icard .meta{padding:8px 9px}
+  .icard .nm{font-size:11.5px;font-weight:600;line-height:1.25;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .icard .ct{font-size:9.5px;color:var(--muted);margin-top:2px}
+  .icard .badge{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.7);
+    font-size:9px;padding:3px 7px;border-radius:999px;color:var(--accent);font-weight:700}
+
+  .addtile{
+    border:1.5px dashed var(--line);background:var(--bg2);border-radius:14px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+    aspect-ratio:1/1;color:var(--muted);font-size:11px;font-weight:600;
+  }
+  .addtile svg{width:22px;height:22px}
+
+  /* reference photo slot */
+  .refgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .refslot{aspect-ratio:3/4;border-radius:13px;overflow:hidden;position:relative;background:var(--bg2);
+    border:1px solid var(--line)}
+  .refslot img{width:100%;height:100%;object-fit:cover}
+  .refslot .x{position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:50%;
+    background:rgba(0,0,0,.75);font-size:13px;display:flex;align-items:center;justify-content:center}
+
+  /* ── detail rows ── */
+  .drow{display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .drow:last-child{border:none}
+  .drow .k{color:var(--muted)}
+  .drow .v{font-weight:600;text-align:right}
+
+  /* ── bottom nav ── */
+  .nav{
+    position:absolute;left:0;right:0;bottom:0;display:flex;
+    background:rgba(13,13,15,.94);backdrop-filter:blur(14px);
+    border-top:1px solid var(--line);padding:8px 4px max(8px,env(safe-area-inset-bottom));
+  }
+  .navb{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);
+    font-size:10px;font-weight:600;padding:4px 0}
+  .navb svg{width:22px;height:22px}
+  .navb.on{color:var(--accent)}
+  .navb.gen{margin-top:-2px}
+  .navb.gen .gico{width:38px;height:38px;border-radius:12px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:flex;align-items:center;justify-content:center;margin-bottom:1px}
+  .navb.gen .gico svg{width:20px;height:20px}
+
+  /* ── loading / overlays ── */
+  .center{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:50px 30px;gap:14px;min-height:60vh}
+  .spinner{width:38px;height:38px;border:3px solid var(--bg4);border-top-color:var(--accent);
+    border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .skel{background:linear-gradient(90deg,var(--bg3),var(--bg4),var(--bg3));
+    background-size:200% 100%;animation:sh 1.3s infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+
+  .toast{
+    position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:200;
+    background:var(--bg4);border:1px solid var(--line);color:var(--text);
+    padding:11px 18px;border-radius:12px;font-size:13px;font-weight:600;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
+
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:150;
+    display:flex;align-items:flex-end;justify-content:center}
+  .sheet{width:100%;max-width:480px;background:var(--bg2);border-top-left-radius:22px;
+    border-top-right-radius:22px;border-top:1px solid var(--line);padding:8px 18px 30px;
+    animation:up .22s ease}
+  @keyframes up{from{transform:translateY(100%)}}
+  .grab{width:38px;height:4px;background:var(--bg4);border-radius:2px;margin:8px auto 16px}
+
+  /* result page */
+  .lookimg{width:100%;border-radius:var(--r);display:block;background:var(--bg2);aspect-ratio:2/3;object-fit:cover}
+  .usedrow{display:flex;align-items:center;gap:10px;padding:9px;background:var(--bg2);
+    border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+  .usedrow img{width:42px;height:42px;border-radius:9px;object-fit:cover;background:var(--bg4)}
+  .usedrow .un{font-size:12.5px;font-weight:600}
+  .usedrow .uc{font-size:10px;color:var(--muted)}
+  .bubble{padding:11px 13px;border-radius:14px;font-size:13px;line-height:1.5;max-width:85%}
+  .bubble.ai{background:var(--bg3);border:1px solid var(--line)}
+  .bubble.me{background:var(--accent);color:#1a121a;font-weight:500;align-self:flex-end}
+  .chatrow{display:flex;gap:8px;align-items:flex-end}
+
+  .empty{text-align:center;color:var(--muted);font-size:13px;padding:38px 24px;line-height:1.6}
+  .star{color:var(--accent);font-size:13px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="scroll" id="screen"></div>
+  <div class="nav" id="nav"></div>
+</div>
+<div class="toast" id="toast"></div>
+<div id="modalRoot"></div>
+
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════
+   WhatShouldIWear — front-end
+   Talks to the OutfitAI worker routes (/api/outfitai/*) and reuses the
+   Studio Google sign-in (/auth/*). Served at missinglink.build/outfitai.
+   ════════════════════════════════════════════════════════════════ */
+const API = "";               // same origin as the worker
+const TOK_PER_GEN = 100;
+
+const S = {
+  loading:true, loggedIn:false, user:null,
+  items:[], references:[], looks:[],
+  tab:"wardrobe", wcat:"wardrobe",
+  viewItemId:null, lookId:null, lookData:null, chat:[],
+  busy:false,
+};
+
+/* ── tiny helpers ── */
+const $ = id => document.getElementById(id);
+const el = (h)=>{const d=document.createElement("div");d.innerHTML=h.trim();return d.firstElementChild;};
+const esc = s => (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let _toastT;
+function toast(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");
+  clearTimeout(_toastT);_toastT=setTimeout(()=>t.classList.remove("show"),2600);}
+
+async function api(path,opts){
+  opts=opts||{};opts.credentials="include";
+  const r=await fetch(API+path,opts);
+  let d=null;try{d=await r.json();}catch(e){}
+  if(!r.ok && !(d&&d.ok!==undefined)) throw new Error((d&&d.error)||("HTTP "+r.status));
+  return d||{};
+}
+
+/* ── ICONS (inline svg) ── */
+const I={
+  closet:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>',
+  camera:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2V9a2 2 0 012-2z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  spark:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.8 5.4L19 9l-5.2 1.6L12 16l-1.8-5.4L5 9l5.2-1.6L12 2zM5 15l.9 2.6L8 18l-2.1.9L5 21l-.9-2.1L2 18l2.1-.4L5 15zM19 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2z"/></svg>',
+  looks:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 12.6A9 9 0 1112 3a9 9 0 018.8 9.6z"/><path d="M9 12l2 2 4-4"/></svg>',
+  profile:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>',
+  cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  loc:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.7-7-11a7 7 0 0114 0c0 5.3-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>',
+  sun:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>',
+  send:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l18-8-8 18-2.5-7.5L3 11z"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
+};
+const CATS=[
+  {k:"wardrobe",label:"Wardrobe",add:"Add Clothing"},
+  {k:"shoes",label:"Shoes",add:"Add Item"},
+  {k:"makeup",label:"Makeup",add:"Add Item"},
+  {k:"perfume",label:"Perfume",add:"Add Item"},
+];
+
+/* ════════════════ image upload (compress client-side) ════════════════ */
+function pickImage(){
+  return new Promise(res=>{
+    const inp=document.createElement("input");
+    inp.type="file";inp.accept="image/*";
+    inp.onchange=()=>res(inp.files&&inp.files[0]?inp.files[0]:null);
+    inp.click();
+  });
+}
+function compress(file){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=1280;let{width:w,height:h}=img;
+      if(w>max||h>max){const s=max/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s);}
+      const c=document.createElement("canvas");c.width=w;c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h);
+      c.toBlob(b=>b?res(b):rej(new Error("compress failed")),"image/jpeg",0.86);
+    };
+    img.onerror=()=>rej(new Error("bad image"));
+    img.src=URL.createObjectURL(file);
+  });
+}
+async function uploadImage(file){
+  const blob=await compress(file);
+  const fd=new FormData();
+  fd.append("image",new File([blob],"photo.jpg",{type:"image/jpeg"}));
+  const d=await api("/api/studio/upload",{method:"POST",body:fd});
+  if(!d.ok) throw new Error(d.error||"upload failed");
+  return d.id; // studio_uploads id
+}
+
+/* ════════════════ data loading ════════════════ */
+async function loadState(){
+  S.loading=true;render();
+  try{
+    const d=await api("/api/outfitai/state");
+    S.loggedIn=!!d.logged_in;
+    S.user=d.user||null;
+    S.items=d.items||[];
+    S.references=d.references||[];
+    S.looks=d.looks||[];
+  }catch(e){S.loggedIn=false;}
+  S.loading=false;render();
+}
+function loginGoogle(){ window.location.href=API+"/auth/google?return=/outfitai"; }
+async function logout(){ try{await api("/auth/logout",{method:"POST"});}catch(e){} location.reload(); }
+function tokens(){ return S.user?S.user.tokens:0; }
+
+/* ════════════════ RENDER ════════════════ */
+function render(){
+  const sc=$("screen");
+  if(S.loading){
+    sc.innerHTML='<div class="center"><div class="spinner"></div><div class="sub">Loading your wardrobe…</div></div>';
+    $("nav").innerHTML="";return;
+  }
+  if(!S.loggedIn){ renderSignIn(sc); $("nav").innerHTML=""; return; }
+
+  if(S.viewItemId){ renderItemDetail(sc); }
+  else if(S.lookId){ renderLook(sc); }
+  else {
+    if(S.tab==="wardrobe") renderWardrobe(sc);
+    else if(S.tab==="photos") renderPhotos(sc);
+    else if(S.tab==="generate") renderGenerate(sc);
+    else if(S.tab==="looks") renderLooks(sc);
+    else if(S.tab==="profile") renderProfile(sc);
+  }
+  renderNav();
+}
+
+function renderNav(){
+  if(S.viewItemId||S.lookId){ /* still show nav for quick jump */ }
+  const items=[
+    {k:"wardrobe",ic:I.closet,l:"Wardrobe"},
+    {k:"photos",ic:I.camera,l:"Photos"},
+    {k:"generate",ic:I.spark,l:"Generate",gen:true},
+    {k:"looks",ic:I.looks,l:"Looks"},
+    {k:"profile",ic:I.profile,l:"Profile"},
+  ];
+  $("nav").innerHTML=items.map(n=>{
+    const on=(!S.viewItemId&&!S.lookId&&S.tab===n.k);
+    if(n.gen) return `<button class="navb gen ${on?'on':''}" data-tab="${n.k}">
+      <div class="gico">${I.spark}</div><span>${n.l}</span></button>`;
+    return `<button class="navb ${on?'on':''}" data-tab="${n.k}">${n.ic}<span>${n.l}</span></button>`;
+  }).join("");
+  $("nav").querySelectorAll(".navb").forEach(b=>b.onclick=()=>{
+    S.viewItemId=null;S.lookId=null;S.lookData=null;
+    S.tab=b.dataset.tab;render();$("screen").scrollTop=0;
+  });
+}
+
+/* ── sign in ── */
+function renderSignIn(sc){
+  sc.innerHTML=`
+    <div class="center" style="min-height:100vh">
+      <div class="logo" style="font-size:34px">WhatShould<span class="ai">IWear</span></div>
+      <div class="sub" style="max-width:300px;margin-top:-4px">
+        Your personal AI stylist. Photograph your wardrobe, then get a real
+        photo of <i>you</i> in the perfect outfit for any night out.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;width:260px;margin-top:10px">
+        <button class="btn" id="signin">Continue with Google</button>
+      </div>
+      <div class="sub" style="font-size:11px;margin-top:6px">
+        New accounts start with free styling tokens. ${TOK_PER_GEN} tokens per look.
+      </div>
+    </div>`;
+  $("signin").onclick=loginGoogle;
+}
+
+/* ════════════════ WARDROBE ════════════════ */
+function renderWardrobe(sc){
+  const cat=CATS.find(c=>c.k===S.wcat);
+  const list=S.items.filter(i=>i.category===S.wcat);
+  sc.innerHTML=`
+    <div class="topbar">
+      <div class="logo">WhatShould<span class="ai">IWear</span></div>
+      <div class="pill"><b>${tokens()}</b> tokens</div>
+    </div>
+    <div class="pad"><div class="sub">Build your closet — the AI styles looks only from what you own.</div></div>
+    <div class="tabs" style="margin-top:14px">
+      ${CATS.map(c=>`<div class="tab ${c.k===S.wcat?'on':''}" data-c="${c.k}">${c.label}</div>`).join("")}
+    </div>
+    <div class="pad" style="padding-top:16px">
+      <button class="btn" id="addItem">${I.plus}<span>${cat.add}</span></button>
+      <div class="h2 row"><span>${cat.label} <span style="color:var(--muted);font-weight:500">· ${list.length} items</span></span></div>
+      <div id="wgrid"></div>
+    </div>`;
+  sc.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{S.wcat=t.dataset.c;render();});
+  $("addItem").onclick=()=>addItemFlow(S.wcat);
+  const g=$("wgrid");
+  if(!list.length){
+    g.innerHTML=`<div class="empty">No ${cat.label.toLowerCase()} yet.<br>Tap “${cat.add}” and snap a photo — the AI will name it, describe it and tag it for you.</div>`;
+  }else{
+    g.className="grid";
+    g.innerHTML=list.map(it=>itemCardHTML(it)).join("");
+    g.querySelectorAll("[data-id]").forEach(c=>c.onclick=()=>{S.viewItemId=c.dataset.id;render();$("screen").scrollTop=0;});
+  }
+}
+function itemCardHTML(it){
+  const analyzing=it.status==="analyzing";
+  return `<button class="icard" data-id="${it.id}">
+    ${analyzing?'<div class="badge">analyzing…</div>':''}
+    <img class="ph" src="${esc(it.image_url)}" loading="lazy" alt="">
+    <div class="meta">
+      <div class="nm">${esc(it.name||"Item")}</div>
+      <div class="ct">${(it.tags&&it.tags[0])?esc(it.tags[0]):esc(it.category)}</div>
+    </div>
+  </button>`;
+}
+
+async function addItemFlow(cat){
+  const file=await pickImage();
+  if(!file) return;
+  // optimistic placeholder
+  const tmp={id:"tmp_"+Date.now(),category:cat,image_url:URL.createObjectURL(file),
+    name:"Uploading…",status:"analyzing",tags:[],pairs_with:[],occasions:[]};
+  S.items.unshift(tmp);
+  if(S.wcat!==cat)S.wcat=cat;
+  render();
+  try{
+    const uploadId=await uploadImage(file);
+    const d=await api("/api/outfitai/item",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({upload_id:uploadId,category:cat})
+    });
+    if(!d.ok) throw new Error(d.error||"failed");
+    const idx=S.items.findIndex(i=>i.id===tmp.id);
+    if(idx>=0) S.items[idx]=d.item; else S.items.unshift(d.item);
+    render();
+    toast("Item added & analyzed ✨");
+  }catch(e){
+    S.items=S.items.filter(i=>i.id!==tmp.id);
+    render();
+    toast("Couldn't add item: "+e.message);
+  }
+}
+
+/* ── item detail ── */
+function renderItemDetail(sc){
+  const it=S.items.find(i=>i.id===S.viewItemId);
+  if(!it){S.viewItemId=null;return render();}
+  const sec=(title,arr,cls)=>{
+    if(!arr||!arr.length) return "";
+    return `<div class="h2">${title}</div><div class="chips">${
+      arr.map(t=>`<div class="chip ${cls||'tag'}">${esc(t)}</div>`).join("")}</div>`;
+  };
+  sc.innerHTML=`
+    <div class="topbar">
+      <button class="back" id="bk">‹</button>
+      <h1>Item Details</h1>
+    </div>
+    <div class="pad">
+      <img class="lookimg" style="aspect-ratio:1/1;object-fit:cover" src="${esc(it.image_url)}" alt="">
+      <div class="h2" style="margin-bottom:4px;font-size:18px">${esc(it.name)}</div>
+      <div class="sub" style="text-transform:capitalize">${esc(it.category)}</div>
+      ${it.status==="analyzing"?'<div class="sub" style="margin-top:10px">⏳ Still analyzing this item…</div>':""}
+      <div class="h2">AI Description</div>
+      <div class="sub" style="color:var(--text)">${esc(it.description||"—")}</div>
+      ${sec("Tags",it.tags)}
+      ${sec("Pairs well with",it.pairs_with)}
+      ${sec("Wear it for",it.occasions)}
+      <div style="height:18px"></div>
+      <button class="btn ghost" id="del" style="color:var(--bad)">${I.trash}<span>Delete item</span></button>
+      <div style="height:14px"></div>
+    </div>`;
+  $("bk").onclick=()=>{S.viewItemId=null;render();};
+  $("del").onclick=async()=>{
+    if(!confirm("Delete this item from your wardrobe?"))return;
+    try{await api("/api/outfitai/item/"+it.id,{method:"DELETE"});}catch(e){}
+    S.items=S.items.filter(i=>i.id!==it.id);
+    S.viewItemId=null;render();toast("Item deleted");
+  };
+}
+
+/* ════════════════ PHOTOS (reference photos of the user) ════════════════ */
+const POSES=["Front, standing straight","Side profile","Three-quarter turn",
+  "Full body, relaxed","Upper body / portrait","Natural everyday pose"];
+function renderPhotos(sc){
+  const refs=S.references;
+  const slots=[];
+  for(let i=0;i<6;i++){
+    const r=refs[i];
+    if(r){
+      slots.push(`<div class="refslot"><img src="${esc(r.image_url)}" alt="">
+        <button class="x" data-rid="${r.id}">✕</button></div>`);
+    }else{
+      slots.push(`<button class="refslot addtile" data-slot="${i}" style="aspect-ratio:3/4">
+        ${I.camera}<span>${esc(POSES[i])}</span></button>`);
+    }
+  }
+  sc.innerHTML=`
+    <div class="topbar"><h1>Your Photos</h1>
+      <div class="pill">${refs.length}/6</div></div>
+    <div class="pad">
+      <div class="sub">Upload up to <b style="color:var(--accent)">6 photos of yourself</b> in
+      different poses. The AI uses these to put your real face & body into every styled look —
+      so the more angles, the better.</div>
+      <div class="card" style="padding:13px;margin-top:14px">
+        <div class="sub" style="color:var(--text);font-weight:600;margin-bottom:6px">📸 Tips for good photos</div>
+        <div class="sub">Good even lighting · plain background · one full-body shot ·
+        one or two from the side · keep your face visible · no heavy filters.</div>
+      </div>
+      <div class="h2">Photo set</div>
+      <div class="refgrid" id="refgrid">${slots.join("")}</div>
+      <div style="height:14px"></div>
+      <div class="sub" style="font-size:11px">You can come back any time to swap or add photos.</div>
+    </div>`;
+  sc.querySelectorAll("[data-slot]").forEach(b=>b.onclick=()=>addReferenceFlow(parseInt(b.dataset.slot)));
+  sc.querySelectorAll("[data-rid]").forEach(b=>b.onclick=async(e)=>{
+    e.stopPropagation();
+    const id=b.dataset.rid;
+    try{await api("/api/outfitai/reference/"+id,{method:"DELETE"});}catch(e){}
+    S.references=S.references.filter(r=>r.id!==id);render();
+  });
+}
+async function addReferenceFlow(slotIdx){
+  if(S.references.length>=6){toast("You already have 6 photos");return;}
+  const file=await pickImage();
+  if(!file)return;
+  toast("Uploading photo…");
+  try{
+    const uploadId=await uploadImage(file);
+    const d=await api("/api/outfitai/reference",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({upload_id:uploadId,pose:POSES[slotIdx]||""})
+    });
+    if(!d.ok) throw new Error(d.error==="reference_limit"?"6 photos max":(d.error||"failed"));
+    S.references.push(d.reference);render();toast("Photo added");
+  }catch(e){toast("Couldn't add photo: "+e.message);}
+}
+
+/* ════════════════ GENERATE ════════════════ */
+const GEN={event:"",wants:new Set(),avoid:"",date:"",time:"",location:"",weather:"",temp:""};
+const WANT_CHIPS=["Something Dressy","Casual","Trendy","Classy","Comfortable","Feminine","Chic","Minimal"];
+function renderGenerate(sc){
+  if(S.busy) return renderGenerating(sc);
+  // default date/time = now
+  if(!GEN.date){const d=new Date();GEN.date=d.toISOString().slice(0,10);}
+  if(!GEN.time){const d=new Date();GEN.time=("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);}
+  const noWardrobe=S.items.length===0;
+  sc.innerHTML=`
+    <div class="topbar"><h1>Generate</h1>
+      <div class="pill"><b>${tokens()}</b> tokens</div></div>
+    <div class="pad">
+      <div class="sub" style="text-align:center;margin-bottom:14px">
+        AI outfit recommendations from <i>your</i> wardrobe.</div>
+      ${noWardrobe?'<div class="card" style="padding:14px;margin-bottom:14px"><div class="sub" style="color:var(--text)">👋 Add a few clothing items in the <b>Wardrobe</b> tab first — the stylist needs something to work with.</div></div>':""}
+
+      <div class="h2" style="margin-top:4px">Describe the event</div>
+      <textarea id="ev" rows="4" maxlength="800" placeholder="e.g. Dinner at a nice rooftop restaurant with my friends. I want something chic and feminine but not too much.">${esc(GEN.event)}</textarea>
+
+      <div class="h2">Details</div>
+      <div class="card" style="padding:2px 14px">
+        <div class="drow"><span class="k">${I.cal} Date</span><span class="v"><input type="date" id="d_date" value="${GEN.date}"></span></div>
+        <div class="drow"><span class="k">${I.clock} Time</span><span class="v"><input type="time" id="d_time" value="${GEN.time}"></span></div>
+        <div class="drow"><span class="k">${I.loc} Location</span><span class="v"><input type="text" id="d_loc" placeholder="City" value="${esc(GEN.location)}" style="text-align:right;border:none;background:transparent;width:140px;padding:0"></span></div>
+        <div class="drow"><span class="k">${I.sun} Weather</span><span class="v"><input type="text" id="d_wx" placeholder="Clear" value="${esc(GEN.weather)}" style="text-align:right;border:none;background:transparent;width:120px;padding:0"></span></div>
+        <div class="drow"><span class="k">🌡 Temp</span><span class="v"><input type="text" id="d_temp" placeholder="—" value="${esc(GEN.temp)}" style="text-align:right;border:none;background:transparent;width:90px;padding:0"></span></div>
+      </div>
+      <button class="btn ghost sm" id="autofill" style="width:100%;margin-top:8px">📍 Auto-fill my location & weather</button>
+
+      <div class="h2">What are you looking for?</div>
+      <div class="chips" id="wantChips">
+        ${WANT_CHIPS.map(w=>`<div class="chip ${GEN.wants.has(w)?'on':''}" data-w="${esc(w)}">${esc(w)}</div>`).join("")}
+      </div>
+
+      <div class="h2">Anything to avoid?</div>
+      <input type="text" id="av" maxlength="200" placeholder="e.g. Nothing too sporty or bulky" value="${esc(GEN.avoid)}">
+
+      <div style="height:18px"></div>
+      <button class="btn" id="gen" ${noWardrobe?'disabled':''}>${I.spark}<span>Generate Outfit · ${TOK_PER_GEN} tokens</span></button>
+      <div class="sub" style="text-align:center;font-size:11px;margin-top:8px">
+        The AI uses your wardrobe, photos, the weather and current trends to style your look.
+        Don't know what you want? Just hit generate.</div>
+      <div style="height:14px"></div>
+    </div>`;
+
+  $("ev").oninput=e=>GEN.event=e.target.value;
+  $("av").oninput=e=>GEN.avoid=e.target.value;
+  $("d_date").onchange=e=>GEN.date=e.target.value;
+  $("d_time").onchange=e=>GEN.time=e.target.value;
+  $("d_loc").oninput=e=>GEN.location=e.target.value;
+  $("d_wx").oninput=e=>GEN.weather=e.target.value;
+  $("d_temp").oninput=e=>GEN.temp=e.target.value;
+  sc.querySelectorAll("#wantChips .chip").forEach(c=>c.onclick=()=>{
+    const w=c.dataset.w;
+    if(GEN.wants.has(w))GEN.wants.delete(w);else GEN.wants.add(w);
+    c.classList.toggle("on");
+  });
+  $("autofill").onclick=autofillWeather;
+  $("gen").onclick=doGenerate;
+}
+
+async function autofillWeather(){
+  const btn=$("autofill");btn.textContent="📍 Locating…";
+  if(!navigator.geolocation){btn.textContent="Geolocation unavailable";return;}
+  navigator.geolocation.getCurrentPosition(async(pos)=>{
+    const{latitude:lat,longitude:lon}=pos.coords;
+    try{
+      const wx=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit`).then(r=>r.json());
+      const t=wx.current&&wx.current.temperature_2m;
+      const code=wx.current&&wx.current.weather_code;
+      if(t!=null){GEN.temp=Math.round(t)+"°F";}
+      if(code!=null){GEN.weather=wxText(code);}
+      try{
+        const geo=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`).then(r=>r.json());
+        const city=geo.city||geo.locality||geo.principalSubdivision||"";
+        const region=geo.principalSubdivisionCode?geo.principalSubdivisionCode.split("-").pop():(geo.countryName||"");
+        GEN.location=[city,region].filter(Boolean).join(", ");
+      }catch(e){}
+      render();toast("Location & weather filled");
+    }catch(e){toast("Couldn't fetch weather");btn.textContent="📍 Auto-fill my location & weather";}
+  },()=>{toast("Location permission denied");btn.textContent="📍 Auto-fill my location & weather";},
+  {timeout:9000});
+}
+function wxText(c){
+  if(c===0)return"Clear";
+  if(c<=2)return"Partly cloudy";
+  if(c===3)return"Overcast";
+  if(c<=48)return"Foggy";
+  if(c<=67)return"Rainy";
+  if(c<=77)return"Snow";
+  if(c<=82)return"Showers";
+  if(c<=99)return"Thunderstorm";
+  return"Clear";
+}
+
+const LOAD_MSGS=["Reading the room…","Studying your wardrobe…","Checking tonight's weather…",
+  "Browsing current trends…","Pairing pieces together…","Styling the look…",
+  "Putting you in the outfit…","Auditing the final photo…"];
+function renderGenerating(sc){
+  sc.innerHTML=`<div class="center" style="min-height:80vh">
+    <div class="spinner"></div>
+    <div style="font-weight:700;font-size:16px" id="lmsg">Styling your look…</div>
+    <div class="sub">This takes up to a couple of minutes — the AI generates a real photo of you, then double-checks it.</div>
+  </div>`;
+  let i=0;
+  S._loadInt=setInterval(()=>{i=(i+1)%LOAD_MSGS.length;const m=$("lmsg");if(m)m.textContent=LOAD_MSGS[i];},2600);
+}
+
+async function doGenerate(){
+  if(!S.items.length){toast("Add wardrobe items first");return;}
+  if(tokens()<TOK_PER_GEN){toast("Not enough tokens — top up in Profile");return;}
+  let wants=Array.from(GEN.wants);
+  S.busy=true;render();
+  try{
+    const d=await api("/api/outfitai/generate",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        event:GEN.event,
+        looking_for:wants.join(", "),
+        avoid:GEN.avoid,
+        date:GEN.date,time:GEN.time,location:GEN.location,
+        weather:GEN.weather,temperature:GEN.temp,
+      })
+    });
+    clearInterval(S._loadInt);
+    if(!d.ok){
+      S.busy=false;render();
+      toast(d.error==="empty_wardrobe"?"Add wardrobe items first":
+            d.error==="insufficient_tokens"?"Not enough tokens":("Failed: "+(d.detail||d.error)));
+      return;
+    }
+    if(typeof d.tokens_remaining==="number"&&S.user)S.user.tokens=d.tokens_remaining;
+    // prepend to looks
+    S.looks.unshift({id:d.look.id,event:GEN.event,result_url:d.look.result_url,
+      explanation:d.look.explanation,item_ids:d.look.item_ids,created_at:Date.now()/1000});
+    S.busy=false;
+    S.lookId=d.look.id;S.lookData=d.look;
+    S.chat=[{role:"ai",text:d.look.explanation}];
+    render();$("screen").scrollTop=0;
+  }catch(e){
+    clearInterval(S._loadInt);
+    S.busy=false;render();
+    toast("Generation failed: "+e.message);
+  }
+}
+
+/* ════════════════ LOOK detail / result ════════════════ */
+function renderLook(sc){
+  const L=S.lookData;
+  if(!L){
+    // hydrate from saved looks list
+    const saved=S.looks.find(x=>x.id===S.lookId);
+    if(saved){
+      S.lookData={id:saved.id,result_url:saved.result_url,explanation:saved.explanation,
+        outfit_name:"Styled Look",item_ids:saved.item_ids||[],
+        items:(saved.item_ids||[]).map(id=>S.items.find(i=>i.id===id)).filter(Boolean),
+        suggestions:[]};
+      S.chat=[{role:"ai",text:saved.explanation}];
+      return renderLook(sc);
+    }
+    S.lookId=null;return render();
+  }
+  const items=L.items||[];
+  sc.innerHTML=`
+    <div class="topbar">
+      <button class="back" id="bk">‹</button>
+      <h1>Your AI Styled Look</h1>
+    </div>
+    <div class="pad">
+      <img class="lookimg" src="${esc(L.result_url)}" alt="">
+      ${L.outfit_name?`<div class="h2" style="font-size:17px;margin-bottom:2px">${esc(L.outfit_name)}</div>`:""}
+      <div class="h2" style="margin-top:14px">Items Used</div>
+      <div id="usedList">${
+        items.length?items.map(it=>`
+          <div class="usedrow" data-id="${it.id}">
+            <img src="${esc(it.image_url)}" alt="">
+            <div><div class="un">${esc(it.name)}</div><div class="uc" style="text-transform:capitalize">${esc(it.category)}</div></div>
+          </div>`).join(""):'<div class="sub">—</div>'
+      }</div>
+
+      <div class="h2">Why this look</div>
+      <div class="sub" style="color:var(--text)">${esc(L.explanation||"")}</div>
+
+      ${(L.suggestions&&L.suggestions.length)?`
+        <div class="h2">💡 Your wardrobe could use</div>
+        ${L.suggestions.map(s=>`<div class="card" style="padding:11px 13px;margin-bottom:8px">
+          <div class="un">${esc(s.item)}</div>
+          <div class="uc" style="margin-top:3px">${esc(s.why||"")}</div></div>`).join("")}
+      `:""}
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn ghost sm" id="regen" style="flex:1">↻ Regenerate</button>
+        <button class="btn ghost sm" id="delLook" style="flex:1;color:var(--bad)">${I.trash} Delete</button>
+      </div>
+
+      <div class="h2">Tell the stylist what to change</div>
+      <div id="chatLog" style="display:flex;flex-direction:column;gap:9px;margin-bottom:10px"></div>
+      <div class="chatrow">
+        <textarea id="chatIn" rows="1" placeholder="e.g. swap the heels for flats, make it warmer…"
+          style="flex:1" maxlength="800"></textarea>
+        <button class="btn" id="chatSend" style="width:46px;height:46px;border-radius:13px;padding:0">${I.send}</button>
+      </div>
+      <div class="sub" style="font-size:11px;margin-top:7px">Each change re-renders the photo · ${TOK_PER_GEN} tokens</div>
+      <div style="height:14px"></div>
+    </div>`;
+  $("bk").onclick=()=>{S.lookId=null;S.lookData=null;render();};
+  sc.querySelectorAll("[data-id]").forEach(r=>r.onclick=()=>{
+    if(S.items.find(i=>i.id===r.dataset.id)){S.lookId=null;S.viewItemId=r.dataset.id;render();}
+  });
+  $("regen").onclick=()=>sendChat("Regenerate this look with a fresh take, same occasion.");
+  $("delLook").onclick=async()=>{
+    if(!confirm("Delete this look?"))return;
+    try{await api("/api/outfitai/look/"+L.id,{method:"DELETE"});}catch(e){}
+    S.looks=S.looks.filter(x=>x.id!==L.id);
+    S.lookId=null;S.lookData=null;render();toast("Look deleted");
+  };
+  const ta=$("chatIn");
+  ta.oninput=()=>{ta.style.height="auto";ta.style.height=Math.min(ta.scrollHeight,120)+"px";};
+  $("chatSend").onclick=()=>{const v=ta.value.trim();if(v)sendChat(v);};
+  ta.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();const v=ta.value.trim();if(v)sendChat(v);}};
+  drawChat();
+}
+function drawChat(){
+  const log=$("chatLog");if(!log)return;
+  log.innerHTML=S.chat.map(m=>`<div class="bubble ${m.role==="me"?"me":"ai"}">${esc(m.text)}</div>`).join("");
+  if(S.busy) log.innerHTML+='<div class="bubble ai"><span class="skel" style="display:inline-block;width:120px;height:10px;border-radius:4px"></span></div>';
+}
+async function sendChat(msg){
+  if(S.busy)return;
+  if(tokens()<TOK_PER_GEN){toast("Not enough tokens");return;}
+  S.chat.push({role:"me",text:msg});
+  S.busy=true;
+  const ta=$("chatIn");if(ta){ta.value="";ta.style.height="auto";}
+  drawChat();
+  try{
+    const d=await api("/api/outfitai/chat",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({look_id:S.lookId,message:msg})
+    });
+    S.busy=false;
+    if(!d.ok){
+      S.chat.push({role:"ai",text:"Sorry — that didn't work ("+(d.detail||d.error)+"). Try rephrasing?"});
+      drawChat();
+      toast(d.error==="insufficient_tokens"?"Not enough tokens":"Couldn't update look");
+      return;
+    }
+    if(typeof d.tokens_remaining==="number"&&S.user)S.user.tokens=d.tokens_remaining;
+    S.lookData=d.look;
+    S.chat.push({role:"ai",text:d.reply||d.look.explanation});
+    // sync looks list
+    const li=S.looks.findIndex(x=>x.id===S.lookId);
+    if(li>=0){S.looks[li].result_url=d.look.result_url;S.looks[li].explanation=d.look.explanation;
+      S.looks[li].item_ids=d.look.item_ids;}
+    render();$("screen").scrollTop=$("screen").scrollHeight;
+  }catch(e){
+    S.busy=false;
+    S.chat.push({role:"ai",text:"Something went wrong: "+e.message});
+    drawChat();
+  }
+}
+
+/* ════════════════ LOOKS list ════════════════ */
+function renderLooks(sc){
+  sc.innerHTML=`
+    <div class="topbar"><h1>My Looks</h1>
+      <div class="pill">${S.looks.length}</div></div>
+    <div class="pad">
+      <div class="sub">Every look the stylist has generated for you.</div>
+      <div id="lkgrid" style="margin-top:14px"></div>
+    </div>`;
+  const g=$("lkgrid");
+  if(!S.looks.length){
+    g.innerHTML=`<div class="empty">No looks yet.<br>Head to <b style="color:var(--accent)">Generate</b> and describe tonight's plans.</div>`;
+    return;
+  }
+  g.className="grid two";
+  g.innerHTML=S.looks.map(l=>`
+    <button class="icard" data-look="${l.id}">
+      <img class="ph" style="aspect-ratio:2/3" src="${esc(l.result_url)}" loading="lazy" alt="">
+      <div class="meta"><div class="nm">${esc(l.event||"Styled look")}</div>
+      <div class="ct">${new Date((l.created_at||0)*1000).toLocaleDateString()}</div></div>
+    </button>`).join("");
+  g.querySelectorAll("[data-look]").forEach(b=>b.onclick=()=>{
+    S.lookId=b.dataset.look;S.lookData=null;render();$("screen").scrollTop=0;
+  });
+}
+
+/* ════════════════ PROFILE ════════════════ */
+function renderProfile(sc){
+  const u=S.user||{};
+  const wardrobeCount=S.items.length;
+  sc.innerHTML=`
+    <div class="topbar"><h1>Profile</h1></div>
+    <div class="pad">
+      <div class="card" style="padding:18px;display:flex;align-items:center;gap:14px">
+        <div style="width:58px;height:58px;border-radius:50%;overflow:hidden;background:var(--bg4);flex:none">
+          ${u.picture?`<img src="${esc(u.picture)}" style="width:100%;height:100%;object-fit:cover" referrerpolicy="no-referrer">`:""}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:16px">${esc(u.name||"Stylist user")}</div>
+          <div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.email||"")}</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:16px;margin-top:12px;display:flex;justify-content:space-around;text-align:center">
+        <div><div style="font-size:20px;font-weight:800;color:var(--accent)">${tokens()}</div><div class="uc">Tokens</div></div>
+        <div><div style="font-size:20px;font-weight:800">${wardrobeCount}</div><div class="uc">Wardrobe</div></div>
+        <div><div style="font-size:20px;font-weight:800">${S.references.length}</div><div class="uc">Photos</div></div>
+        <div><div style="font-size:20px;font-weight:800">${S.looks.length}</div><div class="uc">Looks</div></div>
+      </div>
+
+      <div class="h2">Tokens</div>
+      <div class="card" style="padding:14px">
+        <div class="sub">Each generated look (and each refinement) costs
+          <b style="color:var(--accent)">${TOK_PER_GEN} tokens</b>. Wardrobe analysis is free.</div>
+        <button class="btn sm" id="buy" style="width:100%;margin-top:12px">Get more tokens</button>
+      </div>
+
+      <div class="h2">How it works</div>
+      <div class="card" style="padding:14px">
+        <div class="sub" style="line-height:1.7">
+          1 · Photograph everything you own in <b style="color:var(--text)">Wardrobe</b>.<br>
+          2 · Add 6 photos of yourself under <b style="color:var(--text)">Photos</b>.<br>
+          3 · Describe tonight on the <b style="color:var(--text)">Generate</b> tab.<br>
+          4 · Get a real photo of you in the perfect outfit — then chat to tweak it.
+        </div>
+      </div>
+
+      <div style="height:18px"></div>
+      <button class="btn ghost" id="out">Sign out</button>
+      <div class="sub" style="text-align:center;font-size:11px;margin-top:14px">
+        WhatShouldIWear · powered by <a href="https://missinglink.build" target="_blank">MissingLink</a></div>
+      <div style="height:14px"></div>
+    </div>`;
+  $("out").onclick=logout;
+  $("buy").onclick=async()=>{
+    try{
+      const d=await api("/api/studio/checkout",{method:"POST"});
+      if(d&&d.url)location.href=d.url; else toast("Couldn't open checkout");
+    }catch(e){toast("Top-up is available in Studio");}
+  };
+}
+
+/* ════════════════ boot ════════════════ */
+loadState();
+</script>
+</body>
+</html>
