@@ -121,6 +121,15 @@
   }
   .addtile svg{width:22px;height:22px}
 
+  /* ── reference photo slot ── */
+  .refgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .refslot{aspect-ratio:3/4;border-radius:13px;overflow:hidden;position:relative;background:var(--bg2);
+    border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:6px;color:var(--muted);font-size:10px;font-weight:600;text-align:center;padding:6px}
+  .refslot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .refslot .x{position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:50%;
+    background:rgba(0,0,0,.78);font-size:13px;display:flex;align-items:center;justify-content:center;z-index:2}
+
   /* ── detail rows ── */
   .drow{display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
   .drow:last-child{border:none}
@@ -346,7 +355,7 @@ const SHOP = {
 
 const S = {
   loading:true, loggedIn:false, user:null,
-  items:[], looks:[],
+  items:[], references:[], looks:[],
   tab:"wardrobe", wcat:"wardrobe",
   viewItemId:null, lookId:null, lookData:null, chat:[],
   busy:false,
@@ -442,6 +451,7 @@ async function loadState(){
     S.loggedIn=!!d.logged_in;
     S.user=d.user||null;
     S.items=d.items||[];
+    S.references=d.references||[];
     S.looks=d.looks||[];
   }catch(e){S.loggedIn=false;}
   S.loading=false;render();
@@ -468,6 +478,7 @@ function render(){
   else if(S.lookId){ renderLook(sc); }
   else {
     if(S.tab==="wardrobe") renderWardrobe(sc);
+    else if(S.tab==="photos") renderPhotos(sc);
     else if(S.tab==="generate") renderGenerate(sc);
     else if(S.tab==="looks") renderLooks(sc);
     else if(S.tab==="profile") renderProfile(sc);
@@ -480,6 +491,7 @@ function renderNav(){
   if(S.viewItemId||S.lookId){ /* still show nav for quick jump */ }
   const items=[
     {k:"wardrobe",ic:I.closet,l:"Wardrobe"},
+    {k:"photos",ic:I.camera,l:"Photos"},
     {k:"generate",ic:I.spark,l:"Generate",gen:true},
     {k:"looks",ic:I.looks,l:"Looks"},
     {k:"profile",ic:I.profile,l:"Profile"},
@@ -835,6 +847,63 @@ function renderItemDetail(sc){
   };
 }
 
+/* ════════════════ PHOTOS (optional photos of the user) ════════════════ */
+const POSES=["Front, standing","Side profile","Three-quarter turn","Full length","Relaxed pose","Good lighting"];
+function renderPhotos(sc){
+  const refs=S.references;
+  const slots=[];
+  for(let i=0;i<6;i++){
+    const r=refs[i];
+    if(r){
+      slots.push(`<div class="refslot"><img src="${esc(r.image_url)}" alt="">
+        <button class="x" data-del="${r.id}">✕</button></div>`);
+    }else{
+      slots.push(`<button class="refslot" data-slot="${i}">${I.camera}<span>${esc(POSES[i]||"Add photo")}</span></button>`);
+    }
+  }
+  sc.innerHTML=`
+    <div class="topbar"><h1>Your Photos</h1></div>
+    <div class="pad">
+      <div class="card" style="padding:14px;margin-bottom:4px">
+        <div class="sub" style="color:var(--text)"><b>Optional.</b> Add a few photos of yourself and
+        your generated outfits will be shown <b style="color:var(--accent)">on you</b> instead of on a
+        mannequin. Skip this and looks simply render on a mannequin — that works fine too.</div>
+      </div>
+      <div class="h2">Your photos <span style="color:var(--muted);font-weight:500">${refs.length}/6</span></div>
+      <div class="refgrid">${slots.join("")}</div>
+      <div class="card" style="padding:13px;margin-top:16px">
+        <div class="sub" style="color:var(--text);font-weight:600;margin-bottom:6px">📸 For the best results</div>
+        <div class="sub" style="line-height:1.7">Use clear, well-lit photos · include at least one
+        full-length shot · a plain background helps · a couple of angles works best.</div>
+      </div>
+      <div class="sub" style="font-size:11px;margin-top:14px;text-align:center">
+        You can add, swap or remove photos any time.</div>
+      <div style="height:14px"></div>
+    </div>`;
+  sc.querySelectorAll("[data-slot]").forEach(b=>b.onclick=()=>addReferenceFlow(parseInt(b.dataset.slot)));
+  sc.querySelectorAll("[data-del]").forEach(b=>b.onclick=async(e)=>{
+    e.stopPropagation();
+    const id=b.dataset.del;
+    try{await api("/api/outfitai/reference/"+id,{method:"DELETE"});}catch(err){}
+    S.references=S.references.filter(r=>r.id!==id);render();toast("Photo removed");
+  });
+}
+async function addReferenceFlow(slotIdx){
+  if(S.references.length>=6){toast("That's the max — 6 photos");return;}
+  const file=await pickImage();
+  if(!file)return;
+  toast("Uploading…");
+  try{
+    const uploadId=await uploadImage(file);
+    const d=await api("/api/outfitai/reference",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({upload_id:uploadId,pose:POSES[slotIdx]||""})
+    });
+    if(!d.ok) throw new Error(d.error==="reference_limit"?"6 photos max":(d.error||"failed"));
+    S.references.push(d.reference);render();toast("Photo added — looks will now feature you");
+  }catch(e){toast("Couldn't add photo: "+e.message);}
+}
+
 /* ════════════════ GENERATE ════════════════ */
 const GEN={notes:"",mode:"wardrobe"};
 const MODE_HINT={
@@ -1131,6 +1200,7 @@ function renderProfile(sc){
       <div class="card" style="padding:16px;margin-top:12px;display:flex;justify-content:space-around;text-align:center">
         <div><div style="font-size:20px;font-weight:800;color:var(--accent)">${tokens()}</div><div class="uc">Tokens</div></div>
         <div><div style="font-size:20px;font-weight:800">${wardrobeCount}</div><div class="uc">Wardrobe</div></div>
+        <div><div style="font-size:20px;font-weight:800">${S.references.length}</div><div class="uc">Photos</div></div>
         <div><div style="font-size:20px;font-weight:800">${S.looks.length}</div><div class="uc">Looks</div></div>
       </div>
 
@@ -1145,10 +1215,11 @@ function renderProfile(sc){
       <div class="h2">How it works</div>
       <div class="card" style="padding:14px">
         <div class="sub" style="line-height:1.7">
-          1 · Add everything you own in <b style="color:var(--text)">Wardrobe</b>.<br>
-          2 · Describe tonight on the <b style="color:var(--text)">Generate</b> tab.<br>
-          3 · The AI styles the perfect outfit and shows it on a mannequin.<br>
-          4 · Chat to tweak the look until it's exactly right.
+          1 · Add your clothes in <b style="color:var(--text)">Wardrobe</b>.<br>
+          2 · Optional — add photos of yourself in <b style="color:var(--text)">Photos</b> to see
+          looks on you instead of a mannequin.<br>
+          3 · Describe the occasion on <b style="color:var(--text)">Generate</b>.<br>
+          4 · Get your styled look, then chat to tweak it.
         </div>
       </div>
 
