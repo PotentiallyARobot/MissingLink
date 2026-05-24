@@ -86,8 +86,10 @@
   ::placeholder{color:#5c5b63}
 
   /* ── tabs ── */
-  .tabs{display:flex;gap:22px;padding:4px 18px 0;border-bottom:1px solid var(--line)}
-  .tab{padding:11px 0;font-size:14px;font-weight:600;color:var(--muted);position:relative}
+  .tabs{display:flex;gap:20px;padding:4px 18px 0;border-bottom:1px solid var(--line);
+    overflow-x:auto;scrollbar-width:none}
+  .tab{padding:11px 0;font-size:14px;font-weight:600;color:var(--muted);position:relative;
+    white-space:nowrap;flex:none}
   .tab.on{color:var(--text)}
   .tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2.5px;
     background:var(--accent);border-radius:2px}
@@ -241,19 +243,26 @@
   .sresult:active{transform:scale(.97)}
   .sresult img{width:100%;height:100%;object-fit:cover}
 
-  /* ── ad / sponsored slot ── */
-  .adcard{background:var(--bg2);border:1px solid var(--line);border-radius:16px;
-    margin-top:14px;overflow:hidden;position:relative;display:block;color:inherit}
-  .adcard:active{transform:scale(.995)}
-  .adlabel{position:absolute;top:9px;right:10px;font-size:8.5px;font-weight:800;
-    letter-spacing:.6px;color:var(--muted);text-transform:uppercase;
-    background:var(--bg);border:1px solid var(--line);padding:3px 7px;border-radius:6px;z-index:2}
-  .adcard .adbody{padding:16px 15px}
-  .adcard .adt{font-size:14.5px;font-weight:800;padding-right:62px}
-  .adcard .ads{font-size:12px;color:var(--muted);margin:5px 0 12px;line-height:1.5}
-  .adcard .adcta{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;
-    font-weight:700;color:#1a121a;background:var(--accent);border-radius:10px;padding:9px 14px}
-  .adsbygoogle{display:block}
+  /* ── trending banner ── */
+  .trend{margin-top:18px}
+  .trendhead{display:flex;align-items:center;gap:7px}
+  .trendhead .th{font-size:15.5px;font-weight:800;letter-spacing:-.2px}
+  .trendsub{font-size:11.5px;color:var(--muted);margin:3px 0 11px;line-height:1.45}
+  .trendrow{display:flex;gap:11px;overflow-x:auto;margin:0 -18px;padding:2px 18px 6px;
+    scroll-snap-type:x proximity}
+  .tcard{flex:none;width:146px;scroll-snap-align:start;background:var(--bg2);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;display:block;color:inherit}
+  .tcard:active{transform:scale(.98)}
+  .tcard .tim{width:100%;aspect-ratio:1/1;object-fit:cover;background:var(--bg3);display:block}
+  .tcard .tb{padding:9px 10px 11px}
+  .tcard .tn{font-size:12px;font-weight:700;line-height:1.3;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .tcard .td{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:26px}
+  .tcard .tcta{font-size:10px;font-weight:800;color:var(--accent);margin-top:7px}
+  .trendskel{display:flex;gap:11px;margin:0 -18px;padding:2px 18px 6px}
+  .trendskel .tsk{flex:none;width:146px;height:212px;border-radius:14px}
+  .trenddisc{font-size:10px;color:var(--muted);margin-top:2px}
 </style>
 </head>
 <body>
@@ -286,32 +295,23 @@ const ASSET={
 const TOK_PER_GEN = 100;
 
 /* ════════════════════════════════════════════════════════════════
-   ADS — monetisation slot shown on the main (Wardrobe) screen.
-   Two ways to fill it; you only need ONE:
+   SHOP — where the "Trending now" cards send users when tapped.
+   {q} is replaced with the item's search query.
 
-   A) Google AdSense — generic display ads, auto-targeted by Google.
-      Put your IDs in `adsenseClient` + `adsenseSlot`. (AdSense must
-      approve your domain first, and the page must be publicly
-      reachable — see the note in the chat.)
+   Default is Google Shopping, which shows real, in-stock products and
+   works for everyone. To EARN COMMISSION on what users buy, swap in an
+   affiliate-tagged retailer search instead, e.g.:
+     Amazon Associates:
+       "https://www.amazon.com/s?k={q}&tag=YOURTAG-20"
+     or any affiliate deep-link / search URL from LTK, ShopMy,
+     Collective Voice, ShareASale, etc.
 
-   B) House / affiliate promo — a clean "Sponsored" card you point at
-      any link. For a styling app this earns more and is far more
-      relevant: use a fashion affiliate link (Amazon Associates,
-      LTK, ShopMy, Collective Voice…). Set `houseAd.url`.
-
-   If neither is configured, NO ad renders — end users see a clean app.
+   The trending list itself updates automatically (see the /trending
+   route) so it always reflects what young women are actually wearing.
    ════════════════════════════════════════════════════════════════ */
-const ADS = {
-  enabled: true,
-  adsenseClient: "",            // e.g. "ca-pub-1234567890123456"
-  adsenseSlot: "",              // e.g. "1234567890"
-  houseAd: {
-    label: "Sponsored",
-    title: "Refresh your wardrobe",
-    text: "Shop this season's pieces — hand-picked to pair with what you already own.",
-    cta: "Shop the edit",
-    url: "",                    // ← your affiliate / retailer link
-  },
+const SHOP = {
+  searchUrl: "https://www.google.com/search?tbm=shop&q={q}",
+  disclosure: true,   // show a small "links may earn commission" note
 };
 
 const S = {
@@ -320,6 +320,7 @@ const S = {
   tab:"wardrobe", wcat:"wardrobe",
   viewItemId:null, lookId:null, lookData:null, chat:[],
   busy:false,
+  trending:null, trendingLoaded:false,
 };
 
 /* ── tiny helpers ── */
@@ -361,6 +362,7 @@ const CATS=[
   {k:"shoes",label:"Shoes",add:"Add Shoes",addsub:"Upload a photo of any pair of shoes",noun:"pair of shoes"},
   {k:"makeup",label:"Makeup",add:"Add Makeup",addsub:"Upload a photo of any makeup product",noun:"makeup product"},
   {k:"perfume",label:"Perfume",add:"Add Perfume",addsub:"Upload a photo of any fragrance",noun:"fragrance"},
+  {k:"jewelry",label:"Jewelry",add:"Add Jewelry",addsub:"Upload a photo of any jewelry piece",noun:"jewelry piece"},
 ];
 const SUGG=[
   {label:"Tops",seed:"women top blouse",cat:"wardrobe",img:"tops"},
@@ -504,13 +506,13 @@ function renderWardrobe(sc){
         </div>
         <div class="chev">›</div>
       </button>
-      ${adSlotHTML()}
+      ${trendingBannerHTML()}
       <div id="wbody"></div>
     </div>`;
   sc.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{S.wcat=t.dataset.c;render();$("screen").scrollTop=0;});
   $("addRow").onclick=()=>addItemFlow(S.wcat);
   $("bell").onclick=()=>toast("You're all caught up ✨");
-  mountAds();
+  loadTrending();
 
   const body=$("wbody");
   if(empty){
@@ -553,6 +555,9 @@ function wardrobeEmptyHTML(cat){
     perfume:{hero:ASSET.perfume,t:"No fragrances yet",
       s:"Add the perfumes you own so the AI can match a scent to the mood of each look.",
       btn:"Add Perfume",tip:"A straight-on photo of the bottle is perfect."},
+    jewelry:{hero:ASSET.accessories,t:"No jewelry yet",
+      s:"Add the necklaces, earrings and rings you own so the AI can finish looks with the right sparkle.",
+      btn:"Add Jewelry",tip:"Shoot pieces on a plain, light surface so the detail shows."},
   };
   const m=map[cat]||map.wardrobe;
   return `<div class="emptycard">
@@ -586,43 +591,46 @@ function openSheet(inner){
 }
 function closeSheet(){ $("modalRoot").innerHTML=""; }
 
-/* ── ads ── builds the sponsored slot for the main screen ── */
-let _adsenseLoaded=false;
-function ensureAdSense(){
-  if(_adsenseLoaded||!ADS.adsenseClient)return;
-  _adsenseLoaded=true;
-  const s=document.createElement("script");
-  s.async=true;
-  s.crossOrigin="anonymous";
-  s.src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client="+encodeURIComponent(ADS.adsenseClient);
-  document.head.appendChild(s);
+/* ── trending ── shoppable "what's trending" banner on the main screen ── */
+function shopUrl(q){
+  return (SHOP.searchUrl||"").replace("{q}",encodeURIComponent((q||"").trim()));
 }
-function adSlotHTML(){
-  if(!ADS.enabled) return "";
-  if(ADS.adsenseClient&&ADS.adsenseSlot){
-    return `<div class="adcard"><span class="adlabel">Ad</span>
-      <ins class="adsbygoogle" style="display:block;min-height:100px"
-        data-ad-client="${esc(ADS.adsenseClient)}"
-        data-ad-slot="${esc(ADS.adsenseSlot)}"
-        data-ad-format="auto" data-full-width-responsive="true"></ins></div>`;
+async function loadTrending(){
+  if(S.trendingLoaded) return;
+  S.trendingLoaded=true;
+  try{
+    const d=await api("/api/outfitai/trending");
+    S.trending=(d&&d.ok&&Array.isArray(d.items))?d.items:[];
+  }catch(e){ S.trending=[]; }
+  // re-render only if the user is still on the main wardrobe view
+  if(S.tab==="wardrobe"&&!S.viewItemId&&!S.lookId) render();
+}
+function trendingBannerHTML(){
+  // still loading → skeleton
+  if(S.trending===null){
+    return `<div class="trend">
+      <div class="trendhead">${I.spark}<span class="th">Trending now</span></div>
+      <div class="trendsub">What young women are wearing this season.</div>
+      <div class="trendskel">${'<div class="tsk skel"></div>'.repeat(4)}</div>
+    </div>`;
   }
-  const h=ADS.houseAd||{};
-  if(h.url){
-    return `<a class="adcard" href="${esc(h.url)}" target="_blank" rel="noopener sponsored">
-      <span class="adlabel">${esc(h.label||"Sponsored")}</span>
-      <div class="adbody">
-        <div class="adt">${esc(h.title||"")}</div>
-        <div class="ads">${esc(h.text||"")}</div>
-        <span class="adcta">${esc(h.cta||"Shop now")} →</span>
+  if(!S.trending.length) return "";   // failed / empty → hide quietly
+  const cards=S.trending.map(t=>{
+    const img=t.image||ASSET[t.category]||ASSET.tops;
+    return `<a class="tcard" href="${esc(shopUrl(t.query||t.name))}" target="_blank" rel="noopener sponsored">
+      <img class="tim" src="${esc(img)}" loading="lazy" referrerpolicy="no-referrer" alt="">
+      <div class="tb">
+        <div class="tn">${esc(t.name||"")}</div>
+        <div class="td">${esc(t.blurb||"")}</div>
+        <div class="tcta">Shop now ›</div>
       </div></a>`;
-  }
-  return ""; // nothing configured → clean app, no ad
-}
-function mountAds(){
-  if(ADS.enabled&&ADS.adsenseClient&&ADS.adsenseSlot){
-    ensureAdSense();
-    try{ (window.adsbygoogle=window.adsbygoogle||[]).push({}); }catch(e){}
-  }
+  }).join("");
+  return `<div class="trend">
+    <div class="trendhead">${I.spark}<span class="th">Trending now</span></div>
+    <div class="trendsub">Real pieces young women are wearing this season — tap any to shop.</div>
+    <div class="trendrow">${cards}</div>
+    ${SHOP.disclosure?'<div class="trenddisc">Shopping links may earn us a commission.</div>':''}
+  </div>`;
 }
 
 /* ── add an item: choose photo upload or online search ── */
