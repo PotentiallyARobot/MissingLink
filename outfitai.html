@@ -376,7 +376,7 @@ const S = {
   items:[], references:[], looks:[],
   tab:"wardrobe", wcat:"wardrobe", gender:"female",
   viewItemId:null, lookId:null, lookData:null, chat:[],
-  busy:false, genStep:0,
+  busy:false, genPhases:[],
   trending:null, trendingLoaded:false,
 };
 
@@ -1146,59 +1146,88 @@ function wxText(c){
   return"Clear";
 }
 
-/* Generation stages shown to the user. The pipeline is one request, so
-   stages advance on a timed estimate, then snap to complete when the
-   response lands — fast generations simply jump ahead. */
-const GEN_STEPS=[
-  {k:"context",label:"Reading the occasion & weather"},
-  {k:"style",label:"Styling your outfit"},
-  {k:"render",label:"Creating your look"},
-];
-function setGenStep(i){ S.genStep=i; if(S.lookId==="pending") drawThread(); }
+/* The generate endpoint streams Server-Sent Events: a series of "phase"
+   events as each real pipeline step happens, then a final "done" or
+   "error". S.genPhases holds the phases the server has actually reported,
+   so the user sees what it's genuinely doing — not a timed guess. */
+function pushPhase(label){
+  // Mark any in-flight phase complete, then add the new one as active.
+  S.genPhases=(S.genPhases||[]).map(p=>({...p,done:true}));
+  S.genPhases.push({label,done:false});
+  if(S.lookId==="pending") drawThread();
+}
 
 async function doGenerate(){
   if(!S.items.length){toast("Add wardrobe items first");return;}
   if(tokens()<TOK_PER_GEN){toast("Not enough tokens — tap Subscribe for more");return;}
   const notes=GEN.notes.trim();
   S.chat=[{role:"me",text:notes||"Style me a look for tonight."}];
-  S.lookId="pending";S.lookData=null;S.busy=true;S.genStep=0;
+  S.lookId="pending";S.lookData=null;S.busy=true;S.genPhases=[];
   render();
 
+  pushPhase("Checking the weather where you are");
   let ctx={};
   try{ctx=await gatherContext();}catch(e){ctx={};}
-  setGenStep(1);
-  // Move to the "creating your look" stage after a short delay — the image
-  // render is the longest phase, so the bar reflects real pipeline shape.
-  clearTimeout(S._genT);
-  S._genT=setTimeout(()=>setGenStep(2),4500);
+
+  const fail=(msg)=>{
+    S.busy=false;S.lookId=null;S.lookData=null;S.genPhases=[];render();toast(msg);
+  };
 
   try{
-    const d=await api("/api/outfitai/generate",{
-      method:"POST",headers:{"content-type":"application/json"},
+    const res=await fetch(API+"/api/outfitai/generate",{
+      method:"POST",credentials:"include",
+      headers:{"content-type":"application/json"},
       body:JSON.stringify({
         event:notes,mode:GEN.mode,
         location:ctx.location||"",weather:ctx.weather||"",temperature:ctx.temperature||""
       })
     });
-    clearTimeout(S._genT);
-    if(!d.ok){
-      S.busy=false;S.lookId=null;S.lookData=null;render();
-      toast(d.error==="empty_wardrobe"?"Add wardrobe items first":
-            d.error==="insufficient_tokens"?"Not enough tokens — tap Subscribe for more":
-            ("Couldn't generate: "+(d.detail||d.error)));
-      return;
+    // A non-stream JSON body means an up-front error (e.g. not enough tokens).
+    const ctype=res.headers.get("content-type")||"";
+    if(!ctype.includes("text/event-stream")){
+      let d={}; try{d=await res.json();}catch(e){}
+      return fail(d.error==="empty_wardrobe"?"Add wardrobe items first":
+        d.error==="insufficient_tokens"?"Not enough tokens — tap Subscribe for more":
+        ("Couldn't generate: "+(d.detail||d.error||res.status)));
     }
-    if(typeof d.tokens_remaining==="number"&&S.user)S.user.tokens=d.tokens_remaining;
-    S.looks.unshift({id:d.look.id,event:notes||"Styled look",result_url:d.look.result_url,
-      explanation:d.look.explanation,item_ids:d.look.item_ids,created_at:Date.now()/1000,
-      outfit_name:d.look.outfit_name,why_you:d.look.why_you,why_together:d.look.why_together,
-      online_items:d.look.online_items,mode:d.look.mode});
-    S.busy=false;S.lookId=d.look.id;S.lookData=d.look;
-    render();
+
+    // Read the SSE stream line by line.
+    const reader=res.body.getReader();
+    const dec=new TextDecoder();
+    let buf="",finished=false;
+    while(true){
+      const{value,done}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let nl;
+      while((nl=buf.indexOf("\n\n"))>=0){
+        const chunk=buf.slice(0,nl);buf=buf.slice(nl+2);
+        const line=chunk.split("\n").find(l=>l.startsWith("data:"));
+        if(!line)continue;
+        let ev;try{ev=JSON.parse(line.slice(5).trim());}catch(e){continue;}
+        if(ev.type==="phase"){
+          pushPhase(ev.label||"Working…");
+        }else if(ev.type==="error"){
+          finished=true;
+          return fail(ev.error==="insufficient_tokens"
+            ?"Not enough tokens — tap Subscribe for more"
+            :("Couldn't generate: "+(ev.detail||ev.error)));
+        }else if(ev.type==="done"){
+          finished=true;
+          if(typeof ev.tokens_remaining==="number"&&S.user)S.user.tokens=ev.tokens_remaining;
+          S.genPhases=(S.genPhases||[]).map(p=>({...p,done:true}));
+          S.looks.unshift({id:ev.look.id,event:notes||"Styled look",result_url:ev.look.result_url,
+            explanation:ev.look.explanation,item_ids:ev.look.item_ids,created_at:Date.now()/1000,
+            outfit_name:ev.look.outfit_name,why_you:ev.look.why_you,why_together:ev.look.why_together,
+            online_items:ev.look.online_items,mode:ev.look.mode});
+          S.busy=false;S.lookId=ev.look.id;S.lookData=ev.look;S.genPhases=[];
+          render();
+        }
+      }
+    }
+    if(!finished) fail("Generation was interrupted — please try again.");
   }catch(e){
-    clearTimeout(S._genT);
-    S.busy=false;S.lookId=null;S.lookData=null;render();
-    toast("Generation failed: "+e.message);
+    fail("Generation failed: "+e.message);
   }
 }
 
@@ -1285,16 +1314,20 @@ function lookCardHTML(L){
 }
 
 function genProgressHTML(){
-  const cur=S.genStep||0;
-  const pct=Math.round(((cur+0.5)/GEN_STEPS.length)*100);
-  const steps=GEN_STEPS.map((s,i)=>{
-    const cls=i<cur?"done":i===cur?"active":"";
-    const ic=i<cur?"✓":i===cur?"":(i+1);
-    return `<div class="pstep ${cls}"><span class="ic">${ic}</span>${esc(s.label)}</div>`;
+  const phases=S.genPhases||[];
+  if(!phases.length){
+    return `<div class="progress"><div class="pstep active"><span class="ic"></span>Getting started…</div></div>`;
+  }
+  const doneCount=phases.filter(p=>p.done).length;
+  const pct=Math.min(96,Math.round((doneCount/(phases.length+1))*100)+8);
+  const rows=phases.map(p=>{
+    const cls=p.done?"done":"active";
+    const ic=p.done?"✓":"";
+    return `<div class="pstep ${cls}"><span class="ic">${ic}</span>${esc(p.label)}</div>`;
   }).join("");
   return `<div class="progress">
     <div class="bar"><i style="width:${pct}%"></i></div>
-    ${steps}
+    ${rows}
   </div>`;
 }
 function drawThread(){
