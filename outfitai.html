@@ -434,6 +434,15 @@ function pickImage(){
     inp.click();
   });
 }
+// Lets the user select several photos at once. Returns an array of Files.
+function pickImages(){
+  return new Promise(res=>{
+    const inp=document.createElement("input");
+    inp.type="file";inp.accept="image/*";inp.multiple=true;
+    inp.onchange=()=>res(inp.files?Array.from(inp.files):[]);
+    inp.click();
+  });
+}
 function compress(file){
   return new Promise((res,rej)=>{
     const img=new Image();
@@ -977,16 +986,19 @@ function renderPhotos(sc){
       </div>
       <div class="h2">Your photos <span style="color:var(--muted);font-weight:500">${refs.length}/6</span></div>
       <div class="refgrid">${slots.join("")}</div>
+      ${refs.length<6?`<button class="btn ghost sm" id="bulkAdd" style="width:100%;margin-top:12px">
+        ${I.camera}<span>Add multiple photos</span></button>`:""}
       <div class="card" style="padding:13px;margin-top:16px">
         <div class="sub" style="color:var(--text);font-weight:600;margin-bottom:6px">📸 For the best results</div>
         <div class="sub" style="line-height:1.7">Use clear, well-lit photos · include at least one
         full-length shot · a plain background helps · a couple of angles works best.</div>
       </div>
       <div class="sub" style="font-size:11px;margin-top:14px;text-align:center">
-        You can add, swap or remove photos any time.</div>
+        Tap a slot for one photo, or "Add multiple" to select several at once.</div>
       <div style="height:14px"></div>
     </div>`;
   sc.querySelectorAll("[data-slot]").forEach(b=>b.onclick=()=>addReferenceFlow(parseInt(b.dataset.slot)));
+  const bulk=$("bulkAdd"); if(bulk) bulk.onclick=addReferencesBulk;
   sc.querySelectorAll("[data-del]").forEach(b=>b.onclick=async(e)=>{
     e.stopPropagation();
     const id=b.dataset.del;
@@ -994,20 +1006,46 @@ function renderPhotos(sc){
     S.references=S.references.filter(r=>r.id!==id);render();toast("Photo removed");
   });
 }
+// Upload one reference photo + register it. Returns the saved reference.
+async function uploadReference(file,pose){
+  const uploadId=await uploadImage(file);
+  const d=await api("/api/outfitai/reference",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({upload_id:uploadId,pose:pose||""})
+  });
+  if(!d.ok) throw new Error(d.error==="reference_limit"?"6 photos max":(d.error||"failed"));
+  return d.reference;
+}
 async function addReferenceFlow(slotIdx){
   if(S.references.length>=6){toast("That's the max — 6 photos");return;}
   const file=await pickImage();
   if(!file)return;
   toast("Uploading…");
   try{
-    const uploadId=await uploadImage(file);
-    const d=await api("/api/outfitai/reference",{
-      method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({upload_id:uploadId,pose:POSES[slotIdx]||""})
-    });
-    if(!d.ok) throw new Error(d.error==="reference_limit"?"6 photos max":(d.error||"failed"));
-    S.references.push(d.reference);render();toast("Photo added — looks will now feature you");
+    const ref=await uploadReference(file,POSES[slotIdx]||"");
+    S.references.push(ref);render();toast("Photo added — looks will now feature you");
   }catch(e){toast("Couldn't add photo: "+e.message);}
+}
+async function addReferencesBulk(){
+  const free=6-S.references.length;
+  if(free<=0){toast("That's the max — 6 photos");return;}
+  let files=await pickImages();
+  if(!files.length)return;
+  let skipped=0;
+  if(files.length>free){ skipped=files.length-free; files=files.slice(0,free); }
+  toast("Uploading "+files.length+" photo"+(files.length>1?"s":"")+"…");
+  let ok=0,failed=0;
+  for(const file of files){
+    try{
+      const ref=await uploadReference(file,POSES[S.references.length]||"");
+      S.references.push(ref);
+      ok++;render();   // show each photo as it lands
+    }catch(e){ failed++; }
+  }
+  let msg=ok+" photo"+(ok!==1?"s":"")+" added";
+  if(skipped)msg+=" · "+skipped+" skipped (6 max)";
+  if(failed)msg+=" · "+failed+" failed";
+  toast(msg);
 }
 
 /* ════════════════ GENERATE ════════════════ */
