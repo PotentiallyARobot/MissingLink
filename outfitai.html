@@ -107,7 +107,7 @@
   .grid.two{grid-template-columns:1fr 1fr}
   .icard{
     background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden;
-    position:relative;text-align:left;
+    position:relative;text-align:left;cursor:pointer;
   }
   .icard .ph{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:var(--bg4)}
   .icard .meta{padding:8px 9px}
@@ -116,6 +116,11 @@
   .icard .ct{font-size:9.5px;color:var(--muted);margin-top:2px}
   .icard .badge{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.7);
     font-size:9px;padding:3px 7px;border-radius:999px;color:var(--accent);font-weight:700}
+  .icard .del{position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;
+    background:var(--bad);color:#1a121a;font-size:14px;font-weight:800;
+    display:flex;align-items:center;justify-content:center;z-index:3;border:2px solid var(--bg2)}
+  .h2.row .editbtn{font-size:12px;font-weight:700;color:var(--accent);padding:2px 4px}
+  .h2.row .editbtn.on{color:var(--bad)}
 
   .addtile{
     border:1.5px dashed var(--line);background:var(--bg2);border-radius:14px;
@@ -193,6 +198,30 @@
   .bubble.ai{background:var(--bg3);border:1px solid var(--line)}
   .bubble.me{background:var(--accent);color:#1a121a;font-weight:500;align-self:flex-end}
   .chatrow{display:flex;gap:8px;align-items:flex-end}
+
+  /* ── stylist persona ── */
+  .stylisthdr{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+  .stylistpic{width:34px;height:34px;border-radius:50%;overflow:hidden;flex:none;
+    border:1.5px solid var(--line)}
+  .stylistpic svg{width:100%;height:100%;display:block}
+  .stylistnm{min-width:0}
+  .stylistnm .sn{font-size:15px;font-weight:800;line-height:1.1}
+  .stylistnm .sr{font-size:10.5px;color:var(--muted)}
+  .airow{display:flex;gap:7px;align-items:flex-start}
+  .aiav{width:28px;height:28px;border-radius:50%;overflow:hidden;flex:none;margin-top:1px;
+    border:1px solid var(--line)}
+  .aiav svg{width:100%;height:100%;display:block}
+  .airow .bubble,.airow .lookcard,.airow .progress{flex:1;min-width:0}
+  .stylistcard{display:flex;align-items:center;gap:13px;background:var(--bg2);
+    border:1px solid var(--line);border-radius:16px;padding:14px}
+  .stylistcard .big{width:58px;height:58px;border-radius:50%;overflow:hidden;flex:none;
+    border:2px solid var(--accent)}
+  .stylistcard .big svg{width:100%;height:100%;display:block}
+  .avopt{width:54px;height:54px;border-radius:50%;overflow:hidden;flex:none;
+    border:2px solid var(--line)}
+  .avopt.on{border-color:var(--accent)}
+  .avopt svg{width:100%;height:100%;display:block}
+  .avrow{display:flex;gap:9px;flex-wrap:wrap}
 
   /* ── chat-style result page ── */
   .composer{position:absolute;left:0;right:0;bottom:0;
@@ -374,7 +403,8 @@ const SHOP = {
 const S = {
   loading:true, loggedIn:false, user:null,
   items:[], references:[], looks:[],
-  tab:"wardrobe", wcat:"wardrobe", gender:"female",
+  tab:"wardrobe", wcat:"wardrobe", gender:"female", wEdit:false,
+  stylist:null,
   viewItemId:null, lookId:null, lookData:null, chat:[],
   busy:false, genPhases:[],
   trending:null, trendingLoaded:false,
@@ -493,6 +523,7 @@ async function loadState(){
     S.looks=d.looks||[];
     if(d.gender){ S.gender=d.gender; applyTheme(d.gender);
       try{localStorage.setItem("oa_gender",d.gender);}catch(e){} }
+    if(d.stylist) S.stylist=d.stylist;
   }catch(e){S.loggedIn=false;}
   S.loading=false;render();
 }
@@ -523,6 +554,55 @@ async function setGender(g){
   }catch(e){ toast("Couldn't save — try again"); }
 }
 function loginGoogle(){ window.location.href=API+"/auth/google?return=/outfitai"; }
+
+/* ── personal stylist persona ──
+   The avatar is a generated SVG portrait — six face styles (a–f) tinted by
+   the stylist's gender, with hair that differs by gender. No image model
+   needed, so it renders instantly and never breaks. */
+const STYLIST_PERSONALITIES=[
+  {k:"warm",label:"Warm",desc:"Encouraging & friendly"},
+  {k:"bold",label:"Bold",desc:"Confident & a little daring"},
+  {k:"minimalist",label:"Minimalist",desc:"Calm, precise, understated"},
+  {k:"playful",label:"Playful",desc:"Fun and upbeat"},
+  {k:"editorial",label:"Editorial",desc:"Polished & fashion-forward"},
+];
+const AVATAR_BG={a:"#EBB7E6",b:"#A7C5F2",c:"#F4C58D",d:"#9BD8C4",e:"#C9A7E6",f:"#E69BA7"};
+const AVATAR_KEYS=["a","b","c","d","e","f"];
+function stylistAvatarSVG(stylist,size){
+  const s=stylist||{};
+  const bg=AVATAR_BG[s.avatar]||AVATAR_BG.a;
+  const male=s.gender==="male";
+  const skin="#E8C9A8";
+  // gender-specific hair shape
+  const hair=male
+    ? `<path d="M30 46 Q30 20 64 20 Q98 20 98 46 L98 40 Q90 30 64 30 Q38 30 30 40 Z" fill="#3A2A22"/>`
+    : `<path d="M26 70 Q22 18 64 18 Q106 18 102 70 Q100 50 88 44 Q92 30 64 28 Q36 30 40 44 Q28 50 26 70 Z" fill="#3A2A22"/>`;
+  return `<svg viewBox="0 0 128 128" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="64" cy="64" r="64" fill="${bg}"/>
+    <circle cx="64" cy="116" r="40" fill="#2A2A30"/>
+    ${male?"":hair}
+    <circle cx="64" cy="60" r="30" fill="${skin}"/>
+    ${male?hair:""}
+    <circle cx="53" cy="58" r="3.4" fill="#2A2A30"/>
+    <circle cx="75" cy="58" r="3.4" fill="#2A2A30"/>
+    <path d="M56 72 Q64 78 72 72" stroke="#9A6B52" stroke-width="3" fill="none" stroke-linecap="round"/>
+  </svg>`;
+}
+async function saveStylist(patch){
+  S.stylist={...(S.stylist||{}),...patch};
+  render();
+  try{
+    const d=await api("/api/outfitai/settings",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        stylist_name:S.stylist.name,stylist_gender:S.stylist.gender,
+        stylist_personality:S.stylist.personality,stylist_avatar:S.stylist.avatar
+      })
+    });
+    if(d&&d.stylist)S.stylist=d.stylist;
+  }catch(e){ toast("Couldn't save — try again"); }
+}
+
 async function logout(){ try{await api("/auth/logout",{method:"POST"});}catch(e){} location.reload(); }
 function openSubscribe(){
   if(SUBSCRIBE.url){ window.open(SUBSCRIBE.url,"_blank","noopener"); }
@@ -569,7 +649,7 @@ function renderNav(){
     return `<button class="navb ${on?'on':''}" data-tab="${n.k}">${n.ic}<span>${n.l}</span></button>`;
   }).join("");
   $("nav").querySelectorAll(".navb").forEach(b=>b.onclick=()=>{
-    S.viewItemId=null;S.lookId=null;S.lookData=null;S.chat=[];
+    S.viewItemId=null;S.lookId=null;S.lookData=null;S.chat=[];S.wEdit=false;
     S.tab=b.dataset.tab;render();$("screen").scrollTop=0;
   });
 }
@@ -646,12 +726,37 @@ function renderWardrobe(sc){
   }else{
     body.innerHTML=`
       <div class="h2 row"><span>${cat.label}
-        <span style="color:var(--muted);font-weight:500">· ${list.length} item${list.length===1?"":"s"}</span></span></div>
-      <div class="grid" id="wgrid">${list.map(it=>itemCardHTML(it)).join("")}</div>
+        <span style="color:var(--muted);font-weight:500">· ${list.length} item${list.length===1?"":"s"}</span></span>
+        <button class="editbtn ${S.wEdit?"on":""}" id="wEdit">${S.wEdit?"Done":"Edit"}</button></div>
+      <div class="grid" id="wgrid">${list.map(it=>itemCardHTML(it,S.wEdit)).join("")}</div>
       <div style="height:14px"></div>`;
-    body.querySelectorAll("#wgrid [data-id]").forEach(c=>c.onclick=()=>{
-      S.viewItemId=c.dataset.id;render();$("screen").scrollTop=0;
+    $("wEdit").onclick=()=>{S.wEdit=!S.wEdit;render();};
+    body.querySelectorAll("#wgrid .icard").forEach(c=>{
+      const del=c.querySelector(".del");
+      if(del){
+        del.onclick=(e)=>{e.stopPropagation();deleteItem(c.dataset.id);};
+      }
+      c.onclick=()=>{
+        if(S.wEdit)return;   // in edit mode the card isn't a link
+        S.viewItemId=c.dataset.id;render();$("screen").scrollTop=0;
+      };
     });
+  }
+}
+async function deleteItem(id){
+  const it=S.items.find(i=>i.id===id);
+  if(!it)return;
+  if(!confirm("Remove “"+(it.name||"this item")+"” from your wardrobe?"))return;
+  const prev=S.items;
+  S.items=S.items.filter(i=>i.id!==id);   // optimistic
+  render();
+  try{
+    const d=await api("/api/outfitai/item/"+id,{method:"DELETE"});
+    if(!d.ok)throw new Error(d.error||"failed");
+    toast("Item removed");
+  }catch(e){
+    S.items=prev;render();           // roll back on failure
+    toast("Couldn't remove item: "+e.message);
   }
 }
 
@@ -686,17 +791,18 @@ function wardrobeEmptyHTML(cat){
   </div>`;
 }
 
-function itemCardHTML(it){
+function itemCardHTML(it,editing){
   const analyzing=it.status==="analyzing";
   const sub=it.type||it.brand||(it.tags&&it.tags[0])||it.category;
-  return `<button class="icard" data-id="${it.id}">
+  return `<div class="icard" data-id="${it.id}">
+    ${editing?'<button class="del">✕</button>':''}
     ${analyzing?'<div class="badge">analyzing…</div>':''}
     <img class="ph" src="${esc(it.image_url)}" loading="lazy" referrerpolicy="no-referrer" alt="">
     <div class="meta">
       <div class="nm">${esc(it.name||"Item")}</div>
       <div class="ct">${esc(sub)}</div>
     </div>
-  </button>`;
+  </div>`;
 }
 
 /* ── modal / bottom-sheet ── */
@@ -761,7 +867,7 @@ function addItemFlow(cat){
     <div class="sub" style="margin-bottom:16px">How would you like to add this ${esc(c.noun)}?</div>
     <button class="choicebtn" id="ch_up">
       <div class="ci">${I.camera}</div>
-      <div class="cm"><b>Upload a photo</b><span>Take one now or pick from your gallery</span></div>
+      <div class="cm"><b>Upload photos</b><span>Pick one or many — each is analyzed for you</span></div>
     </button>
     <button class="choicebtn" id="ch_se">
       <div class="ci">${I.search}</div>
@@ -775,29 +881,44 @@ function addItemFlow(cat){
 }
 
 async function uploadItemFlow(cat){
-  const file=await pickImage();
-  if(!file) return;
-  const tmp={id:"tmp_"+Date.now(),category:cat,image_url:URL.createObjectURL(file),
-    name:"Uploading…",status:"analyzing",tags:[],pairs_with:[],occasions:[]};
-  S.items.unshift(tmp);
+  const files=await pickImages();          // select as many as you like
+  if(!files.length) return;
   if(S.wcat!==cat)S.wcat=cat;
+
+  // Drop a placeholder card for every selected image immediately, each with
+  // its own analyzing spinner. They process in parallel and each card swaps
+  // to the finished item (with full metadata) as its analysis completes.
+  const jobs=files.map((file,i)=>{
+    const tmp={id:"tmp_"+Date.now()+"_"+i,category:cat,image_url:URL.createObjectURL(file),
+      name:"Uploading…",status:"analyzing",tags:[],pairs_with:[],occasions:[]};
+    return {file,tmp};
+  });
+  // Newest first, preserving the picked order within this batch.
+  for(let i=jobs.length-1;i>=0;i--) S.items.unshift(jobs[i].tmp);
   render();
-  try{
-    const uploadId=await uploadImage(file);
-    const d=await api("/api/outfitai/item",{
-      method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({upload_id:uploadId,category:cat})
-    });
-    if(!d.ok) throw new Error(d.detail||d.error||"failed");
-    const idx=S.items.findIndex(i=>i.id===tmp.id);
-    if(idx>=0) S.items[idx]=d.item; else S.items.unshift(d.item);
-    render();
-    toast("Item added & analyzed ✨");
-  }catch(e){
-    S.items=S.items.filter(i=>i.id!==tmp.id);
-    render();
-    toast("Couldn't add item: "+e.message);
-  }
+
+  let ok=0,failed=0;
+  await Promise.all(jobs.map(async ({file,tmp})=>{
+    try{
+      const uploadId=await uploadImage(file);
+      const d=await api("/api/outfitai/item",{
+        method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({upload_id:uploadId,category:cat})
+      });
+      if(!d.ok) throw new Error(d.detail||d.error||"failed");
+      const idx=S.items.findIndex(i=>i.id===tmp.id);
+      if(idx>=0) S.items[idx]=d.item; else S.items.unshift(d.item);
+      ok++;
+    }catch(e){
+      S.items=S.items.filter(i=>i.id!==tmp.id);
+      failed++;
+    }
+    render();   // refresh as each one resolves
+  }));
+
+  if(failed&&ok) toast(ok+" added · "+failed+" failed");
+  else if(failed) toast("Couldn't add "+(failed>1?"those items":"that item"));
+  else toast(ok>1?(ok+" items added & analyzed ✨"):"Item added & analyzed ✨");
 }
 
 /* ── image search: for items you own but don't have a photo of ── */
@@ -1263,10 +1384,17 @@ function renderLook(sc){
     };
   }
   const real=S.lookId&&S.lookId!=="pending";
+  const st=S.stylist||{};
   sc.innerHTML=`
     <div class="topbar">
       <button class="back" id="bk">‹</button>
-      <h1>Your Stylist</h1>
+      <div class="stylisthdr">
+        <div class="stylistpic">${stylistAvatarSVG(st,34)}</div>
+        <div class="stylistnm">
+          <div class="sn">${esc(st.name||"Your Stylist")}</div>
+          <div class="sr">Your personal stylist</div>
+        </div>
+      </div>
       ${real?`<button class="bell" id="delLook">${I.trash}</button>`:""}
     </div>
     <div class="pad" id="thread"></div>
@@ -1332,14 +1460,19 @@ function genProgressHTML(){
 }
 function drawThread(){
   const t=$("thread");if(!t)return;
-  let html=S.chat.map(m=>`<div class="bubble ${m.role==="me"?"me":"ai"}">${esc(m.text)}</div>`).join("");
-  if(S.lookData)html+=lookCardHTML(S.lookData);
+  const av=stylistAvatarSVG(S.stylist||{},28);
+  const aiRow=(inner)=>`<div class="airow"><div class="aiav">${av}</div>${inner}</div>`;
+  let html=S.chat.map(m=>{
+    if(m.role==="me") return `<div class="bubble me">${esc(m.text)}</div>`;
+    return aiRow(`<div class="bubble ai">${esc(m.text)}</div>`);
+  }).join("");
+  if(S.lookData)html+=aiRow(lookCardHTML(S.lookData));
   if(S.busy){
     // Initial generation shows the staged progress card; an in-chat
     // refinement (look already on screen) shows the simple typing dots.
-    html+=(S.lookId==="pending"&&!S.lookData)
+    html+=aiRow((S.lookId==="pending"&&!S.lookData)
       ? genProgressHTML()
-      : '<div class="bubble ai loadingb"><span class="dots"><i></i><i></i><i></i></span></div>';
+      : '<div class="bubble ai loadingb"><span class="dots"><i></i><i></i><i></i></span></div>');
   }
   t.innerHTML=html;
   t.querySelectorAll("[data-id]").forEach(r=>r.onclick=()=>{
@@ -1434,6 +1567,17 @@ function renderProfile(sc){
         <div><div style="font-size:20px;font-weight:800">${S.looks.length}</div><div class="uc">Looks</div></div>
       </div>
 
+      <div class="h2">Your stylist</div>
+      <div class="stylistcard">
+        <div class="big">${stylistAvatarSVG(S.stylist||{},58)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:800;font-size:16px">${esc((S.stylist&&S.stylist.name)||"Your Stylist")}</div>
+          <div class="sub" style="font-size:12px;text-transform:capitalize">
+            ${esc((S.stylist&&S.stylist.personality)||"warm")} · ${esc((S.stylist&&S.stylist.gender)||"")}</div>
+        </div>
+        <button class="btn ghost sm" id="editStylist" style="width:auto;padding:8px 14px">Change</button>
+      </div>
+
       <div class="h2">Gender</div>
       <div class="card" style="padding:14px">
         <div class="seg" id="genderSeg">
@@ -1471,9 +1615,65 @@ function renderProfile(sc){
     </div>`;
   $("out").onclick=logout;
   $("buy").onclick=openSubscribe;
+  $("editStylist").onclick=openStylistEditor;
   sc.querySelectorAll("#genderSeg .segb").forEach(b=>b.onclick=()=>{
     if(b.dataset.g!==S.gender) setGender(b.dataset.g);
   });
+}
+
+// Draft state while editing the stylist (committed only on Save).
+function openStylistEditor(){
+  const cur=S.stylist||{name:"",gender:"female",personality:"warm",avatar:"a"};
+  STYLIST_DRAFT={name:cur.name,gender:cur.gender,personality:cur.personality,avatar:cur.avatar};
+  drawStylistEditor();
+}
+let STYLIST_DRAFT=null;
+function drawStylistEditor(){
+  const d=STYLIST_DRAFT;
+  const sh=openSheet(`
+    <div style="font-size:17px;font-weight:800;margin:2px 0 14px">Your stylist</div>
+    <div class="center" style="margin-bottom:14px">
+      <div class="stylistcard" style="border:none;background:transparent;padding:0">
+        <div class="big">${stylistAvatarSVG(d,64)}</div>
+      </div>
+    </div>
+    <div class="field"><label>Name</label>
+      <input type="text" id="st_name" maxlength="40" placeholder="Name your stylist" value="${esc(d.name)}"></div>
+    <div class="field"><label>Stylist gender</label>
+      <div class="seg" id="st_gender">
+        <button class="segb ${d.gender==="female"?"on":""}" data-g="female">Female</button>
+        <button class="segb ${d.gender==="male"?"on":""}" data-g="male">Male</button>
+      </div></div>
+    <div class="field"><label>Personality</label>
+      <div class="chips" id="st_pers">
+        ${STYLIST_PERSONALITIES.map(p=>`<button class="chip ${d.personality===p.k?"on":""}" data-p="${p.k}">${p.label}</button>`).join("")}
+      </div>
+      <div class="sub" style="font-size:11px;margin-top:6px" id="st_persDesc">
+        ${esc((STYLIST_PERSONALITIES.find(p=>p.k===d.personality)||STYLIST_PERSONALITIES[0]).desc)}</div></div>
+    <div class="field"><label>Picture</label>
+      <div class="avrow" id="st_av">
+        ${AVATAR_KEYS.map(k=>`<button class="avopt ${d.avatar===k?"on":""}" data-a="${k}">
+          ${stylistAvatarSVG({gender:d.gender,avatar:k},54)}</button>`).join("")}
+      </div></div>
+    <button class="btn" id="st_save" style="width:100%;margin-top:8px">Save stylist</button>
+  `);
+  sh.querySelector("#st_name").oninput=e=>{STYLIST_DRAFT.name=e.target.value;};
+  sh.querySelectorAll("#st_gender .segb").forEach(b=>b.onclick=()=>{
+    STYLIST_DRAFT.gender=b.dataset.g;drawStylistEditor();
+  });
+  sh.querySelectorAll("#st_pers .chip").forEach(b=>b.onclick=()=>{
+    STYLIST_DRAFT.personality=b.dataset.p;drawStylistEditor();
+  });
+  sh.querySelectorAll("#st_av .avopt").forEach(b=>b.onclick=()=>{
+    STYLIST_DRAFT.avatar=b.dataset.a;drawStylistEditor();
+  });
+  sh.querySelector("#st_save").onclick=()=>{
+    const dr=STYLIST_DRAFT;
+    if(!dr.name.trim()){toast("Give your stylist a name");return;}
+    closeSheet();
+    saveStylist({name:dr.name.trim(),gender:dr.gender,personality:dr.personality,avatar:dr.avatar});
+    toast("Stylist updated ✨");
+  };
 }
 
 /* ════════════════ boot ════════════════ */
