@@ -217,6 +217,21 @@
   .loadingb .dots i{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:blink 1.2s infinite}
   .loadingb .dots i:nth-child(2){animation-delay:.2s}
   .loadingb .dots i:nth-child(3){animation-delay:.4s}
+
+  /* ── staged generation progress ── */
+  .progress{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:15px 15px 13px}
+  .progress .bar{height:5px;border-radius:3px;background:var(--bg4);overflow:hidden;margin-bottom:13px}
+  .progress .bar i{display:block;height:100%;background:var(--accent);border-radius:3px;
+    width:0;transition:width .5s ease}
+  .pstep{display:flex;align-items:center;gap:9px;font-size:13px;padding:3px 0;color:var(--muted)}
+  .pstep .ic{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex:none;
+    display:flex;align-items:center;justify-content:center;font-size:10px}
+  .pstep.done{color:var(--text)}
+  .pstep.done .ic{background:var(--accent);border-color:var(--accent);color:#1a121a}
+  .pstep.active{color:var(--text);font-weight:600}
+  .pstep.active .ic{border-color:var(--accent);
+    border-top-color:transparent;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   @keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
 
   /* ── segmented toggle ── */
@@ -361,7 +376,7 @@ const S = {
   items:[], references:[], looks:[],
   tab:"wardrobe", wcat:"wardrobe", gender:"female",
   viewItemId:null, lookId:null, lookData:null, chat:[],
-  busy:false,
+  busy:false, genStep:0,
   trending:null, trendingLoaded:false,
 };
 
@@ -431,6 +446,15 @@ function pickImage(){
     const inp=document.createElement("input");
     inp.type="file";inp.accept="image/*";
     inp.onchange=()=>res(inp.files&&inp.files[0]?inp.files[0]:null);
+    inp.click();
+  });
+}
+// Lets the user select several photos at once. Returns an array of Files.
+function pickImages(){
+  return new Promise(res=>{
+    const inp=document.createElement("input");
+    inp.type="file";inp.accept="image/*";inp.multiple=true;
+    inp.onchange=()=>res(inp.files?Array.from(inp.files):[]);
     inp.click();
   });
 }
@@ -977,16 +1001,19 @@ function renderPhotos(sc){
       </div>
       <div class="h2">Your photos <span style="color:var(--muted);font-weight:500">${refs.length}/6</span></div>
       <div class="refgrid">${slots.join("")}</div>
+      ${refs.length<6?`<button class="btn ghost sm" id="bulkAdd" style="width:100%;margin-top:12px">
+        ${I.camera}<span>Add multiple photos</span></button>`:""}
       <div class="card" style="padding:13px;margin-top:16px">
         <div class="sub" style="color:var(--text);font-weight:600;margin-bottom:6px">📸 For the best results</div>
         <div class="sub" style="line-height:1.7">Use clear, well-lit photos · include at least one
         full-length shot · a plain background helps · a couple of angles works best.</div>
       </div>
       <div class="sub" style="font-size:11px;margin-top:14px;text-align:center">
-        You can add, swap or remove photos any time.</div>
+        Tap a slot for one photo, or "Add multiple" to select several at once.</div>
       <div style="height:14px"></div>
     </div>`;
   sc.querySelectorAll("[data-slot]").forEach(b=>b.onclick=()=>addReferenceFlow(parseInt(b.dataset.slot)));
+  const bulk=$("bulkAdd"); if(bulk) bulk.onclick=addReferencesBulk;
   sc.querySelectorAll("[data-del]").forEach(b=>b.onclick=async(e)=>{
     e.stopPropagation();
     const id=b.dataset.del;
@@ -994,20 +1021,46 @@ function renderPhotos(sc){
     S.references=S.references.filter(r=>r.id!==id);render();toast("Photo removed");
   });
 }
+// Upload one reference photo + register it. Returns the saved reference.
+async function uploadReference(file,pose){
+  const uploadId=await uploadImage(file);
+  const d=await api("/api/outfitai/reference",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({upload_id:uploadId,pose:pose||""})
+  });
+  if(!d.ok) throw new Error(d.error==="reference_limit"?"6 photos max":(d.error||"failed"));
+  return d.reference;
+}
 async function addReferenceFlow(slotIdx){
   if(S.references.length>=6){toast("That's the max — 6 photos");return;}
   const file=await pickImage();
   if(!file)return;
   toast("Uploading…");
   try{
-    const uploadId=await uploadImage(file);
-    const d=await api("/api/outfitai/reference",{
-      method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({upload_id:uploadId,pose:POSES[slotIdx]||""})
-    });
-    if(!d.ok) throw new Error(d.error==="reference_limit"?"6 photos max":(d.error||"failed"));
-    S.references.push(d.reference);render();toast("Photo added — looks will now feature you");
+    const ref=await uploadReference(file,POSES[slotIdx]||"");
+    S.references.push(ref);render();toast("Photo added — looks will now feature you");
   }catch(e){toast("Couldn't add photo: "+e.message);}
+}
+async function addReferencesBulk(){
+  const free=6-S.references.length;
+  if(free<=0){toast("That's the max — 6 photos");return;}
+  let files=await pickImages();
+  if(!files.length)return;
+  let skipped=0;
+  if(files.length>free){ skipped=files.length-free; files=files.slice(0,free); }
+  toast("Uploading "+files.length+" photo"+(files.length>1?"s":"")+"…");
+  let ok=0,failed=0;
+  for(const file of files){
+    try{
+      const ref=await uploadReference(file,POSES[S.references.length]||"");
+      S.references.push(ref);
+      ok++;render();   // show each photo as it lands
+    }catch(e){ failed++; }
+  }
+  let msg=ok+" photo"+(ok!==1?"s":"")+" added";
+  if(skipped)msg+=" · "+skipped+" skipped (6 max)";
+  if(failed)msg+=" · "+failed+" failed";
+  toast(msg);
 }
 
 /* ════════════════ GENERATE ════════════════ */
@@ -1093,15 +1146,32 @@ function wxText(c){
   return"Clear";
 }
 
+/* Generation stages shown to the user. The pipeline is one request, so
+   stages advance on a timed estimate, then snap to complete when the
+   response lands — fast generations simply jump ahead. */
+const GEN_STEPS=[
+  {k:"context",label:"Reading the occasion & weather"},
+  {k:"style",label:"Styling your outfit"},
+  {k:"render",label:"Creating your look"},
+];
+function setGenStep(i){ S.genStep=i; if(S.lookId==="pending") drawThread(); }
+
 async function doGenerate(){
   if(!S.items.length){toast("Add wardrobe items first");return;}
   if(tokens()<TOK_PER_GEN){toast("Not enough tokens — tap Subscribe for more");return;}
   const notes=GEN.notes.trim();
   S.chat=[{role:"me",text:notes||"Style me a look for tonight."}];
-  S.lookId="pending";S.lookData=null;S.busy=true;
+  S.lookId="pending";S.lookData=null;S.busy=true;S.genStep=0;
   render();
+
   let ctx={};
   try{ctx=await gatherContext();}catch(e){ctx={};}
+  setGenStep(1);
+  // Move to the "creating your look" stage after a short delay — the image
+  // render is the longest phase, so the bar reflects real pipeline shape.
+  clearTimeout(S._genT);
+  S._genT=setTimeout(()=>setGenStep(2),4500);
+
   try{
     const d=await api("/api/outfitai/generate",{
       method:"POST",headers:{"content-type":"application/json"},
@@ -1110,6 +1180,7 @@ async function doGenerate(){
         location:ctx.location||"",weather:ctx.weather||"",temperature:ctx.temperature||""
       })
     });
+    clearTimeout(S._genT);
     if(!d.ok){
       S.busy=false;S.lookId=null;S.lookData=null;render();
       toast(d.error==="empty_wardrobe"?"Add wardrobe items first":
@@ -1125,6 +1196,7 @@ async function doGenerate(){
     S.busy=false;S.lookId=d.look.id;S.lookData=d.look;
     render();
   }catch(e){
+    clearTimeout(S._genT);
     S.busy=false;S.lookId=null;S.lookData=null;render();
     toast("Generation failed: "+e.message);
   }
@@ -1212,11 +1284,30 @@ function lookCardHTML(L){
   </div>`;
 }
 
+function genProgressHTML(){
+  const cur=S.genStep||0;
+  const pct=Math.round(((cur+0.5)/GEN_STEPS.length)*100);
+  const steps=GEN_STEPS.map((s,i)=>{
+    const cls=i<cur?"done":i===cur?"active":"";
+    const ic=i<cur?"✓":i===cur?"":(i+1);
+    return `<div class="pstep ${cls}"><span class="ic">${ic}</span>${esc(s.label)}</div>`;
+  }).join("");
+  return `<div class="progress">
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    ${steps}
+  </div>`;
+}
 function drawThread(){
   const t=$("thread");if(!t)return;
   let html=S.chat.map(m=>`<div class="bubble ${m.role==="me"?"me":"ai"}">${esc(m.text)}</div>`).join("");
   if(S.lookData)html+=lookCardHTML(S.lookData);
-  if(S.busy)html+='<div class="bubble ai loadingb"><span class="dots"><i></i><i></i><i></i></span></div>';
+  if(S.busy){
+    // Initial generation shows the staged progress card; an in-chat
+    // refinement (look already on screen) shows the simple typing dots.
+    html+=(S.lookId==="pending"&&!S.lookData)
+      ? genProgressHTML()
+      : '<div class="bubble ai loadingb"><span class="dots"><i></i><i></i><i></i></span></div>';
+  }
   t.innerHTML=html;
   t.querySelectorAll("[data-id]").forEach(r=>r.onclick=()=>{
     if(S.items.find(i=>i.id===r.dataset.id)){S.viewItemId=r.dataset.id;render();}
