@@ -3245,6 +3245,13 @@
     animation:spin .8s linear infinite;
   }
   @keyframes spin{ to{ transform:rotate(360deg) } }
+  /* Static stand-in for .spinner in a status row whose work is
+     finished — same 12px footprint, no animation. */
+  .status-glyph{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:12px; height:12px; color:var(--gold); font-size:12px;
+    line-height:1;
+  }
   .err{ color:var(--red) }
 
   /* Input bar */
@@ -14363,9 +14370,10 @@ promptflow whoami</code></pre>
               '<div class="d-dse-fallback">Designing without catalog context — composition discovery skipped this turn.</div>' +
             '</div>' +
           '</div>';
-        setStatus(thinkAssist, "Catalog search failed · designing without context");
+        setStatusStatic(thinkAssist, "Catalog search failed · designing without context");
         // Fall through to normal /plan call so the user still gets a
-        // designed process even if discovery failed.
+        // designed process even if discovery failed. This bubble's
+        // work is over — the main assist bubble below owns the spinner.
       } else if (exactMatch) {
         // ── Exact match auto-open ──────────────────────────────
         // The catalog has a process that does exactly what the user
@@ -14482,7 +14490,10 @@ promptflow whoami</code></pre>
               '</div>' +
             '</div>' +
           '</div>';
-        setStatus(thinkAssist, "First of its kind · designing original");
+        // Catalog search is DONE here — this bubble must not spin.
+        // The live work (the /plan design call) is represented by the
+        // main assist bubble below, which owns the only spinner.
+        setStatusStatic(thinkAssist, "First of its kind · designing original");
         // Fall through to /plan as foundational design.
       }
     }
@@ -15615,6 +15626,37 @@ promptflow whoami</code></pre>
       s.className = "status";
       s.innerHTML = `<div class="spinner"></div><span></span>`;
       assist.body.appendChild(s);
+    } else {
+      // A status row may already exist in static (spinner-less) form.
+      // Re-assert the live spinner if this call expects ongoing work.
+      const glyph = s.querySelector(".status-glyph");
+      if (glyph) {
+        const sp = document.createElement("div");
+        sp.className = "spinner";
+        glyph.replaceWith(sp);
+      }
+    }
+    s.querySelector("span").textContent = label;
+  }
+  // Spinner-less status — for a bubble whose work is DONE but that
+  // should still show a one-line result. Renders a static glyph
+  // instead of the animated .spinner so two bubbles aren't both
+  // spinning at once (only the bubble doing live work should spin).
+  function setStatusStatic(assist, label) {
+    let s = assist.body.querySelector(".status");
+    if (!s) {
+      s = document.createElement("div");
+      s.className = "status";
+      s.innerHTML = `<span class="status-glyph">→</span><span></span>`;
+      assist.body.appendChild(s);
+    } else {
+      const sp = s.querySelector(".spinner");
+      if (sp) {
+        const glyph = document.createElement("span");
+        glyph.className = "status-glyph";
+        glyph.textContent = "→";
+        sp.replaceWith(glyph);
+      }
     }
     s.querySelector("span").textContent = label;
   }
