@@ -3250,7 +3250,10 @@
   .status-glyph{
     display:inline-flex; align-items:center; justify-content:center;
     width:12px; height:12px; color:var(--gold); font-size:12px;
-    line-height:1;
+    line-height:1; flex:0 0 auto;
+  }
+  .status-text{
+    flex:1 1 auto; min-width:0; overflow-wrap:anywhere;
   }
   .err{ color:var(--red) }
 
@@ -5989,6 +5992,19 @@ body.d-desktop-mode .stream {
   border: 1px solid rgba(255,255,255,0.06);
   border-radius: 8px;
   padding: 12px 14px;
+  /* Contain long monospace strings so they wrap inside the bubble
+     instead of running off the right edge (FIRST IN THE CATALOG card
+     was overflowing). */
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.d-design-search * {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .d-design-search-phase {
   display: flex;
@@ -16852,7 +16868,7 @@ promptflow whoami</code></pre>
     if (!s) {
       s = document.createElement("div");
       s.className = "status";
-      s.innerHTML = `<span class="status-glyph">→</span><span></span>`;
+      s.innerHTML = `<span class="status-glyph">→</span><span class="status-text"></span>`;
       assist.body.appendChild(s);
     } else {
       const sp = s.querySelector(".spinner");
@@ -16863,7 +16879,18 @@ promptflow whoami</code></pre>
         sp.replaceWith(glyph);
       }
     }
-    s.querySelector("span").textContent = label;
+    // Write into the TEXT span, not the first span (which is the glyph).
+    // Previously this used querySelector("span") and clobbered the glyph
+    // with the full label, leaving the real text span empty — which made
+    // the label render in the wrong, narrow slot and bleed outside the
+    // card. Ensure a dedicated text span exists, then set it.
+    let txt = s.querySelector(".status-text");
+    if (!txt) {
+      txt = document.createElement("span");
+      txt.className = "status-text";
+      s.appendChild(txt);
+    }
+    txt.textContent = label;
   }
   function clearStatus(assist) {
     const s = assist.body.querySelector(".status"); if (s) s.remove();
@@ -25249,6 +25276,8 @@ function dDesktopInit(){
       el.scrollIntoView({ behavior: "auto", block: "start" });
     } catch { if (stream) stream.scrollTop = stream.scrollHeight; }
 
+    // ── Form markup ────────────────────────────────────────────────
+    body.innerHTML =
       '<div class="pfc-card">' +
         '<div class="pfc-head">' +
           '<div class="pfc-head-titles">' +
