@@ -10073,9 +10073,17 @@ body.d-desktop-mode .d-dock-runtime {
   right: 8px;
   opacity: 0;
   transition: opacity .12s ease;
+  display: flex;
+  gap: 4px;
 }
 .d-fv-item:hover .d-fv-item-actions { opacity: 1; }
-.d-fv-item-menu-btn {
+/* On touch devices there's no hover, so the inline download / menu
+   buttons would never appear. Reveal them by default there. */
+@media (hover: none) {
+  .d-fv-item-actions { opacity: 1; }
+}
+.d-fv-item-menu-btn,
+.d-fv-item-dl-btn {
   background: rgba(0,0,0,0.45);
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 6px;
@@ -10090,7 +10098,8 @@ body.d-desktop-mode .d-dock-runtime {
   font-size: 14px;
   line-height: 1;
 }
-.d-fv-item-menu-btn:hover {
+.d-fv-item-menu-btn:hover,
+.d-fv-item-dl-btn:hover {
   background: rgba(0,0,0,0.75);
   border-color: rgba(232,169,23,0.4);
   color: var(--d-gold);
@@ -27137,9 +27146,15 @@ function dDesktopInit(){
         : isFork
           ? '<div class="d-fv-item-badge d-fv-badge-fork">FORK</div>'
           : '';
+      const isDownloadable = (it.kind === "process" || it.kind === "system");
       card.innerHTML =
         badge +
         '<div class="d-fv-item-actions">' +
+          (isDownloadable
+            ? '<button class="d-fv-item-dl-btn" type="button" title="Download .promptflow" aria-label="Download .promptflow">' +
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 11l6 6 6-6M5 21h14"/></svg>' +
+              '</button>'
+            : '') +
           '<button class="d-fv-item-menu-btn" type="button" title="Actions" aria-label="Actions">⋯</button>' +
         '</div>' +
         '<div class="d-fv-item-icon">' + it.icon + '</div>' +
@@ -27174,6 +27189,15 @@ function dDesktopInit(){
         const r = menuBtn.getBoundingClientRect();
         dShowContextMenu(it, r.right, r.bottom);
       });
+      // Inline download button (processes only) — downloads the
+      // .promptflow bundle without opening the menu.
+      const dlBtn = card.querySelector(".d-fv-item-dl-btn");
+      if (dlBtn) {
+        dlBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          dFolderItemDownload(it);
+        });
+      }
       grid.appendChild(card);
     });
     body.innerHTML = "";
