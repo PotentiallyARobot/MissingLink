@@ -10786,17 +10786,28 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
   body.d-desktop-mode {
     --d-dock-clearance: calc(44px + 8px + 8px);   /* height + bottom inset + gap */
   }
+  /* Make the chat column fill the viewport height so the composer can
+     be pinned to the bottom instead of floating mid-page after a short
+     hero/landing block (reported: chat bar sitting high under "Find a
+     process"). The stream grows to absorb slack; the composer is pushed
+     down by margin-top:auto and then lifted clear of the dock. */
+  body.d-desktop-mode .chat-wrap {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    padding-bottom: calc(var(--d-dock-clearance) + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  body.d-desktop-mode .stream {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
   body.d-desktop-mode .input-shell {
     position: sticky;
     bottom: calc(var(--d-dock-clearance) + env(safe-area-inset-bottom, 0px));
+    margin-top: auto;          /* pin to bottom of the flex column */
     padding-bottom: 8px;
     /* Keep the composer above the dock's stacking context. */
     z-index: 31;
-  }
-  /* Give the scrollable message stream room so its final message
-     isn't hidden behind the lifted composer + dock. */
-  body.d-desktop-mode .chat-wrap {
-    padding-bottom: calc(var(--d-dock-clearance) + env(safe-area-inset-bottom, 0px)) !important;
   }
 
   /* ── Modals — full-screen on mobile ──────────────────────────
@@ -25138,8 +25149,16 @@ function dDesktopInit(){
     stream.appendChild(el);
     const body = el.querySelector(".body");
 
-    // ── Form markup ────────────────────────────────────────────────
-    body.innerHTML =
+    // On mobile the landing hero can leave the chat stream scrolled or
+    // visually behind the hero block, so a freshly-appended form bubble
+    // lands off-screen — making it look like nothing happened (or like
+    // only the file-picker box appears once found). Force the stream to
+    // be the active, scrolled-to view and bring the form into sight.
+    if (stream) stream.style.display = "";
+    try {
+      el.scrollIntoView({ behavior: "auto", block: "start" });
+    } catch { if (stream) stream.scrollTop = stream.scrollHeight; }
+
       '<div class="pfc-card">' +
         '<div class="pfc-head">' +
           '<div class="pfc-head-titles">' +
@@ -26586,7 +26605,15 @@ function dDesktopInit(){
     // prompt + a runnable .py/.promptflow file + secrets, resources,
     // requirements, and runtime details. (Previously this just opened
     // a raw file picker for a zip.)
-    if (typeof pfOpenContributeForm === "function") pfOpenContributeForm();
+    try {
+      if (typeof pfOpenContributeForm === "function") {
+        pfOpenContributeForm();
+      } else if (typeof window.pfOpenContributeForm === "function") {
+        window.pfOpenContributeForm();
+      }
+    } catch (e) {
+      console.error("[PromptFlow] Contribute form failed to open:", e);
+    }
   });
   if (D("dHeroGenerate")) D("dHeroGenerate").addEventListener("click", () => {
     // "Generate" opens the ideas page: novel, valuable processes
@@ -27139,6 +27166,18 @@ function dDesktopInit(){
     }
   }
 
+  function dFolderItemDownload(it) {
+    // Download the process as a runnable .promptflow bundle. The
+    // bundler builds from the step graph, so this works for any
+    // process regardless of whether inline python_text is stored.
+    if (it.kind !== "process" && it.kind !== "system") return;
+    if (typeof downloadProcessPython === "function") {
+      downloadProcessPython(it.id);
+    } else {
+      window.location.href = "/api/promptflow/process/bundle/" + encodeURIComponent(it.id) + ".promptflow";
+    }
+  }
+
   async function dFolderItemRemove(it) {
     if (!confirm('Remove "' + (it.name || "this item") + '"? This cannot be undone.')) return;
     if (it.kind === "process" || it.kind === "system") {
@@ -27171,6 +27210,9 @@ function dDesktopInit(){
       (isProcess ? '<button class="d-fv-ctx-item" data-action="edit">' +
         '<span class="d-fv-ctx-icon">✎</span><span>Edit</span>' +
       '</button>' : '') +
+      (isProcess ? '<button class="d-fv-ctx-item" data-action="download">' +
+        '<span class="d-fv-ctx-icon">⬇</span><span>Download .promptflow</span>' +
+      '</button>' : '') +
       '<div class="d-fv-ctx-divider"></div>' +
       '<button class="d-fv-ctx-item danger" data-action="remove">' +
         '<span class="d-fv-ctx-icon">✕</span><span>Remove</span>' +
@@ -27195,6 +27237,7 @@ function dDesktopInit(){
         dHideContextMenu();
         if (act === "open") dFolderItemOpen(it);
         else if (act === "edit") dFolderItemEdit(it);
+        else if (act === "download") dFolderItemDownload(it);
         else if (act === "remove") dFolderItemRemove(it);
       });
     });
