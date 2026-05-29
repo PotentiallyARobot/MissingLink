@@ -50,6 +50,80 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .token-badge{font-family:var(--font-mono);font-size:10px;padding:3px 9px;background:var(--gold-dim);border:1px solid var(--gold);color:var(--gold);border-radius:4px;display:flex;align-items:center;gap:4px;cursor:pointer;transition:all .15s}
 .token-badge:hover{background:var(--gold);color:var(--black)}
 .token-badge.low{border-color:var(--red);color:var(--red);background:rgba(239,68,68,.08);animation:pulse-low 2s infinite}
+
+/* ── Activity bell ───────────────────────────────────────────────── */
+.notif-bell{
+    position:relative;width:32px;height:30px;flex:0 0 auto;
+    display:inline-flex;align-items:center;justify-content:center;
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:6px;cursor:pointer;transition:all .15s;font-size:14px;padding:0;
+}
+.notif-bell:hover{border-color:var(--gold);background:var(--surface-3)}
+.notif-bell[aria-expanded="true"]{border-color:var(--gold);background:var(--surface-3)}
+.notif-bell.has-unread .notif-bell-icon{animation:bell-wiggle 1.4s ease-in-out 1}
+@keyframes bell-wiggle{0%,100%{transform:rotate(0)}15%{transform:rotate(14deg)}30%{transform:rotate(-12deg)}45%{transform:rotate(8deg)}60%{transform:rotate(-5deg)}}
+.notif-bell-badge{
+    position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;
+    padding:0 4px;border-radius:8px;background:var(--red);color:#fff;
+    font-family:var(--font-mono);font-size:9px;font-weight:700;
+    line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--surface);
+}
+/* Dropdown panel — fixed, anchored under the bell by JS. */
+.notif-panel{
+    position:fixed;z-index:10040;width:min(360px,calc(100vw - 20px));
+    max-height:min(460px,calc(100vh - 80px));
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 16px 40px rgba(0,0,0,.6);overflow:hidden;
+    display:flex;flex-direction:column;animation:notif-in .14s ease-out;
+}
+@keyframes notif-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.notif-panel-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:13px 15px;border-bottom:1px solid var(--border);
+    background:linear-gradient(to bottom,var(--surface-2),var(--surface));
+}
+.notif-panel-title{font-family:var(--font-mono);font-size:12px;font-weight:700;letter-spacing:1px;color:var(--text)}
+.notif-panel-allbtn{
+    background:none;border:none;color:var(--gold);cursor:pointer;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;
+    padding:0;text-decoration:underline;text-underline-offset:2px;
+}
+.notif-panel-allbtn:hover{color:var(--gold-light)}
+.notif-panel-body{
+    flex:1 1 auto;overflow-y:auto;
+    scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent;
+}
+.notif-panel-body::-webkit-scrollbar{width:6px}
+.notif-panel-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px}
+.notif-empty,.notif-loading{
+    color:var(--text-muted);font-family:var(--font-mono);font-size:11px;
+    text-align:center;padding:34px 16px;line-height:1.6;
+}
+.notif-item{
+    display:flex;align-items:center;gap:11px;padding:11px 14px;
+    border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;
+    position:relative;
+}
+.notif-item:last-child{border-bottom:none}
+.notif-item:hover{background:var(--surface-2)}
+.notif-item.unread{background:rgba(232,169,23,.05)}
+.notif-item.unread::before{
+    content:"";position:absolute;left:5px;top:50%;transform:translateY(-50%);
+    width:5px;height:5px;border-radius:50%;background:var(--gold);
+}
+.notif-item-thumb{
+    width:42px;height:42px;border-radius:6px;flex:0 0 auto;object-fit:cover;
+    background:var(--surface-3);border:1px solid var(--border);
+}
+.notif-item-body{flex:1 1 auto;min-width:0}
+.notif-item-text{font-size:12.5px;color:var(--text);line-height:1.4}
+.notif-item-text b{color:var(--text);font-weight:700}
+.notif-item-kind{color:var(--gold);font-weight:700}
+.notif-item-time{font-family:var(--font-mono);font-size:9px;color:var(--text-muted);letter-spacing:.4px;margin-top:2px}
+.notif-item-amt{
+    flex:0 0 auto;font-family:var(--font-mono);font-size:12px;font-weight:700;
+    color:var(--gold);display:inline-flex;align-items:center;gap:3px;
+}
 @keyframes pulse-low{0%,100%{opacity:1}50%{opacity:.6}}
 
 /* User menu trigger — pill-shaped button containing the avatar (or
@@ -1061,7 +1135,17 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 
 .img-modal{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;cursor:zoom-out}
 .img-modal.open{display:flex}
-.img-modal img{max-width:92vw;max-height:92vh;object-fit:contain;border-radius:4px;box-shadow:0 0 60px rgba(0,0,0,.5)}
+/* Stage = image + action bar stacked vertically and centered as one
+   unit. This is the key fix: the action bar is now IN FLOW beneath the
+   image instead of floating absolutely over it, so the two never
+   overlap regardless of image size. */
+.modal-stage{
+    display:flex;flex-direction:column;align-items:center;
+    gap:14px;cursor:default;
+    max-width:92vw;max-height:94vh;
+    transition:max-width .2s ease;
+}
+.img-modal img{max-width:100%;max-height:84vh;min-height:0;object-fit:contain;border-radius:6px;box-shadow:0 0 60px rgba(0,0,0,.5);cursor:zoom-out}
 .modal-close{position:absolute;top:16px;right:20px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:18px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10}
 .modal-close:hover{background:rgba(255,255,255,.2)}
 /* Download button in the image modal — sits to the LEFT of the close
@@ -1077,12 +1161,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    the top-right. Slightly larger touch targets than the per-tile
    versions since there's room here. */
 .modal-actions{
-    position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
-    z-index:11;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;
-    max-width:calc(100vw - 48px);
-    background:rgba(17,17,20,.92);backdrop-filter:blur(8px);
-    border:1px solid var(--border);border-radius:10px;
-    padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);
+    position:relative;z-index:11;
+    display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;
+    max-width:min(720px,92vw);
+    background:rgba(17,17,20,.96);backdrop-filter:blur(8px);
+    border:1px solid var(--border);border-radius:12px;
+    padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.5);
 }
 .modal-action-btn{
     background:transparent;color:var(--text);
@@ -1094,6 +1178,16 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .modal-action-btn span{display:inline-block}
 .modal-action-btn:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+/* Thin vertical separator before a button — used to visually group the
+   action bar into react / use-in-mode / social clusters so the long
+   row reads as three intentional groups rather than one jumble. */
+.modal-action-btn.group-start{
+    margin-left:6px;padding-left:14px;position:relative;
+}
+.modal-action-btn.group-start::before{
+    content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
+    width:1px;height:18px;background:var(--border-light);
+}
 .modal-action-btn.busy{
     opacity:.7;cursor:wait;animation:pulse 1s infinite;pointer-events:none;
 }
@@ -1106,6 +1200,25 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .modal-action-btn.modal-act-mode:hover{
     background:var(--gold-dim);color:var(--gold);border-color:var(--gold);
 }
+/* More-overflow trigger + popover. The popover floats above the bar and
+   holds the relocated "use this image" actions as a vertical list. */
+.modal-action-btn.modal-act-more{border-color:var(--border)}
+.modal-action-btn.modal-act-more.active{background:var(--surface-3);border-color:var(--gold);color:var(--gold)}
+.modal-overflow-pop{
+    position:fixed;z-index:10045;display:none;flex-direction:column;gap:4px;
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    padding:6px;box-shadow:0 14px 36px rgba(0,0,0,.6);
+    min-width:170px;animation:notif-in .12s ease-out;
+}
+.modal-overflow-pop .modal-action-btn{
+    width:100%;justify-content:flex-start;border-radius:7px;
+    border:1px solid transparent;background:transparent;
+}
+.modal-overflow-pop .modal-action-btn:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.modal-overflow-pop .modal-action-btn span{display:inline-block!important}
+/* In-overflow buttons drop the group-divider they may have carried. */
+.modal-action-btn.in-overflow.group-start{margin-left:0;padding-left:12px}
+.modal-action-btn.in-overflow.group-start::before{display:none}
 
 /* Inline reactions strip on the lightbox action bar. Compact chip row
    that lives between the share button and the mode buttons. Each chip
@@ -1133,12 +1246,14 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .modal-reaction-emoji{font-size:14px;line-height:1}
 .modal-reaction-count{font-weight:700;min-width:8px;text-align:left}
 .modal-reaction-add{
-    width:24px;height:24px;display:flex;align-items:center;justify-content:center;
-    border-radius:50%;background:var(--surface-3);border:1px solid var(--border);
-    color:var(--text-muted);cursor:pointer;transition:all .12s;
-    font-size:12px;line-height:1;flex-shrink:0;padding:0;
+    height:24px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+    padding:0 9px;border-radius:12px;
+    background:var(--gold-dim);border:1px solid var(--gold);
+    color:var(--gold);cursor:pointer;transition:all .12s;
+    font-family:var(--font-mono);font-size:11px;font-weight:700;line-height:1;flex-shrink:0;
 }
-.modal-reaction-add:hover{border-color:var(--gold);color:var(--gold)}
+.modal-reaction-add .mra-label{font-size:9px;letter-spacing:.5px;text-transform:uppercase}
+.modal-reaction-add:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
 
 /* On narrow screens the labels disappear to keep all buttons in view. */
 @media (max-width: 640px) {
@@ -1766,6 +1881,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 #profileDialogName:focus{border-color:var(--gold)}
 .profile-dialog-field-hint{
     font-size:10px;color:var(--text-muted);line-height:1.4;
+}
+.profile-dialog-publish-hint{
+    font-size:12px;color:var(--text);line-height:1.5;
+    background:linear-gradient(135deg,rgba(232,169,23,.07),var(--surface-2));
+    border:1px solid var(--gold);border-radius:8px;
+    padding:11px 13px;margin-bottom:4px;
 }
 .profile-dialog-handle-row{
     display:flex;align-items:center;gap:8px;
@@ -2401,28 +2522,27 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     }
 }
 
-/* When the comments panel is open by default (gallery items), tell
-   the lightbox image to leave room for it instead of getting cropped
-   behind. Limits max-width so the image is fully visible in the
-   leftover left space. Falls back to the normal centered layout on
-   mobile (where comments collapse to a bottom sheet). */
-.img-modal.with-comments #modalImg{
-    max-width:min(90vw - 380px, calc(100vw - 400px));
-    max-height:88vh;
-    margin-right:380px;
+/* When the comments panel is open (gallery items), constrain the stage
+   so the image+actions unit fits in the space left of the 380px rail
+   instead of being shoved or cropped behind it. Falls back to a
+   bottom-sheet layout on mobile. */
+.img-modal.with-comments{justify-content:flex-start}
+.img-modal.with-comments .modal-stage{
+    max-width:calc(100vw - 380px - 48px);
+    margin-left:24px;
 }
-.img-modal.with-comments .modal-actions{
-    margin-right:380px;
+.img-modal.with-comments #modalImg{
+    max-height:82vh;
 }
 .img-modal.with-comments .modal-download{right:calc(20px + 380px)}
 @media (max-width: 700px){
-    /* Mobile: comments panel is a bottom sheet, so the image needs
-       vertical room above it. with-comments class on mobile shrinks
-       the height instead of shifting horizontally. */
-    .img-modal.with-comments #modalImg{
-        max-width:96vw;max-height:36vh;margin-right:0;
+    /* Mobile: comments panel is a bottom sheet, so the stage needs
+       vertical room above it. Shrink height instead of shifting. */
+    .img-modal.with-comments{justify-content:center;align-items:flex-start}
+    .img-modal.with-comments .modal-stage{
+        max-width:96vw;margin-left:0;margin-top:12px;max-height:38vh;
     }
-    .img-modal.with-comments .modal-actions{margin-right:0}
+    .img-modal.with-comments #modalImg{max-height:28vh}
     .img-modal.with-comments .modal-download{right:20px}
 }
 
@@ -4065,6 +4185,13 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="token-badge" id="tokenBadge" onclick="showBuyModal()" title="Click to buy more tokens">
                 <span>🪙</span><span id="tokenCount">0</span>
             </div>
+            <!-- Activity bell — shows incoming tips/remixes. The badge
+                 count comes from /api/studio/notifications (polled). The
+                 dropdown is built lazily into #notifDropdown by JS. -->
+            <button class="notif-bell" id="notifBell" onclick="toggleNotifPanel(event)" title="Activity" aria-haspopup="true" aria-expanded="false">
+                <span class="notif-bell-icon" aria-hidden="true">🔔</span>
+                <span class="notif-bell-badge" id="notifBellBadge" style="display:none">0</span>
+            </button>
         </div>
         <!-- Community Gallery button — opens the public gallery modal where
              anyone (logged in or not) can browse images other users have
@@ -5081,10 +5208,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <div id="profileDialog" class="modal" style="display:none" onclick="if(event.target===this) closeProfileDialog()">
     <div class="profile-dialog-panel" onclick="event.stopPropagation()">
         <div class="profile-dialog-head">
-            <div class="profile-dialog-title">👤 Profile</div>
+            <div class="profile-dialog-title" id="profileDialogTitle">👤 Profile</div>
             <button class="modal-close" onclick="closeProfileDialog()">×</button>
         </div>
         <div class="profile-dialog-body">
+            <!-- Shown only when the dialog is opened as the first-publish
+                 username prompt. Explains why we're asking right now. -->
+            <div class="profile-dialog-publish-hint" id="profileDialogPublishHint" style="display:none">
+                You're about to publish to the community gallery. Pick a username so
+                people can credit your work — or post anonymously under your @handle.
+            </div>
             <!-- Live preview of what the user's author label will look
                  like on cards. Updates as they type so they see the
                  effect before saving. The fallback shows the @hex
@@ -5114,7 +5247,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             </div>
         </div>
         <div class="profile-dialog-actions">
-            <button class="profile-dialog-btn" onclick="closeProfileDialog()">Cancel</button>
+            <button class="profile-dialog-btn" id="profileDialogCancel" onclick="closeProfileDialog()">Cancel</button>
             <button class="profile-dialog-btn primary" id="profileDialogSave" onclick="saveProfileDialog()">Save</button>
         </div>
     </div>
@@ -5209,7 +5342,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <div class="img-modal" id="imgModal" onclick="closeModal()">
     <a id="modalDownload" class="modal-download" download title="Download image" onclick="event.stopPropagation()" href="#">⬇</a>
     <button class="modal-close" onclick="closeModal()">×</button>
-    <img id="modalImg">
+    <div class="modal-stage" id="modalStage" onclick="event.stopPropagation()">
+    <img id="modalImg" onclick="closeModal()">
     <!-- Action toolbar — shown when the modal was opened with a context
          object: 'batchShot' for batch grid cells, 'historyItem' for items
          restored from history. The Share button is rendered for any
@@ -5234,13 +5368,18 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              discussion. Visibility is wired by openModal based on
              ctx.mine and login state. -->
         <span class="modal-act-reactions" id="modalActReactions" style="display:none"></span>
-        <button class="modal-action-btn modal-act-mode" id="modalActRemixCamera" title="Pose this image in Camera mode" style="display:none">🎥<span>Camera</span></button>
+        <button class="modal-action-btn modal-act-mode group-start" id="modalActRemixCamera" title="Pose this image in Camera mode" style="display:none">🎥<span>Camera</span></button>
         <button class="modal-action-btn modal-act-mode" id="modalActRemixEdit" title="Open this image in Edit mode" style="display:none">✏️<span>Edit</span></button>
         <button class="modal-action-btn modal-act-mode" id="modalActRemixCreate" title="Use as reference in Create mode" style="display:none">✨<span>Create</span></button>
         <button class="modal-action-btn modal-act-remix" id="modalActRemix" title="Remix this image (5 tokens to author)" style="display:none">🎨<span>Remix · 5</span></button>
-        <button class="modal-action-btn modal-act-like" id="modalActLike" title="Thumbs up" style="display:none">🤍<span id="modalActLikeCount">0</span></button>
+        <button class="modal-action-btn modal-act-like group-start" id="modalActLike" title="Thumbs up" style="display:none">🤍<span id="modalActLikeCount">0</span></button>
         <button class="modal-action-btn modal-act-tip" id="modalActTip" title="Tip the author 10 tokens" style="display:none">💰<span>Tip · 10</span></button>
         <button class="modal-action-btn modal-act-comments" id="modalActComments" title="Comments" style="display:none">💬<span id="modalActCommentsCount">0</span></button>
+        <!-- Overflow — secondary actions (Camera/Edit/Create routing,
+             Share) get physically moved into this popover at open time
+             so the bar stays a slim primary row. Built/managed by JS. -->
+        <button class="modal-action-btn modal-act-more group-start" id="modalActMore" title="More actions" style="display:none">⋯<span>Use</span></button>
+    </div>
     </div>
     <!-- Comments side-panel — slides in from the right when the viewer
          clicks the 💬 button on a gallery item. Lives inside the
@@ -5897,6 +6036,9 @@ async function checkAuth(){
                 // depends on _user; refresh it now so the user sees the
                 // affordance without re-rendering anything else.
                 if (typeof updateShareResultButton === 'function') updateShareResultButton();
+                // Newly-logged-in: kick off the activity-bell poll so
+                // tips/remixes surface without a manual earnings check.
+                if (typeof startNotifPolling === 'function') startNotifPolling();
                 // Note: workflow primer modal is now fired once at
                 // page load (browser-wide, see DOMContentLoaded
                 // handler) — it shows for anonymous and signed-in
@@ -5908,6 +6050,11 @@ async function checkAuth(){
             $('authOut').style.display='block';
             $('userMenuTrigger').style.display='none';
             closeUserMenu();
+            // Clear any activity-bell state on logout so a different
+            // account doesn't inherit the previous user's badge.
+            if (typeof closeNotifPanel === 'function') closeNotifPanel();
+            _notifItems = []; _notifUnread = 0;
+            if (typeof _paintNotifBadge === 'function') _paintNotifBadge();
             // Hide the share affordance — anonymous viewers can browse
             // the gallery but can't publish.
             if (typeof updateShareResultButton === 'function') updateShareResultButton();
@@ -6435,7 +6582,7 @@ async function acknowledgeAgeGate(){
 // blank input clears the name and reverts to the handle. The hash
 // handle never changes — it's the deterministic author-filter key,
 // stable across name edits.
-function openProfileDialog(){
+function openProfileDialog(profileOpts){
     if (!_user) {
         showNotif('Sign in to set a display name.', 'info');
         return;
@@ -6444,6 +6591,23 @@ function openProfileDialog(){
     if (!dlg) return;
     const input = $('profileDialogName');
     const handleEl = $('profileDialogHandle');
+
+    // Publish-context mode — when the dialog is opened as the
+    // first-publish username prompt (vs. opened directly from the user
+    // menu), we re-skin a few bits of copy/buttons so it reads as
+    // "name yourself before you post" rather than generic settings.
+    // The actual save logic is identical; only the framing changes,
+    // plus the action buttons resume the parked publish on close.
+    const isPublishCtx = !!(profileOpts && profileOpts.context === 'publish');
+    _profileDialogContext = isPublishCtx ? 'publish' : 'settings';
+    const titleEl = $('profileDialogTitle');
+    const hintEl = $('profileDialogPublishHint');
+    const cancelBtn = $('profileDialogCancel');
+    const saveBtn = $('profileDialogSave');
+    if (titleEl) titleEl.textContent = isPublishCtx ? '👤 Choose a username' : '👤 Profile';
+    if (hintEl) hintEl.style.display = isPublishCtx ? '' : 'none';
+    if (cancelBtn) cancelBtn.textContent = isPublishCtx ? 'Post anonymously' : 'Cancel';
+    if (saveBtn) saveBtn.textContent = isPublishCtx ? 'Save & continue' : 'Save';
 
     // The viewer's own @hex handle isn't in the auth payload, so
     // derive it locally the same way the server does for consistency.
@@ -6545,7 +6709,12 @@ async function saveProfileDialog(){
         if (typeof renderGallery === 'function') renderGallery();
         if (typeof renderStageGallery === 'function') renderStageGallery();
         showNotif(d.display_name ? `Display name set to "${d.display_name}"` : 'Display name cleared — back to anonymous handle.', 'success');
-        closeProfileDialog();
+        // Resume a parked publish if this dialog was opened as the
+        // first-publish username prompt. closeProfileDialog() clears
+        // the context but we capture it first.
+        const resume = _profileDialogContext === 'publish';
+        closeProfileDialog({ keepPending: true });
+        if (resume) _resumePendingPublish();
     } catch (e) {
         showNotif(`Network error: ${e.message}`, 'error');
     } finally {
@@ -6553,11 +6722,34 @@ async function saveProfileDialog(){
     }
 }
 
-function closeProfileDialog(){
+function closeProfileDialog(closeOpts){
     const dlg = $('profileDialog');
     if (!dlg) return;
     dlg.classList.remove('open');
     dlg.style.display = 'none';
+
+    // If the dialog was the first-publish username prompt and the user
+    // dismissed it WITHOUT saving (Cancel / "Post anonymously" / click
+    // outside / ×), honour their choice and continue publishing under
+    // the anonymous handle. The keepPending flag is set by the save
+    // path, which resumes the publish itself after persisting the name.
+    const wasPublish = _profileDialogContext === 'publish';
+    _profileDialogContext = 'settings';
+    if (wasPublish && !(closeOpts && closeOpts.keepPending)) {
+        _resumePendingPublish();
+    }
+}
+
+// Replays the parked openShareDialog call after the username prompt
+// resolves. The _skipNamePrompt flag short-circuits the prompt guard
+// so we don't bounce back into the profile dialog. Clears the parked
+// args first so a failure can't double-fire.
+function _resumePendingPublish(){
+    const pending = _pendingPublish;
+    _pendingPublish = null;
+    if (!pending || !pending.jobId) return;
+    const opts = Object.assign({}, pending.opts || {}, { _skipNamePrompt: true });
+    openShareDialog(pending.jobId, opts);
 }
 
 // Updates the "Anonymous — using your @hex handle" subtitle under
@@ -9658,6 +9850,11 @@ function openModal(src, filename, ctx){
         return fresh;
     };
     const actionBar = $('modalActions');
+    // Before re-using the bar, return any buttons we previously moved
+    // into the "More" overflow popover back to their home in the bar,
+    // and tear the popover down. Keeps each open starting from a clean,
+    // fully-populated bar regardless of the previous context.
+    _restoreModalOverflow();
     // Defaults: hide everything, then selectively unhide based on context.
     if (actionBar) {
         actionBar.style.display = 'none';
@@ -9668,7 +9865,7 @@ function openModal(src, filename, ctx){
         // it supports. Avoids stale visibility from the previous open.
         ['modalActCritique','modalActEdit','modalActToCamera','modalActToEdit','modalActToCreate','modalActShare',
          'modalActRemix','modalActRemixCamera','modalActRemixEdit','modalActRemixCreate',
-         'modalActLike','modalActTip','modalActComments','modalActReactions']
+         'modalActLike','modalActTip','modalActComments','modalActReactions','modalActMore']
             .forEach(id => { const b = $(id); if (b) b.style.display = 'none'; });
     }
     // Always close any open comments panel on a new modal open so it
@@ -9806,6 +10003,12 @@ function openModal(src, filename, ctx){
         // image leftward so it doesn't get cropped under the panel.
         $('imgModal').classList.add('with-comments');
         openLightboxComments(ctx.jobId, ctx);
+        // Image-first toolbar: keep the bar to the primary social row
+        // (react · 👍 · 💬 · tip) and tuck the secondary "use this
+        // image" actions (Camera/Edit/Create routing + Share) into a
+        // "⋯ Use" overflow popover. Runs AFTER the renderers above so
+        // the buttons it relocates already carry their fresh handlers.
+        if (_user) _setupModalOverflow();
     } else if (actionBar && ctx && ctx.jobId && _user) {
         // Lightweight context — used by the history modal and the main
         // output area. Only the Share button is meaningful (the other
@@ -9815,6 +10018,102 @@ function openModal(src, filename, ctx){
         renderModalShareButton(ctx.jobId, !!ctx.is_public, wireBtn);
     }
     $('imgModal').classList.add('open');
+}
+
+// ── Lightbox "More" overflow ────────────────────────────────────────
+//
+// Keeps the lightbox toolbar image-first: only the primary social
+// actions stay in the bar; the secondary "use this image" actions get
+// physically relocated into a popover so the bar never wraps over the
+// image. We move the actual button nodes (not clones) so their wired
+// click handlers come along untouched. _restoreModalOverflow puts them
+// back before each modal re-open.
+const MODAL_OVERFLOW_IDS = ['modalActRemixCamera','modalActRemixEdit','modalActRemixCreate','modalActShare'];
+
+function _setupModalOverflow(){
+    const bar = $('modalActions');
+    const moreBtn = $('modalActMore');
+    if (!bar || !moreBtn) return;
+    // Collect the secondary buttons that are actually visible in this
+    // context. If none are, leave the More button hidden.
+    const movable = MODAL_OVERFLOW_IDS
+        .map(id => $(id))
+        .filter(b => b && b.style.display !== 'none');
+    if (!movable.length) { moreBtn.style.display = 'none'; return; }
+
+    let pop = $('modalOverflowPop');
+    if (!pop) {
+        pop = document.createElement('div');
+        pop.className = 'modal-overflow-pop';
+        pop.id = 'modalOverflowPop';
+        pop.style.display = 'none';
+        pop.onclick = (e) => e.stopPropagation();
+        document.body.appendChild(pop);
+    }
+    pop.innerHTML = '';
+    movable.forEach(b => {
+        // Remember where it came from so restore can re-home it.
+        b.dataset.overflowHome = '1';
+        b.classList.add('in-overflow');
+        // Clicking an item should also close the popover.
+        b.addEventListener('click', _closeModalOverflowOnce, { once: false });
+        pop.appendChild(b);
+    });
+    moreBtn.style.display = '';
+    moreBtn.onclick = (e) => { e.stopPropagation(); _toggleModalOverflow(); };
+}
+
+function _closeModalOverflowOnce(){ closeModalOverflow(); }
+
+function _restoreModalOverflow(){
+    const bar = $('modalActions');
+    const moreBtn = $('modalActMore');
+    const pop = $('modalOverflowPop');
+    closeModalOverflow();
+    if (pop && bar && moreBtn) {
+        // Re-insert moved buttons just before the More button, in order.
+        Array.from(pop.children).forEach(b => {
+            b.classList.remove('in-overflow');
+            delete b.dataset.overflowHome;
+            bar.insertBefore(b, moreBtn);
+        });
+        pop.remove();
+    }
+    if (moreBtn) moreBtn.style.display = 'none';
+}
+
+function _toggleModalOverflow(){
+    const pop = $('modalOverflowPop');
+    if (!pop) return;
+    if (pop.style.display === 'none') openModalOverflow();
+    else closeModalOverflow();
+}
+
+function openModalOverflow(){
+    const pop = $('modalOverflowPop');
+    const moreBtn = $('modalActMore');
+    if (!pop || !moreBtn) return;
+    pop.style.display = 'flex';
+    const r = moreBtn.getBoundingClientRect();
+    const w = pop.offsetWidth || 200;
+    let left = Math.min(r.left, window.innerWidth - w - 10);
+    left = Math.max(10, left);
+    pop.style.left = `${left}px`;
+    // Sits ABOVE the button (the bar is at the bottom of the stage).
+    pop.style.top = `${Math.max(10, r.top - pop.offsetHeight - 8)}px`;
+    moreBtn.classList.add('active');
+    setTimeout(() => document.addEventListener('click', _overflowOutside), 0);
+}
+function closeModalOverflow(){
+    const pop = $('modalOverflowPop');
+    const moreBtn = $('modalActMore');
+    if (pop) pop.style.display = 'none';
+    if (moreBtn) moreBtn.classList.remove('active');
+    document.removeEventListener('click', _overflowOutside);
+}
+function _overflowOutside(e){
+    if (e.target.closest('#modalOverflowPop') || e.target.closest('#modalActMore')) return;
+    closeModalOverflow();
 }
 
 // ── Gallery-item lightbox button renderers ────────────────────────
@@ -9993,7 +10292,7 @@ function renderLightboxReactions(ctx, wireBtn){
         }).join('');
     wrap.innerHTML = primaryHtml + extraHtml + `
         <button class="modal-reaction-add" id="modalReactionAdd"
-                title="Add a different emoji reaction">+</button>
+                title="Choose from all emoji reactions">+<span class="mra-label">More</span></button>
     `;
     // Wire each chip via fresh click handlers (no clone trick needed —
     // we just emitted the HTML so there are no stale listeners).
@@ -10219,6 +10518,13 @@ function showGalleryPendingToast(){
 
 let _shareDialogJobId = null;
 let _shareDialogTags = [];
+// When the publish flow is paused to prompt for a username, the
+// original openShareDialog({jobId, opts}) args are parked here and
+// replayed once the profile dialog resolves (save or skip).
+let _pendingPublish = null;
+// Tracks why the profile dialog is open ('settings' | 'publish') so
+// Save / Cancel know whether to resume a parked publish afterward.
+let _profileDialogContext = 'settings';
 let _shareDialogPrompt = '';
 let _shareDialogImageUrl = '';
 // Working set of links for the dialog. Each entry is { label, url }
@@ -10238,6 +10544,22 @@ async function openShareDialog(jobId, opts){
     }
     if (!jobId) return;
     opts = opts || {};
+
+    // First-publish username prompt — if the user hasn't set a display
+    // name yet, we intercept here and ask them to choose one (or
+    // explicitly continue anonymously) BEFORE the share dialog opens.
+    // Their work is about to go public under an author label, so this
+    // is the natural moment to offer a real name instead of the
+    // default @hex handle. We stash the publish args and resume them
+    // from the profile dialog once the user saves or skips. The guard
+    // flag prevents a loop when openShareDialog is re-invoked by the
+    // resume path. Empty string and null both count as "unset".
+    const hasDisplayName = !!(_user.display_name && String(_user.display_name).trim().length > 0);
+    if (!hasDisplayName && !opts._skipNamePrompt) {
+        _pendingPublish = { jobId, opts };
+        openProfileDialog({ context: 'publish' });
+        return;
+    }
     _shareDialogJobId = jobId;
     _shareDialogTags = [];
     _shareDialogLinks = [];
@@ -10632,6 +10954,9 @@ function closeModal(){
     // Also collapse the discussion panel so it doesn't peek out next
     // open. closeLightboxComments handles state cleanup.
     closeLightboxComments();
+    // Re-home any buttons parked in the "More" overflow and tear the
+    // popover down so it can't linger after the modal is gone.
+    _restoreModalOverflow();
 }
 document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){
@@ -19045,6 +19370,194 @@ function timeAgo(tsMs){
     return `${d}d ago`;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// ── ACTIVITY NOTIFICATIONS (tips / remixes) ─────────────────────────
+//
+// The header bell surfaces incoming tips + remixes so creators learn
+// they earned something without manually checking Earnings. Data comes
+// from /api/studio/notifications, which reads the existing tip ledger —
+// a "notification" is just an incoming transfer newer than the user's
+// notifs_seen_at marker. We poll on a slow interval and after the user
+// themselves takes an action that could mint one server-side.
+// ════════════════════════════════════════════════════════════════════
+
+let _notifItems = [];
+let _notifUnread = 0;
+let _notifPanelOpen = false;
+let _notifPollHandle = null;
+
+// Pull the latest feed + unread count and repaint the badge. Silent on
+// failure — the bell just keeps its last state rather than flashing an
+// error for a background poll.
+async function refreshNotifications(){
+    if (!_user) return;
+    try {
+        const r = await fetchT(`${API}/api/studio/notifications`, null, 6000);
+        const d = await r.json();
+        if (!d || !d.ok) return;
+        _notifItems = Array.isArray(d.items) ? d.items : [];
+        _notifUnread = d.unread || 0;
+        _paintNotifBadge();
+        if (_notifPanelOpen) _renderNotifPanel();
+    } catch { /* keep prior state */ }
+}
+
+function _paintNotifBadge(){
+    const bell = $('notifBell');
+    const badge = $('notifBellBadge');
+    if (!bell || !badge) return;
+    if (_notifUnread > 0) {
+        badge.textContent = _notifUnread > 99 ? '99+' : String(_notifUnread);
+        badge.style.display = '';
+        bell.classList.add('has-unread');
+    } else {
+        badge.style.display = 'none';
+        bell.classList.remove('has-unread');
+    }
+}
+
+// Begin/refresh the slow background poll. Called once the user is known
+// to be logged in (from checkAuth). 60s is plenty for a tip feed and
+// keeps load trivial.
+function startNotifPolling(){
+    if (!_user) return;
+    refreshNotifications();
+    if (_notifPollHandle) return;
+    _notifPollHandle = setInterval(() => {
+        if (_user) refreshNotifications();
+    }, 60000);
+}
+
+function toggleNotifPanel(ev){
+    if (ev) ev.stopPropagation();
+    if (_notifPanelOpen) { closeNotifPanel(); return; }
+    openNotifPanel();
+}
+
+function openNotifPanel(){
+    if (!_user) { showNotif('Sign in to see your activity.', 'info'); return; }
+    closeNotifPanel(); // clear any stale node
+    const bell = $('notifBell');
+    const panel = document.createElement('div');
+    panel.className = 'notif-panel';
+    panel.id = 'notifPanel';
+    panel.onclick = (e) => e.stopPropagation();
+    document.body.appendChild(panel);
+    _notifPanelOpen = true;
+    if (bell) bell.setAttribute('aria-expanded', 'true');
+    _renderNotifPanel();
+    _positionNotifPanel();
+
+    // Mark everything currently shown as seen — clears the badge both
+    // locally and server-side. We optimistically zero the count now;
+    // the server stamp persists it across reloads.
+    if (_notifUnread > 0) {
+        _notifUnread = 0;
+        _paintNotifBadge();
+        fetchT(`${API}/api/studio/notifications/seen`, { method: 'POST' }, 6000).catch(() => {});
+    }
+
+    // Dismiss on outside-click / Escape. Registered next tick so the
+    // opening click doesn't immediately close it.
+    setTimeout(() => {
+        document.addEventListener('click', _notifOutsideClick);
+        document.addEventListener('keydown', _notifEscClose);
+    }, 0);
+}
+
+function closeNotifPanel(){
+    const panel = $('notifPanel');
+    if (panel) panel.remove();
+    _notifPanelOpen = false;
+    const bell = $('notifBell');
+    if (bell) bell.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', _notifOutsideClick);
+    document.removeEventListener('keydown', _notifEscClose);
+}
+function _notifOutsideClick(e){
+    if (e.target.closest('#notifPanel') || e.target.closest('#notifBell')) return;
+    closeNotifPanel();
+}
+function _notifEscClose(e){ if (e.key === 'Escape') closeNotifPanel(); }
+
+function _positionNotifPanel(){
+    const panel = $('notifPanel');
+    const bell = $('notifBell');
+    if (!panel || !bell) return;
+    const r = bell.getBoundingClientRect();
+    const w = panel.offsetWidth || 360;
+    // Right-align the panel to the bell, clamped to the viewport.
+    let left = Math.min(r.right - w, window.innerWidth - w - 10);
+    left = Math.max(10, left);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${r.bottom + 8}px`;
+}
+
+function _renderNotifPanel(){
+    const panel = $('notifPanel');
+    if (!panel) return;
+    const head = `
+        <div class="notif-panel-head">
+            <span class="notif-panel-title">🔔 Activity</span>
+            <button class="notif-panel-allbtn" onclick="closeNotifPanel(); openEarningsModal()">View earnings</button>
+        </div>`;
+    let bodyInner;
+    if (!_notifItems.length) {
+        bodyInner = `<div class="notif-empty">No activity yet.<br>When someone tips or remixes your work, it'll show up here.</div>`;
+    } else {
+        bodyInner = _notifItems.map((n) => {
+            const who = n.from_name
+                ? escapeHtml(n.from_name)
+                : escapeHtml(n.from_handle || '@someone');
+            const verb = n.kind === 'remix' ? 'remixed' : 'tipped';
+            const thumb = n.thumb
+                ? `<img class="notif-item-thumb" src="${escapeHtml(n.thumb)}" alt="" loading="lazy">`
+                : `<div class="notif-item-thumb"></div>`;
+            const amtIcon = n.kind === 'remix' ? '🎨' : '⚡';
+            return `
+                <div class="notif-item ${n.unread ? 'unread' : ''}"
+                     onclick="openNotifTarget(${JSON.stringify(n.job_id)}, ${JSON.stringify(n.thumb || '')})">
+                    ${thumb}
+                    <div class="notif-item-body">
+                        <div class="notif-item-text"><b>${who}</b> <span class="notif-item-kind">${verb}</span> your image</div>
+                        <div class="notif-item-time">${escapeHtml(timeAgo((n.created_at || 0) * 1000))}</div>
+                    </div>
+                    <span class="notif-item-amt">${amtIcon} +${n.amount || 0}</span>
+                </div>`;
+        }).join('');
+    }
+    panel.innerHTML = head + `<div class="notif-panel-body">${bodyInner}</div>`;
+}
+
+// Deep-link from a notification → open the image in the lightbox. We
+// already have the thumb URL + jobId on the notification, so we can open
+// directly with a galleryItem context; the lightbox then hydrates full
+// social state (likes/comments/tips) via its own background refresh.
+function openNotifTarget(jobId, url){
+    closeNotifPanel();
+    if (!jobId) return;
+    // Prefer the richer cached gallery item if we have it (carries
+    // prompt/author/counts for an instant full paint); else fall back to
+    // the minimal ctx built from the notification's own data.
+    const cached = _findGalleryItem(jobId);
+    if (cached && typeof openModal === 'function') {
+        openModal(cached.url, null, {
+            type: 'galleryItem', jobId, mine: cached.mine ? 1 : 0,
+            is_public: 1, url: cached.url, w: cached.w, h: cached.h,
+            likes_count: cached.likes_count || 0,
+            comments_count: cached.comments_count || 0,
+            viewer_liked: cached.viewer_liked || 0,
+            tips_total: cached.tips_total || 0,
+            prompt: cached.prompt || '',
+        });
+        return;
+    }
+    if (url && typeof openModal === 'function') {
+        openModal(url, null, { type: 'galleryItem', jobId, mine: 1, is_public: 1, url });
+    }
+}
+
+
 function escapeHtml(s){
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -19383,6 +19896,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
     initOverlayDragging();
     initModalDragging();
+    window.addEventListener('resize', () => { if (_notifPanelOpen) _positionNotifPanel(); });
     checkAuth();
     // Paint the header badge IMMEDIATELY so the user sees "Connecting…"
     // (and the cold-boot overlay, if applicable) without waiting for the
