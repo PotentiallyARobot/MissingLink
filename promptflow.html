@@ -5988,13 +5988,13 @@ body.d-desktop-mode .stream {
   font-size: 12px;
   line-height: 1.55;
   color: rgba(200,200,205,0.9);
-  background: rgba(20,20,22,0.4);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 8px;
-  padding: 12px 14px;
-  /* Contain long monospace strings so they wrap inside the bubble
-     instead of running off the right edge (FIRST IN THE CATALOG card
-     was overflowing). */
+  /* No own background/border/padding — the assist bubble is already the
+     container. Previously this added a second nested box, and the
+     foundational callout added a third; that triple-border stack looked
+     cluttered and wasted space. This is now just a transparent wrapper. */
+  background: transparent;
+  border: 0;
+  padding: 0;
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
@@ -6006,6 +6006,39 @@ body.d-desktop-mode .stream {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* Live planner thinking panel — streams the model's reasoning during
+   design so it isn't an opaque "Designing process…". */
+.d-plan-thinking {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: rgba(190,190,196,0.85);
+  border-left: 2px solid rgba(232,169,23,0.35);
+  padding: 4px 0 4px 12px;
+  margin: 4px 0;
+}
+.d-plan-thinking-head {
+  display: flex; align-items: center; gap: 8px;
+  color: rgba(220,220,225,0.9); font-size: 12px; margin-bottom: 6px;
+}
+.d-plan-thinking-done { color: rgba(170,200,150,0.9); }
+.d-plan-thinking-body {
+  white-space: pre-wrap;
+  color: rgba(175,175,182,0.8);
+  max-height: 320px; overflow-y: auto;
+}
+/* Real Claude cost line under a designed process. */
+.d-plan-cost {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; padding: 7px 11px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace; font-size: 11px;
+}
+.d-plan-cost-label { color: rgba(170,170,176,0.8); text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; }
+.d-plan-cost-val { color: var(--gold, #e8a917); font-weight: 600; font-size: 13px; }
+.d-plan-cost-tok { color: rgba(150,150,156,0.7); }
 .d-design-search-phase {
   display: flex;
   align-items: center;
@@ -11821,6 +11854,14 @@ promptflow whoami</code></pre>
   let attachedFiles = [];        // [{ file, kind, dataUrl }] — kind ∈ "image" | "video" | "audio"
   let busy = false;               // in-flight generation flag
   let lastUserText = "";          // most recent user prompt, for needs_recipe re-run
+  // True ONLY while a /plan (or run/execute) network request is
+  // genuinely outstanding. Unlike currentAbortController (which the
+  // code never resets to null), this is set right before the fetch and
+  // cleared the moment it settles — so it's a trustworthy "is a real
+  // request in flight?" signal. The send() busy-guard uses it to avoid
+  // spawning a second concurrent send (which produced a zombie
+  // "Running… Starting…" bubble with a new turn stacked beneath it).
+  let _planInFlight = false;
 
   // Watchdog: if busy stays true for longer than 60 seconds with no
   // explicit reset, auto-recover. This handles the edge case where
@@ -11842,6 +11883,7 @@ promptflow whoami</code></pre>
           // eslint-disable-next-line no-console
           console.warn("[PromptFlow] busy=true for >60s — auto-resetting so Enter works again.");
           busy = false;
+          _planInFlight = false;   // backstop: never let the in-flight lock outlive the watchdog
           if (typeof updateSend === "function") updateSend();
         }
       }, 60_000);
@@ -15009,9 +15051,19 @@ promptflow whoami</code></pre>
       // ahead instead of silently bailing. This makes the bug
       // recoverable: any click/Enter that the user could legitimately
       // expect to send WILL send.
+      //
+      // BUT: _planInFlight means a request is GENUINELY outstanding
+      // (set right before the fetch, cleared when it settles). In that
+      // case we must NOT spawn a second concurrent send — doing so left
+      // a zombie "Running… Starting…" bubble with a new turn stacked
+      // beneath it. This flag is the source of truth; the button's CSS
+      // class can lag, and currentAbortController is never reset.
+      if (_planInFlight) {
+        return; // real in-flight call — defer this send.
+      }
       if (!sendBtn.classList.contains("stop") && !sendBtn.classList.contains("running")) {
         // eslint-disable-next-line no-console
-        console.warn("[PromptFlow] send() entered with busy=true but button visually Send — clearing stale busy.");
+        console.warn("[PromptFlow] send() entered with busy=true but button visually Send and no in-flight request — clearing stale busy.");
         busy = false;
       } else {
         return; // legit in-flight call; defer.
@@ -15839,7 +15891,84 @@ promptflow whoami</code></pre>
     }
 
     let planResp;
+    _planInFlight = true;
+    // For DESIGN flows, stream the planner's live reasoning so the user
+    // sees what the model is actually thinking instead of an opaque
+    // "Designing process…" spinner. The /plan/stream endpoint emits
+    // SSE: `thinking` deltas during generation, then a final `done`
+    // (or `error`) event carrying the same JSON /plan returns. Other
+    // flows keep the simpler non-streaming request.
+    const useStream = shouldRunDesignSearch && !isRefinement;
     try {
+      if (useStream) {
+        // Set up a live thinking panel in the assist bubble.
+        clearStatus(assist);
+        const think = document.createElement("div");
+        think.className = "d-plan-thinking";
+        think.innerHTML =
+          '<div class="d-plan-thinking-head"><span class="d-design-search-spinner"></span>' +
+          '<span>Thinking…</span></div>' +
+          '<div class="d-plan-thinking-body"></div>';
+        assist.body.appendChild(think);
+        const thinkBodyEl = think.querySelector(".d-plan-thinking-body");
+
+        const r = await fetch("/api/promptflow/plan/stream", {
+          method: "POST", body: fd,
+          signal: currentAbortController.signal,
+        });
+        if (!r.ok || !r.body) {
+          _planInFlight = false;
+          throw new Error("stream_http_" + r.status);
+        }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        let donePayload = null;
+        let streamErr = null;
+        // Parse the SSE frames: blocks separated by \n\n, each with
+        // an `event:` line and a `data:` line.
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let sep;
+          while ((sep = buf.indexOf("\n\n")) !== -1) {
+            const frame = buf.slice(0, sep);
+            buf = buf.slice(sep + 2);
+            let ev = "message", dataStr = "";
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("event:")) ev = line.slice(6).trim();
+              else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+            }
+            if (!dataStr) continue;
+            let data; try { data = JSON.parse(dataStr); } catch { continue; }
+            if (ev === "thinking" && data.text) {
+              thinkBodyEl.textContent += data.text;
+              stream.scrollTop = stream.scrollHeight;
+            } else if (ev === "done") {
+              donePayload = data;
+            } else if (ev === "error") {
+              streamErr = data;
+            }
+            // heartbeat / stage events are ignored for display.
+          }
+        }
+        _planInFlight = false;
+        // Collapse the thinking head spinner once finished.
+        const head = think.querySelector(".d-plan-thinking-head");
+        if (head) head.innerHTML = '<span class="d-plan-thinking-done">✓ Thought through the design</span>';
+        if (!thinkBodyEl.textContent.trim()) think.style.display = "none";
+        if (streamErr) {
+          stopPlanningStages();
+          setError(assist, streamErr.message || streamErr.error || "Planner failed.");
+          busy = false; updateSend();
+          return;
+        }
+        planResp = donePayload || { ok: false, error: "no_plan" };
+        stopPlanningStages();
+        // Fall through to the shared intent-dispatch code below by
+        // skipping the non-streaming branch.
+      } else {
       const r = await fetch("/api/promptflow/plan", {
         method: "POST", body: fd,
         signal: currentAbortController.signal,
@@ -15851,6 +15980,7 @@ promptflow whoami</code></pre>
       // stack trace for the user; this gives them something they can
       // actually act on.
       const rawText = await r.text();
+      _planInFlight = false;   // request has settled — body is in hand
       const trimmed = rawText.trim();
       if (trimmed.startsWith("<")) {
         // HTML response — edge-level failure. Give the user diagnostic
@@ -15925,10 +16055,21 @@ promptflow whoami</code></pre>
         busy = false; updateSend();
         return;
       }
+      } // end non-streaming else branch
+      // Shared validation for BOTH paths: if the streaming path produced
+      // a non-ok payload (the non-streaming path already returned above
+      // on !ok), surface it here.
+      if (useStream && (!planResp || !planResp.ok)) {
+        stopPlanningStages();
+        setError(assist, (planResp && (planResp.message || planResp.error)) || "Planning failed.");
+        busy = false; updateSend();
+        return;
+      }
     } catch (e) {
       // User-initiated abort lands here as DOMException with name
       // 'AbortError' — present it as a clean cancellation, not as
       // a network error.
+      _planInFlight = false;   // request settled (errored/aborted)
       stopPlanningStages();
       if (e?.name === "AbortError") {
         setError(assist, "Cancelled.");
@@ -16037,6 +16178,25 @@ promptflow whoami</code></pre>
       }
       const mode = planResp.intent === "update_process" ? "updated" : "saved";
       renderProcessCard(assist, planResp.process, mode, generationParent);
+      // Show the ACTUAL Claude cost of designing this process (planner
+      // token usage → USD), so the user sees what the model run cost
+      // rather than an opaque number.
+      if (typeof planResp.claude_cost_usd === "number" && planResp.claude_tokens) {
+        const ct = planResp.claude_tokens;
+        const costEl = document.createElement("div");
+        costEl.className = "d-plan-cost";
+        const usd = planResp.claude_cost_usd;
+        const usdStr = usd < 0.01 ? "<$0.01" : "$" + usd.toFixed(usd < 1 ? 3 : 2);
+        costEl.innerHTML =
+          '<span class="d-plan-cost-label">Claude cost</span>' +
+          '<span class="d-plan-cost-val">' + usdStr + '</span>' +
+          '<span class="d-plan-cost-tok">' +
+            (ct.input_tokens || 0).toLocaleString() + ' in · ' +
+            (ct.output_tokens || 0).toLocaleString() + ' out' +
+            (planResp.claude_model ? ' · ' + escapeHtml(planResp.claude_model) : '') +
+          '</span>';
+        assist.body.appendChild(costEl);
+      }
       const note = document.createElement("div");
       note.className = "status";
       note.textContent = planResp.message
@@ -16526,6 +16686,7 @@ promptflow whoami</code></pre>
       if (currentAbortController) {
         try { currentAbortController.abort(); } catch {}
       }
+      _planInFlight = false;   // released immediately; the fetch catch also clears it
       return;
     }
     if (sendBtn.classList.contains("running")) {
@@ -17437,6 +17598,7 @@ promptflow whoami</code></pre>
       case "audio":              return renderSingleAudio(assist, outputs[0]);
       case "3d":                 return renderSingle3D(assist, outputs[0]);
       case "text":               return renderSingleText(assist, outputs[0]);
+      case "document":           return renderDocument(assist, outputs);
       case "storyboard":         return renderStoryboard(assist, outputs);
       case "image_set":          return renderImageGallery(assist, outputs);
       case "video_set":          return renderVideoSet(assist, outputs);
@@ -17489,6 +17651,36 @@ promptflow whoami</code></pre>
   }
 
   // ── Single-output renderers ──────────────────────────────
+  // Document output (assemble_document): HTML preview iframe + open/PDF
+  // links. The output object carries { html_url, pdf_url }.
+  function renderDocument(assist, outputs) {
+    const o = (outputs || []).find(x => x && (x.html_url || x.pdf_url)) || outputs[0] || {};
+    const htmlUrl = o.html_url || null;
+    const pdfUrl = o.pdf_url || (htmlUrl ? htmlUrl + "?print=1" : null);
+    if (htmlUrl) {
+      const frame = document.createElement("iframe");
+      frame.src = htmlUrl;
+      frame.style.cssText = "width:100%;height:520px;border:1px solid var(--border);border-radius:7px;background:#fff";
+      assist.body.appendChild(frame);
+    }
+    const nodes = [];
+    if (htmlUrl) {
+      const open = downloadButton(htmlUrl, "", "↗ Open HTML");
+      open.removeAttribute("download");
+      nodes.push(open);
+    }
+    if (pdfUrl) {
+      const pdf = downloadButton(pdfUrl, "", "⬇ Download PDF");
+      pdf.removeAttribute("download");  // print mode, not a file download
+      nodes.push(pdf);
+    }
+    if (nodes.length) assist.body.appendChild(actionsRow(...nodes));
+    if (!htmlUrl && !pdfUrl) {
+      // No URLs — fall back to showing any text the step produced.
+      renderSingleText(assist, o);
+    }
+  }
+
   function renderSingleVideo(assist, o) {
     const v = document.createElement("video");
     v.src = o.url; v.controls = true; v.autoplay = true; v.loop = true; v.muted = false;
