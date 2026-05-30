@@ -7223,7 +7223,12 @@ function updateGenButton(){
         } else if (_user.tokens < needed) {
             gen.textContent = `🪙 NEED ${needed} TOKENS`;
         } else if (activeCount + selectedCount > MAX_QUEUED) {
-            gen.textContent = `⏳ NEED ${selectedCount - (MAX_QUEUED - activeCount)} FREE SLOTS`;
+            // The batch-edit path now drains overflow via the completion
+            // poller, so a selection larger than the free slots is fine —
+            // we submit what fits and auto-submit the rest. Label it so the
+            // user knows the extras will queue rather than being rejected.
+            const fits = Math.max(0, MAX_QUEUED - activeCount);
+            gen.textContent = `⚡ GENERATE ${selectedCount} × EDIT (${fits} now, ${selectedCount - fits} queued)`;
         } else {
             gen.textContent = `⚡ GENERATE ${selectedCount} × EDIT`;
         }
@@ -12917,8 +12922,14 @@ async function generateBatchEdits(){
     }
     const activeCount = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
     const MAX_QUEUED = 12;
-    if (activeCount + selected.length > MAX_QUEUED) {
-        showNotif(`Not enough queue slots. You need ${selected.length} free, have ${MAX_QUEUED - activeCount}.`, 'error');
+    // We DON'T bail when the selection exceeds free slots. Like the
+    // multi-angle path, we submit up to the available headroom now and
+    // stash the rest in _pendingAngleShots; the completion poller drains
+    // them one-by-one as jobs finish, so we never exceed the server cap
+    // but the user can queue an arbitrarily large batch in one click.
+    // The only hard requirement is at least one free slot to start.
+    if (activeCount >= MAX_QUEUED) {
+        showNotif(`Queue is full (${activeCount}/${MAX_QUEUED}). Wait for some jobs to finish.`, 'error');
         return;
     }
     // Batch generation is starting — flip to Studio so the user sees
@@ -12949,6 +12960,9 @@ async function generateBatchEdits(){
     // batch that's still rendered). clearBatchGrid() removes the grid
     // element + nulls _activeBatch so we start from a clean slate.
     if (_activeBatch) clearBatchGrid();
+    // Drop any pending shots stashed by a previous (angle or edit) batch
+    // that didn't fully drain — we're starting fresh.
+    _pendingAngleShots = [];
 
     // Initialize the active-batch state. Each shot corresponds to one
     // selected input image. The grid renderer handles variable N.
@@ -12973,7 +12987,11 @@ async function generateBatchEdits(){
     const origText = btn.textContent;
     btn.textContent = `⏳ SUBMITTING 0/${selected.length}`;
 
+    // How many can we push to the server right now? The rest get stashed
+    // and auto-submitted by the completion poller as slots free up.
+    const initialBudget = Math.max(1, MAX_QUEUED - activeCount);
     let submitted = 0;
+    let stashed = 0;
     for (let i = 0; i < selected.length; i++) {
         const inp = selected[i];
         // image_ids order matters: pipeline labels them as image 1, 2, 3.
@@ -12997,12 +13015,37 @@ async function generateBatchEdits(){
             width: inp.w || 0, height: inp.h || 0,
             batch_id: batchId,
         };
+        // Snapshot mirrors the angle-batch shape so submitNextPendingAngle()
+        // and the per-tile retry path can resubmit/relabel this shot using
+        // the exact original params (independent of later sidebar changes).
+        const snapshot = {
+            mode: 'edit',
+            prompt: shotPrompt, negative_prompt: negative, seed,
+            guidance_scale: cfg, inference_steps: steps,
+            ...loraPayload('edit'),
+            width: inp.w || 0, height: inp.h || 0,
+            input_image_id: inp.id, input_image_url: inp.url,
+            edit_slots: null,
+            batch_id: batchId,
+        };
         // Stash retry info on the shot. If this submission fails (or the
         // job later errors during processing), the user can hit Retry on
         // the tile and we'll re-submit with these exact params, independent
         // of any sidebar-state changes since the original.
         _activeBatch.shots[i].payload = payload;
+        _activeBatch.shots[i].snapshot = snapshot;
         _activeBatch.shots[i].inputId = inp.id;
+
+        // Beyond the initial budget → stash for the completion poller
+        // instead of submitting now. The poller (which already calls
+        // submitNextPendingAngle on every batch-member completion) drains
+        // these FIFO, keeping the server queue saturated at its cap.
+        if (submitted >= initialBudget) {
+            _pendingAngleShots.push({ shotIdx: i, payload, snapshot, label: `Edit ${i + 1}` });
+            stashed++;
+            continue;
+        }
+
         try {
             const r = await fetchT(`${API}/api/studio/generate`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -13012,7 +13055,27 @@ async function generateBatchEdits(){
             if (!d.ok) {
                 if (r.status === 401) { $('loginModal').classList.add('open'); break; }
                 if (r.status === 402) { showBuyModal(); break; }
-                if (r.status === 429) { showNotif(`Queue full — submitted ${submitted} of ${selected.length}.`, 'error'); break; }
+                if (r.status === 429) {
+                    // Server queue filled mid-submission — stash this shot
+                    // AND all remaining ones so the completion path drains
+                    // them rather than dropping them.
+                    _pendingAngleShots.push({ shotIdx: i, payload, snapshot, label: `Edit ${i + 1}` });
+                    for (let j = i + 1; j < selected.length; j++) {
+                        const inp2 = selected[j];
+                        const ids2 = [inp2.id];
+                        if (_batchContext[1]) ids2.push(_batchContext[1].id);
+                        if (_batchContext[2]) ids2.push(_batchContext[2].id);
+                        const p2 = (_batchPerImagePrompts && _batchPerImagePrompts[inp2.id]) || prompt;
+                        const payload2 = { ...payload, image_ids: ids2, prompt: p2, width: inp2.w || 0, height: inp2.h || 0 };
+                        const snapshot2 = { ...snapshot, prompt: p2, width: inp2.w || 0, height: inp2.h || 0, input_image_id: inp2.id, input_image_url: inp2.url };
+                        _activeBatch.shots[j].payload = payload2;
+                        _activeBatch.shots[j].snapshot = snapshot2;
+                        _activeBatch.shots[j].inputId = inp2.id;
+                        _pendingAngleShots.push({ shotIdx: j, payload: payload2, snapshot: snapshot2, label: `Edit ${j + 1}` });
+                    }
+                    stashed += (selected.length - i);
+                    break;
+                }
                 log(`Batch edit '${inp.fname}' failed: ${d.error || 'unknown'}`, 'error');
                 _activeBatch.shots[i].status = 'error';
                 renderBatchGrid();
@@ -13035,6 +13098,7 @@ async function generateBatchEdits(){
                 startedAt: Date.now(),
                 batchId,
                 angleLabel: `Edit ${i + 1}`,
+                snapshot,
             });
             submitted++;
             btn.textContent = `⏳ SUBMITTING ${submitted}/${selected.length}`;
@@ -13051,7 +13115,10 @@ async function generateBatchEdits(){
         await new Promise(r => setTimeout(r, 200));
     }
 
-    log(`Submitted ${submitted}/${selected.length} batch edits (batch ${batchId})`, 'success');
+    if (stashed > 0) {
+        showNotif(`Submitted ${submitted}; ${stashed} more will auto-submit as slots free up.`, 'info');
+    }
+    log(`Submitted ${submitted}/${selected.length} batch edits${stashed ? ` (${stashed} pending)` : ''} (batch ${batchId})`, 'success');
     btn.textContent = origText;
     updateGenButton();
 }
@@ -14049,130 +14116,51 @@ async function downloadBatchAll(){
     if (!_activeBatch) return;
     const btn = $('btnDownloadAll');
     const originalHtml = btn ? btn.innerHTML : '';
-
-    const shotsWithUrls = _activeBatch.shots
-        .map((s, i) => ({ ...s, _idx: i }))
-        .filter(s => s.url);
-    if (!shotsWithUrls.length) {
-        showNotif('No images to download yet.', 'error');
-        return;
-    }
-
-    // Offer the LoRA-training export. A "pair" needs BOTH a source (input)
-    // image and a generated result, plus the edit instruction that maps one
-    // to the other — that's the (control, target, caption) triple an
-    // edit-LoRA trainer consumes. Only shots that carry an inputUrl qualify
-    // (batch-edit shots do; a from-scratch generation wouldn't), so we only
-    // surface the prompt when at least one qualifying pair exists.
-    const pairable = shotsWithUrls.filter(s => s.inputUrl && s.url);
-    let withPairs = false;
-    if (pairable.length) {
-        withPairs = await showConfirm(
-            `Include before/after pairs for LoRA training? This adds the ${pairable.length} ` +
-            `source image${pairable.length === 1 ? '' : 's'} alongside ${pairable.length === 1 ? 'its' : 'their'} ` +
-            `result${pairable.length === 1 ? '' : 's'} and a pairs.txt file listing each pair with its edit instruction.`,
-            { confirmLabel: 'Yes, include pairs', cancelLabel: 'Just the results' }
-        );
-    }
-
     if (btn) { btn.classList.add('busy'); btn.disabled = true; }
     try {
         if (btn) btn.innerHTML = '⏳ <span>Zipping…</span>';
         const JSZip = await _loadJSZip();
         const zip = new JSZip();
-        const shortId = _activeBatch.id.split('_').pop() || 'batch';
 
-        if (!withPairs) {
-            // ── Results-only (original behavior) ──
-            // Fetch all images in parallel — R2 serves with CORS enabled for
-            // the studio.html origin, so cross-origin fetch returns usable blobs.
-            const fetches = shotsWithUrls.map(async (shot) => {
-                try {
-                    const res = await fetch(shot.url);
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const blob = await res.blob();
-                    const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-                    const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
-                    zip.file(fname, blob);
-                } catch (e) {
-                    log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
-                }
-            });
-            await Promise.all(fetches);
-        } else {
-            // ── LoRA before/after pairs ──
-            // Layout (mirrors the edit-LoRA training convention: matching
-            // filenames across control/ + target/, one caption per pair):
-            //   before/NN.png   — source (control) image
-            //   after/NN.png    — generated (target) image
-            //   pairs.txt       — one line per pair:
-            //                       before/NN.png\tafter/NN.png\t<edit instruction>
-            // Tab-separated so instructions containing commas/spaces stay
-            // intact and the file parses trivially in a training script.
-            const manifestLines = [
-                '# MissingLink batch — before/after pairs for LoRA edit training',
-                '# Each line: <before_image>\\t<after_image>\\t<edit_instruction>',
-                '# (tab-separated; one pair per line)',
-                '',
-            ];
-            let pairNum = 0;
-            const fetches = shotsWithUrls.map(async (shot) => {
-                const isPair = !!(shot.inputUrl && shot.url);
-                try {
-                    if (isPair) {
-                        const n = String(++pairNum).padStart(2, '0');
-                        // Fetch both halves of the pair. If either fails we
-                        // skip the whole pair (a half-pair is useless for
-                        // training) but keep going for the rest.
-                        const [beforeRes, afterRes] = await Promise.all([
-                            fetch(shot.inputUrl),
-                            fetch(shot.url),
-                        ]);
-                        if (!beforeRes.ok) throw new Error(`before HTTP ${beforeRes.status}`);
-                        if (!afterRes.ok) throw new Error(`after HTTP ${afterRes.status}`);
-                        const [beforeBlob, afterBlob] = await Promise.all([
-                            beforeRes.blob(), afterRes.blob(),
-                        ]);
-                        const beforeName = `before/${n}.png`;
-                        const afterName = `after/${n}.png`;
-                        zip.file(beforeName, beforeBlob);
-                        zip.file(afterName, afterBlob);
-                        const instruction = (shot.prompt || '').replace(/[\r\n\t]+/g, ' ').trim();
-                        manifestLines.push(`${beforeName}\t${afterName}\t${instruction}`);
-                    } else {
-                        // Result with no source (e.g. a from-scratch generation
-                        // mixed into the batch) — still include the output so
-                        // nothing is silently dropped, just not as a pair.
-                        const res = await fetch(shot.url);
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        const blob = await res.blob();
-                        const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-                        zip.file(`unpaired/${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`, blob);
-                    }
-                } catch (e) {
-                    log(`Failed to zip pair "${shot.label}": ${e.message}`, 'error');
-                }
-            });
-            await Promise.all(fetches);
-            zip.file('pairs.txt', manifestLines.join('\n') + '\n');
+        const shotsWithUrls = _activeBatch.shots
+            .map((s, i) => ({ ...s, _idx: i }))
+            .filter(s => s.url);
+        if (!shotsWithUrls.length) {
+            showNotif('No images to download yet.', 'error');
+            return;
         }
+
+        // Fetch all images in parallel — R2 serves with CORS enabled for
+        // the studio.html origin, so cross-origin fetch returns usable blobs.
+        const fetches = shotsWithUrls.map(async (shot) => {
+            try {
+                const res = await fetch(shot.url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const blob = await res.blob();
+                const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+                const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
+                zip.file(fname, blob);
+            } catch (e) {
+                log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
+            }
+        });
+        await Promise.all(fetches);
 
         // Generate the zip blob. "store" skips compression — these are PNGs
         // (already compressed), so DEFLATE would waste CPU with ~0 size gain.
         const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+        const shortId = _activeBatch.id.split('_').pop() || 'batch';
         const url = URL.createObjectURL(zipBlob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = withPairs
-            ? `missinglink-batch-${shortId}-lora-pairs.zip`
-            : `missinglink-batch-${shortId}.zip`;
+        a.download = `missinglink-batch-${shortId}.zip`;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         // Release the blob URL after the browser has started the download
         setTimeout(() => URL.revokeObjectURL(url), 2000);
-        log(`Downloaded ${shotsWithUrls.length}-image zip${withPairs ? ' with LoRA pairs' : ''}`, 'success');
+        log(`Downloaded ${shotsWithUrls.length}-image zip`, 'success');
     } catch (e) {
         showNotif('Zip failed: ' + e.message, 'error');
     } finally {
