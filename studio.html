@@ -1362,6 +1362,22 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .history-card-meta .hc-prompt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text-muted);margin-top:3px;font-size:9px;line-height:1.3;min-height:2.6em}
 .history-card-delete{position:absolute;top:6px;right:6px;width:26px;height:26px;background:rgba(0,0,0,.65);border:1px solid var(--border);color:var(--text);border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;opacity:.85;transition:all .15s;padding:0;line-height:1;font-weight:400}
 .history-card-delete:hover{background:var(--red);border-color:var(--red);color:var(--white);opacity:1;transform:scale(1.1)}
+/* ── Web image search: trigger button + result cards ─────────────────── */
+.batch-search-web-btn{width:100%;margin-top:8px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:11px;letter-spacing:.5px;padding:9px 12px;border-radius:8px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.batch-search-web-btn:hover{border-color:var(--gold);color:var(--gold)}
+/* Reuse .history-card chrome; add an overlaid "Add to stage" affordance. */
+.imgsearch-card{cursor:default}
+.imgsearch-card .history-card-thumb{aspect-ratio:1/1}
+.imgsearch-card .history-card-thumb img{object-fit:cover}
+.imgsearch-add{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,10,12,.55);opacity:0;transition:opacity .15s;z-index:2}
+.imgsearch-card:hover .imgsearch-add{opacity:1}
+.imgsearch-add-btn{background:var(--gold);color:#0a0a0c;border:none;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.5px;padding:9px 14px;border-radius:7px;cursor:pointer;transition:transform .12s}
+.imgsearch-add-btn:hover{transform:scale(1.06)}
+.imgsearch-add-btn:disabled{opacity:.7;cursor:default;transform:none}
+/* Added-state badge once an image has been pulled into the working set. */
+.imgsearch-card.added .imgsearch-add{opacity:1;background:rgba(10,10,12,.4)}
+.imgsearch-card.added .imgsearch-add-btn{background:var(--surface-2);color:var(--gold);border:1px solid var(--gold)}
+.imgsearch-src{padding:6px 9px;font-family:var(--font-mono);font-size:8px;color:var(--text-muted);letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Variant for the thin sidebar tiles — smaller footprint but still always visible */
 /* Dedicated sidebar delete button (distinct class from .history-card-delete
    used in the modal grid, to avoid any specificity / override battles with
@@ -4451,6 +4467,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="dropzone-hint">Drop multiple images here<br><span style="font-size:10px;color:var(--text-dim)">or click to select</span></div>
             <input type="file" id="batchFileInput" accept="image/*" multiple style="display:none">
         </div>
+        <!-- Web image search — opens a modal to find images on the web and
+             add them straight into the working set (same as an upload). -->
+        <button type="button" class="batch-search-web-btn" id="batchSearchWebBtn" onclick="openImageSearch()">
+            🔍 Search the web for images
+        </button>
         <!-- Bulk-select / clear-all controls. Hidden when no inputs. The
              thumbnail grid itself is rendered inside the main output area
              (see #batchInputsGrid below) so the user can see all uploaded
@@ -5132,6 +5153,33 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                  scrolls into view, loadMoreHistory fires. Renders as a small
                  loading pill at the bottom of the grid. -->
             <div id="historyScrollSentinel" class="history-sentinel" style="display:none"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── WEB IMAGE SEARCH MODAL ───────────────────────────────────────────
+     Search the web for images and add them straight into the batch working
+     set. Reuses the history-modal chrome. Results stream into a grid; each
+     card has an "Add to stage" action that fetches the image server-side
+     (upload-from-url), creates a studio_uploads row, and pushes it into
+     _batchInputs exactly like a manual upload. -->
+<div id="imageSearchModal" class="modal" style="display:none" onclick="if(event.target===this) closeImageSearch()">
+    <div class="modal-panel history-modal-panel draggable-modal-panel" id="imageSearchPanel" onclick="event.stopPropagation()">
+        <div class="history-modal-head modal-drag-handle" data-modal="imagesearch" title="Drag to move · double-click to reset">
+            <span class="modal-grip" aria-hidden="true">⋮⋮</span>
+            <div class="history-modal-title">Search the web for images</div>
+            <div class="gallery-search-wrap" style="flex:1;margin:0 12px">
+                <span class="gs-icon">🔍</span>
+                <input type="text" id="imageSearchInput" class="gallery-search-input" placeholder="Describe what you're looking for…" autocomplete="off" spellcheck="false">
+                <button type="button" id="imageSearchClear" class="gallery-search-clear" title="Clear" onclick="clearImageSearch()">×</button>
+            </div>
+            <button class="modal-close" onclick="closeImageSearch()">×</button>
+        </div>
+        <div class="history-modal-body" id="imageSearchBody">
+            <div id="imageSearchGrid" class="history-grid">
+                <div class="history-empty">Type a search above and hit Enter to find images on the web.</div>
+            </div>
+            <div id="imageSearchSentinel" class="history-sentinel" style="display:none"></div>
         </div>
     </div>
 </div>
@@ -12511,8 +12559,211 @@ async function batchUploadFile(file){
     }
 }
 
-// Submit one edit job per selected batch input. Each job is a normal
-// edit-mode generation with image_ids=[input.id] and the shared prompt.
+// ── Web image search (batch controls) ───────────────────────────────
+// State for the search modal. _imgSearchResults accumulates across pages
+// so infinite scroll can append; _imgSearchAdded tracks which result
+// URLs have already been pulled into the working set so the cards can
+// show an "Added" state and avoid duplicate uploads.
+let _imgSearchQuery = '';
+let _imgSearchPage = 0;
+let _imgSearchResults = [];
+let _imgSearchLoading = false;
+let _imgSearchHasMore = false;
+let _imgSearchAdded = new Set();
+let _imgSearchObserver = null;
+let _imgSearchDebounce = null;
+
+function openImageSearch(){
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+    $('imageSearchModal').style.display = 'flex';
+    if (typeof _applySavedModalPosition === 'function') _applySavedModalPosition('imagesearch');
+    const input = $('imageSearchInput');
+    if (input) { setTimeout(() => input.focus(), 50); }
+    // Wire input handlers once.
+    if (input && !input._wired) {
+        input._wired = true;
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); startImageSearch(input.value); }
+        });
+        // Light debounce on typing so a pause also triggers a search.
+        input.addEventListener('input', () => {
+            clearTimeout(_imgSearchDebounce);
+            const v = input.value;
+            _imgSearchDebounce = setTimeout(() => {
+                if (v.trim() && v.trim() !== _imgSearchQuery) startImageSearch(v);
+            }, 600);
+        });
+    }
+}
+
+function closeImageSearch(){
+    $('imageSearchModal').style.display = 'none';
+    if (_imgSearchObserver) { _imgSearchObserver.disconnect(); _imgSearchObserver = null; }
+}
+
+function clearImageSearch(){
+    const input = $('imageSearchInput');
+    if (input) { input.value = ''; input.focus(); }
+    _imgSearchQuery = '';
+    _imgSearchResults = [];
+    _imgSearchPage = 0;
+    _imgSearchHasMore = false;
+    const grid = $('imageSearchGrid');
+    if (grid) grid.innerHTML = `<div class="history-empty">Type a search above and hit Enter to find images on the web.</div>`;
+    const sentinel = $('imageSearchSentinel');
+    if (sentinel) sentinel.style.display = 'none';
+}
+
+// Kick off a fresh search (resets pagination + results).
+function startImageSearch(q){
+    const query = (q || '').trim();
+    if (!query) return;
+    clearTimeout(_imgSearchDebounce);
+    _imgSearchQuery = query;
+    _imgSearchResults = [];
+    _imgSearchPage = 0;
+    _imgSearchHasMore = true;
+    const grid = $('imageSearchGrid');
+    if (grid) grid.innerHTML = `<div class="history-loading">Searching the web…</div>`;
+    loadMoreImageSearch();
+}
+
+async function loadMoreImageSearch(){
+    if (_imgSearchLoading || !_imgSearchHasMore || !_imgSearchQuery) return;
+    _imgSearchLoading = true;
+    const nextPage = _imgSearchPage + 1;
+    const sentinel = $('imageSearchSentinel');
+    if (sentinel && _imgSearchResults.length) { sentinel.style.display = ''; sentinel.textContent = 'Loading more…'; }
+    try {
+        const r = await fetchT(`${API}/api/studio/image-search?q=${encodeURIComponent(_imgSearchQuery)}&page=${nextPage}`, null, 15000);
+        const d = await r.json();
+        if (!d.ok) {
+            _imgSearchHasMore = false;
+            const grid = $('imageSearchGrid');
+            if (grid && !_imgSearchResults.length) {
+                const msg = d.error === 'search_timeout' ? 'Search timed out — try again.'
+                          : d.error === 'search_unavailable' ? 'Image search is temporarily unavailable.'
+                          : 'Search failed — try a different query.';
+                grid.innerHTML = `<div class="history-empty">${msg}</div>`;
+            }
+            return;
+        }
+        const items = d.results || [];
+        // De-dupe against what we already have (same full URL).
+        const seen = new Set(_imgSearchResults.map(x => x.full));
+        const fresh = items.filter(x => x.full && !seen.has(x.full));
+        _imgSearchResults = _imgSearchResults.concat(fresh);
+        _imgSearchPage = nextPage;
+        // A page that returned nothing new (or empty) means we've hit the end.
+        _imgSearchHasMore = items.length > 0 && fresh.length > 0;
+        renderImageSearchResults();
+    } catch (e) {
+        _imgSearchHasMore = false;
+        const grid = $('imageSearchGrid');
+        if (grid && !_imgSearchResults.length) {
+            grid.innerHTML = `<div class="history-empty">Network error — try again.</div>`;
+        }
+    } finally {
+        _imgSearchLoading = false;
+    }
+}
+
+function renderImageSearchResults(){
+    const grid = $('imageSearchGrid');
+    const sentinel = $('imageSearchSentinel');
+    if (!grid) return;
+    if (!_imgSearchResults.length) {
+        grid.innerHTML = `<div class="history-empty">No images found for "${escapeHtml(_imgSearchQuery)}".</div>`;
+        if (sentinel) sentinel.style.display = 'none';
+        return;
+    }
+    // Incremental: append only cards not already rendered (keyed by index).
+    const existing = grid.querySelectorAll('.imgsearch-card').length;
+    if (existing === 0) grid.innerHTML = '';
+    for (let i = existing; i < _imgSearchResults.length; i++) {
+        const res = _imgSearchResults[i];
+        const added = _imgSearchAdded.has(res.full);
+        const card = document.createElement('div');
+        card.className = 'history-card imgsearch-card' + (added ? ' added' : '');
+        card.dataset.idx = String(i);
+        card.innerHTML = `
+            <div class="history-card-thumb">
+                <img src="${escapeHtml(res.thumb || res.full)}" loading="lazy" alt="" referrerpolicy="no-referrer"
+                     onerror="this.closest('.imgsearch-card').style.display='none'">
+                <div class="imgsearch-add">
+                    <button class="imgsearch-add-btn" onclick="addSearchImageToStage(${i}, this)">${added ? '✓ Added' : '+ Add to stage'}</button>
+                </div>
+            </div>
+            <div class="imgsearch-src">${escapeHtml(res.source || res.title || '')}</div>
+        `;
+        grid.appendChild(card);
+    }
+    // (Re)wire infinite-scroll observer on the sentinel.
+    if (sentinel) {
+        sentinel.style.display = _imgSearchHasMore ? '' : 'none';
+        if (_imgSearchHasMore) {
+            if (_imgSearchObserver) _imgSearchObserver.disconnect();
+            const root = sentinel.closest('.history-modal-body') || null;
+            _imgSearchObserver = new IntersectionObserver((entries) => {
+                for (const en of entries) {
+                    if (en.isIntersecting && !_imgSearchLoading && _imgSearchHasMore) loadMoreImageSearch();
+                }
+            }, { root, rootMargin: '300px 0px' });
+            _imgSearchObserver.observe(sentinel);
+        }
+    }
+}
+
+// Pull a searched image into the batch working set. Fetches it server-side
+// (upload-from-url → studio_uploads row), then pushes a _batchInputs entry
+// shaped exactly like a manual upload so the rest of the pipeline treats it
+// identically.
+async function addSearchImageToStage(idx, btn){
+    const res = _imgSearchResults[idx];
+    if (!res || !res.full) return;
+    if (_imgSearchAdded.has(res.full)) return;  // already added
+    if (!_user) { $('loginModal').classList.add('open'); return; }
+
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+    try {
+        const r = await fetchT(`${API}/api/studio/upload-from-url`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ url: res.full })
+        }, 30000);
+        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        const d = await r.json();
+        if (!d.ok) {
+            const map = {
+                not_an_image: 'That link isn\'t a direct image.',
+                fetch_failed: 'Couldn\'t fetch that image (the host blocked it).',
+                image_too_large: 'That image is too large.',
+                email_not_verified: 'Confirm your email to add images.',
+            };
+            showNotif(map[d.error] || ('Could not add image: ' + (d.error || 'unknown')), 'error');
+            if (btn) { btn.disabled = false; btn.textContent = origText; }
+            return;
+        }
+        _batchInputs.push({
+            id: d.id, url: d.url,
+            w: res.w || 0, h: res.h || 0,
+            fname: d.filename || `${d.id}.png`,
+            selected: true,   // match manual-upload default
+        });
+        _imgSearchAdded.add(res.full);
+        renderBatchInputs();
+        // Reflect added-state on the card.
+        const card = btn ? btn.closest('.imgsearch-card') : null;
+        if (card) card.classList.add('added');
+        if (btn) { btn.disabled = false; btn.textContent = '✓ Added'; }
+        log(`Added web image to batch inputs (${d.id})`, 'success');
+    } catch (e) {
+        showNotif('Add failed: ' + e.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+
+
 // Results feed into _activeBatch so the existing grid UI fills tiles in
 // real time, same as the 6-angle flow.
 // _batchContext is { 1: {id,...} | null, 2: {id,...} | null } — the
