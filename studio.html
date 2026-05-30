@@ -6099,6 +6099,15 @@ async function checkAuth(){
         window.history.replaceState({},'','/studio.html');
         log('Signed in','success');
     }
+    if(params.get('verified')==='1'){
+        // Returned from the email-confirmation link. The server already set
+        // the login cookie and granted free tokens; re-check auth to pick up
+        // the now-active account + balance.
+        window.history.replaceState({},'','/studio.html');
+        log('Email confirmed — welcome! Your free credits are ready.','success');
+        showNotif('Email confirmed! Your free credits have been added.', 'success');
+        setTimeout(checkAuth, 800);
+    }
     if(params.get('payment')==='success'){
         window.history.replaceState({},'','/studio.html');
         log('Payment successful — tokens added','success');
@@ -6279,8 +6288,33 @@ async function submitAuthForm(e){
         const d = await r.json();
 
         if (!d.ok) {
+            // Unverified account trying to sign in — offer a resend link
+            // inline instead of a dead-end error.
+            if (d.error === 'email_not_verified') {
+                errEl.innerHTML = (d.message || 'Please confirm your email first.') +
+                    ` <a href="#" id="resendVerifyLink" style="color:var(--gold);text-decoration:underline">Resend confirmation</a>`;
+                errEl.style.display = 'block';
+                const link = $('resendVerifyLink');
+                if (link) link.onclick = (ev) => { ev.preventDefault(); resendVerification(email); };
+                btn.disabled = false; btn.textContent = origText;
+                return;
+            }
             errEl.textContent = d.message || d.error || 'Authentication failed';
             errEl.style.display = 'block';
+            btn.disabled = false; btn.textContent = origText;
+            return;
+        }
+
+        // New email/password signup: the account is created but inert until
+        // the user confirms via the emailed link. Don't try to log in — show
+        // a check-your-email state instead.
+        if (d.verification_required) {
+            errEl.style.color = 'var(--text)';
+            errEl.innerHTML = (d.message || 'Check your email to confirm your address.') +
+                ` <a href="#" id="resendVerifyLink" style="color:var(--gold);text-decoration:underline">Resend</a>`;
+            errEl.style.display = 'block';
+            const link = $('resendVerifyLink');
+            if (link) link.onclick = (ev) => { ev.preventDefault(); resendVerification(email); };
             btn.disabled = false; btn.textContent = origText;
             return;
         }
@@ -6293,6 +6327,30 @@ async function submitAuthForm(e){
         errEl.textContent = 'Network error: ' + err.message;
         errEl.style.display = 'block';
         btn.disabled = false; btn.textContent = origText;
+    }
+}
+
+// Ask the server to re-send the verification email. Always reports success
+// (the endpoint deliberately doesn't reveal whether the account exists or
+// its verification state), so we just confirm the email is on its way.
+async function resendVerification(email){
+    const errEl = $('authError');
+    try {
+        await fetchT(`${API}/auth/resend-verify`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ email })
+        }, 10000);
+        if (errEl) {
+            errEl.style.color = 'var(--text)';
+            errEl.textContent = 'Confirmation email sent. Check your inbox (and spam).';
+            errEl.style.display = 'block';
+        }
+    } catch (err) {
+        if (errEl) {
+            errEl.style.color = '';
+            errEl.textContent = 'Could not resend right now — try again in a moment.';
+            errEl.style.display = 'block';
+        }
     }
 }
 
