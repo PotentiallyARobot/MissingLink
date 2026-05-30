@@ -5813,6 +5813,11 @@ let _historyLoading = false;
 // scroll observer re-firing the same failing request forever. Cleared on
 // modal open and manual retry.
 let _historyStalled = false;
+// Whether the server has more history pages. Set from whether the last page
+// came back full (items === limit) rather than comparing length to the COUNT
+// total, which can disagree and wedge the loader open. Defaults true so the
+// first scroll attempts a load.
+let _historyHasMore = true;
 // Minimized state for the sidebar history panel; persisted in localStorage.
 let _historyMinimized = (() => {
     try { return localStorage.getItem('studio_history_minimized') === '1'; }
@@ -8008,13 +8013,20 @@ async function syncHistory(opts){
         const r = await fetchT(`${API}/api/studio/history?limit=${limit}&offset=${offset}`, null, 20000);
         const d = await r.json();
         if(!d.ok) return false;
+        const items = d.items || [];
         if(offset === 0){
-            _historyItems = d.items || [];
+            _historyItems = items;
         } else {
-            _historyItems = _historyItems.concat(d.items || []);
+            _historyItems = _historyItems.concat(items);
         }
-        // Server returns total only on the first page (offset 0); later pages
-        // send total:-1 meaning "unchanged" — keep what we already have.
+        // AUTHORITATIVE "more pages?" signal: did this page come back full?
+        // The COUNT-based total can disagree with the number of rows the
+        // SELECT actually returns (e.g. done-but-NULL-finished_at rows), which
+        // left _historyItems.length permanently below _historyTotal — so the
+        // sentinel stayed visible and its spinner ran forever even though
+        // every fetch succeeded and there was nothing left to load. A
+        // short/empty page means we've reached the end, full stop.
+        _historyHasMore = items.length >= limit;
         if(typeof d.total === 'number' && d.total >= 0){
             _historyTotal = d.total;
         }
@@ -16648,6 +16660,7 @@ function openHistoryModal(){
     _historyItems = [];
     _historyTotal = 0;
     _historyStalled = false;
+    _historyHasMore = true;
     const grid = $('historyModalGrid');
     if (grid) grid.innerHTML = `<div class="history-empty">Loading…</div>`;
     renderHistoryModal();  // paints the empty state + header
@@ -16681,7 +16694,7 @@ function setupHistoryInfiniteScroll(){
             // Only fire if there's more to load and we're not mid-load
             if (_historyLoading) continue;
             if (_historyStalled) continue;
-            if (_historyItems.length >= _historyTotal) continue;
+            if (!_historyHasMore) continue;
             loadMoreHistory();
         }
     }, { root, rootMargin: '200px 0px' });  // trigger 200px before hit
@@ -16857,11 +16870,15 @@ function renderHistoryModal(){
         }
     }
 
-    // Show a skeleton/spinner sentinel if more to load, hide when done
+    // Show the loader sentinel only while there are genuinely more pages to
+    // fetch (last page was full). When we've hit the end, hide it completely
+    // so its spinner stops.
     if (sentinel) {
-        const hasMore = _historyItems.length < _historyTotal;
+        const hasMore = _historyHasMore && !_historyStalled;
         sentinel.style.display = hasMore ? '' : 'none';
-        sentinel.textContent = hasMore ? 'Loading more…' : '';
+        if (hasMore && !sentinel.querySelector('.history-retry-btn')) {
+            sentinel.textContent = 'Loading more…';
+        }
     }
 }
 
@@ -16871,12 +16888,14 @@ async function loadMoreHistory(){
     const sentinel = $('historyScrollSentinel');
     if (sentinel) sentinel.textContent = 'Loading more…';
     try {
-        const before = _historyItems.length;
         const ok = await syncHistory({ limit: 20, offset: _historyItems.length });
         renderHistoryModal();
-        if (!ok || _historyItems.length === before) {
-            // Page failed or added nothing — stop auto-firing so the observer
-            // can't loop the same request forever; offer a manual retry.
+        if (!ok) {
+            // Genuine fetch failure — stop auto-firing and offer manual retry
+            // so the observer can't loop the same failing request forever.
+            // (A successful page that returns fewer than `limit` items is NOT
+            // a failure — it just means we've reached the end; _historyHasMore
+            // is already false and the sentinel hides itself.)
             _historyStalled = true;
             if (sentinel) {
                 sentinel.style.display = '';
