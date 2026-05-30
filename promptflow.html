@@ -1604,6 +1604,30 @@
     display:flex; align-items:center; justify-content:center;
     padding:20px;
   }
+  .pf-confirm-card{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:10px; box-shadow:0 16px 48px rgba(0,0,0,.7);
+    max-width:420px; width:100%; padding:20px 22px; color:var(--text);
+  }
+  .pf-confirm-title{
+    font-family:var(--font-mono); font-size:13px; font-weight:600;
+    color:var(--gold); letter-spacing:.01em; margin-bottom:8px;
+  }
+  .pf-confirm-msg{
+    font-size:14px; line-height:1.5; color:var(--text-dim); margin-bottom:18px;
+  }
+  .pf-confirm-actions{ display:flex; justify-content:flex-end; gap:8px; }
+  .pf-confirm-cancel, .pf-confirm-ok{
+    font-family:var(--font-mono); font-size:12px; padding:7px 14px;
+    border-radius:6px; cursor:pointer; border:1px solid var(--border);
+    background:transparent; color:var(--text-dim);
+  }
+  .pf-confirm-cancel:hover{ background:var(--surface-2); color:var(--text); }
+  .pf-confirm-ok{
+    background:var(--gold); border-color:var(--gold); color:#0a0a0b; font-weight:600;
+  }
+  .pf-confirm-ok:hover{ filter:brightness(1.08); }
+  .pf-confirm-ok.danger{ background:var(--red); border-color:var(--red); color:#fff; }
 
   /* ── Generation preferences popover ─────────────────────────
      Distinct from .modal-overlay because it's smaller / scoped to
@@ -19885,8 +19909,8 @@ promptflow whoami</code></pre>
     if (p.mine && !p.is_system) {
       actions.appendChild(makeAction("$", () => openMonetizeModal(p.id),
         { title: p.is_monetized ? `${p.markup_tokens || 0}t + ${p.bonus_tokens || 0}t bonus — edit pricing` : "Monetize" }));
-      actions.appendChild(makeAction("✕", () => deleteProcess(p.id, p.name),
-        { danger: true, title: "Delete" }));
+      actions.appendChild(makeAction("🗑", () => deleteProcess(p.id, p.name),
+        { danger: true, title: "Delete process" }));
     }
     return card;
   }
@@ -20070,8 +20094,49 @@ promptflow whoami</code></pre>
     } catch (e) { alert("Network error: " + (e?.message || e)); }
   }
 
+  // In-app confirmation modal — replaces the native browser confirm()
+  // dialog. Returns a promise resolving true (confirmed) or false
+  // (cancelled / dismissed). Styled to match the app, dismissable by
+  // backdrop click or Escape.
+  function pfConfirm(message, opts = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.style.zIndex = "2000";
+      const danger = !!opts.danger;
+      overlay.innerHTML =
+        '<div class="pf-confirm-card">' +
+          (opts.title ? '<div class="pf-confirm-title"></div>' : '') +
+          '<div class="pf-confirm-msg"></div>' +
+          '<div class="pf-confirm-actions">' +
+            '<button class="pf-confirm-cancel" type="button"></button>' +
+            '<button class="pf-confirm-ok' + (danger ? ' danger' : '') + '" type="button"></button>' +
+          '</div>' +
+        '</div>';
+      if (opts.title) overlay.querySelector(".pf-confirm-title").textContent = opts.title;
+      overlay.querySelector(".pf-confirm-msg").textContent = message;
+      overlay.querySelector(".pf-confirm-cancel").textContent = opts.cancelLabel || "Cancel";
+      overlay.querySelector(".pf-confirm-ok").textContent = opts.confirmLabel || "Confirm";
+      const done = (val) => {
+        try { overlay.remove(); } catch {}
+        document.removeEventListener("keydown", onKey);
+        resolve(val);
+      };
+      const onKey = (e) => { if (e.key === "Escape") done(false); };
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) done(false); });
+      overlay.querySelector(".pf-confirm-cancel").onclick = () => done(false);
+      overlay.querySelector(".pf-confirm-ok").onclick = () => done(true);
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => { try { overlay.querySelector(".pf-confirm-ok").focus(); } catch {} });
+    });
+  }
+
   async function deleteProcess(pid, pname) {
-    if (!confirm(`Delete "${pname}"? This cannot be undone.`)) return;
+    const ok = await pfConfirm(`Delete "${pname}"? This cannot be undone.`, {
+      title: "Delete process", confirmLabel: "Delete", danger: true,
+    });
+    if (!ok) return;
     try {
       const r = await fetch("/api/promptflow/process/delete", {
         method: "POST",
@@ -27702,23 +27767,56 @@ function dDesktopInit(){
   }
 
   async function dFolderItemRemove(it) {
-    if (!confirm('Remove "' + (it.name || "this item") + '"? This cannot be undone.')) return;
-    if (it.kind === "process" || it.kind === "system") {
-      try {
-        const r = await fetch("/api/promptflow/process/delete", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id: it.id }),
-        });
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || j.message || "Delete failed");
-        // Refresh the folder view to reflect the deletion.
-        if (_dFolderActive) dLoadFolderItems(_dFolderActive);
-      } catch (e) {
-        alert("Could not remove: " + (e?.message || e));
+    if (it.kind === "conversation") {
+      // No backend support yet — tell the user in-app, not via a
+      // native dialog.
+      await pfConfirm("Removing conversations isn't supported yet.", {
+        title: "Not available", confirmLabel: "OK", cancelLabel: "Close",
+      });
+      return;
+    }
+    if (it.kind !== "process" && it.kind !== "system") return;
+    const ok = await pfConfirm('Delete "' + (it.name || "this item") + '"? This cannot be undone.', {
+      title: "Delete process", confirmLabel: "Delete", danger: true,
+    });
+    if (!ok) return;
+
+    // Optimistically remove from the in-memory list and re-render so the
+    // item disappears immediately, then call the API. If the delete
+    // fails we restore the list and surface an in-app error.
+    const listKey = _dFolderActive;
+    const prevList = (listKey && Array.isArray(_dFolderItems[listKey]))
+      ? _dFolderItems[listKey].slice() : null;
+    if (prevList) {
+      _dFolderItems[listKey] = prevList.filter(x => x.id !== it.id);
+      const searchEl = D("dFvSearch");
+      dRenderFolderItems(_dFolderItems[listKey], searchEl ? searchEl.value : "");
+    }
+    // Also drop it from the main process cache so other views agree.
+    if (Array.isArray(processesCache)) {
+      processesCache = processesCache.filter(p => p.id !== it.id);
+    }
+    try {
+      const r = await fetch("/api/promptflow/process/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: it.id }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || j.message || "Delete failed");
+      // Success — refresh from server in the background to stay in sync.
+      if (listKey) dLoadFolderItems(listKey);
+      if (typeof paintProcessList === "function") { try { paintProcessList(); } catch {} }
+    } catch (e) {
+      // Restore the list and tell the user.
+      if (prevList && listKey) {
+        _dFolderItems[listKey] = prevList;
+        const searchEl = D("dFvSearch");
+        dRenderFolderItems(prevList, searchEl ? searchEl.value : "");
       }
-    } else if (it.kind === "conversation") {
-      alert("Removing conversations isn't supported by the backend yet. Coming soon.");
+      await pfConfirm("Could not delete: " + (e?.message || e), {
+        title: "Delete failed", confirmLabel: "OK", cancelLabel: "Close",
+      });
     }
   }
 
@@ -27738,7 +27836,7 @@ function dDesktopInit(){
       '</button>' : '') +
       '<div class="d-fv-ctx-divider"></div>' +
       '<button class="d-fv-ctx-item danger" data-action="remove">' +
-        '<span class="d-fv-ctx-icon">✕</span><span>Remove</span>' +
+        '<span class="d-fv-ctx-icon">🗑</span><span>Delete' + (isProcess ? '' : '') + '</span>' +
       '</button>';
     menu.style.left = x + "px";
     menu.style.top = y + "px";
