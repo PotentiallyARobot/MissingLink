@@ -3396,6 +3396,15 @@
     user-select: none;
     pointer-events: none;
     z-index: 2;
+    transition: color .15s ease, opacity .15s ease;
+  }
+  /* Edit mode — the composer is now refining a process. Gold + full
+     opacity so it's clearly distinct from the default Interpreter
+     state, matching the gold Edit button in the editor pane. */
+  .d-input-mode-label-edit {
+    color: var(--gold, #e8a917);
+    opacity: 1;
+    font-weight: 600;
   }
   /* Hide the "Interpreter" label when the contribution / helper
      verb-chip bar is visible. The label is absolute-positioned at
@@ -11456,7 +11465,7 @@ $ promptflow run my-process.promptflow</code></pre>
            sitting just above the input bar's top-left edge.
            Doesn't affect the layout of the bar's children since
            it's pulled out of normal flow with position:absolute. -->
-      <span class="d-input-mode-label" aria-hidden="true">Interpreter</span>
+      <span class="d-input-mode-label" id="dInputModeLabel" aria-hidden="true">Interpreter</span>
       <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.zip,.json,.txt,.md" multiple hidden>
       <button class="icon-btn" id="attachBtn" title="Attach files — image/video/audio for processing, or upload a .zip + chat (.md/.txt/.json) to contribute lessons">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -12930,14 +12939,27 @@ promptflow whoami</code></pre>
   // image is required. In a fresh conversation we need an image; in
   // an existing one a text-only refinement is fine.
   function updateComposerHint() {
-    if (currentEditorProcessId && currentEditorProcess?.editable) {
-      textInput.placeholder = `Tell Claude how to update "${currentEditorProcess.name}"…`;
+    const label = document.getElementById("dInputModeLabel");
+    const inEditMode = !!(currentEditorProcessId && currentEditorProcess?.editable);
+    if (inEditMode) {
+      textInput.placeholder = `Tell Claude how to update "${currentEditorProcess.name}"… (e.g. "add a figure step", "make the tone formal")`;
     } else if (currentEditorProcessId) {
       textInput.placeholder = `(read-only — close to start a new conversation)`;
     } else if (currentConversationId) {
       textInput.placeholder = "Refine the previous plan, attach more, or text-only…";
     } else {
       textInput.placeholder = `Describe anything. Attach image / video / audio, or none. Try "make me a process for…"`;
+    }
+    // Communicate edit mode visually on the "Interpreter" label: when
+    // editing a process, it turns gold and reads "Interpreter (Edit)".
+    if (label) {
+      if (inEditMode) {
+        label.textContent = "Interpreter (Edit)";
+        label.classList.add("d-input-mode-label-edit");
+      } else {
+        label.textContent = "Interpreter";
+        label.classList.remove("d-input-mode-label-edit");
+      }
     }
   }
 
@@ -16213,6 +16235,20 @@ promptflow whoami</code></pre>
       paintEditorDoneRow();     // surface the Stop-refining button
       refreshProcesses();
       busy = false; updateSend();
+      // Auto-enter edit mode: open the structured editor for the
+      // freshly-designed process so the user lands directly in Edit
+      // (the composer flips to "Interpreter (Edit)" + the update-this
+      // placeholder via updateComposerHint inside openProcessEditor).
+      // Only for a brand-new design, not an in-place update (which the
+      // user triggered from an already-open editor).
+      if (planResp.intent === "design_process" && planResp.process.id) {
+        const newPid = planResp.process.id;
+        setTimeout(() => {
+          if (!busy && currentEditorProcessId !== newPid) {
+            openProcessEditor(newPid);
+          }
+        }, 50);
+      }
       return;
     }
 
@@ -18491,13 +18527,11 @@ promptflow whoami</code></pre>
     const authorHtml = authorName
       ? '<span class="pc-author">by <strong>' + escapeHtml(authorName) + '</strong></span>'
       : "";
-    // Public URL — only when there's one (own + slug, or published).
-    const urlHtml = proc.public_url
-      ? '<div class="pc-url-row">' +
-          '<span class="pc-url-label">live at</span> ' +
-          '<a class="pc-url-link" href="' + escapeAttr(proc.public_url) + '">' + escapeHtml(proc.public_url) + '</a>' +
-        '</div>'
-      : "";
+    // Public URL — rendered ONCE, by the richer `process-card-live`
+    // row below the card (which adds a copy button + draft hint).
+    // The inline version that used to sit inside the card body was a
+    // visual duplicate of that row, so it's removed.
+    const urlHtml = "";
     // Metadata pills row — KEY STATS, always visible. Showing zeros
     // is more honest than hiding the row: a new user knows what to
     // expect (0 runs means they could be first), and demo viewers
