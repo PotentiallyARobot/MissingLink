@@ -1309,8 +1309,6 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    intersects viewport, triggers loadMoreHistory(). */
 .history-sentinel{grid-column:1/-1;padding:20px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-top:10px}
 .history-sentinel::before{content:"";display:inline-block;width:12px;height:12px;border:2px solid var(--surface-3);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:8px}
-/* When the sentinel holds a retry button (a failed/stalled page), hide the
-   spinner pseudo-element so it doesn't look like it's still loading. */
 .history-sentinel:has(.history-retry-btn)::before{display:none}
 .history-retry-btn{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:11px;letter-spacing:.5px;padding:8px 14px;border-radius:6px;cursor:pointer;transition:all .15s}
 .history-retry-btn:hover{border-color:var(--gold);color:var(--gold)}
@@ -5811,9 +5809,9 @@ const _GPU_READY_FRESH_S = 12;
 let _historyItems = [];
 let _historyTotal = 0;
 let _historyLoading = false;
-// Set true when a "load more" page fails or returns nothing — stops the
-// infinite-scroll observer from re-firing the same doomed request forever.
-// Cleared on modal open and on manual retry.
+// True when a "load more" page fails or adds nothing — stops the infinite
+// scroll observer re-firing the same failing request forever. Cleared on
+// modal open and manual retry.
 let _historyStalled = false;
 // Minimized state for the sidebar history panel; persisted in localStorage.
 let _historyMinimized = (() => {
@@ -8003,10 +8001,10 @@ async function syncHistory(opts){
     const limit = opts.limit || 20;
     const offset = opts.offset || 0;
     try{
-        // 20s (was 8s): after a large batch the first history pages sort
-        // more rows server-side and can exceed a tight 8s budget. A longer
-        // timeout avoids a spurious failure that the infinite-scroll loop
-        // would otherwise keep retrying.
+        // 20s (was 8s): after a large batch the first history page can take
+        // longer server-side; a tight timeout would fail and the loader would
+        // get stuck. With the server-side index + lighter query this should
+        // be fast, but the headroom prevents a spurious stall.
         const r = await fetchT(`${API}/api/studio/history?limit=${limit}&offset=${offset}`, null, 20000);
         const d = await r.json();
         if(!d.ok) return false;
@@ -8015,15 +8013,17 @@ async function syncHistory(opts){
         } else {
             _historyItems = _historyItems.concat(d.items || []);
         }
-        _historyTotal = d.total || 0;
+        // Server returns total only on the first page (offset 0); later pages
+        // send total:-1 meaning "unchanged" — keep what we already have.
+        if(typeof d.total === 'number' && d.total >= 0){
+            _historyTotal = d.total;
+        }
         renderHistorySidebar();
         if($('historyModal').style.display !== 'none'){
             renderHistoryModal();
         }
         return true;
     }catch(e){
-        // Return false so callers (loadMoreHistory) can stop retrying a
-        // failing page instead of spinning forever.
         return false;
     }
 }
@@ -16874,10 +16874,9 @@ async function loadMoreHistory(){
         const before = _historyItems.length;
         const ok = await syncHistory({ limit: 20, offset: _historyItems.length });
         renderHistoryModal();
-        // A page "succeeded but added nothing" or outright failed means we
-        // can't safely keep auto-firing — otherwise the IntersectionObserver
-        // re-triggers the same offset forever (the endless-spinner bug).
         if (!ok || _historyItems.length === before) {
+            // Page failed or added nothing — stop auto-firing so the observer
+            // can't loop the same request forever; offer a manual retry.
             _historyStalled = true;
             if (sentinel) {
                 sentinel.style.display = '';
@@ -16889,7 +16888,6 @@ async function loadMoreHistory(){
     }
 }
 
-// Manual retry after a stalled page. Clears the stall flag and tries once.
 async function retryLoadMoreHistory(){
     _historyStalled = false;
     const sentinel = $('historyScrollSentinel');
