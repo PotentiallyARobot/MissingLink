@@ -198,7 +198,22 @@ const fmtDate = (sec) => {
 };
 
 async function api(path, opts={}) {
-  const r = await fetch(path, { credentials: "include", ...opts });
+  // Abort slow requests instead of hanging forever. The admin boot probe
+  // gates the whole UI on its first /users call; without a ceiling a slow
+  // query (e.g. a user with a massive batch) leaves the splash spinning with
+  // no way out. 25s is generous headroom over the normal response time.
+  const ms = opts.timeoutMs || 25000;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  let r;
+  try {
+    r = await fetch(path, { credentials: "include", signal: ctrl.signal, ...opts });
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("timeout — the server took too long to respond");
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
   if (r.status === 401) {
     showDenied("Not signed in", '<a href="/studio.html">Go to Studio →</a>');
     throw new Error("not_logged_in");
@@ -522,8 +537,9 @@ function renderLoader() {
   if (state.view === "user" && state.gens.length > 0) return;
   $("#main").innerHTML = '<div class="loader"><div class="spinner"></div></div>';
 }
-function renderError(msg) {
-  $("#main").innerHTML = '<div class="error-state"><div class="h">Something went wrong</div>' + esc(msg) + '</div>';
+function renderError(msg, isHtml) {
+  const body = isHtml ? msg : esc(msg);
+  $("#main").innerHTML = '<div class="error-state"><div class="h">Something went wrong</div>' + body + '</div>';
 }
 
 // ── search (filter users by email/name) ─────────────────────────
@@ -565,7 +581,18 @@ window.addEventListener("hashchange", fromHash);
       if (stat) stat.innerHTML = "<b>" + probe.total.toLocaleString() + "</b> user" + (probe.total === 1 ? "" : "s");
     }
   } catch (e) {
-    // api() already painted the denied splash; just stop.
+    // 401/403 already painted the denied splash via api(); for those we just
+    // stop. For anything else (timeout, 500, network) the splash would
+    // otherwise spin forever with no recourse — reveal the shell and show a
+    // retry so the admin isn't stranded.
+    if (e.message === "not_logged_in" || e.message === "forbidden") return;
+    document.body.classList.add("ready");
+    $("#me").textContent = "admin";
+    renderError(
+      "Couldn't load the admin dashboard: " + esc(e.message) +
+      '. <button class="btn" onclick="location.reload()">Retry</button>',
+      true
+    );
     return;
   }
 

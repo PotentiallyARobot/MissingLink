@@ -5808,6 +5808,13 @@ const _GPU_READY_FRESH_S = 12;
 // survives page reloads and is authoritative per user.
 let _historyItems = [];
 let _historyTotal = 0;
+// Group cursor: how many history GROUPS (batches + singles) we've fetched so
+// far. The server pages history by group, not by raw row, so we can't derive
+// the next offset from _historyItems.length (a single batch can be hundreds of
+// rows but one group). The server tells us groups_in_page each fetch and we
+// accumulate it here. This is what fixed history wedging open after a big
+// batch: paging now advances one card at a time regardless of batch size.
+let _historyGroupOffset = 0;
 let _historyLoading = false;
 // True when a "load more" page fails or adds nothing — stops the infinite
 // scroll observer re-firing the same failing request forever. Cleared on
@@ -8004,6 +8011,9 @@ async function syncHistory(opts){
     opts = opts || {};
     if(!_user) return false;
     const limit = opts.limit || 20;
+    // offset is in GROUPS (batches + singles), matching the server. On a fresh
+    // load (offset 0) we reset the running group cursor; otherwise the caller
+    // passes the accumulated group offset.
     const offset = opts.offset || 0;
     try{
         // 20s (was 8s): after a large batch the first history page can take
@@ -8016,19 +8026,32 @@ async function syncHistory(opts){
         const items = d.items || [];
         if(offset === 0){
             _historyItems = items;
+            _historyGroupOffset = 0;
         } else {
             _historyItems = _historyItems.concat(items);
         }
-        // AUTHORITATIVE "more pages?" signal: did this page come back full?
-        // The COUNT-based total can disagree with the number of rows the
-        // SELECT actually returns (e.g. done-but-NULL-finished_at rows), which
-        // left _historyItems.length permanently below _historyTotal — so the
-        // sentinel stayed visible and its spinner ran forever even though
-        // every fetch succeeded and there was nothing left to load. A
-        // short/empty page means we've reached the end, full stop.
-        _historyHasMore = items.length >= limit;
+        // Advance the group cursor by the number of distinct groups this page
+        // represented. The server computes this; fall back to counting the
+        // page's distinct batch_ids/ids if an older server omits the field.
+        let groupsInPage = (typeof d.groups_in_page === 'number') ? d.groups_in_page : null;
+        if(groupsInPage === null){
+            const seen = new Set();
+            for(const it of items) seen.add(it.batch_id || it.id);
+            groupsInPage = seen.size;
+        }
+        _historyGroupOffset += groupsInPage;
         if(typeof d.total === 'number' && d.total >= 0){
             _historyTotal = d.total;
+        }
+        // AUTHORITATIVE "more pages?" signal. _historyTotal is now a GROUP
+        // count, so compare the groups fetched so far against it. We also keep
+        // the "page came back full" check as a fallback for the very first
+        // load before _historyTotal is known: a page that returned fewer
+        // groups than requested means we've reached the end.
+        if(_historyTotal > 0){
+            _historyHasMore = _historyGroupOffset < _historyTotal;
+        } else {
+            _historyHasMore = groupsInPage >= limit;
         }
         renderHistorySidebar();
         if($('historyModal').style.display !== 'none'){
@@ -16659,6 +16682,7 @@ function openHistoryModal(){
     // state so we don't append stale results on top of an old list.
     _historyItems = [];
     _historyTotal = 0;
+    _historyGroupOffset = 0;
     _historyStalled = false;
     _historyHasMore = true;
     const grid = $('historyModalGrid');
@@ -16888,7 +16912,11 @@ async function loadMoreHistory(){
     const sentinel = $('historyScrollSentinel');
     if (sentinel) sentinel.textContent = 'Loading more…';
     try {
-        const ok = await syncHistory({ limit: 20, offset: _historyItems.length });
+        // Page by the GROUP cursor, not _historyItems.length. Raw row count
+        // and group count diverge whenever a batch is present, and paging by
+        // rows is exactly what made the loader churn endlessly through a big
+        // batch. syncHistory advances _historyGroupOffset for us.
+        const ok = await syncHistory({ limit: 20, offset: _historyGroupOffset });
         renderHistoryModal();
         if (!ok) {
             // Genuine fetch failure — stop auto-firing and offer manual retry
