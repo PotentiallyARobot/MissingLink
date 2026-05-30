@@ -14049,51 +14049,130 @@ async function downloadBatchAll(){
     if (!_activeBatch) return;
     const btn = $('btnDownloadAll');
     const originalHtml = btn ? btn.innerHTML : '';
+
+    const shotsWithUrls = _activeBatch.shots
+        .map((s, i) => ({ ...s, _idx: i }))
+        .filter(s => s.url);
+    if (!shotsWithUrls.length) {
+        showNotif('No images to download yet.', 'error');
+        return;
+    }
+
+    // Offer the LoRA-training export. A "pair" needs BOTH a source (input)
+    // image and a generated result, plus the edit instruction that maps one
+    // to the other — that's the (control, target, caption) triple an
+    // edit-LoRA trainer consumes. Only shots that carry an inputUrl qualify
+    // (batch-edit shots do; a from-scratch generation wouldn't), so we only
+    // surface the prompt when at least one qualifying pair exists.
+    const pairable = shotsWithUrls.filter(s => s.inputUrl && s.url);
+    let withPairs = false;
+    if (pairable.length) {
+        withPairs = await showConfirm(
+            `Include before/after pairs for LoRA training? This adds the ${pairable.length} ` +
+            `source image${pairable.length === 1 ? '' : 's'} alongside ${pairable.length === 1 ? 'its' : 'their'} ` +
+            `result${pairable.length === 1 ? '' : 's'} and a pairs.txt file listing each pair with its edit instruction.`,
+            { confirmLabel: 'Yes, include pairs', cancelLabel: 'Just the results' }
+        );
+    }
+
     if (btn) { btn.classList.add('busy'); btn.disabled = true; }
     try {
         if (btn) btn.innerHTML = '⏳ <span>Zipping…</span>';
         const JSZip = await _loadJSZip();
         const zip = new JSZip();
+        const shortId = _activeBatch.id.split('_').pop() || 'batch';
 
-        const shotsWithUrls = _activeBatch.shots
-            .map((s, i) => ({ ...s, _idx: i }))
-            .filter(s => s.url);
-        if (!shotsWithUrls.length) {
-            showNotif('No images to download yet.', 'error');
-            return;
+        if (!withPairs) {
+            // ── Results-only (original behavior) ──
+            // Fetch all images in parallel — R2 serves with CORS enabled for
+            // the studio.html origin, so cross-origin fetch returns usable blobs.
+            const fetches = shotsWithUrls.map(async (shot) => {
+                try {
+                    const res = await fetch(shot.url);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const blob = await res.blob();
+                    const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+                    const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
+                    zip.file(fname, blob);
+                } catch (e) {
+                    log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
+                }
+            });
+            await Promise.all(fetches);
+        } else {
+            // ── LoRA before/after pairs ──
+            // Layout (mirrors the edit-LoRA training convention: matching
+            // filenames across control/ + target/, one caption per pair):
+            //   before/NN.png   — source (control) image
+            //   after/NN.png    — generated (target) image
+            //   pairs.txt       — one line per pair:
+            //                       before/NN.png\tafter/NN.png\t<edit instruction>
+            // Tab-separated so instructions containing commas/spaces stay
+            // intact and the file parses trivially in a training script.
+            const manifestLines = [
+                '# MissingLink batch — before/after pairs for LoRA edit training',
+                '# Each line: <before_image>\\t<after_image>\\t<edit_instruction>',
+                '# (tab-separated; one pair per line)',
+                '',
+            ];
+            let pairNum = 0;
+            const fetches = shotsWithUrls.map(async (shot) => {
+                const isPair = !!(shot.inputUrl && shot.url);
+                try {
+                    if (isPair) {
+                        const n = String(++pairNum).padStart(2, '0');
+                        // Fetch both halves of the pair. If either fails we
+                        // skip the whole pair (a half-pair is useless for
+                        // training) but keep going for the rest.
+                        const [beforeRes, afterRes] = await Promise.all([
+                            fetch(shot.inputUrl),
+                            fetch(shot.url),
+                        ]);
+                        if (!beforeRes.ok) throw new Error(`before HTTP ${beforeRes.status}`);
+                        if (!afterRes.ok) throw new Error(`after HTTP ${afterRes.status}`);
+                        const [beforeBlob, afterBlob] = await Promise.all([
+                            beforeRes.blob(), afterRes.blob(),
+                        ]);
+                        const beforeName = `before/${n}.png`;
+                        const afterName = `after/${n}.png`;
+                        zip.file(beforeName, beforeBlob);
+                        zip.file(afterName, afterBlob);
+                        const instruction = (shot.prompt || '').replace(/[\r\n\t]+/g, ' ').trim();
+                        manifestLines.push(`${beforeName}\t${afterName}\t${instruction}`);
+                    } else {
+                        // Result with no source (e.g. a from-scratch generation
+                        // mixed into the batch) — still include the output so
+                        // nothing is silently dropped, just not as a pair.
+                        const res = await fetch(shot.url);
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const blob = await res.blob();
+                        const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+                        zip.file(`unpaired/${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`, blob);
+                    }
+                } catch (e) {
+                    log(`Failed to zip pair "${shot.label}": ${e.message}`, 'error');
+                }
+            });
+            await Promise.all(fetches);
+            zip.file('pairs.txt', manifestLines.join('\n') + '\n');
         }
-
-        // Fetch all images in parallel — R2 serves with CORS enabled for
-        // the studio.html origin, so cross-origin fetch returns usable blobs.
-        const fetches = shotsWithUrls.map(async (shot) => {
-            try {
-                const res = await fetch(shot.url);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const blob = await res.blob();
-                const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-                const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
-                zip.file(fname, blob);
-            } catch (e) {
-                log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
-            }
-        });
-        await Promise.all(fetches);
 
         // Generate the zip blob. "store" skips compression — these are PNGs
         // (already compressed), so DEFLATE would waste CPU with ~0 size gain.
         const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-        const shortId = _activeBatch.id.split('_').pop() || 'batch';
         const url = URL.createObjectURL(zipBlob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `missinglink-batch-${shortId}.zip`;
+        a.download = withPairs
+            ? `missinglink-batch-${shortId}-lora-pairs.zip`
+            : `missinglink-batch-${shortId}.zip`;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         // Release the blob URL after the browser has started the download
         setTimeout(() => URL.revokeObjectURL(url), 2000);
-        log(`Downloaded ${shotsWithUrls.length}-image zip`, 'success');
+        log(`Downloaded ${shotsWithUrls.length}-image zip${withPairs ? ' with LoRA pairs' : ''}`, 'success');
     } catch (e) {
         showNotif('Zip failed: ' + e.message, 'error');
     } finally {
