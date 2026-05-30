@@ -11916,6 +11916,24 @@ promptflow whoami</code></pre>
   // false-positive" — 60s is well past any normal /plan + /execute
   // round trip, so a real in-flight call won't be killed by mistake.
   let _busyWatchdog = null;
+  // Arm (or re-arm) a watchdog that auto-recovers if `busy` is still
+  // true after the timeout — covers any path that sets busy=true
+  // directly (most do) without routing through setBusyState. A hung
+  // /execute that never returns would otherwise leave busy stuck and
+  // block every future run; this guarantees the UI frees itself.
+  function armBusyWatchdog(ms) {
+    if (_busyWatchdog) { clearTimeout(_busyWatchdog); _busyWatchdog = null; }
+    _busyWatchdog = setTimeout(() => {
+      if (busy) {
+        // eslint-disable-next-line no-console
+        console.warn("[PromptFlow] busy stuck >timeout — auto-recovering so runs work again.");
+        busy = false;
+        _planInFlight = false;
+        _sendInProgress = false;
+        if (typeof updateSend === "function") updateSend();
+      }
+    }, ms || 120_000);   // 120s: well past a normal plan+execute round trip
+  }
   function setBusyState(newVal) {
     busy = newVal;
     if (_busyWatchdog) { clearTimeout(_busyWatchdog); _busyWatchdog = null; }
@@ -15862,6 +15880,7 @@ promptflow whoami</code></pre>
 
     // Capture and reset composer.
     busy = true;
+    armBusyWatchdog();   // auto-recover if this turn hangs (e.g. /execute never returns)
     _sendInProgress = false;   // busy/_planInFlight now guard re-entry
     // Fresh abort controller for this send cycle. /plan is always
     // cancellable; once /execute starts we re-evaluate based on
@@ -18402,6 +18421,18 @@ promptflow whoami</code></pre>
         if (cardEl) {
           cardEl.classList.add("rc-card-invalid");
           setTimeout(() => cardEl.classList.remove("rc-card-invalid"), 600);
+        }
+        return;
+      }
+
+      // Don't fire if a turn is already in flight — send() would reject
+      // it at the concurrency guard, leaving a dead "Running" header
+      // with no status and the composer un-cleared. Tell the user to
+      // wait instead of painting a stuck bubble.
+      if (busy || _planInFlight || _sendInProgress) {
+        const costRow = body.querySelector("#rc-cost-row");
+        if (costRow) {
+          costRow.innerHTML = '<span class="rc-cost-line" style="color:var(--gold)">Another run is in progress — wait for it to finish, then Run again.</span>';
         }
         return;
       }
