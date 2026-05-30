@@ -471,6 +471,12 @@
     display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0;
   }
   .editor-actions .btn{ font-size:11px; padding:5px 10px }
+  .editor-actions .editor-run-btn{
+    background:linear-gradient(180deg,#f4c558 0%,#e8a917 100%);
+    border:1px solid rgba(232,169,23,0.95);
+    color:#0a0a0b; font-weight:600;
+  }
+  .editor-actions .editor-run-btn:hover{ filter:brightness(1.08); }
   .editor-section-title{
     font-family:var(--font-mono); font-size:10px; letter-spacing:.1em;
     text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;
@@ -6048,6 +6054,29 @@ body.d-desktop-mode .stream {
 .d-plan-cost-label { color: rgba(170,170,176,0.8); text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; }
 .d-plan-cost-val { color: var(--gold, #e8a917); font-weight: 600; font-size: 13px; }
 .d-plan-cost-tok { color: rgba(150,150,156,0.7); }
+.run-inputs-box {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.run-inputs-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 6px;
+}
+.run-inputs-proc {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px; font-weight: 600; color: var(--gold, #e8a917);
+}
+.run-inputs-label {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px; letter-spacing: 0.12em; color: rgba(150,150,156,0.7);
+}
+.run-inputs-body {
+  font-size: 13px; color: rgba(220,220,225,0.92);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .d-design-search-phase {
   display: flex;
   align-items: center;
@@ -11871,6 +11900,10 @@ promptflow whoami</code></pre>
   // spawning a second concurrent send (which produced a zombie
   // "Running… Starting…" bubble with a new turn stacked beneath it).
   let _planInFlight = false;
+  // Synchronous re-entrancy latch for send() — see the comment at the
+  // top of send(). Set once a turn commits to real work, cleared when
+  // busy takes over or the turn bails early.
+  let _sendInProgress = false;
 
   // Watchdog: if busy stays true for longer than 60 seconds with no
   // explicit reset, auto-recover. This handles the edge case where
@@ -11893,6 +11926,7 @@ promptflow whoami</code></pre>
           console.warn("[PromptFlow] busy=true for >60s — auto-resetting so Enter works again.");
           busy = false;
           _planInFlight = false;   // backstop: never let the in-flight lock outlive the watchdog
+          _sendInProgress = false; // and never let the sync latch stick
           if (typeof updateSend === "function") updateSend();
         }
       }, 60_000);
@@ -15067,31 +15101,33 @@ promptflow whoami</code></pre>
 
   // ── Send / generate (two-phase: plan → confirm → execute) ─────
   async function send() {
+    // Concurrency guard. Block a second send while a turn is genuinely
+    // in flight so a new user message can't be stacked beneath a
+    // running plan/run. Two signals:
+    //   _planInFlight   — a /plan or /execute network call is out.
+    //   _sendInProgress — the brief synchronous setup window before
+    //                     busy/_planInFlight are set (cleared at every
+    //                     commit + early exit; watchdog clears as a
+    //                     backstop so it can never stick permanently).
+    if (_planInFlight || _sendInProgress) {
+      return;
+    }
+    // Stale-busy self-heal: if busy is true but nothing is actually in
+    // flight and the button is showing Send (not Stop/Running), treat
+    // busy as stale and proceed — otherwise defer to the live run.
     if (busy) {
-      // Self-healing guard. If the button is visually showing Send
-      // (no stop/running class) but busy is stale-true, we forge
-      // ahead instead of silently bailing. This makes the bug
-      // recoverable: any click/Enter that the user could legitimately
-      // expect to send WILL send.
-      //
-      // BUT: _planInFlight means a request is GENUINELY outstanding
-      // (set right before the fetch, cleared when it settles). In that
-      // case we must NOT spawn a second concurrent send — doing so left
-      // a zombie "Running… Starting…" bubble with a new turn stacked
-      // beneath it. This flag is the source of truth; the button's CSS
-      // class can lag, and currentAbortController is never reset.
-      if (_planInFlight) {
-        return; // real in-flight call — defer this send.
-      }
-      if (!sendBtn.classList.contains("stop") && !sendBtn.classList.contains("running")) {
-        // eslint-disable-next-line no-console
-        console.warn("[PromptFlow] send() entered with busy=true but button visually Send and no in-flight request — clearing stale busy.");
+      const buttonIdle = !sendBtn.classList.contains("stop") && !sendBtn.classList.contains("running");
+      if (buttonIdle) {
         busy = false;
       } else {
-        return; // legit in-flight call; defer.
+        return;
       }
     }
     if (!ME) { openAuth("signup"); return; }
+    // Past the entry guards — latch against a second concurrent send().
+    // Cleared at every busy=true commit (busy/_planInFlight take over
+    // from there) and at the no-op early returns below.
+    _sendInProgress = true;
     const userText = textInput.value.trim();
     if (userText) lastUserText = userText;
 
@@ -15149,6 +15185,7 @@ promptflow whoami</code></pre>
       && !refineBoundProcessId
       && !currentEditorProcessId;
     if (shouldStreamDiscuss) {
+      _sendInProgress = false;   // discuss path manages its own state
       await streamDiscussAnswer(userText);
       return;
     }
@@ -15231,7 +15268,7 @@ promptflow whoami</code></pre>
       const resultMount = document.createElement("div");
       resultMount.className = "d-contrib-result-mount";
       body.appendChild(resultMount);
-      busy = true; updateSend();
+      busy = true; _sendInProgress = false; updateSend();
 
       try {
         if (intent === "extract") {
@@ -15341,10 +15378,11 @@ promptflow whoami</code></pre>
       } finally {
         busy = false; updateSend();
       }
+      _sendInProgress = false;
       return;
     }
 
-    if (!userText) return;
+    if (!userText) { _sendInProgress = false; return; }
 
     // The interpreter-commands suggestion panel (matches like
     // "Run my X" while typing) shouldn't linger after the message
@@ -15384,10 +15422,12 @@ promptflow whoami</code></pre>
         // refineBoundProcess. Resets composer, adds user/assistant
         // bubbles to the stream below the editor pane.
         textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        _sendInProgress = false;
         await refineBoundProcess(userText);
         return;
       }
     } else if (currentEditorProcessId && !currentEditorProcess?.editable) {
+      _sendInProgress = false;
       alert("This process is read-only. Close the editor (top right) to start a new conversation.");
       return;
     }
@@ -15422,6 +15462,7 @@ promptflow whoami</code></pre>
         fileInput.value = "";
         paintAttach();
         updateSend();
+        _sendInProgress = false;   // refineBoundProcess manages its own state
         await refineBoundProcess(userText);
         return;
       }
@@ -15469,12 +15510,16 @@ promptflow whoami</code></pre>
     if (isChooserContinuation) window._skipDesignSearchOnce = false;
 
     // Append user turn — refinements / text-only don't include a
-    // thumbnail. Skipped when this send() is a chooser continuation,
-    // since the user bubble is already on screen from the original
-    // turn.
-    if (!isChooserContinuation) {
+    // thumbnail. Skipped when this send() is a chooser continuation
+    // (user bubble already on screen) OR when a run bubble already
+    // renders the inputs inside itself (forced runs show inputs →
+    // progress → output in one card, so a separate loose user message
+    // would duplicate the input and land out of order).
+    const runShowsOwnInputs = !!(window._runCardBubble && window._runInputsInline);
+    if (!isChooserContinuation && !runShowsOwnInputs) {
       addUserMsg(userText, userImg, userImgName, extraThumbs);
     }
+    window._runInputsInline = false;   // one-shot
 
     // ── Visible search-and-compose pre-pass for design intent ──
     //
@@ -15817,6 +15862,7 @@ promptflow whoami</code></pre>
 
     // Capture and reset composer.
     busy = true;
+    _sendInProgress = false;   // busy/_planInFlight now guard re-entry
     // Fresh abort controller for this send cycle. /plan is always
     // cancellable; once /execute starts we re-evaluate based on
     // whether the plan invokes a saved process (picked_process_id).
@@ -20237,6 +20283,66 @@ promptflow whoami</code></pre>
     }
   }
 
+  // Run the process currently open in the editor. Reuses the chat's
+  // execution pipeline: set _forceRunProcessId so send() executes THIS
+  // process (the planner can't reinterpret), prefill a run instruction,
+  // and fire. Status + output render in the chat stream below the
+  // editor pane, which stays open. For processes that need inputs, the
+  // user can type them into the composer first (they become the run's
+  // text input); otherwise the process runs on its sample/default
+  // inputs. This is the lightweight editor-side counterpart to the
+  // full run-card input collector used from process cards.
+  function runProcessFromEditor(p) {
+    if (!p || !p.id) return;
+    if (busy || _planInFlight || _sendInProgress) return;   // don't stack a run
+    // Clear any refine binding — Run is "execute THIS", not "refine".
+    if (typeof refineBoundProcessId !== "undefined" && refineBoundProcessId) {
+      refineBoundProcessId = null;
+      if (typeof refineBoundProcessName !== "undefined") refineBoundProcessName = null;
+      try { paintRefineBindChip(); } catch {}
+      try { paintEditorDoneRow(); } catch {}
+    }
+    window._forceRunProcessId = p.id;
+    window._forceRunProcessName = p.name;
+    const typed = (textInput.value || "").trim();
+    const runInstruction = typed || `Run "${p.name}"`;
+    if (!typed) textInput.value = runInstruction;
+
+    // Build ONE run bubble that holds the whole run: a labeled inputs
+    // box at the top, then status/progress, then output — all streamed
+    // into the same bubble by send() (via _runCardBubble). This is why
+    // we DON'T let send() add a separate loose user message: the input
+    // lives inside this card instead (set _runInputsInline so send()
+    // skips addUserMsg).
+    const assist = addAssistMsg();
+    const inputsBox = document.createElement("div");
+    inputsBox.className = "run-inputs-box";
+    inputsBox.innerHTML =
+      '<div class="run-inputs-head">' +
+        '<span class="run-inputs-proc"></span>' +
+        '<span class="run-inputs-label">INPUT</span>' +
+      '</div>' +
+      '<div class="run-inputs-body"></div>';
+    inputsBox.querySelector(".run-inputs-proc").textContent = "▶ " + p.name;
+    inputsBox.querySelector(".run-inputs-body").textContent = runInstruction;
+    assist.body.appendChild(inputsBox);
+
+    window._runCardBubble = assist;
+    window._runInputsInline = true;
+
+    try {
+      send();
+    } catch (e) {
+      window._forceRunProcessId = null;
+      window._forceRunProcessName = null;
+      window._runCardBubble = null;
+      window._runInputsInline = false;
+      // eslint-disable-next-line no-console
+      console.error("[editor-run] send() threw", e);
+      alert("Could not start the run. Please try again.");
+    }
+  }
+
   function paintEditor() {
     if (!currentEditorProcess) return;
     const p = currentEditorProcess;
@@ -20309,6 +20415,18 @@ promptflow whoami</code></pre>
     }
     const actionsR = document.createElement("div");
     actionsR.className = "editor-actions";
+    // Run — execute this process directly from the editor. Available
+    // for any runnable process (not system stubs with no steps). Sets
+    // _forceRunProcessId so the chat's send() pipeline executes THIS
+    // process, prefills a minimal run instruction, and fires it; the
+    // run status + output render in the chat stream below the editor.
+    if (!p.is_system || (p.steps && p.steps.length > 0)) {
+      const runBtn = document.createElement("button");
+      runBtn.className = "btn editor-run-btn";
+      runBtn.innerHTML = "▶ Run";
+      runBtn.onclick = () => runProcessFromEditor(p);
+      actionsR.appendChild(runBtn);
+    }
     // Download is available for ANY process. The .promptflow bundler
     // builds a runnable bundle from the step graph itself, so we no
     // longer gate this on python_text being present.
