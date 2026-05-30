@@ -20049,7 +20049,18 @@ promptflow whoami</code></pre>
       let j;
       try { j = JSON.parse(trimmed); }
       catch { alert("Could not load process: couldn't parse server response."); return; }
-      if (!j.ok || !j.process) { alert(j.message || j.error || "Could not load process."); return; }
+      if (!j.ok || !j.process) {
+        // Never surface a raw HTML/huge payload in an alert (a server
+        // error sometimes carries page HTML in `message`). Show a
+        // clean, bounded message and log the detail for debugging.
+        let msg = String(j.message || j.error || "Could not load process.");
+        if (msg.includes("<!doctype") || msg.includes("<html") || msg.length > 200) {
+          console.error("[openProcessEditor] server error:", msg.slice(0, 2000));
+          msg = "Could not load process: the server returned an error (HTTP " + r.status + "). Please try again.";
+        }
+        alert(msg);
+        return;
+      }
       currentEditorProcessId = pid;
       currentEditorProcess = j.process;
       currentConversationId = null;     // detach from any conversation
