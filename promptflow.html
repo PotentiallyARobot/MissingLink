@@ -1628,6 +1628,13 @@
   }
   .pf-confirm-ok:hover{ filter:brightness(1.08); }
   .pf-confirm-ok.danger{ background:var(--red); border-color:var(--red); color:#fff; }
+  .pf-prompt-input{
+    width:100%; box-sizing:border-box; margin-bottom:18px;
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; padding:9px 11px; color:var(--text);
+    font-family:var(--font-display); font-size:14px;
+  }
+  .pf-prompt-input:focus{ outline:none; border-color:var(--gold); }
 
   /* ── Generation preferences popover ─────────────────────────
      Distinct from .modal-overlay because it's smaller / scoped to
@@ -20132,10 +20139,53 @@ promptflow whoami</code></pre>
     });
   }
 
-  async function deleteProcess(pid, pname) {
-    const ok = await pfConfirm(`Delete "${pname}"? This cannot be undone.`, {
-      title: "Delete process", confirmLabel: "Delete", danger: true,
+  // In-app text-input modal — replaces the native browser prompt().
+  // Resolves to the entered string, or null if cancelled/dismissed.
+  function pfPrompt(message, opts = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.style.zIndex = "2000";
+      overlay.innerHTML =
+        '<div class="pf-confirm-card">' +
+          (opts.title ? '<div class="pf-confirm-title"></div>' : '') +
+          (message ? '<div class="pf-confirm-msg"></div>' : '') +
+          '<input class="pf-prompt-input" type="text" />' +
+          '<div class="pf-confirm-actions">' +
+            '<button class="pf-confirm-cancel" type="button"></button>' +
+            '<button class="pf-confirm-ok" type="button"></button>' +
+          '</div>' +
+        '</div>';
+      if (opts.title) overlay.querySelector(".pf-confirm-title").textContent = opts.title;
+      if (message) overlay.querySelector(".pf-confirm-msg").textContent = message;
+      const input = overlay.querySelector(".pf-prompt-input");
+      input.value = opts.value || "";
+      if (opts.placeholder) input.placeholder = opts.placeholder;
+      if (opts.maxLength) input.maxLength = opts.maxLength;
+      overlay.querySelector(".pf-confirm-cancel").textContent = opts.cancelLabel || "Cancel";
+      overlay.querySelector(".pf-confirm-ok").textContent = opts.confirmLabel || "Save";
+      const done = (val) => {
+        try { overlay.remove(); } catch {}
+        document.removeEventListener("keydown", onKey);
+        resolve(val);
+      };
+      const submit = () => {
+        const v = input.value.trim();
+        done(v ? v : null);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") done(null);
+        else if (e.key === "Enter" && document.activeElement === input) { e.preventDefault(); submit(); }
+      };
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) done(null); });
+      overlay.querySelector(".pf-confirm-cancel").onclick = () => done(null);
+      overlay.querySelector(".pf-confirm-ok").onclick = submit;
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => { try { input.focus(); input.select(); } catch {} });
     });
+  }
+
     if (!ok) return;
     try {
       const r = await fetch("/api/promptflow/process/delete", {
@@ -27745,12 +27795,48 @@ function dDesktopInit(){
 
   function dFolderItemEdit(it) {
     // Edit means "open in editor" for processes. For conversations,
-    // there's no edit; we treat Edit on a chat as Rename — but no
-    // rename endpoint exists yet, so we surface a one-time message.
+    // Edit renames the chat via an in-app prompt + the rename endpoint.
     if (it.kind === "process" || it.kind === "system") {
       dFolderItemOpen(it);
     } else if (it.kind === "conversation") {
-      alert("Renaming conversations isn't supported yet. Coming soon.");
+      dRenameConversation(it);
+    }
+  }
+
+  async function dRenameConversation(it) {
+    const newTitle = await pfPrompt("Rename this conversation:", {
+      title: "Rename chat", value: it.name || it.title || "",
+      placeholder: "Conversation title", confirmLabel: "Rename", maxLength: 200,
+    });
+    if (!newTitle || newTitle === (it.name || it.title)) return;
+    const listKey = _dFolderActive;
+    const prevList = (listKey && Array.isArray(_dFolderItems[listKey]))
+      ? _dFolderItems[listKey].slice() : null;
+    // Optimistic rename in the list.
+    if (prevList) {
+      _dFolderItems[listKey] = prevList.map(x =>
+        x.id === it.id ? { ...x, name: newTitle, title: newTitle } : x);
+      const searchEl = D("dFvSearch");
+      dRenderFolderItems(_dFolderItems[listKey], searchEl ? searchEl.value : "");
+    }
+    try {
+      const r = await fetch("/api/promptflow/conversation/rename", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: it.id, title: newTitle }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || j.message || "Rename failed");
+      if (listKey) dLoadFolderItems(listKey);
+    } catch (e) {
+      if (prevList && listKey) {
+        _dFolderItems[listKey] = prevList;
+        const searchEl = D("dFvSearch");
+        dRenderFolderItems(prevList, searchEl ? searchEl.value : "");
+      }
+      await pfConfirm("Could not rename: " + (e?.message || e), {
+        title: "Rename failed", confirmLabel: "OK", cancelLabel: "Close",
+      });
     }
   }
 
@@ -27767,19 +27853,15 @@ function dDesktopInit(){
   }
 
   async function dFolderItemRemove(it) {
-    if (it.kind === "conversation") {
-      // No backend support yet — tell the user in-app, not via a
-      // native dialog.
-      await pfConfirm("Removing conversations isn't supported yet.", {
-        title: "Not available", confirmLabel: "OK", cancelLabel: "Close",
-      });
-      return;
-    }
-    if (it.kind !== "process" && it.kind !== "system") return;
+    const isConvo = it.kind === "conversation";
+    if (!isConvo && it.kind !== "process" && it.kind !== "system") return;
     const ok = await pfConfirm('Delete "' + (it.name || "this item") + '"? This cannot be undone.', {
-      title: "Delete process", confirmLabel: "Delete", danger: true,
+      title: isConvo ? "Delete chat" : "Delete process", confirmLabel: "Delete", danger: true,
     });
     if (!ok) return;
+    const endpoint = isConvo
+      ? "/api/promptflow/conversation/delete"
+      : "/api/promptflow/process/delete";
 
     // Optimistically remove from the in-memory list and re-render so the
     // item disappears immediately, then call the API. If the delete
@@ -27797,7 +27879,7 @@ function dDesktopInit(){
       processesCache = processesCache.filter(p => p.id !== it.id);
     }
     try {
-      const r = await fetch("/api/promptflow/process/delete", {
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: it.id }),
@@ -27830,6 +27912,9 @@ function dDesktopInit(){
       '</button>' +
       (isProcess ? '<button class="d-fv-ctx-item" data-action="edit">' +
         '<span class="d-fv-ctx-icon">✎</span><span>Edit</span>' +
+      '</button>' : '') +
+      (!isProcess && it.kind === "conversation" ? '<button class="d-fv-ctx-item" data-action="edit">' +
+        '<span class="d-fv-ctx-icon">✎</span><span>Rename</span>' +
       '</button>' : '') +
       (isProcess ? '<button class="d-fv-ctx-item" data-action="download">' +
         '<span class="d-fv-ctx-icon">⬇</span><span>Download .promptflow</span>' +
