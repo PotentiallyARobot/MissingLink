@@ -20469,6 +20469,21 @@ function restorePersistedInputs(){
 .mlc-msg .who{font-family:var(--font-mono);font-size:11px;color:var(--gold);font-weight:700;margin-right:6px;}
 .mlc-msg.mine .who{color:var(--gold-light);}
 .mlc-msg .when{font-size:10px;color:var(--text-muted);margin-left:6px;}
+.mlc-edit{font-size:10px;color:var(--text-muted);margin-left:6px;cursor:pointer;
+  text-decoration:underline;opacity:0;transition:opacity .12s;}
+.mlc-msg:hover .mlc-edit{opacity:1;}
+.mlc-edit:hover{color:var(--gold);}
+.mlc-editbox{display:flex;flex-direction:column;gap:6px;}
+.mlc-edit-input{width:100%;resize:none;background:var(--surface);border:1px solid var(--gold-dark);
+  border-radius:6px;color:var(--text);font-family:var(--font-body);font-size:13px;padding:6px 8px;
+  line-height:1.4;outline:none;min-height:44px;}
+.mlc-edit-actions{display:flex;gap:6px;}
+.mlc-edit-actions button{font-family:var(--font-display);font-weight:700;font-size:11px;
+  border:none;border-radius:6px;padding:3px 10px;cursor:pointer;}
+.mlc-edit-save{background:var(--gold);color:var(--black);}
+.mlc-edit-save:hover{background:var(--gold-light);}
+.mlc-edit-cancel{background:var(--surface-3);color:var(--text-dim);}
+.mlc-edit-cancel:hover{color:var(--text);}
 .mlc-empty{color:var(--text-muted);font-size:12px;text-align:center;margin:auto 0;}
 .mlc-input{display:flex;gap:6px;padding:10px;border-top:1px solid var(--border);background:var(--surface-2);}
 .mlc-input textarea{flex:1;resize:none;background:var(--surface);border:1px solid var(--border);
@@ -20512,6 +20527,12 @@ function restorePersistedInputs(){
   var head=document.getElementById('mlcHead');
   var toggleBtn=document.getElementById('mlcToggle');
   var lastId=0, timer=null, atBottom=true, started=false;
+  // Message store keyed by id, so polls can upsert (new messages append,
+  // edited messages update in place). editingId tracks which of the
+  // user's own messages is currently open in the edit box, if any.
+  var msgStore={};      // id -> {id,handle,body,created_at,edited_at,mine}
+  var msgOrder=[];      // ids in display order (ascending)
+  var editingId=null;
 
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -20566,16 +20587,111 @@ function restorePersistedInputs(){
   });
   function scrollDown(){ bodyEl.scrollTop=bodyEl.scrollHeight; }
 
-  function render(msgs){
-    if(!msgs.length && lastId===0){ bodyEl.innerHTML='<div class="mlc-empty">No messages yet. Say hi 👋</div>'; return; }
-    var html='';
-    for(var i=0;i<msgs.length;i++){var m=msgs[i];
-      html+='<div class="mlc-msg'+(m.mine?' mine':'')+'">'+
-        '<span class="who">'+esc(m.handle)+'</span>'+esc(m.body)+
-        '<span class="when">'+fmt(m.created_at)+'</span></div>';
-    }
-    if(lastId===0) bodyEl.innerHTML=html; else bodyEl.insertAdjacentHTML('beforeend',html);
+  // Build the inner HTML for one message. Own messages get a small
+  // "edit" link; an "(edited)" marker shows when edited_at is set.
+  function msgInner(m){
+    var edited = m.edited_at ? '<span class="when" title="edited '+esc(fmt(m.edited_at))+'">(edited)</span>' : '';
+    var editLink = m.mine ? '<span class="mlc-edit" data-edit="'+m.id+'">edit</span>' : '';
+    return '<span class="who">'+esc(m.handle)+'</span>'+
+      '<span class="mlc-txt">'+esc(m.body)+'</span>'+
+      '<span class="when">'+fmt(m.created_at)+'</span>'+
+      edited+editLink;
   }
+
+  // Upsert a batch of messages into the store + DOM. New ids are appended
+  // in order; existing ids update in place (this is how edits land).
+  function upsert(msgs){
+    var appended=false;
+    for(var i=0;i<msgs.length;i++){
+      var m=msgs[i];
+      var existing=msgStore[m.id];
+      msgStore[m.id]=m;
+      var el=bodyEl.querySelector('.mlc-msg[data-id="'+m.id+'"]');
+      if(el){
+        // Update in place — but don't clobber a row the user is editing.
+        if(editingId!==m.id) el.innerHTML=msgInner(m);
+        el.className='mlc-msg'+(m.mine?' mine':'');
+      } else {
+        // New message: insert in id order (almost always at the end).
+        var empty=bodyEl.querySelector('.mlc-empty'); if(empty) empty.remove();
+        var div=document.createElement('div');
+        div.className='mlc-msg'+(m.mine?' mine':'');
+        div.setAttribute('data-id',m.id);
+        div.innerHTML=msgInner(m);
+        // Find insertion point (keep ascending id order).
+        var nodes=bodyEl.querySelectorAll('.mlc-msg'); var placed=false;
+        for(var j=0;j<nodes.length;j++){
+          if(parseInt(nodes[j].getAttribute('data-id'),10) > m.id){
+            bodyEl.insertBefore(div,nodes[j]); placed=true; break;
+          }
+        }
+        if(!placed) bodyEl.appendChild(div);
+        appended=true;
+      }
+    }
+    return appended;
+  }
+
+  function showEmptyIfNone(){
+    if(!bodyEl.querySelector('.mlc-msg') && !bodyEl.querySelector('.mlc-empty')){
+      bodyEl.innerHTML='<div class="mlc-empty">No messages yet. Say hi 👋</div>';
+    }
+  }
+
+  // ── inline edit ──
+  function beginEdit(id){
+    var m=msgStore[id]; if(!m||!m.mine) return;
+    var el=bodyEl.querySelector('.mlc-msg[data-id="'+id+'"]'); if(!el) return;
+    editingId=id;
+    el.innerHTML=
+      '<div class="mlc-editbox">'+
+        '<textarea class="mlc-edit-input" maxlength="600"></textarea>'+
+        '<div class="mlc-edit-actions">'+
+          '<button class="mlc-edit-save">Save</button>'+
+          '<button class="mlc-edit-cancel">Cancel</button>'+
+        '</div>'+
+      '</div>';
+    var ta=el.querySelector('.mlc-edit-input');
+    ta.value=m.body; ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length);
+    el.querySelector('.mlc-edit-save').onclick=function(){ commitEdit(id, ta.value); };
+    el.querySelector('.mlc-edit-cancel').onclick=function(){ cancelEdit(id); };
+    ta.addEventListener('keydown',function(e){
+      if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); commitEdit(id, ta.value); }
+      if(e.key==='Escape'){ e.preventDefault(); cancelEdit(id); }
+    });
+  }
+  function cancelEdit(id){
+    var was=editingId; editingId=null;
+    var m=msgStore[id]; var el=bodyEl.querySelector('.mlc-msg[data-id="'+id+'"]');
+    if(m&&el) el.innerHTML=msgInner(m);
+  }
+  async function commitEdit(id, newBody){
+    var v=(newBody||'').trim();
+    if(!v){ cancelEdit(id); return; }
+    try{
+      var r=await fetchT(API+'/api/studio/chat/edit',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:id, body:v})},8000);
+      var d=await r.json();
+      if(d.ok){
+        editingId=null;
+        // Optimistically apply; the next poll will confirm/sync to others.
+        if(msgStore[id]){ msgStore[id].body=d.body; msgStore[id].edited_at=d.edited_at; }
+        var el=bodyEl.querySelector('.mlc-msg[data-id="'+id+'"]');
+        if(el&&msgStore[id]) el.innerHTML=msgInner(msgStore[id]);
+      } else {
+        // Not allowed / gone — just restore the original.
+        cancelEdit(id);
+      }
+    }catch(e){ cancelEdit(id); }
+  }
+  // Delegate clicks on "edit" links.
+  bodyEl.addEventListener('click',function(e){
+    var t=e.target;
+    if(t&&t.classList&&t.classList.contains('mlc-edit')){
+      beginEdit(parseInt(t.getAttribute('data-edit'),10));
+    }
+  });
 
   async function poll(){
     try{
@@ -20590,10 +20706,16 @@ function restorePersistedInputs(){
       // collapsed/expanded state (handled by the .collapsed class).
       if(root.style.display==='none'){ root.style.display='flex'; }
       if(d.messages&&d.messages.length){
-        render(d.messages);
-        lastId=d.messages[d.messages.length-1].id;
-        if(atBottom) scrollDown();
-      } else if(lastId===0){ render([]); }
+        var appended=upsert(d.messages);
+        // Advance lastId only to the true max id — edited older rows
+        // (id <= lastId) are folded in for sync but must not rewind or
+        // wrongly bump the cursor.
+        for(var k=0;k<d.messages.length;k++){
+          if(d.messages[k].id>lastId) lastId=d.messages[k].id;
+        }
+        if(appended && atBottom) scrollDown();
+      }
+      showEmptyIfNone();
       if(d.online){
         countEl.textContent=d.online.length+' online';
         onlineEl.innerHTML='<b>online:</b> '+d.online.map(esc).join(', ');
