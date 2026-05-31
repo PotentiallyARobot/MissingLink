@@ -20453,7 +20453,17 @@ function restorePersistedInputs(){
   background:var(--surface);border:1px solid var(--border);border-radius:12px;
   box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;}
 #mlChat.collapsed{height:auto;}
-#mlChat.collapsed .mlc-body,#mlChat.collapsed .mlc-input{display:none;}
+#mlChat.collapsed .mlc-body,#mlChat.collapsed .mlc-input,#mlChat.collapsed .mlc-online{display:none;}
+/* Minimized: the whole window is gone; only #mlcLauncher remains. */
+#mlChat.minimized{display:none !important;}
+#mlcLauncher{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9001;
+  display:flex;align-items:center;gap:8px;cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+  padding:7px 14px;font-family:var(--font-display);font-weight:700;font-size:12px;
+  color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.4);}
+#mlcLauncher:hover{border-color:var(--gold-dark);color:var(--gold-light);}
+#mlcLauncher .mlc-launcher-count{font-family:var(--font-mono);font-weight:400;
+  font-size:11px;color:var(--text-muted);}
 .mlc-head{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:move;
   background:var(--surface-2);border-bottom:1px solid var(--border);user-select:none;}
 .mlc-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none;
@@ -20506,6 +20516,7 @@ function restorePersistedInputs(){
     <span class="mlc-count" id="mlcCount"></span>
     <span class="mlc-spacer"></span>
     <button class="mlc-btn" id="mlcToggle" title="expand/collapse">▢</button>
+    <button class="mlc-btn" id="mlcMin" title="minimize to a button">−</button>
   </div>
   <div class="mlc-body" id="mlcBody"><div class="mlc-empty">Loading…</div></div>
   <div class="mlc-online" id="mlcOnline"></div>
@@ -20514,6 +20525,11 @@ function restorePersistedInputs(){
     <button id="mlcSend">Send</button>
   </div>
 </div>
+<button id="mlcLauncher" title="Open community chat" style="display:none;">
+  <span class="mlc-dot"></span>
+  <span>Community</span>
+  <span class="mlc-launcher-count" id="mlcLauncherCount"></span>
+</button>
 <script>
 (function(){
   // Reuses the page's fetchT (cookie auth) + _user. Polls every 3s for
@@ -20526,7 +20542,16 @@ function restorePersistedInputs(){
   var sendBtn=document.getElementById('mlcSend');
   var head=document.getElementById('mlcHead');
   var toggleBtn=document.getElementById('mlcToggle');
+  var minBtn=document.getElementById('mlcMin');
+  var launcher=document.getElementById('mlcLauncher');
+  var launcherCount=document.getElementById('mlcLauncherCount');
   var lastId=0, timer=null, atBottom=true, started=false;
+  // Whether the user has authed at least once (first 200). Until then we
+  // keep everything hidden so logged-out visitors see nothing.
+  var authed=false;
+  // Minimized = window hidden, launcher button shown. Persisted.
+  var minimized=false;
+  try{ minimized = localStorage.getItem('mlChatMin')==='1'; }catch(e){}
   // Message store keyed by id, so polls can upsert (new messages append,
   // edited messages update in place). editingId tracks which of the
   // user's own messages is currently open in the edit box, if any.
@@ -20541,17 +20566,48 @@ function restorePersistedInputs(){
 
   // Collapse state persists across reloads.
   try{ if(localStorage.getItem('mlChatOpen')==='1') root.classList.remove('collapsed'); }catch(e){}
+
+  // Single source of truth for what's on screen. Three cases:
+  //   not authed   → nothing visible (window hidden, launcher hidden)
+  //   minimized     → launcher button only
+  //   normal        → window visible (collapsed/expanded handled by class)
+  function applyVisibility(){
+    if(!authed){
+      root.style.display='none';
+      launcher.style.display='none';
+      return;
+    }
+    if(minimized){
+      root.classList.add('minimized');     // CSS forces display:none
+      root.style.display='none';
+      launcher.style.display='flex';
+    } else {
+      root.classList.remove('minimized');
+      root.style.display='flex';
+      launcher.style.display='none';
+    }
+  }
+
+  function setMinimized(v){
+    minimized=!!v;
+    try{ localStorage.setItem('mlChatMin', minimized?'1':'0'); }catch(e){}
+    applyVisibility();
+    if(!minimized){ atBottom=true; scrollDown(); }
+  }
+
   function setOpen(open){
     root.classList.toggle('collapsed',!open);
     try{ localStorage.setItem('mlChatOpen', open?'1':'0'); }catch(e){}
     if(open){ atBottom=true; scrollDown(); }
   }
   head.addEventListener('click',function(e){
-    if(e.target===toggleBtn) return; // toggle handled below
+    if(e.target===toggleBtn || e.target===minBtn) return; // own handlers
     if(dragMoved) return;            // a drag shouldn't toggle
     setOpen(root.classList.contains('collapsed'));
   });
   toggleBtn.addEventListener('click',function(){ setOpen(root.classList.contains('collapsed')); });
+  minBtn.addEventListener('click',function(e){ e.stopPropagation(); setMinimized(true); });
+  launcher.addEventListener('click',function(){ setMinimized(false); });
 
   // ── drag (position persists) ──
   var dragMoved=false;
@@ -20561,7 +20617,7 @@ function restorePersistedInputs(){
       if(p&&typeof p.left==='number'){root.style.left=p.left+'px';root.style.top=p.top+'px';
         root.style.right='auto';root.style.bottom='auto';}}catch(e){}
     head.addEventListener('mousedown',function(e){
-      if(e.target===toggleBtn)return;
+      if(e.target===toggleBtn||e.target===minBtn)return;
       dragging=true;dragMoved=false;sx=e.clientX;sy=e.clientY;
       var r=root.getBoundingClientRect();sl=r.left;st=r.top;
       e.preventDefault();
@@ -20633,9 +20689,14 @@ function restorePersistedInputs(){
   }
 
   function showEmptyIfNone(){
-    if(!bodyEl.querySelector('.mlc-msg') && !bodyEl.querySelector('.mlc-empty')){
-      bodyEl.innerHTML='<div class="mlc-empty">No messages yet. Say hi 👋</div>';
+    if(bodyEl.querySelector('.mlc-msg')){
+      // There are messages — make sure no stale empty/loading note lingers.
+      var stale=bodyEl.querySelector('.mlc-empty'); if(stale) stale.remove();
+      return;
     }
+    // No messages. Show (or correct) the empty note. This also clears the
+    // initial "Loading…" placeholder once the first poll has resolved.
+    bodyEl.innerHTML='<div class="mlc-empty">No messages yet. Say hi 👋</div>';
   }
 
   // ── inline edit ──
@@ -20696,15 +20757,16 @@ function restorePersistedInputs(){
   async function poll(){
     try{
       var r=await fetchT(API+'/api/studio/chat/messages?after='+lastId,null,8000);
-      // 401 = not logged in (yet). Keep the window hidden and quietly
-      // retry on the next tick; logging in will start returning 200.
-      if(r.status===401){ root.style.display='none'; return; }
+      // 401 = not logged in (yet). Hide everything and quietly retry on
+      // the next tick; logging in will start returning 200.
+      if(r.status===401){ authed=false; applyVisibility(); return; }
       if(!r.ok) return;
       var d=await r.json();
       if(!d.ok) return;
-      // Reveal on the first successful authed poll. Respect the saved
-      // collapsed/expanded state (handled by the .collapsed class).
-      if(root.style.display==='none'){ root.style.display='flex'; }
+      // First successful authed poll → reveal. applyVisibility honors the
+      // saved minimized state (launcher vs window) and collapsed class.
+      if(!authed){ authed=true; }
+      applyVisibility();
       if(d.messages&&d.messages.length){
         var appended=upsert(d.messages);
         // Advance lastId only to the true max id — edited older rows
@@ -20713,12 +20775,14 @@ function restorePersistedInputs(){
         for(var k=0;k<d.messages.length;k++){
           if(d.messages[k].id>lastId) lastId=d.messages[k].id;
         }
-        if(appended && atBottom) scrollDown();
+        if(appended && atBottom && !minimized) scrollDown();
       }
       showEmptyIfNone();
       if(d.online){
         countEl.textContent=d.online.length+' online';
         onlineEl.innerHTML='<b>online:</b> '+d.online.map(esc).join(', ');
+        // Keep the minimized launcher's count fresh too.
+        launcherCount.textContent=d.online.length+' online';
       }
     }catch(e){/* transient; next tick retries */}
   }
