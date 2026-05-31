@@ -11379,6 +11379,12 @@ async function doGenerate(){
             if (r.status === 401) { $('loginModal').classList.add('open'); }
             else if (r.status === 402) { showBuyModal(); }
             else if (r.status === 429) { showNotif('Max 3 jobs queued. Wait for one to finish or cancel one.'); }
+            else if (d.error === 'content_blocked') {
+                showNotif('This request was blocked: content involving minors is not allowed. Adult content is fine, but this was flagged and cannot be generated.', 'error');
+            }
+            else if (d.error === 'moderation_unavailable') {
+                showNotif('Safety check is temporarily unavailable, so this edit was not run. Please try again in a moment.', 'error');
+            }
             else { log('Error: ' + (d.error || 'Failed'), 'error'); }
             return;
         }
@@ -13373,6 +13379,18 @@ async function generateBatchEdits(){
                 if (r.status === 401) { $('loginModal').classList.add('open'); break; }
                 if (r.status === 402) { showBuyModal(); break; }
                 if (r.status === 429) { showNotif(`Queue full — submitted ${submitted} of ${selected.length}.`, 'error'); break; }
+                if (d.error === 'content_blocked') {
+                    showNotif(`'${inp.fname}' was blocked: content involving minors is not allowed.`, 'error');
+                    _activeBatch.shots[i].status = 'error';
+                    renderBatchGrid();
+                    continue;
+                }
+                if (d.error === 'moderation_unavailable') {
+                    showNotif(`'${inp.fname}' was not run — safety check temporarily unavailable. Try again shortly.`, 'error');
+                    _activeBatch.shots[i].status = 'error';
+                    renderBatchGrid();
+                    continue;
+                }
                 log(`Batch edit '${inp.fname}' failed: ${d.error || 'unknown'}`, 'error');
                 _activeBatch.shots[i].status = 'error';
                 renderBatchGrid();
@@ -13764,6 +13782,11 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
                     break;
                 }
                 log(`Shot '${shot.label}' failed: ${d.error || 'unknown'}`, 'error');
+                if (d.error === 'content_blocked') {
+                    showNotif('This request was blocked: content involving minors is not allowed.', 'error');
+                } else if (d.error === 'moderation_unavailable') {
+                    showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
+                }
                 _activeBatch.shots[i].status = 'error';
                 renderBatchGrid();
                 continue;
@@ -13840,6 +13863,11 @@ async function submitNextPendingAngle(){
                 return false;
             }
             log(`Shot '${label}' failed: ${d.error || 'unknown'}`, 'error');
+            if (d.error === 'content_blocked') {
+                showNotif('This request was blocked: content involving minors is not allowed.', 'error');
+            } else if (d.error === 'moderation_unavailable') {
+                showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
+            }
             _activeBatch.shots[shotIdx].status = 'error';
             renderBatchGrid();
             return false;
