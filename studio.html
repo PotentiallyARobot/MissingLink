@@ -20578,13 +20578,17 @@ function restorePersistedInputs(){
   }
 
   async function poll(){
-    if(!window._user){ return; } // not logged in yet
     try{
       var r=await fetchT(API+'/api/studio/chat/messages?after='+lastId,null,8000);
+      // 401 = not logged in (yet). Keep the window hidden and quietly
+      // retry on the next tick; logging in will start returning 200.
+      if(r.status===401){ root.style.display='none'; return; }
       if(!r.ok) return;
       var d=await r.json();
       if(!d.ok) return;
-      if(root.style.display==='none') root.style.display='flex';
+      // Reveal on the first successful authed poll. Respect the saved
+      // collapsed/expanded state (handled by the .collapsed class).
+      if(root.style.display==='none'){ root.style.display='flex'; }
       if(d.messages&&d.messages.length){
         render(d.messages);
         lastId=d.messages[d.messages.length-1].id;
@@ -20619,10 +20623,12 @@ function restorePersistedInputs(){
   });
 
   function start(){ if(started) return; started=true; poll(); timer=setInterval(poll,3000); }
-  // Wait until auth resolves so we don't flash the widget to logged-out visitors.
-  var wait=setInterval(function(){ if(window._user){ clearInterval(wait); start(); } },800);
-  // In case _user is already set by the time we run.
-  if(window._user) start();
+  // Start polling right away. The window stays hidden until the first
+  // authed (200) response, and hides itself again on 401, so logged-out
+  // visitors never see it — no dependence on a page-scoped _user var
+  // (top-level `let` is not visible on window, which is why an earlier
+  // gate never fired).
+  start();
 })();
 </script>
 
