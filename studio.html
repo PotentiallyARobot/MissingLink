@@ -5987,7 +5987,15 @@ function showNotif(message, type){
 // it. Used by every /api/studio/upload* call site so a child-safety block
 // reads sensibly instead of surfacing the raw error code. Returns nothing;
 // callers `return` after invoking it.
-function notifyUploadError(code){
+function notifyUploadError(code, data){
+    // If the server returned an admin-only debug message (moderation
+    // scores for threshold tuning), show that verbatim — it's only ever
+    // populated for the admin account. Falls back to the friendly copy.
+    if(data && data.message){
+        showNotif(data.message, 'error');
+        if(data.debug){ try { console.log('[moderation debug]', data.debug); } catch(e){} }
+        return;
+    }
     if(code==='content_blocked'){
         showNotif('This image can\u2019t be uploaded: it was flagged as involving a minor. Images depicting people under 18 are not allowed.', 'error');
     } else if(code==='moderation_unavailable'){
@@ -8373,7 +8381,7 @@ async function genUploadToSlot(i, file){
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
-        if (d.error) { notifyUploadError(d.error); return; }
+        if (d.error) { notifyUploadError(d.error, d); return; }
         const w = d.w || dims.w, h = d.h || dims.h;
         _generateRefs[i] = { id: d.id, url: d.url, filename: d.filename, w, h };
         renderGenSlot(i);
@@ -9489,7 +9497,7 @@ async function uploadToSlot(i,file){
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
-        if(d.error){ notifyUploadError(d.error); return; }
+        if(d.error){ notifyUploadError(d.error, d); return; }
         const w = d.w || dims.w, h = d.h || dims.h;
         slots[i]={id:d.id,url:d.url,filename:d.filename,w:w,h:h};
         $('inpWidth').value=w; $('inpHeight').value=h;
@@ -11670,7 +11678,7 @@ async function batchContextUpload(slotIdx, file){
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
-        if (d.error) { notifyUploadError(d.error); return; }
+        if (d.error) { notifyUploadError(d.error, d); return; }
         _batchContext[slotIdx] = {
             id: d.id, url: d.url,
             w: d.w || dims.w, h: d.h || dims.h,
@@ -12573,7 +12581,7 @@ async function batchUploadFile(file){
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
-        if (d.error) { notifyUploadError(d.error); return; }
+        if (d.error) { notifyUploadError(d.error, d); return; }
         _batchInputs.push({
             id: d.id, url: d.url,
             w: d.w || dims.w, h: d.h || dims.h,
@@ -12770,7 +12778,8 @@ async function addSearchImageToStage(idx, btn){
                 content_blocked: 'That image can\'t be added: it was flagged as involving a minor. Images depicting people under 18 are not allowed.',
                 moderation_unavailable: 'Safety check is temporarily unavailable, so that image was not added. Please try again in a moment.',
             };
-            showNotif(map[d.error] || ('Could not add image: ' + (d.error || 'unknown')), 'error');
+            showNotif(d.message || map[d.error] || ('Could not add image: ' + (d.error || 'unknown')), 'error');
+            if (d.debug){ try { console.log('[moderation debug]', d.debug); } catch(e){} }
             if (btn) { btn.disabled = false; btn.textContent = origText; }
             return;
         }
