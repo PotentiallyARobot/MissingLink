@@ -11287,7 +11287,11 @@ function toggleLock(){
 // value verbatim regardless of mode — 0 means off, so inactive unless
 // the user explicitly raised it.
 function loraPayload(mode){
-    const lightning = parseFloat($('rngLoraLightning').value) || 0;
+    // Fail SAFE, not to zero. A NaN/empty slider read must fall back to the
+    // working default (1.0 = Lightning engaged), never to 0 — `|| 0` would
+    // silently disable the distilled adapter and produce base-model output.
+    const lvRaw = parseFloat($('rngLoraLightning').value);
+    const lightning = Number.isFinite(lvRaw) ? lvRaw : 1.0;
     const angles = (mode === 'camera')
         ? (parseFloat($('rngLoraAngles').value) || 0)
         : 0;
@@ -20348,7 +20352,12 @@ function restoreJobState(jobId){
     $('rngCfg').value=s.guidance_scale||1; $('vCfg').value=s.guidance_scale||1;
     $('rngSteps').value=s.inference_steps||4; $('vSteps').value=s.inference_steps||4;
     // New per-LoRA sliders. Fall back to legacy single lora_scale if snapshot is old.
-    const lightVal = (s.lora_lightning != null) ? s.lora_lightning : 1.0;
+    // Treat a stored 0 the same as missing: a Lightning weight of 0 is never a
+    // deliberate user choice (it just disables the distilled adapter and yields
+    // slow base-model output), and persisting it here is what made the bug
+    // "sticky" — restoring such a snapshot used to pin the slider at 0. Default
+    // back to 1.0 so loading old/zeroed jobs self-heals.
+    const lightVal = (s.lora_lightning != null && s.lora_lightning > 0) ? s.lora_lightning : 1.0;
     const anglesVal = (s.lora_angles != null) ? s.lora_angles : (s.lora_scale != null ? s.lora_scale : 0.9);
     // Anything2Real defaults to 0 on restore — older snapshots predate
     // this field, and 0 (off) is the correct neutral for a user who
