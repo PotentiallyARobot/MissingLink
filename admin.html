@@ -74,6 +74,10 @@ main{padding:22px;max-width:1400px;margin:0 auto}
 .user-header .stats b{color:var(--gold)}
 .user-header .back{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-decoration:none;border:1px solid var(--border);padding:6px 12px;border-radius:5px;cursor:pointer}
 .user-header .back:hover{color:var(--gold);border-color:var(--gold)}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tab-btn{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);padding:7px 16px;border-radius:6px;cursor:pointer}
+.tab-btn:hover{color:var(--text);border-color:var(--text-muted)}
+.tab-btn.active{color:var(--gold);border-color:var(--gold);background:var(--surface-3)}
 
 .gens-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .gen{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:border-color .12s,transform .12s}
@@ -170,6 +174,7 @@ body.ready #splash{display:none}
 const PAGE_SIZE = 20;
 const state = {
   view: "users",      // "users" | "user"
+  tab: "gens",        // within "user" view: "gens" | "uploads"
   userId: null,
   users: [],
   usersOffset: 0,
@@ -177,6 +182,10 @@ const state = {
   gens: [],
   gensOffset: 0,
   gensDone: false,
+  uploads: [],
+  uploadsOffset: 0,
+  uploadsDone: false,
+  uploadsTotal: 0,
   currentUser: null,
   filter: "",
   loading: false,
@@ -334,6 +343,8 @@ function userCardHtml(u) {
           '<div class="sub">' +
             '<span class="count">' + (u.gen_count || 0) + ' gen' + (u.gen_count === 1 ? "" : "s") + '</span>' +
             '<span>·</span>' +
+            '<span class="count">' + (u.upload_count || 0) + ' upload' + (u.upload_count === 1 ? "" : "s") + '</span>' +
+            '<span>·</span>' +
             '<span>last seen ' + fmtDate(u.last_login || u.created_at) + '</span>' +
           '</div>' +
         '</div>' +
@@ -367,6 +378,36 @@ async function loadUserGens(reset=false) {
   renderUserView();
 }
 
+// ── user uploads (source images) loader ─────────────────────────
+// Distinct from generations: lists studio_uploads rows. A user can have
+// zero generations but many uploads — these are the source images the
+// wipe/ban purge removes, so being able to review them before acting is
+// the whole point of this tab.
+async function loadUserUploads(reset=false) {
+  if (state.loading) return;
+  if (!reset && state.uploadsDone) return;
+  state.loading = true;
+  if (reset) renderLoader();
+  try {
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(state.uploadsOffset) });
+    const data = await api("/api/studio/admin/user/" + encodeURIComponent(state.userId) + "/uploads?" + params.toString());
+    state.uploads.push(...(data.uploads || []));
+    state.uploadsOffset += (data.uploads || []).length;
+    state.uploadsDone = !data.has_more;
+    if (typeof data.total === "number") state.uploadsTotal = data.total;
+    if (data.user) state.currentUser = data.user;
+    if (typeof data.total === "number") {
+      $("#stat-total").innerHTML = "<b>" + data.total.toLocaleString() + "</b> upload" + (data.total === 1 ? "" : "s");
+    }
+  } catch (e) {
+    renderError(e.message);
+    state.loading = false;
+    return;
+  }
+  state.loading = false;
+  renderUserView();
+}
+
 function renderUserView() {
   if (state.view !== "user") return;
   const main = $("#main");
@@ -376,6 +417,9 @@ function renderUserView() {
     ? '<img src="' + esc(u.picture) + '" alt="" referrerpolicy="no-referrer">'
     : esc(initial);
 
+  const genCount = (u.gen_count != null ? u.gen_count : state.gens.length);
+  const upCount = (u.upload_count != null ? u.upload_count : state.uploadsTotal);
+
   let header = (
     '<div class="user-header">' +
       '<div class="av">' + av + '</div>' +
@@ -383,7 +427,9 @@ function renderUserView() {
         '<h2>' + esc(u.name || u.email) + '</h2>' +
         '<div class="em">' + esc(u.email) + '</div>' +
         '<div class="stats">' +
-          '<span><b>' + (u.gen_count != null ? u.gen_count : state.gens.length) + '</b> generations</span>' +
+          '<span><b>' + genCount + '</b> generations</span>' +
+          '<span>·</span>' +
+          '<span><b>' + upCount + '</b> uploads</span>' +
           '<span>·</span>' +
           '<span>joined ' + fmtDate(u.created_at) + '</span>' +
           '<span>·</span>' +
@@ -392,33 +438,109 @@ function renderUserView() {
         '</div>' +
       '</div>' +
       '<a class="back" id="back-btn">← back</a>' +
+    '</div>' +
+    // Tab switcher between generations and uploaded source images.
+    '<div class="tabs">' +
+      '<button class="tab-btn' + (state.tab === "gens" ? " active" : "") + '" id="tab-gens">Generations</button>' +
+      '<button class="tab-btn' + (state.tab === "uploads" ? " active" : "") + '" id="tab-uploads">Uploads</button>' +
     '</div>'
   );
 
   let gridHtml;
-  if (state.gens.length === 0 && state.gensDone) {
-    gridHtml = '<div class="empty-state">No generations.</div>';
+  if (state.tab === "uploads") {
+    if (state.uploads.length === 0 && state.uploadsDone) {
+      gridHtml = '<div class="empty-state">No uploads.</div>';
+    } else {
+      gridHtml = '<div class="gens-grid">';
+      for (const up of state.uploads) gridHtml += uploadCardHtml(up);
+      gridHtml += '</div>';
+      if (!state.uploadsDone) {
+        gridHtml += '<div class="loader" id="loader-anchor"><button class="btn" id="loadmore">Load more</button></div>';
+      } else if (state.uploads.length > 0) {
+        gridHtml += '<div class="empty-state">— end —</div>';
+      }
+    }
   } else {
-    gridHtml = '<div class="gens-grid">';
-    for (const g of state.gens) gridHtml += genCardHtml(g);
-    gridHtml += '</div>';
-    if (!state.gensDone) {
-      gridHtml += '<div class="loader" id="loader-anchor"><button class="btn" id="loadmore">Load more</button></div>';
-    } else if (state.gens.length > 0) {
-      gridHtml += '<div class="empty-state">— end —</div>';
+    if (state.gens.length === 0 && state.gensDone) {
+      gridHtml = '<div class="empty-state">No generations.</div>';
+    } else {
+      gridHtml = '<div class="gens-grid">';
+      for (const g of state.gens) gridHtml += genCardHtml(g);
+      gridHtml += '</div>';
+      if (!state.gensDone) {
+        gridHtml += '<div class="loader" id="loader-anchor"><button class="btn" id="loadmore">Load more</button></div>';
+      } else if (state.gens.length > 0) {
+        gridHtml += '<div class="empty-state">— end —</div>';
+      }
     }
   }
 
   main.innerHTML = header + gridHtml;
   $("#back-btn").onclick = () => navigate("users");
-  for (const card of main.querySelectorAll(".gen")) {
-    card.onclick = () => openLightbox(card.dataset.id);
+  $("#tab-gens").onclick = () => switchTab("gens");
+  $("#tab-uploads").onclick = () => switchTab("uploads");
+
+  if (state.tab === "uploads") {
+    for (const card of main.querySelectorAll(".gen")) {
+      card.onclick = () => openUploadLightbox(card.dataset.id);
+    }
+    const lm = $("#loadmore");
+    if (lm) {
+      lm.onclick = () => loadUserUploads(false);
+      setupInfiniteScroll($("#loader-anchor"), () => loadUserUploads(false));
+    }
+  } else {
+    for (const card of main.querySelectorAll(".gen")) {
+      card.onclick = () => openLightbox(card.dataset.id);
+    }
+    const lm = $("#loadmore");
+    if (lm) {
+      lm.onclick = () => loadUserGens(false);
+      setupInfiniteScroll($("#loader-anchor"), () => loadUserGens(false));
+    }
   }
-  const lm = $("#loadmore");
-  if (lm) {
-    lm.onclick = () => loadUserGens(false);
-    setupInfiniteScroll($("#loader-anchor"), () => loadUserGens(false));
+}
+
+// Switch between the generations and uploads tabs. Lazy-loads the uploads
+// list the first time that tab is opened (gens are already loaded on entry).
+function switchTab(tab) {
+  if (state.tab === tab) return;
+  state.tab = tab;
+  if (tab === "uploads" && state.uploads.length === 0 && !state.uploadsDone) {
+    loadUserUploads(true);
+  } else {
+    renderUserView();
   }
+}
+
+function uploadCardHtml(up) {
+  return (
+    '<div class="gen" data-id="' + esc(up.id) + '">' +
+      '<div class="img">' +
+        '<img loading="lazy" src="' + esc(up.url) + '" alt="">' +
+        '<div class="mode">upload</div>' +
+      '</div>' +
+      '<div class="cap">' +
+        (up.filename ? '<div class="prompt">' + esc(up.filename) + '</div>' : '') +
+        fmtDate(up.created_at) +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// Simple lightbox for an upload — no input/output frames, just the image
+// and its metadata.
+function openUploadLightbox(upId) {
+  const up = state.uploads.find(x => x.id === upId);
+  if (!up) return;
+  $("#lb-img").src = up.url;
+  $("#lb-info").innerHTML =
+    (up.filename ? '<div class="p">' + esc(up.filename) + '</div>' : '') +
+    '<div class="meta">' +
+      '<span>id: ' + esc(up.id) + '</span>' +
+      '<span>uploaded ' + fmtDate(up.created_at) + '</span>' +
+    '</div>';
+  $("#lb").classList.add("open");
 }
 
 function genCardHtml(g) {
@@ -505,9 +627,14 @@ function navigate(view, userId) {
     location.hash = "";
   } else if (view === "user") {
     state.userId = userId;
+    state.tab = "gens";
     state.gens = [];
     state.gensOffset = 0;
     state.gensDone = false;
+    state.uploads = [];
+    state.uploadsOffset = 0;
+    state.uploadsDone = false;
+    state.uploadsTotal = 0;
     location.hash = "user/" + userId;
   }
   renderCrumbs();
