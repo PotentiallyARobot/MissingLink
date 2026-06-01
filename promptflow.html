@@ -9541,6 +9541,36 @@ body.d-desktop-mode .editor-pane {
 body.d-desktop-mode .empty {
   max-width: none;
 }
+/* Empty-state hero: fill the stream's height and center the hero
+   block vertically, so the wordmark + CTAs + download button sit in
+   the middle of the available space instead of pinning to the top
+   and leaving a tall dead band above the composer.
+
+   Keyed on #empty itself (NOT a :has() on an ancestor): the app sets
+   #empty { display:none } the instant a conversation starts, so this
+   rule stops applying automatically the moment real messages render —
+   no fragile :has() release to get wrong, which is exactly the
+   problem that sank the previous centering attempt. The flex-grow
+   makes #empty consume the leftover stream height; centering its
+   single child (.d-hero) distributes that height above and below the
+   hero evenly. Padding keeps the hero off the topbar/composer edges
+   when the viewport is short. min-height:0 lets it shrink under the
+   stream's max-height so the hero never gets clipped — if the
+   viewport is too short to center, it just sits scrollable inside the
+   already-scrollable stream. */
+body.d-desktop-mode #empty {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  justify-content: center;
+  align-items: center;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+body.d-desktop-mode #empty .d-hero {
+  flex: 0 0 auto;
+}
 
 /* ════════════════════════════════════════════════════════════════
    Unified command bar at the bottom
@@ -15494,20 +15524,6 @@ promptflow whoami</code></pre>
         return;
       }
     } else if (currentEditorProcessId && !currentEditorProcess?.editable) {
-      // Editor id is set but the loaded process doesn't report
-      // editable. Before refusing, check whether the conversation is
-      // refine-bound to this SAME process — that binding is only set
-      // for processes the user owns and can edit (see openProcessEditor
-      // and the design_process response handler). If so, the missing
-      // `editable` flag is a stale/partial load, not a genuine
-      // read-only process; route the refinement through instead of
-      // wedging the composer with a false "read-only" alert.
-      if (refineBoundProcessId && refineBoundProcessId === currentEditorProcessId) {
-        textInput.value = ""; textInput.style.height = "auto"; updateSend();
-        _sendInProgress = false;
-        await refineBoundProcess(userText);
-        return;
-      }
       _sendInProgress = false;
       alert("This process is read-only. Close the editor (top right) to start a new conversation.");
       return;
