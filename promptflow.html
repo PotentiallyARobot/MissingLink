@@ -6068,6 +6068,12 @@ body.d-desktop-mode .stream {
   color: rgba(220,220,225,0.9); font-size: 12px; margin-bottom: 6px;
 }
 .d-plan-thinking-done { color: rgba(170,200,150,0.9); }
+.d-plan-thinking-stage {
+  color: rgba(232,169,23,0.85);
+  font-size: 11px;
+  margin: 0 0 6px 0;
+  min-height: 14px;
+}
 .d-plan-thinking-body {
   white-space: pre-wrap;
   color: rgba(175,175,182,0.8);
@@ -9541,23 +9547,21 @@ body.d-desktop-mode .editor-pane {
 body.d-desktop-mode .empty {
   max-width: none;
 }
-/* Empty-state hero: fill the stream's height and center the hero
-   block vertically, so the wordmark + CTAs + download button sit in
-   the middle of the available space instead of pinning to the top
-   and leaving a tall dead band above the composer.
+/* Empty-state hero: fill the stream height and center the hero
+   block, so the wordmark + CTAs + download button sit in the middle
+   of the available space instead of pinning to the top under the
+   topbar and leaving a tall dead band above the composer.
 
-   Keyed on #empty itself (NOT a :has() on an ancestor): the app sets
-   #empty { display:none } the instant a conversation starts, so this
-   rule stops applying automatically the moment real messages render —
-   no fragile :has() release to get wrong, which is exactly the
-   problem that sank the previous centering attempt. The flex-grow
-   makes #empty consume the leftover stream height; centering its
-   single child (.d-hero) distributes that height above and below the
-   hero evenly. Padding keeps the hero off the topbar/composer edges
-   when the viewport is short. min-height:0 lets it shrink under the
-   stream's max-height so the hero never gets clipped — if the
-   viewport is too short to center, it just sits scrollable inside the
-   already-scrollable stream. */
+   Keyed on #empty itself, NOT a :has() on an ancestor: the app sets
+   #empty{display:none} the instant a conversation starts, so this
+   rule releases automatically when real messages render — no fragile
+   :has() to mis-fire (the reason the previous centering attempt was
+   removed). flex-grow makes #empty consume the leftover stream
+   height; centering distributes it around the hero. The slight bias
+   toward the top (more padding-bottom than -top) keeps the hero from
+   sitting visually low once the topbar above and composer below
+   bracket it. min-height:0 lets it shrink under the stream's
+   max-height so the hero is never clipped on short viewports. */
 body.d-desktop-mode #empty {
   display: flex;
   flex-direction: column;
@@ -9565,8 +9569,8 @@ body.d-desktop-mode #empty {
   min-height: 0;
   justify-content: center;
   align-items: center;
-  padding-top: 16px;
-  padding-bottom: 16px;
+  padding-top: 12px;
+  padding-bottom: 64px;
 }
 body.d-desktop-mode #empty .d-hero {
   flex: 0 0 auto;
@@ -15493,7 +15497,17 @@ promptflow whoami</code></pre>
     // of editor mode without manually closing it. Editor pane stays
     // visible above the chat stream so refinement results render
     // inline as chat bubbles below the structured editor view.
-    if (currentEditorProcessId && currentEditorProcess?.editable) {
+    // Editor mode — a process is open in the editor pane. Treat the
+    // process as editable if EITHER the loaded process reports it OR
+    // the conversation is refine-bound to this same id (that binding is
+    // only ever set for the user's own editable processes). Using the
+    // OR means a momentarily-missing `editable` flag can't wedge the
+    // composer.
+    const inEditableEditor = !!currentEditorProcessId && (
+      currentEditorProcess?.editable === true
+      || (refineBoundProcessId && refineBoundProcessId === currentEditorProcessId)
+    );
+    if (inEditableEditor) {
       // Two ways to escape editor mode without manually closing it:
       //   1. "Generate process …" / "Generate a new process …"
       //      → user wants to start a fresh process from scratch
@@ -15518,14 +15532,26 @@ promptflow whoami</code></pre>
         // Normal editor refinement — chat-driven, same flow as
         // refineBoundProcess. Resets composer, adds user/assistant
         // bubbles to the stream below the editor pane.
+        // Safety net: refineBoundProcess() no-ops if refineBoundProcessId
+        // is null. We're in an editable editor, so bind it to the open
+        // process if the bind somehow went missing — guarantees the
+        // message is never silently dropped.
+        if (!refineBoundProcessId && currentEditorProcessId) {
+          refineBoundProcessId = currentEditorProcessId;
+          refineBoundProcessName = currentEditorProcess?.name || "";
+          paintRefineBindChip();
+        }
         textInput.value = ""; textInput.style.height = "auto"; updateSend();
         _sendInProgress = false;
         await refineBoundProcess(userText);
         return;
       }
-    } else if (currentEditorProcessId && !currentEditorProcess?.editable) {
+    } else if (currentEditorProcessId && !inEditableEditor) {
+      // Editor is open on a process that is genuinely not the user's to
+      // edit (someone else's published process, or a system process).
+      // This is the only case that should ever surface read-only.
       _sendInProgress = false;
-      alert("This process is read-only. Close the editor (top right) to start a new conversation.");
+      alert("This process is read-only — it belongs to someone else. Close the editor (top right) to start a new conversation, or fork it to make your own editable copy.");
       return;
     }
 
@@ -16065,6 +16091,8 @@ promptflow whoami</code></pre>
     // (or `error`) event carrying the same JSON /plan returns. Other
     // flows keep the simpler non-streaming request.
     const useStream = shouldRunDesignSearch && !isRefinement;
+    // Hoisted so the outer catch can clear it if the stream throws.
+    let warmupTimer = null;
     try {
       if (useStream) {
         // Set up a live thinking panel in the assist bubble.
@@ -16073,16 +16101,43 @@ promptflow whoami</code></pre>
         think.className = "d-plan-thinking";
         think.innerHTML =
           '<div class="d-plan-thinking-head"><span class="d-design-search-spinner"></span>' +
-          '<span>Thinking…</span></div>' +
+          '<span class="d-plan-thinking-label">Thinking…</span></div>' +
+          '<div class="d-plan-thinking-stage"></div>' +
           '<div class="d-plan-thinking-body"></div>';
         assist.body.appendChild(think);
         const thinkBodyEl = think.querySelector(".d-plan-thinking-body");
+        const thinkStageEl = think.querySelector(".d-plan-thinking-stage");
+
+        // Show motion immediately. There's a gap between opening the
+        // stream and the model's first thinking delta (system-prompt
+        // assembly, catalog search, RAG, Opus warming up). An empty
+        // panel during that window reads as frozen, so cycle through
+        // what the backend is doing until a real signal arrives.
+        let gotRealSignal = false;
+        const warmupSteps = [
+          "Searching your catalog for related processes…",
+          "Pulling in relevant lessons and context…",
+          "Reasoning about how to design this…",
+        ];
+        let warmupIdx = 0;
+        thinkStageEl.textContent = warmupSteps[0];
+        warmupTimer = setInterval(() => {
+          if (gotRealSignal) return;
+          warmupIdx = Math.min(warmupIdx + 1, warmupSteps.length - 1);
+          thinkStageEl.textContent = warmupSteps[warmupIdx];
+        }, 1800);
+        const stageLabels = {
+          planning: "Designing the process…",
+          search: "Searching your catalog…",
+          retrieving: "Gathering context…",
+        };
 
         const r = await fetch("/api/promptflow/plan/stream", {
           method: "POST", body: fd,
           signal: currentAbortController.signal,
         });
         if (!r.ok || !r.body) {
+          clearInterval(warmupTimer);
           _planInFlight = false;
           throw new Error("stream_http_" + r.status);
         }
@@ -16109,17 +16164,29 @@ promptflow whoami</code></pre>
             if (!dataStr) continue;
             let data; try { data = JSON.parse(dataStr); } catch { continue; }
             if (ev === "thinking" && data.text) {
+              if (!gotRealSignal) {
+                gotRealSignal = true;
+                clearInterval(warmupTimer);
+                thinkStageEl.textContent = "Reasoning…";
+              }
               thinkBodyEl.textContent += data.text;
               stream.scrollTop = stream.scrollHeight;
+            } else if (ev === "stage") {
+              gotRealSignal = true;
+              clearInterval(warmupTimer);
+              const lbl = stageLabels[data && data.stage] ||
+                (data && data.stage ? String(data.stage) : "");
+              if (lbl) thinkStageEl.textContent = lbl;
             } else if (ev === "done") {
               donePayload = data;
             } else if (ev === "error") {
               streamErr = data;
             }
-            // heartbeat / stage events are ignored for display.
           }
         }
         _planInFlight = false;
+        clearInterval(warmupTimer);
+        if (thinkStageEl) thinkStageEl.remove();
         // Collapse the thinking head spinner once finished.
         const head = think.querySelector(".d-plan-thinking-head");
         if (head) head.innerHTML = '<span class="d-plan-thinking-done">✓ Thought through the design</span>';
@@ -16236,6 +16303,7 @@ promptflow whoami</code></pre>
       // 'AbortError' — present it as a clean cancellation, not as
       // a network error.
       _planInFlight = false;   // request settled (errored/aborted)
+      if (warmupTimer) clearInterval(warmupTimer);
       stopPlanningStages();
       if (e?.name === "AbortError") {
         setError(assist, "Cancelled.");
@@ -20315,12 +20383,38 @@ promptflow whoami</code></pre>
       currentEditorProcessId = pid;
       currentEditorProcess = j.process;
       currentConversationId = null;     // detach from any conversation
-      // Also bind the conversation to this process so the input bar
-      // shows the "Refining: …" chip and the standard chat-driven
-      // refinement path is available. Editor mode and refine-bound
-      // mode are now the same flow — opening the editor just gives
-      // you the structured pane above the chat stream.
-      if (j.process.editable) {
+      // Clear any stale run-state left over from a prior generation or
+      // run. If `busy` or `currentRunCancellable` are still set when the
+      // editor opens, the composer's send button renders in its Stop/
+      // Running state — and the Enter handler treats a visible Stop as
+      // "cancel", so the user's first refinement keystroke gets eaten
+      // instead of sent. Opening the editor is a clean slate: nothing
+      // is in flight, so force the idle state before wiring the refine
+      // path. (This was the "can't send when edit is active" report.)
+      busy = false;
+      currentRunCancellable = true;
+      _planInFlight = false;
+      _sendInProgress = false;
+      // Also abort any orphaned controller so a half-finished prior
+      // stream can't fire a late callback that flips busy back on.
+      if (currentAbortController) {
+        try { currentAbortController.abort(); } catch {}
+        currentAbortController = null;
+      }
+      // Bind the conversation to this process so the input bar shows
+      // the "Refining: …" chip and chat-driven refinement is available.
+      // A process the user just opened in the editor is editable when
+      // it's theirs and not a system process. Trust the server's
+      // `editable` flag, but fall back to (mine && !is_system) if the
+      // flag is somehow absent from an older/cached payload — otherwise
+      // a missing flag silently drops the refine binding and every
+      // typed message no-ops.
+      const editorEditable = (j.process.editable === true)
+        || (j.process.editable == null && j.process.mine === true && !j.process.is_system);
+      if (editorEditable) {
+        // Normalize so downstream `currentEditorProcess?.editable`
+        // checks (in send()) see a definite boolean.
+        currentEditorProcess.editable = true;
         refineBoundProcessId = pid;
         refineBoundProcessName = j.process.name;
       } else {
