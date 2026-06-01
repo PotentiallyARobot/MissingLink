@@ -867,7 +867,7 @@ function addItemFlow(cat){
     <div class="sub" style="margin-bottom:16px">How would you like to add this ${esc(c.noun)}?</div>
     <button class="choicebtn" id="ch_up">
       <div class="ci">${I.camera}</div>
-      <div class="cm"><b>Upload photos</b><span>Pick one or many — each is analyzed for you</span></div>
+      <div class="cm"><b>Upload photos</b><span>Pick up to 15 at once — each is analyzed for you</span></div>
     </button>
     <button class="choicebtn" id="ch_se">
       <div class="ci">${I.search}</div>
@@ -881,8 +881,12 @@ function addItemFlow(cat){
 }
 
 async function uploadItemFlow(cat){
-  const files=await pickImages();          // select as many as you like
+  let files=await pickImages();            // select up to 15 at a time
   if(!files.length) return;
+  // Limit each batch to 15 photos — keeps uploads quick and analysis reliable.
+  let skipped=0;
+  if(files.length>15){ skipped=files.length-15; files=files.slice(0,15); }
+  if(skipped) toast("15 photos at a time — "+skipped+" left out");
   if(S.wcat!==cat)S.wcat=cat;
 
   // Drop a placeholder card for every selected image immediately, each with
@@ -1275,7 +1279,7 @@ function pushPhase(label){
   // Mark any in-flight phase complete, then add the new one as active.
   S.genPhases=(S.genPhases||[]).map(p=>({...p,done:true}));
   S.genPhases.push({label,done:false});
-  if(S.lookId==="pending") drawThread();
+  if(S.lookId==="pending"||S.refining) drawThread();
 }
 
 async function doGenerate(){
@@ -1358,7 +1362,7 @@ function renderComposer(){
   $("composer").innerHTML=`
     <div class="chatrow">
       <textarea id="chatIn" rows="1" maxlength="800" ${locked?"disabled":""}
-        placeholder="${S.lookId==="pending"?"Styling your look…":"Ask for a change…"}"></textarea>
+        placeholder="${S.lookId==="pending"?"Styling your look…":(S.refining?"Reworking your look…":"Ask for a change…")}"></textarea>
       <button class="btn" id="chatSend" ${locked?"disabled":""}>${I.send}</button>
     </div>`;
   if(locked)return;
@@ -1468,11 +1472,9 @@ function drawThread(){
   }).join("");
   if(S.lookData)html+=aiRow(lookCardHTML(S.lookData));
   if(S.busy){
-    // Initial generation shows the staged progress card; an in-chat
-    // refinement (look already on screen) shows the simple typing dots.
-    html+=aiRow((S.lookId==="pending"&&!S.lookData)
-      ? genProgressHTML()
-      : '<div class="bubble ai loadingb"><span class="dots"><i></i><i></i><i></i></span></div>');
+    // Both the initial generation and an in-chat refinement now show the
+    // staged progress card, so the user sees the stylist's real reasoning.
+    html+=aiRow(genProgressHTML());
   }
   t.innerHTML=html;
   t.querySelectorAll("[data-id]").forEach(r=>r.onclick=()=>{
@@ -1488,32 +1490,69 @@ async function sendChat(msg){
   if(!S.lookId||S.lookId==="pending")return;
   if(tokens()<TOK_PER_GEN){toast("Not enough tokens — tap Subscribe for more");return;}
   S.chat.push({role:"me",text:msg});
-  S.busy=true;render();
+  // Show the same staged "what it's thinking" card used during generation,
+  // driven by the real pipeline phases the server streams back.
+  S.busy=true;S.refining=true;S.genPhases=[];render();
+  pushPhase("Reading your request");
+
+  const finishErr=(text,toastMsg)=>{
+    S.busy=false;S.refining=false;S.genPhases=[];
+    S.chat.push({role:"ai",text});
+    render();if(toastMsg)toast(toastMsg);
+  };
+
   try{
-    const d=await api("/api/outfitai/chat",{
-      method:"POST",headers:{"content-type":"application/json"},
+    const res=await fetch(API+"/api/outfitai/chat",{
+      method:"POST",credentials:"include",
+      headers:{"content-type":"application/json"},
       body:JSON.stringify({look_id:S.lookId,message:msg})
     });
-    S.busy=false;
-    if(!d.ok){
-      S.chat.push({role:"ai",text:"Sorry — that didn't work. Mind rephrasing the change?"});
-      render();
-      toast(d.error==="insufficient_tokens"?"Not enough tokens — tap Subscribe for more":"Couldn't update look");
-      return;
+    // A non-stream JSON body means an up-front error (e.g. not enough tokens).
+    const ctype=res.headers.get("content-type")||"";
+    if(!ctype.includes("text/event-stream")){
+      let d={};try{d=await res.json();}catch(e){}
+      return finishErr("Sorry — that didn't work. Mind rephrasing the change?",
+        d.error==="insufficient_tokens"?"Not enough tokens — tap Subscribe for more":"Couldn't update look");
     }
-    if(typeof d.tokens_remaining==="number"&&S.user)S.user.tokens=d.tokens_remaining;
-    S.lookData=d.look;
-    S.chat.push({role:"ai",text:d.reply||d.look.explanation});
-    const li=S.looks.findIndex(x=>x.id===S.lookId);
-    if(li>=0){const s=S.looks[li];
-      s.result_url=d.look.result_url;s.explanation=d.look.explanation;s.item_ids=d.look.item_ids;
-      s.outfit_name=d.look.outfit_name;s.why_you=d.look.why_you;s.why_together=d.look.why_together;
-      s.online_items=d.look.online_items;}
-    render();
+
+    const reader=res.body.getReader();
+    const dec=new TextDecoder();
+    let buf="",finished=false;
+    while(true){
+      const{value,done}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let nl;
+      while((nl=buf.indexOf("\n\n"))>=0){
+        const chunk=buf.slice(0,nl);buf=buf.slice(nl+2);
+        const line=chunk.split("\n").find(l=>l.startsWith("data:"));
+        if(!line)continue;
+        let ev;try{ev=JSON.parse(line.slice(5).trim());}catch(e){continue;}
+        if(ev.type==="phase"){
+          pushPhase(ev.label||"Working…");
+        }else if(ev.type==="error"){
+          finished=true;
+          return finishErr("Sorry — that didn't work. Mind rephrasing the change?",
+            ev.error==="insufficient_tokens"?"Not enough tokens — tap Subscribe for more":"Couldn't update look");
+        }else if(ev.type==="done"){
+          finished=true;
+          S.genPhases=(S.genPhases||[]).map(p=>({...p,done:true}));
+          if(typeof ev.tokens_remaining==="number"&&S.user)S.user.tokens=ev.tokens_remaining;
+          S.lookData=ev.look;
+          S.busy=false;S.refining=false;S.genPhases=[];
+          S.chat.push({role:"ai",text:ev.reply||ev.look.explanation});
+          const li=S.looks.findIndex(x=>x.id===S.lookId);
+          if(li>=0){const s=S.looks[li];
+            s.result_url=ev.look.result_url;s.explanation=ev.look.explanation;s.item_ids=ev.look.item_ids;
+            s.outfit_name=ev.look.outfit_name;s.why_you=ev.look.why_you;s.why_together=ev.look.why_together;
+            s.online_items=ev.look.online_items;}
+          render();
+        }
+      }
+    }
+    if(!finished) finishErr("That got interrupted — try sending it again?");
   }catch(e){
-    S.busy=false;
-    S.chat.push({role:"ai",text:"Something went wrong — try again?"});
-    render();
+    finishErr("Something went wrong — try again?");
   }
 }
 
