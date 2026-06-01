@@ -6068,13 +6068,6 @@ body.d-desktop-mode .stream {
   color: rgba(220,220,225,0.9); font-size: 12px; margin-bottom: 6px;
 }
 .d-plan-thinking-done { color: rgba(170,200,150,0.9); }
-.d-plan-thinking-stage {
-  color: rgba(232,169,23,0.85);
-  font-size: 11px;
-  margin: 0 0 6px 0;
-  min-height: 14px;
-  transition: opacity 0.2s;
-}
 .d-plan-thinking-body {
   white-space: pre-wrap;
   color: rgba(175,175,182,0.8);
@@ -15501,6 +15494,20 @@ promptflow whoami</code></pre>
         return;
       }
     } else if (currentEditorProcessId && !currentEditorProcess?.editable) {
+      // Editor id is set but the loaded process doesn't report
+      // editable. Before refusing, check whether the conversation is
+      // refine-bound to this SAME process — that binding is only set
+      // for processes the user owns and can edit (see openProcessEditor
+      // and the design_process response handler). If so, the missing
+      // `editable` flag is a stale/partial load, not a genuine
+      // read-only process; route the refinement through instead of
+      // wedging the composer with a false "read-only" alert.
+      if (refineBoundProcessId && refineBoundProcessId === currentEditorProcessId) {
+        textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        _sendInProgress = false;
+        await refineBoundProcess(userText);
+        return;
+      }
       _sendInProgress = false;
       alert("This process is read-only. Close the editor (top right) to start a new conversation.");
       return;
@@ -16042,9 +16049,6 @@ promptflow whoami</code></pre>
     // (or `error`) event carrying the same JSON /plan returns. Other
     // flows keep the simpler non-streaming request.
     const useStream = shouldRunDesignSearch && !isRefinement;
-    // Hoisted so the outer catch can always clear it if the stream
-    // throws mid-flight (network drop, abort). Assigned below.
-    let warmupTimer = null;
     try {
       if (useStream) {
         // Set up a live thinking panel in the assist bubble.
@@ -16053,46 +16057,16 @@ promptflow whoami</code></pre>
         think.className = "d-plan-thinking";
         think.innerHTML =
           '<div class="d-plan-thinking-head"><span class="d-design-search-spinner"></span>' +
-          '<span class="d-plan-thinking-label">Thinking…</span></div>' +
-          '<div class="d-plan-thinking-stage"></div>' +
+          '<span>Thinking…</span></div>' +
           '<div class="d-plan-thinking-body"></div>';
         assist.body.appendChild(think);
         const thinkBodyEl = think.querySelector(".d-plan-thinking-body");
-        const thinkStageEl = think.querySelector(".d-plan-thinking-stage");
-
-        // Show motion immediately. There's a gap between opening the
-        // stream and the model's first thinking delta (system-prompt
-        // assembly, semantic search, RAG retrieval, then Opus warming
-        // up). An empty panel during that window reads as "frozen", so
-        // we cycle through what the backend is actually doing. The
-        // stepper is cancelled the moment any real signal (a stage
-        // event or the first thinking delta) arrives.
-        let gotRealSignal = false;
-        const warmupSteps = [
-          "Searching your catalog for related processes…",
-          "Pulling in relevant lessons and context…",
-          "Reasoning about how to design this…",
-        ];
-        let warmupIdx = 0;
-        thinkStageEl.textContent = warmupSteps[0];
-        warmupTimer = setInterval(() => {
-          if (gotRealSignal) return;
-          warmupIdx = Math.min(warmupIdx + 1, warmupSteps.length - 1);
-          thinkStageEl.textContent = warmupSteps[warmupIdx];
-        }, 1800);
-        // Human-readable labels for server-emitted stage events.
-        const stageLabels = {
-          planning: "Designing the process…",
-          search: "Searching your catalog…",
-          retrieving: "Gathering context…",
-        };
 
         const r = await fetch("/api/promptflow/plan/stream", {
           method: "POST", body: fd,
           signal: currentAbortController.signal,
         });
         if (!r.ok || !r.body) {
-          clearInterval(warmupTimer);
           _planInFlight = false;
           throw new Error("stream_http_" + r.status);
         }
@@ -16119,37 +16093,17 @@ promptflow whoami</code></pre>
             if (!dataStr) continue;
             let data; try { data = JSON.parse(dataStr); } catch { continue; }
             if (ev === "thinking" && data.text) {
-              // First real reasoning text — stop the warmup stepper and
-              // hand the stage line over to "Reasoning…".
-              if (!gotRealSignal) {
-                gotRealSignal = true;
-                clearInterval(warmupTimer);
-                thinkStageEl.textContent = "Reasoning…";
-              }
               thinkBodyEl.textContent += data.text;
               stream.scrollTop = stream.scrollHeight;
-            } else if (ev === "stage") {
-              // Backend progress checkpoint. Surface it so the panel
-              // keeps moving even before any thinking delta lands.
-              gotRealSignal = true;
-              clearInterval(warmupTimer);
-              const lbl = stageLabels[data && data.stage] ||
-                (data && data.stage ? String(data.stage) : "");
-              if (lbl) thinkStageEl.textContent = lbl;
             } else if (ev === "done") {
               donePayload = data;
             } else if (ev === "error") {
               streamErr = data;
             }
-            // heartbeat (": keepalive") frames carry no data line and
-            // are skipped above.
+            // heartbeat / stage events are ignored for display.
           }
         }
         _planInFlight = false;
-        clearInterval(warmupTimer);
-        // Clear the live stage line; the head below becomes the final
-        // status.
-        if (thinkStageEl) thinkStageEl.remove();
         // Collapse the thinking head spinner once finished.
         const head = think.querySelector(".d-plan-thinking-head");
         if (head) head.innerHTML = '<span class="d-plan-thinking-done">✓ Thought through the design</span>';
@@ -16266,7 +16220,6 @@ promptflow whoami</code></pre>
       // 'AbortError' — present it as a clean cancellation, not as
       // a network error.
       _planInFlight = false;   // request settled (errored/aborted)
-      if (warmupTimer) clearInterval(warmupTimer);
       stopPlanningStages();
       if (e?.name === "AbortError") {
         setError(assist, "Cancelled.");
