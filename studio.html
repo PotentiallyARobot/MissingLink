@@ -1129,6 +1129,42 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .mk-help-note{font-size:11px;margin-top:10px!important;padding-top:10px;border-top:1px dashed var(--border)}
 
+/* ── LoRA training export dialog ──────────────────────────────────
+   Shown from the batch Download button when the user opts to save the
+   batch as a before/after training set. Reuses the .modal backdrop +
+   .history-modal-panel chrome. Each row is one image pair: thumbnails of
+   both images, a Before/After role toggle, and an editable instruction
+   field. Header has batch-wide controls. Mobile: rows stack, thumbs shrink. */
+.lora-export-panel{max-width:720px;width:100%;display:flex;flex-direction:column;max-height:88vh}
+.lora-export-body{padding:16px 20px;overflow-y:auto;flex:1}
+.lora-export-intro{font-size:12px;color:var(--text-dim);line-height:1.5;margin-bottom:14px}
+.lora-export-intro code{background:var(--surface-3);color:var(--gold);padding:1px 5px;border-radius:4px;font-family:var(--font-mono);font-size:11px}
+.lora-export-bulk{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.lora-export-bulk input[type=text]{flex:1;min-width:160px;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--font-body);font-size:12px;outline:none}
+.lora-export-bulk input[type=text]:focus{border-color:var(--gold)}
+.lora-export-bulk button{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:11px;padding:8px 12px;border-radius:6px;cursor:pointer;transition:all .15s}
+.lora-export-bulk button:hover{border-color:var(--gold);color:var(--gold)}
+.lora-pair-row{display:grid;grid-template-columns:auto 1fr;gap:14px;padding:12px 0;border-bottom:1px solid var(--border)}
+.lora-pair-imgs{display:flex;align-items:center;gap:8px}
+.lora-pair-img{position:relative;width:84px;height:84px;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:var(--surface-3);flex-shrink:0}
+.lora-pair-img img{width:100%;height:100%;object-fit:cover;display:block}
+.lora-pair-img .role-tag{position:absolute;left:0;bottom:0;right:0;font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.5px;text-align:center;padding:2px 0;background:rgba(0,0,0,.65);color:var(--text)}
+.lora-pair-img.is-before .role-tag{color:#7dd3fc}
+.lora-pair-img.is-after .role-tag{color:var(--gold)}
+.lora-pair-swap{background:var(--surface-3);border:1px solid var(--border);color:var(--text-dim);width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0;transition:all .15s}
+.lora-pair-swap:hover{border-color:var(--gold);color:var(--gold);transform:rotate(180deg)}
+.lora-pair-meta{display:flex;flex-direction:column;gap:6px;justify-content:center;min-width:0}
+.lora-pair-dims{font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+.lora-pair-instr{width:100%;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-family:var(--font-body);font-size:12px;line-height:1.4;outline:none;resize:vertical;min-height:38px}
+.lora-pair-instr:focus{border-color:var(--gold)}
+.lora-export-foot{display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid var(--border)}
+.lora-export-foot .le-count{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-right:auto}
+.lora-export-foot button{font-family:var(--font-mono);font-size:12px;padding:9px 18px;border-radius:7px;cursor:pointer;border:1px solid var(--border);background:var(--surface-3);color:var(--text);transition:all .15s}
+.lora-export-foot button.primary{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+.lora-export-foot button.primary:hover{background:var(--gold-light,#f5c842)}
+.lora-export-foot button:not(.primary):hover{border-color:var(--text-muted)}
+@media (max-width:560px){.lora-pair-row{grid-template-columns:1fr}.lora-pair-img{width:64px;height:64px}.lora-export-bulk input[type=text]{width:100%}}
+
 .custom-prompt{width:100%;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--text);font-family:var(--font-body);font-size:12px;line-height:1.5;outline:none;resize:vertical;min-height:80px;transition:border-color .15s}
 .custom-prompt:focus{border-color:var(--gold)}
 .custom-prompt::placeholder{color:var(--text-muted);font-size:11px}
@@ -5073,6 +5109,24 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
+<!-- LoRA training export dialog — opened from the batch Download button.
+     Body + footer are populated by buildLoraExportDialog(); the panel reuses
+     the .history-modal-panel chrome for visual consistency. -->
+<div id="loraExportModal" class="modal" style="display:none" onclick="if(event.target===this) _loraExportResolve(null)">
+    <div class="modal-panel history-modal-panel lora-export-panel" onclick="event.stopPropagation()">
+        <div class="history-modal-head">
+            <div class="history-modal-title">Save for LoRA Training</div>
+            <button class="modal-close" onclick="_loraExportResolve(null)">×</button>
+        </div>
+        <div class="lora-export-body" id="loraExportBody"></div>
+        <div class="lora-export-foot">
+            <span class="le-count" id="loraExportCount"></span>
+            <button onclick="_loraExportResolve(null)">Cancel</button>
+            <button class="primary" onclick="_loraExportConfirm()">⬇ Download zip</button>
+        </div>
+    </div>
+</div>
+
 <!-- Floating markup toolbox — only visible while modal is open -->
 <div id="markupToolbox" class="mk-toolbox" style="display:none">
     <div class="mk-toolbox-head">
@@ -7368,8 +7422,6 @@ function updateGenButton(){
             gen.textContent = `⚡ GENERATE (write a prompt first)`;
         } else if (_user.tokens < needed) {
             gen.textContent = `🪙 NEED ${needed} TOKENS`;
-        } else if (activeCount + selectedCount > MAX_QUEUED) {
-            gen.textContent = `⏳ NEED ${selectedCount - (MAX_QUEUED - activeCount)} FREE SLOTS`;
         } else {
             gen.textContent = `⚡ GENERATE ${selectedCount} × EDIT`;
         }
@@ -13314,10 +13366,15 @@ async function generateBatchEdits(){
         showBuyModal();
         return;
     }
+    // Queue check — UNLIKE the old all-must-fit gate, we don't bail when
+    // the whole batch can't fit at once. We only need ONE free slot to
+    // start; any shots that don't fit are stashed in _pendingAngleShots and
+    // auto-submit as running jobs complete (same drain the angle batches
+    // use). This removes the "NEED N FREE SLOTS" wall.
     const activeCount = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
     const MAX_QUEUED = 12;
-    if (activeCount + selected.length > MAX_QUEUED) {
-        showNotif(`Not enough queue slots. You need ${selected.length} free, have ${MAX_QUEUED - activeCount}.`, 'error');
+    if (activeCount >= MAX_QUEUED) {
+        showNotif(`Queue is full (${activeCount}/${MAX_QUEUED}). Wait for some jobs to finish.`, 'error');
         return;
     }
     // Batch generation is starting — flip to Studio so the user sees
@@ -13367,12 +13424,20 @@ async function generateBatchEdits(){
     };
     renderBatchGrid();
 
+    // Fresh drain queue for this batch — clears any leftover from a prior
+    // angle/batch run so stale shots can't bleed into this one.
+    _pendingAngleShots = [];
+
     const btn = $('btnGen');
     btn.disabled = true;
     const origText = btn.textContent;
     btn.textContent = `⏳ SUBMITTING 0/${selected.length}`;
 
     let submitted = 0;
+    // How many we can submit right now before hitting the server cap. The
+    // rest get stashed and drained as jobs complete.
+    let headroom = MAX_QUEUED - activeCount;
+    let stashed = 0;
     for (let i = 0; i < selected.length; i++) {
         const inp = selected[i];
         // image_ids order matters: pipeline labels them as image 1, 2, 3.
@@ -13402,6 +13467,15 @@ async function generateBatchEdits(){
         // of any sidebar-state changes since the original.
         _activeBatch.shots[i].payload = payload;
         _activeBatch.shots[i].inputId = inp.id;
+
+        // No server headroom left → stash for the auto-drain instead of
+        // submitting now. submitNextPendingAngle() consumes this exact shape
+        // and fires from the job-completion handler as slots free up.
+        if (headroom <= 0) {
+            _pendingAngleShots.push({ shotIdx: i, payload, snapshot: null, label: `Edit ${i + 1}` });
+            stashed++;
+            continue;
+        }
         try {
             const r = await fetchT(`${API}/api/studio/generate`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -13411,7 +13485,14 @@ async function generateBatchEdits(){
             if (!d.ok) {
                 if (r.status === 401) { $('loginModal').classList.add('open'); break; }
                 if (r.status === 402) { showBuyModal(); break; }
-                if (r.status === 429) { showNotif(`Queue full — submitted ${submitted} of ${selected.length}.`, 'error'); break; }
+                if (r.status === 429) {
+                    // Server says full even though we thought we had room —
+                    // stash THIS shot and all remaining ones, then drain.
+                    _pendingAngleShots.push({ shotIdx: i, payload, snapshot: null, label: `Edit ${i + 1}` });
+                    stashed++;
+                    headroom = 0;
+                    continue;
+                }
                 if (d.error === 'content_blocked') {
                     showNotif(`'${inp.fname}' was blocked: content involving minors is not allowed.`, 'error');
                     _activeBatch.shots[i].status = 'error';
@@ -13448,6 +13529,7 @@ async function generateBatchEdits(){
                 angleLabel: `Edit ${i + 1}`,
             });
             submitted++;
+            headroom--;
             btn.textContent = `⏳ SUBMITTING ${submitted}/${selected.length}`;
             startJobPoll(d.job_id);
             renderQueue();
@@ -13462,7 +13544,10 @@ async function generateBatchEdits(){
         await new Promise(r => setTimeout(r, 200));
     }
 
-    log(`Submitted ${submitted}/${selected.length} batch edits (batch ${batchId})`, 'success');
+    log(`Submitted ${submitted}/${selected.length} batch edits (batch ${batchId})${stashed ? ` · ${stashed} queued for auto-submit` : ''}`, 'success');
+    if (stashed) {
+        showNotif(`Queue filled — ${stashed} edit${stashed === 1 ? '' : 's'} will auto-submit as slots free up.`, 'info');
+    }
     btn.textContent = origText;
     updateGenButton();
 }
@@ -14463,58 +14548,97 @@ async function _loadJSZip(){
 }
 
 // Download all successful results from the active batch as a single ZIP.
-// Each image is fetched as a blob, added to the archive with a descriptive
-// filename, then the archive blob is triggered as one download. Single-click
-// UX rather than browser-blocked popup chains.
+// First asks whether to save the batch as a before/after LoRA training
+// set. If yes, an interactive dialog lets the user set the before/after
+// role and edit instruction per pair; the zip then contains before/ +
+// after/ images plus a train.csv manifest (paths, dims, roles,
+// instruction). If no, falls back to the plain results-only zip.
 async function downloadBatchAll(){
     if (!_activeBatch) return;
     const btn = $('btnDownloadAll');
     const originalHtml = btn ? btn.innerHTML : '';
-    if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+
+    const shotsWithUrls = _activeBatch.shots
+        .map((s, i) => ({ ...s, _idx: i }))
+        .filter(s => s.url);
+    if (!shotsWithUrls.length) {
+        showNotif('No images to download yet.', 'error');
+        return;
+    }
+
+    // A pair needs BOTH a source (input) image and a result. Batch-edit
+    // shots carry shot.inputUrl; pure generations wouldn't, so we only
+    // offer the LoRA path when at least one qualifying pair exists.
+    const pairable = shotsWithUrls.filter(s => s.inputUrl && s.url);
+    let loraChoices = null;
+    if (pairable.length) {
+        const wantLora = await showConfirm(
+            `Save this batch for LoRA training? You'll set the before/after image and edit ` +
+            `instruction for each of the ${pairable.length} pair${pairable.length === 1 ? '' : 's'}, ` +
+            `and the zip will include a train.csv manifest.`,
+            { confirmLabel: 'Set up training set', cancelLabel: 'Just the results' }
+        );
+        if (wantLora) {
+            loraChoices = await showLoraExportDialog(pairable);
+            if (loraChoices === null) return;   // user closed the dialog → abort
+        }
+    }
+
+    if (btn) { btn.classList.add('busy'); btn.disabled = true; btn.innerHTML = '⏳ <span>Zipping…</span>'; }
     try {
-        if (btn) btn.innerHTML = '⏳ <span>Zipping…</span>';
         const JSZip = await _loadJSZip();
         const zip = new JSZip();
-
-        const shotsWithUrls = _activeBatch.shots
-            .map((s, i) => ({ ...s, _idx: i }))
-            .filter(s => s.url);
-        if (!shotsWithUrls.length) {
-            showNotif('No images to download yet.', 'error');
-            return;
-        }
-
-        // Fetch all images in parallel — R2 serves with CORS enabled for
-        // the studio.html origin, so cross-origin fetch returns usable blobs.
-        const fetches = shotsWithUrls.map(async (shot) => {
-            try {
-                const res = await fetch(shot.url);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const blob = await res.blob();
-                const safeLabel = shot.label.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-                const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
-                zip.file(fname, blob);
-            } catch (e) {
-                log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
-            }
-        });
-        await Promise.all(fetches);
-
-        // Generate the zip blob. "store" skips compression — these are PNGs
-        // (already compressed), so DEFLATE would waste CPU with ~0 size gain.
-        const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
         const shortId = _activeBatch.id.split('_').pop() || 'batch';
-        const url = URL.createObjectURL(zipBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `missinglink-batch-${shortId}.zip`;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        // Release the blob URL after the browser has started the download
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-        log(`Downloaded ${shotsWithUrls.length}-image zip`, 'success');
+
+        if (loraChoices) {
+            // ── LoRA before/after training set ──
+            // before/NN.png + after/NN.png per pair, plus train.csv mapping
+            // each pair to its instruction and dimensions (kohya-style edit
+            // training triples: control image, target image, caption).
+            const csv = [['pair', 'before', 'after', 'before_w', 'before_h', 'after_w', 'after_h', 'instruction']];
+            let n = 0;
+            for (let i = 0; i < loraChoices.length; i++) {
+                const c = loraChoices[i];
+                const idx = String(i + 1).padStart(2, '0');
+                try {
+                    const [beforeBlob, afterBlob] = await Promise.all([
+                        fetch(c.beforeUrl).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); }),
+                        fetch(c.afterUrl).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); }),
+                    ]);
+                    // Fill any missing dims from the decoded blobs.
+                    let bw = c.beforeW, bh = c.beforeH, aw = c.afterW, ah = c.afterH;
+                    if (!bw || !bh) { const d = await _blobDims(beforeBlob); bw = d.w; bh = d.h; }
+                    if (!aw || !ah) { const d = await _blobDims(afterBlob);  aw = d.w; ah = d.h; }
+                    zip.file(`before/${idx}.png`, beforeBlob);
+                    zip.file(`after/${idx}.png`, afterBlob);
+                    const instr = (c.instruction || '').replace(/"/g, '""');
+                    csv.push([idx, `before/${idx}.png`, `after/${idx}.png`, bw, bh, aw, ah, `"${instr}"`]);
+                    n++;
+                } catch (e) {
+                    log(`Failed to add pair ${idx}: ${e.message}`, 'error');
+                }
+            }
+            zip.file('train.csv', csv.map(row => row.join(',')).join('\n'));
+            await _triggerZipDownload(zip, `missinglink-lora-${shortId}.zip`);
+            log(`Downloaded LoRA training set — ${n} pair${n === 1 ? '' : 's'}`, 'success');
+        } else {
+            // ── Plain results-only zip (original behavior) ──
+            const fetches = shotsWithUrls.map(async (shot) => {
+                try {
+                    const res = await fetch(shot.url);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const blob = await res.blob();
+                    const safeLabel = (shot.label || 'image').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+                    const fname = `${String(shot._idx + 1).padStart(2, '0')}-${safeLabel}.png`;
+                    zip.file(fname, blob);
+                } catch (e) {
+                    log(`Failed to zip "${shot.label}": ${e.message}`, 'error');
+                }
+            });
+            await Promise.all(fetches);
+            await _triggerZipDownload(zip, `missinglink-batch-${shortId}.zip`);
+            log(`Downloaded ${shotsWithUrls.length}-image zip`, 'success');
+        }
     } catch (e) {
         showNotif('Zip failed: ' + e.message, 'error');
     } finally {
@@ -14524,6 +14648,139 @@ async function downloadBatchAll(){
             btn.innerHTML = originalHtml;
         }
     }
+}
+
+// Decode a blob's natural dimensions. Resolves {w,h}, or {0,0} on failure.
+function _blobDims(blob){
+    return new Promise((resolve) => {
+        try {
+            const u = URL.createObjectURL(blob);
+            const im = new Image();
+            im.onload = () => { resolve({ w: im.naturalWidth, h: im.naturalHeight }); URL.revokeObjectURL(u); };
+            im.onerror = () => { resolve({ w: 0, h: 0 }); URL.revokeObjectURL(u); };
+            im.src = u;
+        } catch { resolve({ w: 0, h: 0 }); }
+    });
+}
+
+// Generate the zip blob (STORE = no recompress; PNGs are already
+// compressed) and trigger a single download with the given filename.
+async function _triggerZipDownload(zip, filename){
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// ── LoRA export dialog ──────────────────────────────────────────────
+// Renders one row per pairable shot: source + result thumbnails, a
+// Before/After role toggle (swap), and an editable instruction. Header
+// offers "instruction for all" and "swap all". Returns a promise resolving
+// to an array of { beforeUrl, afterUrl, beforeW, beforeH, afterW, afterH,
+// instruction } in row order, or null if cancelled.
+let _loraExportResolver = null;
+let _loraExportState = null;   // [{ srcUrl, srcW, srcH, resUrl, resW, resH, swapped, instruction }]
+
+function showLoraExportDialog(pairable){
+    return new Promise((resolve) => {
+        _loraExportResolver = resolve;
+        // Default role: input image = before, result = after (natural edit
+        // direction). Missing dims get filled at zip time via _blobDims.
+        _loraExportState = pairable.map((s) => ({
+            srcUrl: s.inputUrl,
+            srcW: s.inputW || 0, srcH: s.inputH || 0,
+            resUrl: s.url,
+            resW: s.w || 0, resH: s.h || 0,
+            swapped: false,                       // false = input is "before"
+            instruction: (s.prompt || '').trim(),
+        }));
+        buildLoraExportDialog();
+        $('loraExportModal').style.display = 'flex';
+    });
+}
+
+function buildLoraExportDialog(){
+    const body = $('loraExportBody');
+    if (!body) return;
+    const rows = _loraExportState.map((p, i) => {
+        const beforeUrl = p.swapped ? p.resUrl : p.srcUrl;
+        const afterUrl  = p.swapped ? p.srcUrl : p.resUrl;
+        const beforeDim = p.swapped ? `${p.resW||'?'}×${p.resH||'?'}` : `${p.srcW||'?'}×${p.srcH||'?'}`;
+        const afterDim  = p.swapped ? `${p.srcW||'?'}×${p.srcH||'?'}` : `${p.resW||'?'}×${p.resH||'?'}`;
+        return `
+        <div class="lora-pair-row">
+            <div class="lora-pair-imgs">
+                <div class="lora-pair-img is-before"><img src="${beforeUrl}" alt="before"><span class="role-tag">before</span></div>
+                <button class="lora-pair-swap" title="Swap before / after" onclick="_loraSwap(${i})">⇄</button>
+                <div class="lora-pair-img is-after"><img src="${afterUrl}" alt="after"><span class="role-tag">after</span></div>
+            </div>
+            <div class="lora-pair-meta">
+                <div class="lora-pair-dims">before ${beforeDim} · after ${afterDim}</div>
+                <textarea class="lora-pair-instr" rows="1" placeholder="Edit instruction for this pair…" oninput="_loraSetInstr(${i}, this.value)">${_escapeHtml(_loraExportState[i].instruction)}</textarea>
+            </div>
+        </div>`;
+    }).join('');
+    body.innerHTML = `
+        <p class="lora-export-intro">For each pair, confirm which image is the <b>before</b> (input) and which is the <b>after</b> (target), and set the edit instruction. The zip will contain <code>before/</code> + <code>after/</code> images and a <code>train.csv</code> manifest.</p>
+        <div class="lora-export-bulk">
+            <input type="text" id="loraBulkInstr" placeholder="Set the same instruction for all pairs…">
+            <button onclick="_loraApplyAllInstr()">Apply to all</button>
+            <button onclick="_loraSwapAll()">⇄ Swap all</button>
+        </div>
+        ${rows}`;
+    const countEl = $('loraExportCount');
+    if (countEl) countEl.textContent = `${_loraExportState.length} pair${_loraExportState.length === 1 ? '' : 's'}`;
+}
+
+function _escapeHtml(s){
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function _loraSwap(i){
+    if (!_loraExportState || !_loraExportState[i]) return;
+    _loraExportState[i].swapped = !_loraExportState[i].swapped;
+    buildLoraExportDialog();
+}
+function _loraSwapAll(){
+    if (!_loraExportState) return;
+    const anyUnswapped = _loraExportState.some(p => !p.swapped);
+    _loraExportState.forEach(p => { p.swapped = anyUnswapped; });
+    buildLoraExportDialog();
+}
+function _loraSetInstr(i, val){
+    if (_loraExportState && _loraExportState[i]) _loraExportState[i].instruction = val;
+}
+function _loraApplyAllInstr(){
+    const v = ($('loraBulkInstr') ? $('loraBulkInstr').value : '').trim();
+    if (!v) { showNotif('Type an instruction to apply to all pairs first.', 'error'); return; }
+    _loraExportState.forEach(p => { p.instruction = v; });
+    buildLoraExportDialog();
+    if ($('loraBulkInstr')) $('loraBulkInstr').value = v;   // re-fill (innerHTML wiped it)
+}
+function _loraExportResolve(result){
+    $('loraExportModal').style.display = 'none';
+    const r = _loraExportResolver; _loraExportResolver = null;
+    if (r) r(result);
+}
+function _loraExportConfirm(){
+    const choices = _loraExportState.map((p) => {
+        const beforeUrl = p.swapped ? p.resUrl : p.srcUrl;
+        const afterUrl  = p.swapped ? p.srcUrl : p.resUrl;
+        return {
+            beforeUrl, afterUrl,
+            beforeW: p.swapped ? p.resW : p.srcW,
+            beforeH: p.swapped ? p.resH : p.srcH,
+            afterW:  p.swapped ? p.srcW : p.resW,
+            afterH:  p.swapped ? p.srcH : p.resH,
+            instruction: p.instruction,
+        };
+    });
+    _loraExportResolve(choices);
 }
 
 // ── GIF generation ─────────────────────────────────────
@@ -15365,6 +15622,17 @@ function canCancelJob(j){
     // Pre-generation stages: user can still bail out without wasting denoising steps
     const PRE_GEN = new Set(['fetching', 'preparing', 'encoding_prompt', 'encoding_image']);
     if(j.status === 'running' && (!j.stage || PRE_GEN.has(j.stage))) return true;
+    // Post-generation delivery stall: the image is already produced and the
+    // worker is stuck retrying the callback (stage 'callback', 'encoding', or
+    // 'callback_retry_N' — the "Retry N/5" the user sees). Cancelling wastes
+    // no denoise work, so let them bail out of the stuck loop.
+    if(j.status === 'running' && j.stage){
+        if(j.stage === 'callback' || j.stage === 'encoding' || j.stage.indexOf('callback_retry_') === 0) return true;
+    }
+    // Escape hatch: running far longer than a healthy job (~2 min) in ANY
+    // stage. Past 4 min, always offer cancel rather than trapping the user.
+    const startMs = j.runningAt || j.startedAt || j.submittedAt || 0;
+    if(j.status === 'running' && startMs && (Date.now() - startMs) >= 240000) return true;
     return false;
 }
 
