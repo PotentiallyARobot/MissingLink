@@ -31,6 +31,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .hdr .crumbs .sep{color:var(--border-light)}
 .hdr .crumbs .cur{color:var(--gold)}
 .hdr .spacer{flex:1}
+.hdr .topnav{display:flex;gap:4px;margin-left:6px}
+.hdr .topnav .navlink{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-decoration:none;cursor:pointer;padding:5px 12px;border-radius:5px;border:1px solid transparent}
+.hdr .topnav .navlink:hover{color:var(--text)}
+.hdr .topnav .navlink.active{color:var(--gold);border-color:var(--border-light)}
 .hdr .me{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:4px 10px;border:1px solid var(--border);border-radius:4px}
 .hdr .me b{color:var(--gold);font-weight:600}
 
@@ -78,6 +82,24 @@ main{padding:22px;max-width:1400px;margin:0 auto}
 .tab-btn{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);padding:7px 16px;border-radius:6px;cursor:pointer}
 .tab-btn:hover{color:var(--text);border-color:var(--text-muted)}
 .tab-btn.active{color:var(--gold);border-color:var(--gold);background:var(--surface-3)}
+/* Stats page */
+.stats-controls{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.stats-controls label{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:7px}
+.stats-controls select,.stats-controls input{font-family:var(--font-mono);font-size:12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 9px}
+.stats-controls input{width:90px}
+.summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.scard{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.scard .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted)}
+.scard .v{font-size:22px;font-weight:700;color:var(--text);margin-top:5px}
+.scard .v.gold{color:var(--gold)}
+.scard .sub{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:3px}
+.stats-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12px}
+.stats-table th,.stats-table td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)}
+.stats-table th{color:var(--text-muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;background:var(--bg)}
+.stats-table td:first-child,.stats-table th:first-child{text-align:left;color:var(--text-dim)}
+.stats-table tbody tr:hover{background:var(--surface)}
+.stats-table td.cost{color:var(--gold)}
+.stats-note{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);line-height:1.6;margin-top:14px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
 
 .gens-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .gen{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:border-color .12s,transform .12s}
@@ -142,6 +164,10 @@ body.ready #splash{display:none}
 <div id="app">
 <header class="hdr">
   <h1>MISSING<span>·</span>LINK / ADMIN</h1>
+  <nav class="topnav">
+    <a id="nav-users" class="navlink active">Users</a>
+    <a id="nav-stats" class="navlink">Stats</a>
+  </nav>
   <div class="crumbs" id="crumbs">
     <a id="crumb-home">Users</a>
   </div>
@@ -173,7 +199,7 @@ body.ready #splash{display:none}
 
 const PAGE_SIZE = 20;
 const state = {
-  view: "users",      // "users" | "user"
+  view: "users",      // "users" | "user" | "stats"
   tab: "gens",        // within "user" view: "gens" | "uploads"
   userId: null,
   users: [],
@@ -189,6 +215,9 @@ const state = {
   currentUser: null,
   filter: "",
   loading: false,
+  stats: null,        // last loaded stats payload
+  statsDays: 30,      // selected window
+  statsRate: 0.001036,// $/GPU-sec (editable; default Modal A100-40GB base)
 };
 
 // ── helpers ─────────────────────────────────────────────────────
@@ -251,6 +280,8 @@ function renderCrumbs() {
   const c = $("#crumbs");
   if (state.view === "users") {
     c.innerHTML = '<span class="cur">Users</span>';
+  } else if (state.view === "stats") {
+    c.innerHTML = '<span class="cur">Stats</span>';
   } else {
     const email = state.currentUser?.email || state.userId;
     c.innerHTML = '<a id="crumb-home">Users</a><span class="sep">/</span><span class="cur">' + esc(email) + '</span>';
@@ -543,6 +574,129 @@ function openUploadLightbox(upId) {
   $("#lb").classList.add("open");
 }
 
+// ── stats page ──────────────────────────────────────────────────
+// Formats seconds as a compact "Hh Mm" / "Mm Ss" string for readability.
+function fmtDur(sec) {
+  sec = Math.round(sec || 0);
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h + "h " + m + "m";
+}
+function fmtUSD(n) {
+  return "$" + (n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function loadStats() {
+  if (state.loading) return;
+  state.loading = true;
+  renderLoader();
+  try {
+    const data = await api("/api/studio/admin/stats?days=" + encodeURIComponent(state.statsDays));
+    state.stats = data;
+    // Seed the rate input from the server default the first time only; if
+    // the admin has already typed a custom rate, keep theirs.
+    if (state.statsRate == null && typeof data.gpu_rate_per_sec === "number") {
+      state.statsRate = data.gpu_rate_per_sec;
+    }
+    $("#stat-total").innerHTML = "<b>" + (data.totals?.distinct_active_users || 0).toLocaleString() +
+      "</b> active user" + ((data.totals?.distinct_active_users === 1) ? "" : "s") + " / " + data.days + "d";
+  } catch (e) {
+    renderError(e.message);
+    state.loading = false;
+    return;
+  }
+  state.loading = false;
+  renderStatsView();
+}
+
+function renderStatsView() {
+  if (state.view !== "stats") return;
+  const main = $("#main");
+  const s = state.stats;
+  if (!s) { main.innerHTML = '<div class="empty-state">No stats.</div>'; return; }
+
+  const rate = (typeof state.statsRate === "number" && isFinite(state.statsRate)) ? state.statsRate : (s.gpu_rate_per_sec || 0);
+  const t = s.totals || {};
+  const gpuCost = (t.gpu_seconds || 0) * rate;
+  const wallCost = (t.wall_seconds || 0) * rate;
+
+  // Controls: window selector + editable $/sec rate.
+  const controls =
+    '<div class="stats-controls">' +
+      '<label>Window ' +
+        '<select id="stats-days">' +
+          [7, 14, 30, 60, 90, 180].map(function(d){
+            return '<option value="' + d + '"' + (d === s.days ? ' selected' : '') + '>' + d + ' days</option>';
+          }).join('') +
+        '</select>' +
+      '</label>' +
+      '<label>$ / GPU-sec ' +
+        '<input id="stats-rate" type="number" step="0.000001" min="0" value="' + rate + '">' +
+      '</label>' +
+      '<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">' +
+        esc(s.gpu_label || "GPU") + ' · base ' + (s.gpu_rate_per_sec || 0) + '/sec' +
+      '</span>' +
+    '</div>';
+
+  // Summary cards.
+  const cards =
+    '<div class="summary-cards">' +
+      '<div class="scard"><div class="k">Active users</div><div class="v gold">' + (t.distinct_active_users || 0).toLocaleString() + '</div><div class="sub">distinct, in window</div></div>' +
+      '<div class="scard"><div class="k">Generations done</div><div class="v">' + (t.jobs_done || 0).toLocaleString() + '</div><div class="sub">of ' + (t.jobs || 0).toLocaleString() + ' submitted</div></div>' +
+      '<div class="scard"><div class="k">GPU inference time</div><div class="v">' + fmtDur(t.gpu_seconds) + '</div><div class="sub">Σ reported elapsed</div></div>' +
+      '<div class="scard"><div class="k">Est. inference cost</div><div class="v gold">' + fmtUSD(gpuCost) + '</div><div class="sub">≈ lower bound</div></div>' +
+      '<div class="scard"><div class="k">Wall-clock GPU time</div><div class="v">' + fmtDur(t.wall_seconds) + '</div><div class="sub">claim→done, ≈ upper bound</div></div>' +
+      '<div class="scard"><div class="k">Est. wall cost</div><div class="v gold">' + fmtUSD(wallCost) + '</div><div class="sub">≈ upper bound</div></div>' +
+    '</div>';
+
+  // Daily table (newest first for at-a-glance recent days).
+  let rows = '';
+  const daily = (s.daily || []).slice().reverse();
+  for (const d of daily) {
+    const c = (d.gpu_seconds || 0) * rate;
+    rows +=
+      '<tr>' +
+        '<td>' + esc(d.day) + '</td>' +
+        '<td>' + (d.active_users || 0) + '</td>' +
+        '<td>' + (d.jobs_done || 0) + '</td>' +
+        '<td>' + fmtDur(d.gpu_seconds) + '</td>' +
+        '<td>' + fmtDur(d.wall_seconds) + '</td>' +
+        '<td class="cost">' + fmtUSD(c) + '</td>' +
+      '</tr>';
+  }
+  const table =
+    '<table class="stats-table">' +
+      '<thead><tr>' +
+        '<th>Day (UTC)</th><th>Active users</th><th>Gens</th>' +
+        '<th>GPU time</th><th>Wall time</th><th>Est. cost</th>' +
+      '</tr></thead>' +
+      '<tbody>' + (rows || '<tr><td colspan="6" style="text-align:center;color:var(--text-dim)">no activity</td></tr>') + '</tbody>' +
+    '</table>';
+
+  const note =
+    '<div class="stats-note">' +
+      'How to read this: <b>GPU inference time</b> sums each job\'s reported compute and is a <b>lower bound</b> on cost — ' +
+      'it excludes warm-idle and cold-boot time that Modal still bills. <b>Wall-clock</b> (claim→done) includes overhead and ' +
+      'over-counts when jobs run in parallel, so treat it as an <b>upper bound</b>. Your real A100-40GB invoice sits between ' +
+      'the two; Modal\'s own dashboard is authoritative. Region multipliers (≈1.25× US/EU) may apply on top of the base rate — ' +
+      'adjust the $/GPU-sec field above to match your actual rate.' +
+    '</div>';
+
+  main.innerHTML = controls + cards + table + note;
+
+  // Wire controls.
+  const daysSel = $("#stats-days");
+  if (daysSel) daysSel.onchange = () => { state.statsDays = parseInt(daysSel.value, 10) || 30; loadStats(); };
+  const rateInp = $("#stats-rate");
+  if (rateInp) rateInp.oninput = () => {
+    const v = parseFloat(rateInp.value);
+    state.statsRate = isFinite(v) ? v : 0;
+    renderStatsView();  // re-render cost columns only; no refetch
+  };
+}
+
 function genCardHtml(g) {
   const prompt = g.prompt ? '<div class="prompt">' + esc(g.prompt) + '</div>' : '';
   const inCount = Array.isArray(g.inputs) ? g.inputs.length : 0;
@@ -636,11 +790,25 @@ function navigate(view, userId) {
     state.uploadsDone = false;
     state.uploadsTotal = 0;
     location.hash = "user/" + userId;
+  } else if (view === "stats") {
+    location.hash = "stats";
   }
+  // Top-nav active state. "user" detail view is reached from Users, so it
+  // keeps Users highlighted.
+  const onStats = view === "stats";
+  $("#nav-users").classList.toggle("active", !onStats);
+  $("#nav-stats").classList.toggle("active", onStats);
+  // The search box only applies to the user list; hide the whole toolbar
+  // on the stats page so it doesn't look like it filters the table.
+  const tb = $("#toolbar");
+  if (tb) tb.style.display = onStats ? "none" : "";
+
   renderCrumbs();
   if (view === "users") {
     if (state.users.length === 0) loadUsersBatch();
     else renderUsersView();
+  } else if (view === "stats") {
+    loadStats();
   } else {
     loadUserGens(true);
   }
@@ -687,9 +855,14 @@ $("#search").addEventListener("input", (e) => {
 function fromHash() {
   const m = location.hash.match(/^#user\/(.+)$/);
   if (m) navigate("user", decodeURIComponent(m[1]));
+  else if (location.hash === "#stats") navigate("stats");
   else navigate("users");
 }
 window.addEventListener("hashchange", fromHash);
+
+// Top-nav links.
+$("#nav-users").onclick = () => navigate("users");
+$("#nav-stats").onclick = () => navigate("stats");
 
 // ── boot ────────────────────────────────────────────────────────
 (async function boot() {
