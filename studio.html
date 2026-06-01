@@ -5983,6 +5983,19 @@ function showNotif(message, type){
         $('notifModal').style.display = 'flex';
     });
 }
+// Map an upload/generation error code to a clear, human message and show
+// it. Used by every /api/studio/upload* call site so a child-safety block
+// reads sensibly instead of surfacing the raw error code. Returns nothing;
+// callers `return` after invoking it.
+function notifyUploadError(code){
+    if(code==='content_blocked'){
+        showNotif('This image can\u2019t be uploaded: it was flagged as involving a minor. Images depicting people under 18 are not allowed.', 'error');
+    } else if(code==='moderation_unavailable'){
+        showNotif('Safety check is temporarily unavailable, so this upload was not accepted. Please try again in a moment.', 'error');
+    } else {
+        showNotif(code || 'Upload failed.', 'error');
+    }
+}
 function showConfirm(message, opts){
     // opts: { confirmLabel, cancelLabel, danger }
     opts = opts || {};
@@ -8236,7 +8249,16 @@ async function uploadFile(file){
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
-        if(d.error){ showNotif(d.error, 'error'); return; }
+        if(d.error){
+            if(d.error==='content_blocked'){
+                showNotif('This image can\u2019t be uploaded: it was flagged as involving a minor. Images depicting people under 18 are not allowed.', 'error');
+            } else if(d.error==='moderation_unavailable'){
+                showNotif('Safety check is temporarily unavailable, so this upload was not accepted. Please try again in a moment.', 'error');
+            } else {
+                showNotif(d.error, 'error');
+            }
+            return;
+        }
         // Prefer server-returned dims if available, else use client-read dims
         setInputImage(d.id, d.url, d.w || dims.w, d.h || dims.h);
         log(`Uploaded ${file.name} (${dims.w}×${dims.h})`);
@@ -8351,7 +8373,7 @@ async function genUploadToSlot(i, file){
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
-        if (d.error) { showNotif(d.error, 'error'); return; }
+        if (d.error) { notifyUploadError(d.error); return; }
         const w = d.w || dims.w, h = d.h || dims.h;
         _generateRefs[i] = { id: d.id, url: d.url, filename: d.filename, w, h };
         renderGenSlot(i);
@@ -9467,7 +9489,7 @@ async function uploadToSlot(i,file){
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
         const d=await r.json();
-        if(d.error){ showNotif(d.error, 'error'); return; }
+        if(d.error){ notifyUploadError(d.error); return; }
         const w = d.w || dims.w, h = d.h || dims.h;
         slots[i]={id:d.id,url:d.url,filename:d.filename,w:w,h:h};
         $('inpWidth').value=w; $('inpHeight').value=h;
@@ -11648,7 +11670,7 @@ async function batchContextUpload(slotIdx, file){
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
-        if (d.error) { showNotif(d.error, 'error'); return; }
+        if (d.error) { notifyUploadError(d.error); return; }
         _batchContext[slotIdx] = {
             id: d.id, url: d.url,
             w: d.w || dims.w, h: d.h || dims.h,
@@ -12551,7 +12573,7 @@ async function batchUploadFile(file){
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
-        if (d.error) { showNotif(d.error, 'error'); return; }
+        if (d.error) { notifyUploadError(d.error); return; }
         _batchInputs.push({
             id: d.id, url: d.url,
             w: d.w || dims.w, h: d.h || dims.h,
@@ -12745,6 +12767,8 @@ async function addSearchImageToStage(idx, btn){
                 fetch_failed: 'Couldn\'t fetch that image (the host blocked it).',
                 image_too_large: 'That image is too large.',
                 email_not_verified: 'Confirm your email to add images.',
+                content_blocked: 'That image can\'t be added: it was flagged as involving a minor. Images depicting people under 18 are not allowed.',
+                moderation_unavailable: 'Safety check is temporarily unavailable, so that image was not added. Please try again in a moment.',
             };
             showNotif(map[d.error] || ('Could not add image: ' + (d.error || 'unknown')), 'error');
             if (btn) { btn.disabled = false; btn.textContent = origText; }
