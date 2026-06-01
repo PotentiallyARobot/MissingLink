@@ -649,6 +649,7 @@ function renderStatsView() {
       '<div class="scard"><div class="k">Est. inference cost</div><div class="v gold">' + fmtUSD(gpuCost) + '</div><div class="sub">≈ lower bound</div></div>' +
       '<div class="scard"><div class="k">Wall-clock GPU time</div><div class="v">' + fmtDur(t.wall_seconds) + '</div><div class="sub">claim→done, ≈ upper bound</div></div>' +
       '<div class="scard"><div class="k">Est. wall cost</div><div class="v gold">' + fmtUSD(wallCost) + '</div><div class="sub">≈ upper bound</div></div>' +
+      '<div class="scard"><div class="k">Safety blocks</div><div class="v' + ((t.safety_blocks || 0) > 0 ? ' gold' : '') + '">' + (t.safety_blocks || 0).toLocaleString() + '</div><div class="sub">minor-content, in window</div></div>' +
     '</div>';
 
   // Daily table (newest first for at-a-glance recent days).
@@ -656,6 +657,7 @@ function renderStatsView() {
   const daily = (s.daily || []).slice().reverse();
   for (const d of daily) {
     const c = (d.gpu_seconds || 0) * rate;
+    const blk = d.safety_blocks || 0;
     rows +=
       '<tr>' +
         '<td>' + esc(d.day) + '</td>' +
@@ -664,15 +666,16 @@ function renderStatsView() {
         '<td>' + fmtDur(d.gpu_seconds) + '</td>' +
         '<td>' + fmtDur(d.wall_seconds) + '</td>' +
         '<td class="cost">' + fmtUSD(c) + '</td>' +
+        '<td' + (blk > 0 ? ' style="color:var(--gold)"' : '') + '>' + blk + '</td>' +
       '</tr>';
   }
   const table =
     '<table class="stats-table">' +
       '<thead><tr>' +
         '<th>Day (UTC)</th><th>Active users</th><th>Gens</th>' +
-        '<th>GPU time</th><th>Wall time</th><th>Est. cost</th>' +
+        '<th>GPU time</th><th>Wall time</th><th>Est. cost</th><th>Blocked</th>' +
       '</tr></thead>' +
-      '<tbody>' + (rows || '<tr><td colspan="6" style="text-align:center;color:var(--text-dim)">no activity</td></tr>') + '</tbody>' +
+      '<tbody>' + (rows || '<tr><td colspan="7" style="text-align:center;color:var(--text-dim)">no activity</td></tr>') + '</tbody>' +
     '</table>';
 
   const note =
@@ -684,7 +687,50 @@ function renderStatsView() {
       'adjust the $/GPU-sec field above to match your actual rate.' +
     '</div>';
 
-  main.innerHTML = controls + cards + table + note;
+  // ── Safety panel: reason breakdown + repeat offenders ──
+  const reasonLabels = {
+    sexual_minors: 'Sexualized minor (classifier)',
+    minor_present: 'Minor present in image',
+    content_blocked: 'Blocked (input image)',
+    moderation_unavailable: 'Held — screening unavailable',
+  };
+  const byReason = s.safety_by_reason || {};
+  const reasonKeys = Object.keys(byReason);
+  let reasonHtml = '';
+  if (reasonKeys.length) {
+    reasonHtml = reasonKeys
+      .sort((a, b) => (byReason[b] || 0) - (byReason[a] || 0))
+      .map(function(k){
+        return '<tr><td>' + esc(reasonLabels[k] || k) + '</td><td>' + (byReason[k] || 0) + '</td></tr>';
+      }).join('');
+  }
+  const offenders = s.safety_offenders || [];
+  let offHtml = '';
+  for (const o of offenders) {
+    // Token-hash actors (public /api/edit) aren't studio users, so don't
+    // link those; only link real user ids to the detail view.
+    const isTok = String(o.user_id || '').startsWith('tok:');
+    const cell = isTok
+      ? '<span style="color:var(--text-dim)">' + esc(o.user_id) + '</span>'
+      : '<a class="off-link" data-uid="' + esc(o.user_id) + '" style="color:var(--gold);cursor:pointer">' + esc(o.user_id) + '</a>';
+    offHtml += '<tr><td>' + cell + '</td><td>' + (o.blocks || 0) + '</td><td>' + fmtDate(o.last_at) + '</td></tr>';
+  }
+
+  let safetyPanel = '';
+  if ((t.safety_blocks || 0) > 0) {
+    safetyPanel =
+      '<div style="margin-top:24px"><div class="k" style="font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:10px">Child-safety blocks (' + (t.safety_blocks || 0) + ' in window)</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
+        '<table class="stats-table"><thead><tr><th>Reason</th><th>Count</th></tr></thead><tbody>' +
+          (reasonHtml || '<tr><td colspan="2" style="text-align:center;color:var(--text-dim)">—</td></tr>') +
+        '</tbody></table>' +
+        '<table class="stats-table"><thead><tr><th>Top actors</th><th>Blocks</th><th>Last</th></tr></thead><tbody>' +
+          (offHtml || '<tr><td colspan="3" style="text-align:center;color:var(--text-dim)">—</td></tr>') +
+        '</tbody></table>' +
+      '</div></div>';
+  }
+
+  main.innerHTML = controls + cards + table + safetyPanel + note;
 
   // Wire controls.
   const daysSel = $("#stats-days");
@@ -695,6 +741,12 @@ function renderStatsView() {
     state.statsRate = isFinite(v) ? v : 0;
     renderStatsView();  // re-render cost columns only; no refetch
   };
+  // Clicking a flagged actor jumps to their user-detail view to review
+  // and act (wipe/ban). Only real user ids are linked (token-hash actors
+  // from the public edit API aren't studio users).
+  for (const a of $("#main").querySelectorAll(".off-link")) {
+    a.onclick = () => navigate("user", a.dataset.uid);
+  }
 }
 
 function genCardHtml(g) {
