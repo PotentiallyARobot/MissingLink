@@ -6745,6 +6745,14 @@ async function acknowledgeAgeGate(){
                 }
             }, 120);
         }
+        // If the gate was opened because a server route rejected the action
+        // with age_ack_required, replay that action now that the ack is on
+        // record. Run after the close transition. One-shot.
+        if (typeof _ageGateThenRetry === 'function') {
+            const retry = _ageGateThenRetry;
+            _ageGateThenRetry = null;
+            setTimeout(() => { try { retry(); } catch (e) {} }, 140);
+        }
     } catch (e) {
         showNotif('Network error — please try again.', 'error');
     } finally {
@@ -8510,6 +8518,10 @@ async function _checkNsfwBeforeCreate(prompt){
 // reads this flag and opens the NSFW advisory so the user lands on
 // the same modal they would have seen if they'd already been ack'd.
 let _ageGateThenNsfwAdvisory = false;
+// Callback set when a server route rejects an action with
+// error="age_ack_required". The age gate's success handler invokes it
+// once, after the ack is recorded, to replay the original action.
+let _ageGateThenRetry = null;
 
 function openNsfwAdvisoryModal(){
     const m = document.getElementById('nsfwAdvisoryModal');
@@ -11456,6 +11468,13 @@ async function doGenerate(){
             else if (d.error === 'moderation_unavailable') {
                 showNotif('Safety check is temporarily unavailable, so this edit was not run. Please try again in a moment.', 'error');
             }
+            else if (d.error === 'age_ack_required') {
+                // Server requires an 18+ acknowledgement for NSFW content in
+                // this mode. Open the age gate; once acknowledged, replay the
+                // generation automatically.
+                _ageGateThenRetry = doGenerate;
+                openAgeGate();
+            }
             else { log('Error: ' + (d.error || 'Failed'), 'error'); }
             return;
         }
@@ -13494,6 +13513,15 @@ async function generateBatchEdits(){
                     renderBatchGrid();
                     continue;
                 }
+                if (d.error === 'age_ack_required') {
+                    // NSFW content in this batch needs an 18+ acknowledgement.
+                    // Open the gate; the user can re-run the batch after acking.
+                    showNotif('Adult content requires confirming you are 18+. Please acknowledge, then run again.', 'error');
+                    openAgeGate();
+                    _activeBatch.shots[i].status = 'error';
+                    renderBatchGrid();
+                    break;
+                }
                 log(`Batch edit '${inp.fname}' failed: ${d.error || 'unknown'}`, 'error');
                 _activeBatch.shots[i].status = 'error';
                 renderBatchGrid();
@@ -13893,6 +13921,9 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
                     showNotif('This request was blocked: content involving minors is not allowed.', 'error');
                 } else if (d.error === 'moderation_unavailable') {
                     showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
+                } else if (d.error === 'age_ack_required') {
+                    showNotif('Adult content requires confirming you are 18+. Please acknowledge, then run again.', 'error');
+                    openAgeGate();
                 }
                 _activeBatch.shots[i].status = 'error';
                 renderBatchGrid();
@@ -13974,6 +14005,9 @@ async function submitNextPendingAngle(){
                 showNotif('This request was blocked: content involving minors is not allowed.', 'error');
             } else if (d.error === 'moderation_unavailable') {
                 showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
+            } else if (d.error === 'age_ack_required') {
+                showNotif('Adult content requires confirming you are 18+. Please acknowledge, then run again.', 'error');
+                openAgeGate();
             }
             _activeBatch.shots[shotIdx].status = 'error';
             renderBatchGrid();
