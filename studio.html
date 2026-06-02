@@ -8279,6 +8279,57 @@ function readImageDimensions(file){
     });
 }
 
+// Produce a downscaled JPEG copy of an image for SERVER-SIDE SCREENING only.
+// A full 4K image base64-inlined into the moderation request crashes the
+// Worker; a ~1024px copy is plenty for minor detection and keeps the request
+// small and reliable. The full-quality original is still uploaded separately
+// and stored untouched. Returns a Blob, or null if downscaling isn't needed
+// (small images) or fails (caller falls back to sending only the original).
+const SCREEN_MAX_EDGE = 1024;
+const SCREEN_DOWNSCALE_THRESHOLD_BYTES = 3 * 1024 * 1024; // only bother for >3MB
+function makeScreeningCopy(file){
+    return new Promise((resolve) => {
+        try {
+            if (!file || file.size <= SCREEN_DOWNSCALE_THRESHOLD_BYTES) { resolve(null); return; }
+            const url = URL.createObjectURL(file);
+            const im = new Image();
+            im.onload = () => {
+                try {
+                    const w = im.naturalWidth, h = im.naturalHeight;
+                    const longest = Math.max(w, h);
+                    if (longest <= SCREEN_MAX_EDGE) { URL.revokeObjectURL(url); resolve(null); return; }
+                    const scale = SCREEN_MAX_EDGE / longest;
+                    const cw = Math.max(1, Math.round(w * scale));
+                    const ch = Math.max(1, Math.round(h * scale));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = cw; canvas.height = ch;
+                    const cx = canvas.getContext('2d');
+                    cx.drawImage(im, 0, 0, cw, ch);
+                    URL.revokeObjectURL(url);
+                    canvas.toBlob((b) => resolve(b || null), 'image/jpeg', 0.85);
+                } catch (e) {
+                    URL.revokeObjectURL(url); resolve(null);
+                }
+            };
+            im.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+            im.src = url;
+        } catch (e) {
+            resolve(null);
+        }
+    });
+}
+
+// Append a downscaled screening copy to an upload FormData when the file is
+// large, so the server screens the small copy (reliable) and stores the
+// full original. No-op for small files. Always safe to call before a POST
+// to /api/studio/upload.
+async function attachScreenCopy(fd, file){
+    try {
+        const copy = await makeScreeningCopy(file);
+        if (copy) fd.append('screen_image', copy, 'screen.jpg');
+    } catch (e) { /* fall back to original-only screening */ }
+}
+
 function initDrop(){
     const z=$('dropzone'),inp=$('fileInput');
     ['dragenter','dragover'].forEach(e=>z.addEventListener(e,ev=>{ev.preventDefault();z.classList.add('over');}));
@@ -8319,7 +8370,7 @@ async function uploadFile(file){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     // Read dimensions client-side so Width/Height populate immediately
     const dims = await readImageDimensions(file);
-    const fd=new FormData(); fd.append('image',file);
+    const fd=new FormData(); fd.append('image',file); await attachScreenCopy(fd, file);
     try{
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
@@ -8443,7 +8494,7 @@ function genSlotFileChange(i){
 async function genUploadToSlot(i, file){
     if (!_user) { $('loginModal').classList.add('open'); return; }
     const dims = await readImageDimensions(file);
-    const fd = new FormData(); fd.append('image', file);
+    const fd = new FormData(); fd.append('image', file); await attachScreenCopy(fd, file);
     try {
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
@@ -9563,7 +9614,7 @@ async function uploadToSlot(i,file){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     // Read dimensions client-side before upload so Width/Height populate right away
     const dims = await readImageDimensions(file);
-    const fd=new FormData(); fd.append('image',file);
+    const fd=new FormData(); fd.append('image',file); await attachScreenCopy(fd, file);
     try{
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
         if(r.status===401){ $('loginModal').classList.add('open'); return; }
@@ -10022,7 +10073,7 @@ async function _compositeSlotWithStrokes(slotIdx){
     // Upload the composited PNG. This creates a fresh studio_uploads row
     // we can reference by id in the generate payload. We don't persist
     // this into slots[i] — the original stays the source of truth.
-    const fd = new FormData(); fd.append('image', file);
+    const fd = new FormData(); fd.append('image', file); await attachScreenCopy(fd, file);
     const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
     if (r.status === 401) { $('loginModal').classList.add('open'); throw new Error('auth'); }
     const d = await r.json();
@@ -11756,6 +11807,7 @@ async function batchContextUpload(slotIdx, file){
     const dims = await readImageDimensions(file);
     const fd = new FormData();
     fd.append('image', file);
+    await attachScreenCopy(fd, file);
     try {
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
@@ -12479,6 +12531,7 @@ async function sendBatchInputToCreate(inp){
             const file = new File([blob], fname, { type: blob.type || 'image/png' });
             const fd = new FormData();
             fd.append('image', file);
+            await attachScreenCopy(fd, file);
             const upR = await fetchT(`${API}/api/studio/upload`, {
                 method: 'POST', body: fd,
             }, 30000);
@@ -12659,6 +12712,7 @@ async function batchUploadFile(file){
     const dims = await readImageDimensions(file);
     const fd = new FormData();
     fd.append('image', file);
+    await attachScreenCopy(fd, file);
     try {
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
@@ -13693,6 +13747,7 @@ async function prepareBatchShotForReuse(shot, slotIdx){
         const file = new File([blob], fname, { type: blob.type || 'image/png' });
         const fd = new FormData();
         fd.append('image', file);
+        await attachScreenCopy(fd, file);
         const upR = await fetchT(`${API}/api/studio/upload`, {
             method: 'POST', body: fd,
         }, 30000);
