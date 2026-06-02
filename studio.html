@@ -1436,6 +1436,8 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .gallery-search-wrap:focus-within{border-color:var(--gold)}
 .gallery-search-wrap .gs-icon{font-size:12px;color:var(--text-muted);flex:0 0 auto}
 .gallery-search-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:var(--font-body);font-size:12px;min-width:0;padding:4px 0;line-height:1.2}
+.image-search-size{background:var(--surface-2,#18181b);color:var(--text);border:1px solid var(--border,#3f3f46);border-radius:6px;font-family:var(--font-mono);font-size:11px;padding:6px 8px;outline:none;cursor:pointer;margin-right:8px}
+.image-search-size:focus{border-color:var(--gold,#E8A917)}
 .gallery-search-input::placeholder{color:var(--text-muted)}
 .gallery-search-clear{background:none;border:none;color:var(--text-muted);font-size:14px;cursor:pointer;padding:0 2px;line-height:1;display:none}
 .gallery-search-clear.visible{display:inline-block}
@@ -5210,6 +5212,12 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <input type="text" id="imageSearchInput" class="gallery-search-input" placeholder="Describe what you're looking for…" autocomplete="off" spellcheck="false">
                 <button type="button" id="imageSearchClear" class="gallery-search-clear" title="Clear" onclick="clearImageSearch()">×</button>
             </div>
+            <select id="imageSearchSize" class="image-search-size" title="Filter by image resolution" onchange="onImageSearchSizeChange()">
+                <option value="any">Any size</option>
+                <option value="large">Large</option>
+                <option value="medium">Medium</option>
+                <option value="small">Small</option>
+            </select>
             <button class="modal-close" onclick="closeImageSearch()">×</button>
         </div>
         <div class="history-modal-body" id="imageSearchBody">
@@ -12668,6 +12676,7 @@ let _imgSearchHasMore = false;
 let _imgSearchAdded = new Set();
 let _imgSearchObserver = null;
 let _imgSearchDebounce = null;
+let _imgSearchSize = 'any';   // resolution bucket: any | large | medium | small
 
 function openImageSearch(){
     if (!_user) { $('loginModal').classList.add('open'); return; }
@@ -12724,6 +12733,16 @@ function startImageSearch(q){
     loadMoreImageSearch();
 }
 
+// Resolution dropdown changed. Update the bucket and, if there's an active
+// query, re-run the search from page 1 with the new size filter.
+function onImageSearchSizeChange(){
+    const sel = $('imageSearchSize');
+    _imgSearchSize = sel ? sel.value : 'any';
+    if (_imgSearchQuery) {
+        startImageSearch(_imgSearchQuery);
+    }
+}
+
 async function loadMoreImageSearch(){
     if (_imgSearchLoading || !_imgSearchHasMore || !_imgSearchQuery) return;
     _imgSearchLoading = true;
@@ -12731,16 +12750,26 @@ async function loadMoreImageSearch(){
     const sentinel = $('imageSearchSentinel');
     if (sentinel && _imgSearchResults.length) { sentinel.style.display = ''; sentinel.textContent = 'Loading more…'; }
     try {
-        const r = await fetchT(`${API}/api/studio/image-search?q=${encodeURIComponent(_imgSearchQuery)}&page=${nextPage}`, null, 15000);
+        const r = await fetchT(`${API}/api/studio/image-search?q=${encodeURIComponent(_imgSearchQuery)}&page=${nextPage}&size=${encodeURIComponent(_imgSearchSize)}`, null, 15000);
         const d = await r.json();
         if (!d.ok) {
             _imgSearchHasMore = false;
+            // Adult-NSFW query needs an 18+ acknowledgement. Open the gate;
+            // once acknowledged, re-run this same search automatically.
+            if (d.error === 'age_ack_required') {
+                _ageGateThenRetry = () => { _imgSearchPage = nextPage - 1; _imgSearchHasMore = true; loadMoreImageSearch(); };
+                openAgeGate();
+                return;
+            }
             const grid = $('imageSearchGrid');
             if (grid && !_imgSearchResults.length) {
-                const msg = d.error === 'search_timeout' ? 'Search timed out — try again.'
+                const msg = d.error === 'content_blocked' ? 'That search can\u2019t be run.'
+                          : d.error === 'search_timeout' ? 'Search timed out — try again.'
                           : d.error === 'search_unavailable' ? 'Image search is temporarily unavailable.'
                           : 'Search failed — try a different query.';
                 grid.innerHTML = `<div class="history-empty">${msg}</div>`;
+            } else if (d.error === 'content_blocked') {
+                showNotif('That search can\u2019t be run.', 'error');
             }
             return;
         }
