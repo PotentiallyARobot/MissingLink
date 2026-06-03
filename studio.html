@@ -1406,6 +1406,7 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .imgsearch-card .history-card-thumb{aspect-ratio:1/1}
 .imgsearch-card .history-card-thumb img{object-fit:cover}
 .imgsearch-add{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,10,12,.55);opacity:0;transition:opacity .15s;z-index:2}
+.imgsearch-dims{position:absolute;bottom:6px;right:6px;z-index:3;background:rgba(10,10,12,.78);color:#e4e4e7;font-family:var(--font-mono);font-size:10px;letter-spacing:.3px;padding:2px 6px;border-radius:4px;pointer-events:none}
 .imgsearch-card:hover .imgsearch-add{opacity:1}
 .imgsearch-add-btn{background:var(--gold);color:#0a0a0c;border:none;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.5px;padding:9px 14px;border-radius:7px;cursor:pointer;transition:transform .12s}
 .imgsearch-add-btn:hover{transform:scale(1.06)}
@@ -5217,6 +5218,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <option value="large">Large</option>
                 <option value="medium">Medium</option>
                 <option value="small">Small</option>
+            </select>
+            <select id="imageSearchSort" class="image-search-size" title="Sort results" onchange="onImageSearchSortChange()">
+                <option value="relevance">Relevance</option>
+                <option value="largest">Largest first</option>
+                <option value="smallest">Smallest first</option>
             </select>
             <button class="modal-close" onclick="closeImageSearch()">×</button>
         </div>
@@ -12746,6 +12752,7 @@ let _imgSearchAdded = new Set();
 let _imgSearchObserver = null;
 let _imgSearchDebounce = null;
 let _imgSearchSize = 'any';   // resolution bucket: any | large | medium | small
+let _imgSearchSort = 'relevance';   // relevance | largest | smallest
 
 function openImageSearch(){
     if (!_user) { $('loginModal').classList.add('open'); return; }
@@ -12871,27 +12878,64 @@ function renderImageSearchResults(){
         if (sentinel) sentinel.style.display = 'none';
         return;
     }
-    // Incremental: append only cards not already rendered (keyed by index).
-    const existing = grid.querySelectorAll('.imgsearch-card').length;
-    if (existing === 0) grid.innerHTML = '';
-    for (let i = existing; i < _imgSearchResults.length; i++) {
-        const res = _imgSearchResults[i];
-        const added = _imgSearchAdded.has(res.full);
-        const card = document.createElement('div');
-        card.className = 'history-card imgsearch-card' + (added ? ' added' : '');
-        card.dataset.idx = String(i);
-        card.innerHTML = `
-            <div class="history-card-thumb">
-                <img src="${escapeHtml(res.thumb || res.full)}" loading="lazy" alt="" referrerpolicy="no-referrer"
-                     onerror="this.closest('.imgsearch-card').style.display='none'">
-                <div class="imgsearch-add">
-                    <button class="imgsearch-add-btn" onclick="addSearchImageToStage(${i}, this)">${added ? '✓ Added' : '+ Add to stage'}</button>
-                </div>
-            </div>
-            <div class="imgsearch-src">${escapeHtml(res.source || res.title || '')}</div>
-        `;
-        grid.appendChild(card);
+
+    // Decide the display order. For "relevance" we keep arrival order and can
+    // append incrementally (cheap). For size sorts we must order the whole
+    // list, so we build a sorted view and full-rebuild. Results missing
+    // dimensions (w/h = 0) sort to the END of a size sort so they don't
+    // masquerade as 0×0 at the top.
+    const sorting = _imgSearchSort === 'largest' || _imgSearchSort === 'smallest';
+    let view = _imgSearchResults;
+    if (sorting) {
+        const area = (r) => {
+            const a = (Number(r.w) || 0) * (Number(r.h) || 0);
+            return a > 0 ? a : -1;   // unknown size → -1 sentinel
+        };
+        // Tag each with its original index so cards can reference the correct
+        // _imgSearchResults position (addSearchImageToStage needs it), without
+        // an O(n^2) indexOf during render.
+        view = _imgSearchResults.map((r, idx) => ({ r, idx })).sort((a, b) => {
+            const aa = area(a.r), ab = area(b.r);
+            if (aa === -1 && ab === -1) return 0;
+            if (aa === -1) return 1;
+            if (ab === -1) return -1;
+            return _imgSearchSort === 'largest' ? (ab - aa) : (aa - ab);
+        });
     }
+
+    const cardHtml = (res, i) => {
+        const added = _imgSearchAdded.has(res.full);
+        const dims = (Number(res.w) > 0 && Number(res.h) > 0)
+            ? `<div class="imgsearch-dims">${res.w}×${res.h}</div>` : '';
+        return `
+            <div class="history-card imgsearch-card${added ? ' added' : ''}" data-idx="${i}">
+                <div class="history-card-thumb">
+                    <img src="${escapeHtml(res.thumb || res.full)}" loading="lazy" alt="" referrerpolicy="no-referrer"
+                         onerror="this.closest('.imgsearch-card').style.display='none'">
+                    ${dims}
+                    <div class="imgsearch-add">
+                        <button class="imgsearch-add-btn" onclick="addSearchImageToStage(${i}, this)">${added ? '✓ Added' : '+ Add to stage'}</button>
+                    </div>
+                </div>
+                <div class="imgsearch-src">${escapeHtml(res.source || res.title || '')}</div>
+            </div>`;
+    };
+
+    if (sorting) {
+        // Full rebuild in sorted order. Each entry carries its original index
+        // into _imgSearchResults so addSearchImageToStage gets the right item.
+        grid.innerHTML = view.map(({ r, idx }) => cardHtml(r, idx)).join('');
+    } else {
+        // Relevance: incremental append (only new cards).
+        const existing = grid.querySelectorAll('.imgsearch-card').length;
+        if (existing === 0) grid.innerHTML = '';
+        let appended = '';
+        for (let i = existing; i < _imgSearchResults.length; i++) {
+            appended += cardHtml(_imgSearchResults[i], i);
+        }
+        if (appended) grid.insertAdjacentHTML('beforeend', appended);
+    }
+
     // (Re)wire infinite-scroll observer on the sentinel.
     if (sentinel) {
         sentinel.style.display = _imgSearchHasMore ? '' : 'none';
@@ -12905,7 +12949,18 @@ function renderImageSearchResults(){
             }, { root, rootMargin: '300px 0px' });
             _imgSearchObserver.observe(sentinel);
         }
+        // Keep the sentinel after the grid content on full rebuilds.
+        if (sorting && sentinel.parentElement === grid) grid.appendChild(sentinel);
     }
+}
+
+// Sort dropdown changed: re-render in the new order. No re-fetch needed —
+// we sort whatever results are already loaded. (More results keep loading
+// via infinite scroll and get folded into the sort on each render.)
+function onImageSearchSortChange(){
+    const sel = $('imageSearchSort');
+    _imgSearchSort = sel ? sel.value : 'relevance';
+    renderImageSearchResults();
 }
 
 // Pull a searched image into the batch working set. Fetches it server-side
