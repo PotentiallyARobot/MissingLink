@@ -924,6 +924,35 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     opacity:1!important;transform:scale(1);
 }
 
+/* Per-tile safety indicator — sits beneath the batch-input image, replacing
+   the old "PASSED" modal that popped on every admin upload. Green = the
+   server-side safety check passed; red = it was flagged. Non-blocking and
+   always-visible (no hover needed) so the result is glanceable. Only rendered
+   when a result object is present on the tile (admin/debug path). */
+.bit-safety{
+    display:flex;align-items:center;gap:5px;
+    margin:4px 6px 0;padding:3px 7px;
+    border-radius:5px;font-size:10px;line-height:1.3;font-weight:600;
+    font-family:var(--font-mono,monospace);letter-spacing:.3px;
+    user-select:none;cursor:default;
+}
+.bit-safety .bit-safety-dot{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:13px;height:13px;border-radius:50%;font-size:9px;font-weight:700;
+    flex:0 0 auto;color:#0a0a0c;
+}
+.bit-safety .bit-safety-text{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.bit-safety.pass{
+    background:rgba(34,197,94,.14);color:#22c55e;border:1px solid rgba(34,197,94,.4);
+}
+.bit-safety.pass .bit-safety-dot{background:#22c55e;}
+.bit-safety.fail{
+    background:rgba(239,68,68,.14);color:#ef4444;border:1px solid rgba(239,68,68,.4);
+}
+.bit-safety.fail .bit-safety-dot{background:#ef4444;}
+
 /* AI result modal — used to surface critique/reverse-prompt results.
    Sits above everything; click outside or × to close. Reuses the
    visual language of other modals in this file. */
@@ -6052,18 +6081,58 @@ function notifyUploadError(code, data){
     }
 }
 // Admin-only: when an upload PASSES and the server returned moderation
-// scores (debug object, populated only for ADMIN_EMAIL), show them so the
-// operator can tune thresholds by watching where real images land. No-op
-// for everyone else, because non-admins never receive a debug object.
-function showAdminScores(data){
-    if(!data || !data.debug || !data.debug.passed) return;
+// scores (debug object, populated only for ADMIN_EMAIL), record the result
+// so the batch tile can show a small green/red safety indicator beneath the
+// image. We deliberately DO NOT pop a modal on a pass anymore — a passing
+// safety check is the common case and a blocking dialog every time was
+// disruptive. The scores are still logged to the console for threshold
+// tuning. (A FAIL never reaches here: the server returns an error and the
+// upload is rejected before this is called, surfaced via notifyUploadError.)
+// Returns a normalized {passed, sexual_minors_score, ...} object the caller
+// can stamp onto the batch-input tile, or null when there's nothing to show.
+function extractSafetyResult(data){
+    if(!data || !data.debug) return null;
     const d = data.debug;
-    const sm = (d.sexual_minors_score * 100).toFixed(1);
-    const smT = (d.sexual_minors_threshold * 100).toFixed(0);
-    const mc = (d.minor_present_confidence * 100).toFixed(1);
-    const mcT = (d.minor_present_threshold * 100).toFixed(0);
-    showNotif('PASSED — sexual/minors ' + sm + '% (thr ' + smT + '%), minor-present ' + mc + '% (thr ' + mcT + '%)', 'info');
-    try { console.log('[moderation debug]', d); } catch(e){}
+    try {
+        console.log('[moderation debug]', d);
+    } catch(e){}
+    return {
+        passed: !!d.passed,
+        sexual_minors_score: d.sexual_minors_score,
+        sexual_minors_threshold: d.sexual_minors_threshold,
+        minor_present_confidence: d.minor_present_confidence,
+        minor_present_threshold: d.minor_present_threshold,
+    };
+}
+// Back-compat shim. Older call sites referenced showAdminScores() to pop a
+// modal on pass; that behavior is intentionally gone. Kept as a no-op (plus
+// console log) so nothing breaks if another call site still references it.
+function showAdminScores(data){
+    extractSafetyResult(data);
+}
+// Build the small indicator that sits beneath a batch tile's image. Green
+// when the safety check passed, red otherwise. Only rendered when we have a
+// stored result for the tile (i.e. the admin/debug path populated one) — for
+// everyone else there's no result object and nothing is shown.
+function safetyIndicatorHtml(safety){
+    if(!safety) return '';
+    const ok = !!safety.passed;
+    const cls = ok ? 'pass' : 'fail';
+    const dot = ok ? '✓' : '✕';
+    const label = ok ? 'Safety check passed' : 'Safety check flagged';
+    // Compact human-readable scores for the tooltip (admin tuning aid).
+    let tip = label;
+    if (typeof safety.sexual_minors_score === 'number') {
+        const sm = (safety.sexual_minors_score * 100).toFixed(1);
+        const smT = (safety.sexual_minors_threshold * 100).toFixed(0);
+        const mc = (safety.minor_present_confidence * 100).toFixed(1);
+        const mcT = (safety.minor_present_threshold * 100).toFixed(0);
+        tip = `${label} — sexual/minors ${sm}% (thr ${smT}%), minor-present ${mc}% (thr ${mcT}%)`;
+    }
+    return `<div class="bit-safety ${cls}" title="${_htmlEsc(tip)}">`
+         + `<span class="bit-safety-dot">${dot}</span>`
+         + `<span class="bit-safety-text">${label}</span>`
+         + `</div>`;
 }
 function showConfirm(message, opts){
     // opts: { confirmLabel, cancelLabel, danger }
@@ -12109,6 +12178,7 @@ function renderBatchInputs(){
                 <span class="bit-label-num">${i + 1}</span>
                 <span class="bit-label-name">${displayName}</span>
             </div>
+            ${safetyIndicatorHtml(inp._safety)}
         `;
         // Tile click behavior depends on mode:
         //   - Batch mode: enter the focus stage (single-image takeover
@@ -12729,10 +12799,10 @@ async function batchUploadFile(file){
             w: d.w || dims.w, h: d.h || dims.h,
             fname: file.name,
             selected: true,   // new uploads default to selected
+            _safety: extractSafetyResult(d),  // green/red tile indicator
         });
         renderBatchInputs();
         log(`Batch input added: ${file.name} (${dims.w}×${dims.h})`);
-        showAdminScores(d);
     } catch (e) {
         showNotif('Upload failed: ' + e.message, 'error');
     }
@@ -13001,6 +13071,7 @@ async function addSearchImageToStage(idx, btn){
             w: res.w || 0, h: res.h || 0,
             fname: d.filename || `${d.id}.png`,
             selected: true,   // match manual-upload default
+            _safety: extractSafetyResult(d),  // green/red tile indicator
         });
         _imgSearchAdded.add(res.full);
         renderBatchInputs();
@@ -13009,7 +13080,6 @@ async function addSearchImageToStage(idx, btn){
         if (card) card.classList.add('added');
         if (btn) { btn.disabled = false; btn.textContent = '✓ Added'; }
         log(`Added web image to batch inputs (${d.id})`, 'success');
-        showAdminScores(d);
     } catch (e) {
         showNotif('Add failed: ' + e.message, 'error');
         if (btn) { btn.disabled = false; btn.textContent = origText; }
