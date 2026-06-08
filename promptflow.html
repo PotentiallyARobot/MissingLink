@@ -18429,15 +18429,116 @@ promptflow whoami</code></pre>
     return Math.round(base * mult);
   }
 
+  // Derive the input kinds a process ACTUALLY consumes by scanning its
+  // python source and step definitions for the runtime input
+  // placeholders the executor injects (<INPUT_IMAGE_URL>, {{image_url}},
+  // <USER_TEXT>, {{user_text}}, etc.). The model-declared input_kinds
+  // are unreliable — a generated image→video process often forgets to
+  // list "image" — so the run form (and the persisted metadata) should
+  // reflect what the code references, not just what was declared.
+  //
+  // Strategy: start from the declared kinds (preserves intent + ordering
+  // the author chose), then add any media kind the content references
+  // but the declaration omitted. We never DROP a declared kind — the
+  // author may collect an input the python doesn't obviously template.
+  // Ordering: media first (image, video, audio, file/url) then text,
+  // which matches how the run form reads most naturally.
+  function reconcileInputKinds(proc) {
+    const declared = (Array.isArray(proc.input_kinds) ? proc.input_kinds : [])
+      .map(k => String(k).toLowerCase())
+      .filter(Boolean);
+
+    // Gather all stringy content from python_text + steps.
+    let hay = String(proc.python_text || "");
+    const walk = (v) => {
+      if (typeof v === "string") hay += "\n" + v;
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    if (proc.steps) walk(proc.steps);
+    if (proc.sample_inputs) walk(proc.sample_inputs);
+
+    const refs = {
+      image: /<INPUT_IMAGE_URL>|INPUT_IMAGE_URL|\{\{\s*image_url\b|\{\{\s*image\b/i.test(hay),
+      video: /<INPUT_VIDEO_URL>|INPUT_VIDEO_URL|\{\{\s*video_url\b|\{\{\s*video\b/i.test(hay),
+      audio: /<UPLOADED_AUDIO_URL>|UPLOADED_AUDIO_URL|\{\{\s*audio_url\b|\{\{\s*audio\b/i.test(hay),
+      text:  /<USER_TEXT>|\{\{\s*user_text\b/i.test(hay),
+    };
+
+    // Union: declared kinds first (de-duped), then referenced media the
+    // declaration missed, then ensure text if referenced.
+    const seen = new Set();
+    const out = [];
+    const add = (k) => { if (k && !seen.has(k)) { seen.add(k); out.push(k); } };
+
+    // Preserve declared media/text in their declared order.
+    declared.forEach(add);
+    // Add referenced media that wasn't declared.
+    ["image", "video", "audio"].forEach(k => { if (refs[k]) add(k); });
+    // Text: add if referenced, or as a last-resort so there's always
+    // at least one usable field.
+    if (refs.text) add("text");
+    if (out.length === 0) add("text");
+
+    // Reorder: media kinds before text for a natural top-to-bottom form.
+    const mediaOrder = ["image", "video", "audio", "file", "url"];
+    out.sort((a, b) => {
+      const ai = mediaOrder.indexOf(a), bi = mediaOrder.indexOf(b);
+      const aw = ai === -1 ? (a === "text" ? 100 : 50) : ai;
+      const bw = bi === -1 ? (b === "text" ? 100 : 50) : bi;
+      return aw - bw;
+    });
+
+    const changed =
+      out.length !== declared.length ||
+      out.some((k, i) => k !== declared[i]);
+    return { kinds: out, changed };
+  }
+
+  // Persist a reconciled input_kinds set back to the process when the
+  // user owns it. Best-effort: updates the in-memory caches immediately
+  // so the card meta / graph reflect the fix even if the network write
+  // is slow, and silently no-ops for non-owned/system processes (the
+  // server enforces ownership too).
+  async function persistReconciledInputKinds(proc, kinds) {
+    // Update caches up front so the UI is consistent this turn.
+    proc.input_kinds = kinds.slice();
+    const cached = (processesCache || []).find(x => x.id === proc.id);
+    if (cached) cached.input_kinds = kinds.slice();
+    if (currentEditorProcess && currentEditorProcess.id === proc.id) {
+      currentEditorProcess.input_kinds = kinds.slice();
+    }
+    const isOwner = !!(ME && proc.created_by_user_id === ME.id) && !proc.is_system;
+    if (!isOwner) return;   // can't write to others' / system processes
+    try {
+      await fetch("/api/promptflow/process/metadata_patch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ process_id: proc.id, input_kinds: kinds }),
+      });
+    } catch { /* best-effort — cache is already corrected for this session */ }
+  }
+
   async function openRunCard(proc) {
     const cardAssist = addAssistMsg();
     const body = cardAssist.body;
 
     // Skeleton paint — render fields immediately, fetch cost in
     // parallel and update the cost line when it arrives.
-    const inputKinds = Array.isArray(proc.input_kinds) && proc.input_kinds.length > 0
-      ? proc.input_kinds
-      : ["text"];
+    //
+    // Build the form from the RECONCILED kinds (what the process
+    // actually consumes), not the raw declared input_kinds, so an
+    // image→video process always offers an image upload even if the
+    // declaration forgot to list it. When this differs from what's
+    // stored, persist the correction (owner only) so the card meta,
+    // the graph, and future runs all agree going forward.
+    const _recon = reconcileInputKinds(proc);
+    if (_recon.changed) {
+      // Fire-and-forget; cache update inside is synchronous so the
+      // values we read just below are already corrected.
+      persistReconciledInputKinds(proc, _recon.kinds);
+    }
+    const inputKinds = _recon.kinds.length > 0 ? _recon.kinds : ["text"];
 
     // Build the form rows. Each kind gets a labeled control: textarea
     // for text, file picker for image/video/audio. Stash the control
@@ -18792,6 +18893,14 @@ promptflow whoami</code></pre>
 
     const card = document.createElement("div");
     card.className = "plan-card pc-rich";
+    // Reconcile declared input_kinds against what the process actually
+    // consumes, so the card's Input line and the run form agree and
+    // reflect reality (e.g. an image→video process always shows image).
+    // Persist the correction when the user owns the process.
+    try {
+      const _r = reconcileInputKinds(proc);
+      if (_r.changed) persistReconciledInputKinds(proc, _r.kinds);
+    } catch { /* non-fatal — fall back to declared kinds */ }
     const inputs = (proc.input_kinds || []).join(", ") || "text";
     const stepCount = Array.isArray(proc.steps) ? proc.steps.length : 0;
     // Status pill — gold for updated, green for saved, neutral for loaded.
