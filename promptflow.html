@@ -95,8 +95,43 @@
     font-family:var(--font-mono); font-size:10px; padding:4px 9px;
     background:var(--gold-dim); border:1px solid var(--gold); color:var(--gold);
     border-radius:4px; display:flex; align-items:center; gap:4px;
+    cursor:pointer; transition:background .15s, color .15s;
   }
+  .token-pill:hover{ background:var(--gold); color:var(--black) }
   .token-pill.low{ border-color:var(--red); color:var(--red); background:rgba(239,68,68,.08) }
+
+  /* ── Buy/subscribe modal — ported from studio.html ──────────── */
+  .pf-buy-backdrop{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:10000; align-items:center; justify-content:center; padding:20px }
+  .pf-buy-backdrop.open{ display:flex }
+  .pf-buy-card{ position:relative; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:32px; max-width:400px; width:100%; text-align:center; font-family:var(--font-mono) }
+  .pf-buy-close{ position:absolute; top:14px; right:16px; width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,.08); color:var(--text); font-size:18px; line-height:1; border:none; cursor:pointer }
+  .pf-buy-close:hover{ background:rgba(255,255,255,.18) }
+  .pf-buy-icon{ font-size:36px; margin-bottom:4px }
+  .pf-buy-card h2{ font-family:var(--font-display); font-size:16px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--text); margin:12px 0 8px }
+  .pf-buy-balance{ color:var(--text-muted); font-size:11px; margin-bottom:20px }
+  .pf-buy-balance b{ color:var(--gold) }
+  .pf-buy-option{ position:relative; padding:16px; border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:all .15s; margin-bottom:16px }
+  .pf-buy-option:hover{ border-color:var(--gold); background:var(--gold-dim) }
+  .pf-buy-amount{ font-size:14px; font-weight:700; color:var(--gold); letter-spacing:.5px }
+  .pf-buy-detail{ font-size:10px; color:var(--text-muted); margin:4px 0 }
+  .pf-buy-price{ font-size:20px; font-weight:700; color:var(--text) }
+  .pf-buy-price-suffix{ font-size:11px; font-weight:600; color:var(--text-muted); margin-left:2px }
+  .pf-buy-divider{ display:flex; align-items:center; gap:10px; margin:14px 0; font-family:var(--font-mono); font-size:9px; color:var(--text-muted); letter-spacing:1px }
+  .pf-buy-divider::before,.pf-buy-divider::after{ content:""; flex:1; height:1px; background:var(--border) }
+  .pf-buy-option-subscribe{ position:relative; border:1px solid var(--gold); background:linear-gradient(135deg,var(--gold-dim) 0%,transparent 100%); padding-top:22px }
+  .pf-buy-option-subscribe:hover{ box-shadow:0 0 0 1px var(--gold) inset, 0 8px 24px rgba(0,0,0,.3) }
+  .pf-buy-option-subscribe .pf-buy-amount{ color:var(--gold) }
+  .pf-buy-option-subscribe .pf-buy-price{ color:var(--gold) }
+  .pf-buy-ribbon{ position:absolute; top:-8px; right:12px; background:var(--gold); color:#0a0a0a; font-family:var(--font-mono); font-size:8px; font-weight:700; letter-spacing:1.5px; padding:3px 8px; border-radius:3px }
+  .pf-buy-perks{ font-size:10px; color:var(--text); margin:8px 0 0; padding:0; text-align:left; line-height:1.6 }
+  .pf-buy-perks li{ list-style:none; padding-left:14px; position:relative }
+  .pf-buy-perks li::before{ content:"✓"; position:absolute; left:0; color:var(--green); font-weight:700 }
+  .pf-buy-status{ padding:12px; border:1px solid var(--green); border-radius:8px; background:rgba(34,197,94,.08); text-align:left; margin-bottom:14px }
+  .pf-buy-status-title{ font-family:var(--font-mono); font-size:10px; font-weight:700; color:var(--green); letter-spacing:.5px; margin-bottom:4px }
+  .pf-buy-status-detail{ font-size:11px; color:var(--text); line-height:1.4 }
+  .pf-buy-manage{ display:inline-block; margin-top:8px; font-family:var(--font-mono); font-size:10px; color:var(--text-muted); text-decoration:underline; cursor:pointer; background:none; border:none; padding:0 }
+  .pf-buy-manage:hover{ color:var(--gold) }
+  .pf-buy-note{ font-size:9px; color:var(--text-muted); margin-top:8px }
   .avatar{ width:24px; height:24px; border-radius:50%; border:1px solid var(--border); object-fit:cover }
 
   /* ── Account menu (gear icon + dropdown) ───────────────
@@ -11255,7 +11290,7 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
   </button>
   <button class="brand" id="brandHome" type="button" title="Home — start a new conversation">PromptFlow<sup>™</sup></button>
   <div class="hdr-right">
-    <div id="tokenPill" class="token-pill" style="display:none">
+    <div id="tokenPill" class="token-pill" style="display:none" title="Tokens remaining — click to add more">
       <span id="tokenCount">0</span> tokens
     </div>
     <button id="subscribeBtn" class="btn primary" style="display:none">Subscribe $20/mo</button>
@@ -13844,6 +13879,62 @@ promptflow whoami</code></pre>
       const j = await r.json();
       if (j.ok && j.url) location.href = j.url;
       else alert(j.message || j.error || "Could not start checkout.");
+    } catch { alert("Network error."); }
+  };
+
+  // ── Buy / subscribe modal ────────────────────────────
+  // Clicking the token pill opens the ported studio buy modal. Tokens
+  // and subscribe both route to Stripe-hosted checkout via the worker.
+  function pfOpenBuyModal() {
+    if (!ME) { openAuth("signin"); return; }
+    const bal = ME.tokens != null ? ME.tokens : 0;
+    $("pfBuyBalance").textContent = (bal || 0).toLocaleString();
+    // Flip subscribe option vs. active-status panel based on ME.
+    const active = !!(ME.subscription_status === "active"
+      || ME.subscription_active || ME.is_subscriber);
+    $("pfBuySubscribe").style.display = active ? "none" : "";
+    $("pfBuyDivider").style.display = active ? "none" : "";
+    $("pfBuyStatus").style.display = active ? "" : "none";
+    $("pfBuyModal").classList.add("open");
+  }
+  function pfCloseBuyModal() { $("pfBuyModal").classList.remove("open"); }
+
+  $("tokenPill").onclick = pfOpenBuyModal;
+  $("pfBuyClose").onclick = pfCloseBuyModal;
+  $("pfBuyModal").addEventListener("click", (e) => {
+    if (e.target === $("pfBuyModal")) pfCloseBuyModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("pfBuyModal").classList.contains("open")) pfCloseBuyModal();
+  });
+
+  $("pfBuyTokens").onclick = async () => {
+    try {
+      const r = await fetch("/api/studio/checkout", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+      });
+      const j = await r.json();
+      if (j.url) location.href = j.url;
+      else alert(j.message || j.error || "Payment setup failed. Please try again.");
+    } catch { alert("Network error."); }
+  };
+  $("pfBuySubscribe").onclick = async () => {
+    try {
+      const r = await fetch("/api/studio/subscribe", { method: "POST" });
+      const j = await r.json();
+      if (j.ok && j.url) location.href = j.url;
+      else if (j.url) location.href = j.url;
+      else alert(j.message || j.error || "Could not start checkout.");
+    } catch { alert("Network error."); }
+  };
+  $("pfBuyManage").onclick = async () => {
+    try {
+      const r = await fetch("/api/studio/subscription/portal", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+      });
+      const j = await r.json();
+      if (j.url) location.href = j.url;
+      else alert(j.message || j.error || "Could not open the billing portal.");
     } catch { alert("Network error."); }
   };
 
@@ -29789,6 +29880,46 @@ if (document.readyState === "loading") {
       <button class="d-ma-btn d-ma-btn-secondary" id="dCronCancel" type="button">Cancel</button>
       <button class="d-ma-btn d-ma-btn-primary" id="dCronSubmit" type="button">Create trigger</button>
     </div>
+  </div>
+</div>
+
+<!-- BUY / SUBSCRIBE MODAL — ported from studio.html, opened by clicking
+     the token count pill in the top bar. -->
+<div class="pf-buy-backdrop" id="pfBuyModal">
+  <div class="pf-buy-card">
+    <button class="pf-buy-close" id="pfBuyClose" type="button" aria-label="Close">×</button>
+    <div class="pf-buy-icon">🪙</div>
+    <h2>Get More Tokens</h2>
+    <p class="pf-buy-balance">Current balance: <b id="pfBuyBalance">0</b> tokens</p>
+    <div class="pf-buy-option" id="pfBuyTokens">
+      <div class="pf-buy-amount">~100 IMAGES</div>
+      <div class="pf-buy-detail">10,000 tokens · ~$0.02 per image</div>
+      <div class="pf-buy-price">$5.00</div>
+    </div>
+    <!-- Subscribe option. JS toggles visibility based on ME.subscription
+         status — when active, this hides and #pfBuyStatus shows instead. -->
+    <div class="pf-buy-divider" id="pfBuyDivider">OR SUBSCRIBE</div>
+    <div class="pf-buy-option pf-buy-option-subscribe" id="pfBuySubscribe">
+      <span class="pf-buy-ribbon">MOST VALUE</span>
+      <div class="pf-buy-amount">👑 PRO — 500+ IMAGES/MONTH</div>
+      <div class="pf-buy-detail">50,000 tokens every month</div>
+      <ul class="pf-buy-perks">
+        <li>50,000 tokens auto-renewed monthly</li>
+        <li>Access to all MissingLink libraries</li>
+        <li>Run on your own hardware</li>
+        <li>Cancel anytime</li>
+      </ul>
+      <div class="pf-buy-price" style="margin-top:10px">$20<span class="pf-buy-price-suffix">/month</span></div>
+    </div>
+    <!-- Shown to active subscribers in place of the Subscribe option. -->
+    <div class="pf-buy-status" id="pfBuyStatus" style="display:none">
+      <div class="pf-buy-status-title"><span class="pulse"></span>SUBSCRIPTION ACTIVE</div>
+      <div class="pf-buy-status-detail">
+        You're on the Pro plan — <b>50,000 tokens every month</b> plus full library access.
+      </div>
+      <button class="pf-buy-manage" id="pfBuyManage" type="button">Manage subscription / cancel →</button>
+    </div>
+    <p class="pf-buy-note">Secure payment via Stripe. One-time tokens never expire.</p>
   </div>
 </div>
 
