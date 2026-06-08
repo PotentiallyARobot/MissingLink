@@ -12003,6 +12003,47 @@ promptflow whoami</code></pre>
   </div>
 </div>
 
+<!-- BUY / SUBSCRIBE MODAL — ported from studio.html, opened by clicking
+     the token count pill in the top bar. Placed BEFORE the main script
+     so its elements exist when the init wiring binds their handlers. -->
+<div class="pf-buy-backdrop" id="pfBuyModal">
+  <div class="pf-buy-card">
+    <button class="pf-buy-close" id="pfBuyClose" type="button" aria-label="Close">×</button>
+    <div class="pf-buy-icon">🪙</div>
+    <h2>Get More Tokens</h2>
+    <p class="pf-buy-balance">Current balance: <b id="pfBuyBalance">0</b> tokens</p>
+    <div class="pf-buy-option" id="pfBuyTokens">
+      <div class="pf-buy-amount">~100 IMAGES</div>
+      <div class="pf-buy-detail">10,000 tokens · ~$0.02 per image</div>
+      <div class="pf-buy-price">$5.00</div>
+    </div>
+    <!-- Subscribe option. JS toggles visibility based on ME.subscription
+         status — when active, this hides and #pfBuyStatus shows instead. -->
+    <div class="pf-buy-divider" id="pfBuyDivider">OR SUBSCRIBE</div>
+    <div class="pf-buy-option pf-buy-option-subscribe" id="pfBuySubscribe">
+      <span class="pf-buy-ribbon">MOST VALUE</span>
+      <div class="pf-buy-amount">👑 PRO — 500+ IMAGES/MONTH</div>
+      <div class="pf-buy-detail">50,000 tokens every month</div>
+      <ul class="pf-buy-perks">
+        <li>50,000 tokens auto-renewed monthly</li>
+        <li>Access to all MissingLink libraries</li>
+        <li>Run on your own hardware</li>
+        <li>Cancel anytime</li>
+      </ul>
+      <div class="pf-buy-price" style="margin-top:10px">$20<span class="pf-buy-price-suffix">/month</span></div>
+    </div>
+    <!-- Shown to active subscribers in place of the Subscribe option. -->
+    <div class="pf-buy-status" id="pfBuyStatus" style="display:none">
+      <div class="pf-buy-status-title">SUBSCRIPTION ACTIVE</div>
+      <div class="pf-buy-status-detail">
+        You're on the Pro plan — <b>50,000 tokens every month</b> plus full library access.
+      </div>
+      <button class="pf-buy-manage" id="pfBuyManage" type="button">Manage subscription / cancel →</button>
+    </div>
+    <p class="pf-buy-note">Secure payment via Stripe. One-time tokens never expire.</p>
+  </div>
+</div>
+
 <script>
 (() => {
   // ── State ──────────────────────────────────────────────
@@ -13885,58 +13926,78 @@ promptflow whoami</code></pre>
   // ── Buy / subscribe modal ────────────────────────────
   // Clicking the token pill opens the ported studio buy modal. Tokens
   // and subscribe both route to Stripe-hosted checkout via the worker.
+  // All element lookups are null-guarded so that if the markup ever
+  // moves or is absent, wiring fails soft instead of throwing and
+  // halting the rest of init (which would break the chat composer).
   function pfOpenBuyModal() {
     if (!ME) { openAuth("signin"); return; }
+    const modal = $("pfBuyModal");
+    if (!modal) return;
     const bal = ME.tokens != null ? ME.tokens : 0;
-    $("pfBuyBalance").textContent = (bal || 0).toLocaleString();
+    const balEl = $("pfBuyBalance");
+    if (balEl) balEl.textContent = (bal || 0).toLocaleString();
     // Flip subscribe option vs. active-status panel based on ME.
     const active = !!(ME.subscription_status === "active"
       || ME.subscription_active || ME.is_subscriber);
-    $("pfBuySubscribe").style.display = active ? "none" : "";
-    $("pfBuyDivider").style.display = active ? "none" : "";
-    $("pfBuyStatus").style.display = active ? "" : "none";
-    $("pfBuyModal").classList.add("open");
+    const sub = $("pfBuySubscribe"), div = $("pfBuyDivider"), stat = $("pfBuyStatus");
+    if (sub) sub.style.display = active ? "none" : "";
+    if (div) div.style.display = active ? "none" : "";
+    if (stat) stat.style.display = active ? "" : "none";
+    modal.classList.add("open");
   }
-  function pfCloseBuyModal() { $("pfBuyModal").classList.remove("open"); }
+  function pfCloseBuyModal() {
+    const modal = $("pfBuyModal");
+    if (modal) modal.classList.remove("open");
+  }
 
-  $("tokenPill").onclick = pfOpenBuyModal;
-  $("pfBuyClose").onclick = pfCloseBuyModal;
-  $("pfBuyModal").addEventListener("click", (e) => {
-    if (e.target === $("pfBuyModal")) pfCloseBuyModal();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && $("pfBuyModal").classList.contains("open")) pfCloseBuyModal();
-  });
+  {
+    const tokenPillEl = $("tokenPill");
+    if (tokenPillEl) tokenPillEl.onclick = pfOpenBuyModal;
+    const closeEl = $("pfBuyClose");
+    if (closeEl) closeEl.onclick = pfCloseBuyModal;
+    const modalEl = $("pfBuyModal");
+    if (modalEl) {
+      modalEl.addEventListener("click", (e) => {
+        if (e.target === modalEl) pfCloseBuyModal();
+      });
+    }
+    document.addEventListener("keydown", (e) => {
+      const m = $("pfBuyModal");
+      if (e.key === "Escape" && m && m.classList.contains("open")) pfCloseBuyModal();
+    });
 
-  $("pfBuyTokens").onclick = async () => {
-    try {
-      const r = await fetch("/api/studio/checkout", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-      });
-      const j = await r.json();
-      if (j.url) location.href = j.url;
-      else alert(j.message || j.error || "Payment setup failed. Please try again.");
-    } catch { alert("Network error."); }
-  };
-  $("pfBuySubscribe").onclick = async () => {
-    try {
-      const r = await fetch("/api/studio/subscribe", { method: "POST" });
-      const j = await r.json();
-      if (j.ok && j.url) location.href = j.url;
-      else if (j.url) location.href = j.url;
-      else alert(j.message || j.error || "Could not start checkout.");
-    } catch { alert("Network error."); }
-  };
-  $("pfBuyManage").onclick = async () => {
-    try {
-      const r = await fetch("/api/studio/subscription/portal", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-      });
-      const j = await r.json();
-      if (j.url) location.href = j.url;
-      else alert(j.message || j.error || "Could not open the billing portal.");
-    } catch { alert("Network error."); }
-  };
+    const buyTokensEl = $("pfBuyTokens");
+    if (buyTokensEl) buyTokensEl.onclick = async () => {
+      try {
+        const r = await fetch("/api/studio/checkout", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+        });
+        const j = await r.json();
+        if (j.url) location.href = j.url;
+        else alert(j.message || j.error || "Payment setup failed. Please try again.");
+      } catch { alert("Network error."); }
+    };
+    const buySubEl = $("pfBuySubscribe");
+    if (buySubEl) buySubEl.onclick = async () => {
+      try {
+        const r = await fetch("/api/studio/subscribe", { method: "POST" });
+        const j = await r.json();
+        if (j.url) location.href = j.url;
+        else alert(j.message || j.error || "Could not start checkout.");
+      } catch { alert("Network error."); }
+    };
+    const manageEl = $("pfBuyManage");
+    if (manageEl) manageEl.onclick = async () => {
+      try {
+        const r = await fetch("/api/studio/subscription/portal", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+        });
+        const j = await r.json();
+        if (j.url) location.href = j.url;
+        else alert(j.message || j.error || "Could not open the billing portal.");
+      } catch { alert("Network error."); }
+    };
+  }
 
   // ── Account dropdown ─────────────────────────────────
   // Single gear-icon menu that replaces the old row of text buttons
@@ -29989,46 +30050,6 @@ if (document.readyState === "loading") {
       <button class="d-ma-btn d-ma-btn-secondary" id="dCronCancel" type="button">Cancel</button>
       <button class="d-ma-btn d-ma-btn-primary" id="dCronSubmit" type="button">Create trigger</button>
     </div>
-  </div>
-</div>
-
-<!-- BUY / SUBSCRIBE MODAL — ported from studio.html, opened by clicking
-     the token count pill in the top bar. -->
-<div class="pf-buy-backdrop" id="pfBuyModal">
-  <div class="pf-buy-card">
-    <button class="pf-buy-close" id="pfBuyClose" type="button" aria-label="Close">×</button>
-    <div class="pf-buy-icon">🪙</div>
-    <h2>Get More Tokens</h2>
-    <p class="pf-buy-balance">Current balance: <b id="pfBuyBalance">0</b> tokens</p>
-    <div class="pf-buy-option" id="pfBuyTokens">
-      <div class="pf-buy-amount">~100 IMAGES</div>
-      <div class="pf-buy-detail">10,000 tokens · ~$0.02 per image</div>
-      <div class="pf-buy-price">$5.00</div>
-    </div>
-    <!-- Subscribe option. JS toggles visibility based on ME.subscription
-         status — when active, this hides and #pfBuyStatus shows instead. -->
-    <div class="pf-buy-divider" id="pfBuyDivider">OR SUBSCRIBE</div>
-    <div class="pf-buy-option pf-buy-option-subscribe" id="pfBuySubscribe">
-      <span class="pf-buy-ribbon">MOST VALUE</span>
-      <div class="pf-buy-amount">👑 PRO — 500+ IMAGES/MONTH</div>
-      <div class="pf-buy-detail">50,000 tokens every month</div>
-      <ul class="pf-buy-perks">
-        <li>50,000 tokens auto-renewed monthly</li>
-        <li>Access to all MissingLink libraries</li>
-        <li>Run on your own hardware</li>
-        <li>Cancel anytime</li>
-      </ul>
-      <div class="pf-buy-price" style="margin-top:10px">$20<span class="pf-buy-price-suffix">/month</span></div>
-    </div>
-    <!-- Shown to active subscribers in place of the Subscribe option. -->
-    <div class="pf-buy-status" id="pfBuyStatus" style="display:none">
-      <div class="pf-buy-status-title"><span class="pulse"></span>SUBSCRIPTION ACTIVE</div>
-      <div class="pf-buy-status-detail">
-        You're on the Pro plan — <b>50,000 tokens every month</b> plus full library access.
-      </div>
-      <button class="pf-buy-manage" id="pfBuyManage" type="button">Manage subscription / cancel →</button>
-    </div>
-    <p class="pf-buy-note">Secure payment via Stripe. One-time tokens never expire.</p>
   </div>
 </div>
 
