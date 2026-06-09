@@ -792,6 +792,24 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .batch-input-tile .bit-send-create{right:62px}
 .batch-input-tile .bit-send-camera{right:34px}
 .batch-input-tile .bit-send-edit{right:6px}
+/* Create-mode "Assign to Input" — labeled pill replacing the tiny ✨
+   icon on the single-image result stage. Same dark-glass treatment as
+   .bit-send but pill-shaped with text, sitting left of the Camera/Edit
+   round buttons. Always visible in Create mode (no hover-reveal) so the
+   primary next action is discoverable at a glance. */
+.batch-input-tile .bit-assign-input{
+    position:absolute;bottom:6px;right:62px;height:24px;
+    border-radius:12px;padding:0 11px;
+    background:rgba(0,0,0,.78);border:1px solid rgba(255,255,255,.25);color:#fff;cursor:pointer;
+    font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.3px;
+    display:flex;align-items:center;justify-content:center;gap:4px;
+    backdrop-filter:blur(4px);
+    transition:all .12s;
+    z-index:3;white-space:nowrap;
+}
+.batch-input-tile .bit-assign-input:hover{
+    background:var(--gold);color:#0a0a0c;border-color:var(--gold);transform:scale(1.04);
+}
 /* Find-issues button — single-tile vision-check trigger. Sits left of
    the send-to-mode buttons. Stays gold-tinted while a check is in
    flight to make the per-tile state visible at a glance. */
@@ -2166,6 +2184,22 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     background:var(--gold-dim);border-color:var(--gold);color:var(--gold);
 }
 
+/* Include-inputs toggle + thumbnail strip in the share dialog. */
+.share-dialog-inputs-toggle{
+    display:flex;align-items:flex-start;gap:8px;cursor:pointer;
+    font-size:12px;line-height:1.4;color:var(--text);
+}
+.share-dialog-inputs-toggle input{
+    margin-top:2px;accent-color:var(--gold);width:15px;height:15px;cursor:pointer;flex:0 0 auto;
+}
+.share-dialog-inputs-thumbs{
+    display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;
+}
+.share-dialog-inputs-thumbs img{
+    width:48px;height:48px;object-fit:cover;border-radius:6px;
+    border:1px solid var(--border);background:var(--surface-2);
+}
+
 /* ── Gallery card bottom action row ──────────────────────────────────
    Single compact row below each card image containing the reactions
    strip on the left and the three mode-assignment icon buttons on
@@ -2700,6 +2734,25 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     position:absolute;top:4px;left:8px;
     font-size:7.5px;font-weight:700;letter-spacing:1.5px;
     color:var(--text-muted);
+}
+/* Input/source images the creator opted to share — same boxed
+   treatment as the PROMPT block so "what went in" reads as part of
+   the generation provenance. Thumbnails enlarge via the lightbox. */
+.lbc-creator-inputs{
+    background:var(--surface-3);border:1px solid var(--border);
+    border-radius:4px;padding:6px 8px;margin-top:4px;
+    position:relative;padding-top:18px;
+}
+.lbc-creator-inputs-row{
+    display:flex;flex-wrap:wrap;gap:6px;
+}
+.lbc-creator-input-thumb{
+    width:64px;height:64px;object-fit:cover;border-radius:4px;
+    border:1px solid var(--border);cursor:pointer;
+    transition:all .12s;background:var(--surface-2);
+}
+.lbc-creator-input-thumb:hover{
+    border-color:var(--gold);transform:scale(1.04);
 }
 .lbc-creator-links{
     display:flex;flex-wrap:wrap;gap:5px;margin-top:2px;
@@ -4091,6 +4144,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     .batch-input-tile .bit-send-create { right: 76px; }
     .batch-input-tile .bit-send-camera { right: 42px; }
     .batch-input-tile .bit-send-edit   { right: 8px; }
+    /* Labeled Assign-to-Input pill (Create mode) — taller thumb target,
+       shifted clear of the Camera/Edit round buttons. */
+    .batch-input-tile .bit-assign-input { right: 76px; height: 28px; bottom: 8px; }
     .batch-input-tile .bit-find-issues { left: 8px; bottom: 8px; }
     .batch-input-tile .bit-remove,
     .batch-input-tile .bit-reverse { width: 28px; height: 28px; top: 8px; }
@@ -5445,6 +5501,19 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                         <button type="button" class="sd-orientation-chip" data-val="other">Other</button>
                     </div>
                     <div class="share-dialog-tags-hint">Only needed when your image shows people in romantic / sexual context.</div>
+                </div>
+                <!-- Include-inputs toggle. Hidden by default; openShareDialog
+                     reveals it (and paints thumbnails) only when the
+                     generation actually had input/source images. Lets the
+                     creator show viewers what fed the prompt. -->
+                <div class="share-dialog-field" id="shareDialogInputsField" style="display:none">
+                    <label class="share-dialog-field-label">Input images</label>
+                    <label class="share-dialog-inputs-toggle">
+                        <input type="checkbox" id="shareDialogIncludeInputs">
+                        <span>Show the image(s) I used as input on the public post</span>
+                    </label>
+                    <div class="share-dialog-inputs-thumbs" id="shareDialogInputsThumbs"></div>
+                    <div class="share-dialog-tags-hint">Viewers will see what went into your prompt. Off by default.</div>
                 </div>
                 <div class="share-dialog-field">
                     <label class="share-dialog-field-label">
@@ -9587,6 +9656,20 @@ async function doGenerateMode(_autoRetried){
         } else {
             _batchInputs.push(...newEntries);
         }
+        // Create-mode stage behaves like Edit: the new result REPLACES
+        // the prior one rather than stacking below it. Drop every
+        // previously-completed generation tile (marked by _genModel)
+        // that isn't part of this response. Scoped deliberately:
+        //   • placeholders survive (a second in-flight generation the
+        //     user kicked off keeps its progress tile)
+        //   • plain uploads survive (Batch mode shares this array; we
+        //     must not nuke a user's curated batch set)
+        //   • everything removed here is already in History, so nothing
+        //     is lost — same recovery story Edit mode has.
+        const _newIds = new Set(newEntries.map(e => e.id));
+        _batchInputs = _batchInputs.filter(b =>
+            b._placeholder || !b._genModel || _newIds.has(b.id)
+        );
         // Aliases used below — keep `img` pointing at the FIRST image so
         // the rest of the success path (history sync, focus, etc.) reads
         // the same way it did pre-n>1.
@@ -10807,6 +10890,7 @@ async function toggleShareJob(jobId, makePublic, payload){
             tags: Array.isArray(payload.tags) ? payload.tags : null,
             links: Array.isArray(payload.links) ? payload.links : null,
             orientation: payload.orientation || null,
+            include_inputs: payload.includeInputs === true,
           })
         : JSON.stringify({});
     try {
@@ -10920,6 +11004,12 @@ const SHARE_DIALOG_MAX_LINKS = 10;
 // unselected — that's the default and the value we won't bother
 // sending up on publish.
 let _shareDialogOrientation = '';
+// Whether the creator opted to surface this generation's input images
+// on the public post, plus the resolved input URLs (for the dialog's
+// thumbnail preview). Populated by openShareDialog's /inputs fetch;
+// the toggle row stays hidden when the generation had no inputs.
+let _shareDialogIncludeInputs = false;
+let _shareDialogInputImages = [];
 
 async function openShareDialog(jobId, opts){
     if (!_user) {
@@ -10985,6 +11075,23 @@ async function openShareDialog(jobId, opts){
         orientField.style.display = (_user && _user.nsfw_enabled) ? '' : 'none';
     }
 
+    // Reset + hide the include-inputs row; openShareDialog asks the
+    // server which input images (if any) fed this generation and only
+    // reveals the toggle when there's at least one. Captures the jobId
+    // so a slow response can't paint into a different dialog.
+    _shareDialogIncludeInputs = false;
+    _shareDialogInputImages = [];
+    const inputsField = $('shareDialogInputsField');
+    if (inputsField) inputsField.style.display = 'none';
+    const includeChk = $('shareDialogIncludeInputs');
+    if (includeChk) {
+        includeChk.checked = false;
+        includeChk.onchange = () => { _shareDialogIncludeInputs = !!includeChk.checked; };
+    }
+    const thumbs = $('shareDialogInputsThumbs');
+    if (thumbs) thumbs.innerHTML = '';
+    _loadShareDialogInputs(jobId);
+
     // Show the modal + start the AI auto-populate. The autofill call
     // hits /extract-publish-fields which returns title/caption/
     // description/tags in one round-trip — covers what the separate
@@ -11018,6 +11125,14 @@ function closeShareDialog(){
     _shareDialogPrompt = '';
     _shareDialogImageUrl = '';
     _shareDialogOrientation = '';
+    _shareDialogIncludeInputs = false;
+    _shareDialogInputImages = [];
+    const inputsField = $('shareDialogInputsField');
+    if (inputsField) inputsField.style.display = 'none';
+    const includeChk = $('shareDialogIncludeInputs');
+    if (includeChk) includeChk.checked = false;
+    const thumbsBox = $('shareDialogInputsThumbs');
+    if (thumbsBox) thumbsBox.innerHTML = '';
     const tagInput = $('shareDialogTagInput');
     if (tagInput) tagInput.value = '';
     // Reset publish button state for next open.
@@ -11130,6 +11245,46 @@ function _paintShareDialogOrientation(){
             _paintShareDialogOrientation();
         };
     });
+}
+
+// Fetch the input/source images that fed this generation and, if there
+// are any, reveal the include-inputs toggle with a thumbnail preview.
+// Owner-only endpoint; a 404 / empty list just leaves the row hidden,
+// which is the right behavior for from-scratch text generations that
+// had no inputs. Echoes the prior opt-in state so a re-share pre-checks
+// the box when the creator enabled inputs before.
+async function _loadShareDialogInputs(jobId){
+    if (!jobId) return;
+    const jobIdAtCall = jobId;
+    try {
+        const r = await fetchT(`${API}/api/studio/job/${encodeURIComponent(jobId)}/inputs`, null, 8000);
+        const d = await r.json();
+        // Bail if the dialog moved on to another job while we waited.
+        if (!d.ok || _shareDialogJobId !== jobIdAtCall) return;
+        const imgs = Array.isArray(d.inputs) ? d.inputs : [];
+        _shareDialogInputImages = imgs;
+        const field = $('shareDialogInputsField');
+        const thumbs = $('shareDialogInputsThumbs');
+        const chk = $('shareDialogIncludeInputs');
+        if (!imgs.length) {
+            // No inputs → keep the row hidden entirely.
+            if (field) field.style.display = 'none';
+            return;
+        }
+        if (field) field.style.display = '';
+        // Pre-check if the creator previously opted in.
+        _shareDialogIncludeInputs = !!d.share_inputs;
+        if (chk) chk.checked = _shareDialogIncludeInputs;
+        if (thumbs) {
+            thumbs.innerHTML = imgs
+                .slice(0, 8)
+                .map((u) => `<img src="${escapeHtml(u)}" alt="input image" loading="lazy">`)
+                .join('');
+        }
+    } catch (e) {
+        // Network hiccup — just leave the toggle hidden; sharing still
+        // works, the inputs simply won't be offered this time.
+    }
 }
 
 // Fires the full publish-fields autofill. Server takes the image URL
@@ -11309,10 +11464,13 @@ async function confirmPublishFromDialog(){
     // than preserving the prior value. The server handler validates
     // against the allowed-list and stores NULL when it doesn't match.
     const orientation = _shareDialogOrientation || '';
+    // Only forward the flag as true when the toggle row was actually
+    // shown (i.e. the generation had inputs) AND the box is checked.
+    const includeInputs = _shareDialogInputImages.length > 0 && _shareDialogIncludeInputs;
 
     const pubBtn = $('shareDialogPublish');
     if (pubBtn) { pubBtn.disabled = true; pubBtn.textContent = 'Publishing…'; }
-    const result = await toggleShareJob(jobId, true, { title, caption, description, tags, links, orientation });
+    const result = await toggleShareJob(jobId, true, { title, caption, description, tags, links, orientation, includeInputs });
     if (result === null) {
         // toggleShareJob already showed an error notification. Re-enable
         // the publish button so the user can retry.
@@ -12163,6 +12321,7 @@ function renderBatchInputs(){
                     <div class="bip-bar"><div class="bip-bar-fill" style="width:${pct.toFixed(0)}%"></div></div>
                 </div>`;
         }
+        const isCreateTile = (typeof currentMode !== 'undefined' && currentMode === 'generate');
         tile.innerHTML = `
             <img src="${inp.url}" alt="">
             ${overlaySvg}
@@ -12170,7 +12329,9 @@ function renderBatchInputs(){
             <div class="bit-check"></div>
             <button type="button" class="bit-find-issues${issueBtnClass}" title="${issueBtnTitle}">🔍</button>
             <button type="button" class="bit-reverse" title="Reverse-prompt this image (write a prompt that could have generated it)">🔁</button>
-            <button type="button" class="bit-send bit-send-create" title="Use as input in Create mode">✨</button>
+            ${isCreateTile
+                ? `<button type="button" class="bit-assign-input" title="Assign this image to a reference input slot">↩ Assign to Input</button>`
+                : `<button type="button" class="bit-send bit-send-create" title="Use as input in Create mode">✨</button>`}
             <button type="button" class="bit-send bit-send-camera" title="Load in Camera mode">📷</button>
             <button type="button" class="bit-send bit-send-edit" title="Load in Edit mode">✏️</button>
             <button type="button" class="bit-remove" title="Remove this image">×</button>
@@ -12213,7 +12374,17 @@ function renderBatchInputs(){
             e.stopPropagation();
             aiReverseInputTile(inp, tile.querySelector('.bit-reverse'));
         };
-        tile.querySelector('.bit-send-create').onclick = (e) => {
+        const sendCreateBtn = tile.querySelector('.bit-send-create');
+        if (sendCreateBtn) sendCreateBtn.onclick = (e) => {
+            e.stopPropagation();
+            sendBatchInputToCreate(inp);  // async, fire-and-forget
+        };
+        // Create-mode labeled "Assign to Input" — same routing as the
+        // small ✨ icon elsewhere (first empty reference slot, overwrite
+        // slot 1 with notif when full), but an explicit, discoverable
+        // affordance on the single-image result stage.
+        const assignBtn = tile.querySelector('.bit-assign-input');
+        if (assignBtn) assignBtn.onclick = (e) => {
             e.stopPropagation();
             sendBatchInputToCreate(inp);  // async, fire-and-forget
         };
@@ -19598,6 +19769,22 @@ function renderLightboxComments(opts){
         const promptHtml = c.prompt
             ? `<div class="lbc-creator-prompt"><span class="lbc-creator-prompt-label">PROMPT</span>${escapeHtml(c.prompt)}</div>`
             : '';
+        // Input/source images the creator opted to share at publish
+        // time. Only present when share_inputs=1 server-side AND the
+        // generation actually had inputs. Thumbnails open the full-size
+        // image in the lightbox on click.
+        const inputImgs = Array.isArray(c.input_images) ? c.input_images : [];
+        const inputsHtml = inputImgs.length
+            ? `<div class="lbc-creator-inputs">
+                 <span class="lbc-creator-prompt-label">INPUT IMAGE${inputImgs.length === 1 ? '' : 'S'}</span>
+                 <div class="lbc-creator-inputs-row">
+                   ${inputImgs.map((u) =>
+                       `<img class="lbc-creator-input-thumb" src="${escapeHtml(u)}" alt="input image" loading="lazy"
+                             onclick="openModal('${escapeHtml(u).replace(/'/g, "\\'")}')" title="Input image — click to enlarge">`
+                   ).join('')}
+                 </div>
+               </div>`
+            : '';
         const mineChip = c.mine ? `<span class="lbc-creator-mine">YOU</span>` : '';
         // "View all by @handle" link — gold-styled chip that opens the
         // gallery modal pre-filtered to this author's public work.
@@ -19666,6 +19853,7 @@ function renderLightboxComments(opts){
             ${descriptionHtml}
             ${linksHtml}
             ${promptHtml}
+            ${inputsHtml}
             ${viewAllChip}
         `;
         body.appendChild(block);
