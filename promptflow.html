@@ -16329,6 +16329,19 @@ promptflow whoami</code></pre>
               const lbl = stageLabels[data && data.stage] ||
                 (data && data.stage ? String(data.stage) : "");
               if (lbl) thinkStageEl.textContent = lbl;
+            } else if (ev === "heartbeat") {
+              // The server pulses a heartbeat every ~4s while the planner
+              // works. Before the first thinking delta arrives (Opus can
+              // take 10-20s to warm up on a design call), the warmup
+              // copy has already cycled to its last line and would
+              // otherwise sit motionless. Append a live elapsed counter
+              // so the user can see the request is still alive rather
+              // than wondering if it stalled. Once real thinking deltas
+              // start (gotRealSignal), we stop touching the label.
+              if (!gotRealSignal && data && typeof data.seconds === "number") {
+                const base = warmupSteps[warmupSteps.length - 1];
+                thinkStageEl.textContent = base + " (" + data.seconds + "s)";
+              }
             } else if (ev === "done") {
               donePayload = data;
             } else if (ev === "error") {
