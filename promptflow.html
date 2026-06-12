@@ -15985,6 +15985,8 @@ promptflow whoami</code></pre>
             }
           }
           busy = false;
+          _sendInProgress = false;  // release the send latch — this early
+          // return previously left it stuck, deadlocking the next send()
           updateSend();
         }
         return;
@@ -16037,11 +16039,19 @@ promptflow whoami</code></pre>
               '</div>';
             clearStatus(thinkAssist);
             textInput.value = capturedUserText;
+            // The user explicitly clicked — clear any stale latch so
+            // this send() cannot be silently swallowed by the guard.
+            _sendInProgress = false;
             window._skipDesignSearchOnce = true;
             send();
           });
         });
-        // Bail — wait for the user's click.
+        // Bail — wait for the user's click. Release the send latch
+        // FIRST: this return previously left _sendInProgress=true, so
+        // the click handler's send() no-op'd at the entry guard — the
+        // "Building on top of X ... then nothing happens" bug — and the
+        // Run button showed a false "Another run is in progress".
+        _sendInProgress = false;
         return;
       } else {
         // ── No match — pioneer card, auto-advance to foundational
@@ -16593,7 +16603,18 @@ promptflow whoami</code></pre>
             (ct.input_tokens || 0).toLocaleString() + ' in · ' +
             (ct.output_tokens || 0).toLocaleString() + ' out' +
             (planResp.claude_model ? ' · ' + escapeHtml(planResp.claude_model) : '') +
-          '</span>';
+          '</span>' +
+          // Template savings: output tokens Claude did NOT have to write
+          // because the server renders process.py from the steps array.
+          (planResp.template_savings && planResp.template_savings.output_tokens_saved
+            ? '<span class="d-plan-cost-save">saved ~' +
+                planResp.template_savings.output_tokens_saved.toLocaleString() +
+                ' output tokens via template' +
+                (typeof planResp.template_savings.usd_saved === 'number' && planResp.template_savings.usd_saved > 0
+                  ? ' (~' + (planResp.template_savings.usd_saved < 0.01 ? '<$0.01' : '$' + planResp.template_savings.usd_saved.toFixed(3)) + ')'
+                  : '') +
+              '</span>'
+            : '');
         assist.body.appendChild(costEl);
       }
       const note = document.createElement("div");
@@ -18482,7 +18503,11 @@ promptflow whoami</code></pre>
     const outputKind = String(proc.output_kind || "").toLowerCase();
     // Step count is a multiplier — a 5-step process burns more
     // tokens than a 1-step process even at the same output kind.
-    const stepCount = Math.max(1, (proc.step_count || (proc.steps && proc.steps.length) || 1));
+    let _sjLen = 0;
+    if (typeof proc.steps_json === "string") {
+      try { const _a = JSON.parse(proc.steps_json); if (Array.isArray(_a)) _sjLen = _a.length; } catch {}
+    }
+    const stepCount = Math.max(1, (proc.step_count || (proc.steps && proc.steps.length) || _sjLen || 1));
     let base = 0;
     if (outputKind === "video") {
       base = 200;            // ~$0.18 fal for 5s clip
@@ -18976,7 +19001,18 @@ promptflow whoami</code></pre>
       if (_r.changed) persistReconciledInputKinds(proc, _r.kinds);
     } catch { /* non-fatal — fall back to declared kinds */ }
     const inputs = (proc.input_kinds || []).join(", ") || "text";
-    const stepCount = Array.isArray(proc.steps) ? proc.steps.length : 0;
+    // Step count must tolerate BOTH payload shapes: endpoints that
+    // return a parsed `steps` array AND endpoints that return the raw
+    // `steps_json` string straight from D1. Reading only proc.steps
+    // made healthy processes render as "0 steps" (the DB row was fine;
+    // the card was looking at a field that wasn't there).
+    let stepCount = Array.isArray(proc.steps) ? proc.steps.length : 0;
+    if (!stepCount && typeof proc.steps_json === "string") {
+      try {
+        const _a = JSON.parse(proc.steps_json);
+        if (Array.isArray(_a)) stepCount = _a.length;
+      } catch { /* malformed json — keep 0 */ }
+    }
     // Status pill — gold for updated, green for saved, neutral for loaded.
     const statusPill = mode === "updated"
       ? '<span class="pc-status-pill pc-status-updated">↻ Updated</span>'
