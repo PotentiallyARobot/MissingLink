@@ -20246,30 +20246,60 @@ function _sdxlWakeGpu(){
 const _SDXL_HEALTH_URL = 'https://tylerfriddle--qwen-studio-gpu-sdxlstudioworker-health.modal.run';
 let _sdxlHealthTimer = null;
 var _sdxlBadgeOwned = false;   // true once the SDXL tab is driving the header badge
-function _sdxlSetGpuPill(state){
-    // Drive the header GPU badge for the SDXL tab. state: 'warming' | 'ready' | 'sleeping'.
+// Human labels for the worker's startup stages (matches modal_app _post_startup).
+const _SDXL_STAGE_LABELS = {
+    booting: 'Booting container…',
+    loading_vae: 'Loading VAE…',
+    loading_transformer: 'Loading model…',
+    loading_text_encoder: 'Loading text encoder…',
+    loading_pipeline: 'Loading checkpoint…',
+    building_pipeline: 'Building pipeline…',
+    loading_loras: 'Loading LoRAs…',
+    moving_to_gpu: 'Moving to GPU…',
+    registering: 'Registering weights…',
+    ready: 'GPU ready',
+};
+function _sdxlSetGpuPill(state, stageLabel){
+    // Drive the header GPU badge for the SDXL tab.
+    // state: 'warming' | 'ready' | 'sleeping'. stageLabel optionally overrides
+    // the warming text with the actual boot phase.
     const dot = $('connDot'), label = $('connLabel');
     if (!dot || !label) return;
     if (window._stageView !== 'sdxl') return;   // only override the badge on the SDXL tab
     _sdxlBadgeOwned = true;
     if (state === 'ready'){ dot.className = 'dot on'; label.textContent = 'GPU ready'; }
-    else if (state === 'warming'){ dot.className = 'dot cold'; label.textContent = 'GPU warming…'; }
+    else if (state === 'warming'){ dot.className = 'dot cold'; label.textContent = stageLabel || 'GPU warming…'; }
     else { dot.className = 'dot off'; label.textContent = 'GPU sleeping'; }
+    // Mirror the phase into the SDXL status line in the sidebar too.
+    const st = $('sdxlStatus');
+    if (st && state === 'warming') st.textContent = stageLabel || 'GPU warming…';
 }
 function _sdxlPollHealth(){
     if (_sdxlHealthTimer) return;   // already polling
     let tries = 0;
     _sdxlHealthTimer = setInterval(async () => {
         tries++;
-        if (tries > 60){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; return; }  // ~3 min cap
+        if (tries > 80){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; return; }  // ~4 min cap
+        // 1) Read the live startup phase from /status (the worker posts phases
+        //    there via gpu-heartbeat) so we can SHOW the boot sequence.
+        try {
+            const sr = await fetchT(`${API}/api/studio/status`, null, 5000);
+            const sd = await sr.json();
+            const stage = sd && sd.gpu && sd.gpu.startup_stage;
+            if (stage && stage !== 'ready'){
+                _sdxlSetGpuPill('warming', _SDXL_STAGE_LABELS[stage] || ('Warming: ' + stage));
+            }
+        } catch {}
+        // 2) Health endpoint answering = container is actually up and serving.
         try {
             const r = await fetch(_SDXL_HEALTH_URL, { method: 'GET' });
             if (r.ok){
                 _sdxlSetGpuPill('ready');
+                const st = $('sdxlStatus'); if (st) st.textContent = '';
                 clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null;
             }
         } catch {}
-    }, 3000);
+    }, 2500);
 }
 function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
