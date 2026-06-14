@@ -2996,6 +2996,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     max-width:680px;width:100%;margin:0 auto;padding:18px 16px 40px;
     display:flex;flex-direction:column;gap:14px;
 }
+/* When the controls live in the sidebar (.sdxl-only), drop the centered
+   max-width + big padding so they fill the narrow command panel. */
+.sdxl-only .sdxl-panel-inner{max-width:none;padding:0;gap:12px}
+.sdxl-only .sdxl-modes{flex-wrap:wrap}
+.sdxl-only .sdxl-mode-btn{font-size:11px;padding:7px 6px}
+.sdxl-only .sdxl-sliders{flex-direction:column;gap:8px;align-items:stretch}
 .sdxl-row{display:flex;align-items:center;gap:10px}
 .sdxl-modes{gap:6px}
 .sdxl-mode-btn{
@@ -4581,6 +4587,89 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
+    <!-- ── SDXL STUDIO CONTROLS (sidebar; shown only on the SDXL tab) ──
+         Lives in the left command panel like Camera/Edit/Create. Toggled by
+         setStageView('sdxl') via the .sdxl-only class. Output renders on the
+         stage through the shared job poller. -->
+    <div class="sec sdxl-only" id="sdxlSidebar" style="display:none">
+
+            <div class="sdxl-row sdxl-modes">
+              <button class="sdxl-mode-btn active" data-m="txt2img" onclick="sdxlSetMode('txt2img')">Text → Image</button>
+              <button class="sdxl-mode-btn" data-m="img2img" onclick="sdxlSetMode('img2img')">Image → Image</button>
+              <button class="sdxl-mode-btn" data-m="inpaint" onclick="sdxlSetMode('inpaint')">Inpaint</button>
+            </div>
+
+            <div class="sdxl-field">
+              <label>Prompt</label>
+              <textarea id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
+            </div>
+            <div class="sdxl-field">
+              <label>Negative prompt</label>
+              <textarea id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
+            </div>
+
+            <!-- source image (img2img / inpaint) -->
+            <div class="sdxl-field sdxl-srcwrap" id="sdxlSrcField" style="display:none">
+              <label>Source image</label>
+              <div class="sdxl-drop" id="sdxlDrop" onclick="document.getElementById('sdxlFile').click()">
+                📷 Click or drop an image
+              </div>
+              <input type="file" id="sdxlFile" accept="image/*" hidden>
+            </div>
+
+            <!-- inpaint mask canvas -->
+            <div class="sdxl-field" id="sdxlMaskField" style="display:none">
+              <label>Mask — paint the area to regenerate</label>
+              <div class="sdxl-maskstage" id="sdxlMaskStage">
+                <img id="sdxlMaskBase" alt="">
+                <canvas id="sdxlMaskCanvas"></canvas>
+              </div>
+              <div class="sdxl-row">
+                <span class="sdxl-mini">Brush</span>
+                <input type="range" id="sdxlBrush" min="6" max="120" step="2" value="40" style="flex:1">
+                <button class="sdxl-secondary" onclick="sdxlClearMask()">Clear mask</button>
+              </div>
+            </div>
+
+            <div class="sdxl-row sdxl-sliders">
+              <div class="sdxl-slider"><span>Steps</span><input type="range" id="sdxlSteps" min="1" max="60" value="30"><b id="sdxlStepsV">30</b></div>
+              <div class="sdxl-slider"><span>Guidance</span><input type="range" id="sdxlCfg" min="1" max="15" step="0.5" value="7"><b id="sdxlCfgV">7</b></div>
+            </div>
+            <div class="sdxl-row sdxl-sliders">
+              <div class="sdxl-slider"><span>Width</span><input type="range" id="sdxlW" min="512" max="1024" step="64" value="1024"><b id="sdxlWV">1024</b></div>
+              <div class="sdxl-slider"><span>Height</span><input type="range" id="sdxlH" min="512" max="1024" step="64" value="1024"><b id="sdxlHV">1024</b></div>
+            </div>
+            <div class="sdxl-row sdxl-sliders" id="sdxlStrengthRow" style="display:none">
+              <div class="sdxl-slider"><span>Strength</span><input type="range" id="sdxlStrength" min="0.05" max="1" step="0.05" value="0.7"><b id="sdxlStrengthV">0.70</b></div>
+            </div>
+
+            <!-- base model (checkpoint) -->
+            <div class="sdxl-field">
+              <label>Base model</label>
+              <div class="sdxl-row">
+                <span class="sdxl-basename" id="sdxlBaseName">SDXL 1.0 base</span>
+                <button class="sdxl-secondary" onclick="sdxlOpenSearch('Checkpoint')">Search checkpoints</button>
+                <button class="sdxl-secondary" id="sdxlBaseReset" style="display:none" onclick="sdxlResetBase()">Reset</button>
+              </div>
+            </div>
+
+            <!-- LoRA stack (manual URLs) -->
+            <div class="sdxl-field">
+              <label>LoRAs <span class="sdxl-mini">(search, or paste a Civitai/HF URL)</span></label>
+              <div id="sdxlLoraList"></div>
+              <div class="sdxl-row">
+                <button class="sdxl-secondary" onclick="sdxlOpenSearch('LORA')">Search LoRAs</button>
+                <button class="sdxl-secondary" onclick="sdxlAddLora()">+ Add by URL</button>
+              </div>
+            </div>
+
+            <div class="sdxl-actions">
+              <span class="sdxl-status" id="sdxlStatus"></span>
+              <button class="sdxl-generate" id="sdxlGenBtn" onclick="sdxlGenerate()">✦ Generate · 50 tokens</button>
+            </div>
+    </div>
+
+
     <!-- CAMERA MODE -->
     <div class="sec camera-only" id="secCamInput">
         <div class="sec-label"><span class="icon">📁</span> INPUT IMAGE</div>
@@ -5105,85 +5194,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              the SDXL tab is active. Self-contained create UI (txt2img /
              img2img / inpaint + LoRA stack) that enqueues through
              /api/sdxl-studio/generate and rides the shared job poller. -->
-        <div class="sdxl-panel" id="sdxlPanel" style="display:none">
-          <div class="sdxl-panel-inner">
-            <div class="sdxl-row sdxl-modes">
-              <button class="sdxl-mode-btn active" data-m="txt2img" onclick="sdxlSetMode('txt2img')">Text → Image</button>
-              <button class="sdxl-mode-btn" data-m="img2img" onclick="sdxlSetMode('img2img')">Image → Image</button>
-              <button class="sdxl-mode-btn" data-m="inpaint" onclick="sdxlSetMode('inpaint')">Inpaint</button>
-            </div>
-
-            <div class="sdxl-field">
-              <label>Prompt</label>
-              <textarea id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
-            </div>
-            <div class="sdxl-field">
-              <label>Negative prompt</label>
-              <textarea id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
-            </div>
-
-            <!-- source image (img2img / inpaint) -->
-            <div class="sdxl-field sdxl-srcwrap" id="sdxlSrcField" style="display:none">
-              <label>Source image</label>
-              <div class="sdxl-drop" id="sdxlDrop" onclick="document.getElementById('sdxlFile').click()">
-                📷 Click or drop an image
-              </div>
-              <input type="file" id="sdxlFile" accept="image/*" hidden>
-            </div>
-
-            <!-- inpaint mask canvas -->
-            <div class="sdxl-field" id="sdxlMaskField" style="display:none">
-              <label>Mask — paint the area to regenerate</label>
-              <div class="sdxl-maskstage" id="sdxlMaskStage">
-                <img id="sdxlMaskBase" alt="">
-                <canvas id="sdxlMaskCanvas"></canvas>
-              </div>
-              <div class="sdxl-row">
-                <span class="sdxl-mini">Brush</span>
-                <input type="range" id="sdxlBrush" min="6" max="120" step="2" value="40" style="flex:1">
-                <button class="sdxl-secondary" onclick="sdxlClearMask()">Clear mask</button>
-              </div>
-            </div>
-
-            <div class="sdxl-row sdxl-sliders">
-              <div class="sdxl-slider"><span>Steps</span><input type="range" id="sdxlSteps" min="1" max="60" value="30"><b id="sdxlStepsV">30</b></div>
-              <div class="sdxl-slider"><span>Guidance</span><input type="range" id="sdxlCfg" min="1" max="15" step="0.5" value="7"><b id="sdxlCfgV">7</b></div>
-            </div>
-            <div class="sdxl-row sdxl-sliders">
-              <div class="sdxl-slider"><span>Width</span><input type="range" id="sdxlW" min="512" max="1024" step="64" value="1024"><b id="sdxlWV">1024</b></div>
-              <div class="sdxl-slider"><span>Height</span><input type="range" id="sdxlH" min="512" max="1024" step="64" value="1024"><b id="sdxlHV">1024</b></div>
-            </div>
-            <div class="sdxl-row sdxl-sliders" id="sdxlStrengthRow" style="display:none">
-              <div class="sdxl-slider"><span>Strength</span><input type="range" id="sdxlStrength" min="0.05" max="1" step="0.05" value="0.7"><b id="sdxlStrengthV">0.70</b></div>
-            </div>
-
-            <!-- base model (checkpoint) -->
-            <div class="sdxl-field">
-              <label>Base model</label>
-              <div class="sdxl-row">
-                <span class="sdxl-basename" id="sdxlBaseName">SDXL 1.0 base</span>
-                <button class="sdxl-secondary" onclick="sdxlOpenSearch('Checkpoint')">Search checkpoints</button>
-                <button class="sdxl-secondary" id="sdxlBaseReset" style="display:none" onclick="sdxlResetBase()">Reset</button>
-              </div>
-            </div>
-
-            <!-- LoRA stack (manual URLs) -->
-            <div class="sdxl-field">
-              <label>LoRAs <span class="sdxl-mini">(search, or paste a Civitai/HF URL)</span></label>
-              <div id="sdxlLoraList"></div>
-              <div class="sdxl-row">
-                <button class="sdxl-secondary" onclick="sdxlOpenSearch('LORA')">Search LoRAs</button>
-                <button class="sdxl-secondary" onclick="sdxlAddLora()">+ Add by URL</button>
-              </div>
-            </div>
-
-            <div class="sdxl-actions">
-              <span class="sdxl-status" id="sdxlStatus"></span>
-              <button class="sdxl-generate" id="sdxlGenBtn" onclick="sdxlGenerate()">✦ Generate · 50 tokens</button>
-            </div>
-          </div>
-        </div>
-
         <!-- ── CIVITAI SEARCH MODAL (LoRA + Checkpoint) ──────────────── -->
         <div class="sdxl-search-modal" id="sdxlSearchModal" style="display:none">
           <div class="sdxl-search-box">
@@ -7540,7 +7550,7 @@ function setMode(mode, opts){
     // programmatic setMode calls (which pass no such opt) do NOT override
     // a saved Gallery stage preference.
     if (opts.switchToStudio && typeof setStageView === 'function'
-        && window._stageView === 'gallery') {
+        && (window._stageView === 'gallery' || window._stageView === 'sdxl')) {
         setStageView('studio');
     }
     // If user leaves Edit mode, end any "editing view N" session — a Camera
@@ -19977,6 +19987,17 @@ function sdxlResetBase(){
     $('sdxlBaseReset').style.display = 'none';
 }
 
+// Restore the standard sidebar section visibility for `mode` when leaving the
+// SDXL tab. Mirrors the .X-only toggles in setMode without its heavier batch/
+// stage side effects (we only need the sidebar to look right again).
+function _restoreSidebarForMode(mode){
+    document.querySelectorAll('.camera-only').forEach(el => el.style.display = mode === 'camera' ? '' : 'none');
+    document.querySelectorAll('.edit-only').forEach(el => el.style.display = mode === 'edit' ? '' : 'none');
+    document.querySelectorAll('.batch-only').forEach(el => el.style.display = mode === 'batch' ? '' : 'none');
+    document.querySelectorAll('.generate-only').forEach(el => el.style.display = mode === 'generate' ? '' : 'none');
+    document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
+}
+
 function setStageView(view){
     if (view !== 'studio' && view !== 'gallery' && view !== 'sdxl') view = 'studio';
     window._stageView = view;
@@ -20020,11 +20041,27 @@ function _switchToStudioForOutput(){
 function _syncStageGalleryVisibility(){
     const sg = document.getElementById('stageGallery');
     const ph = document.getElementById('outPh');
-    // The SDXL panel overlays the stage in the same way the gallery does.
-    const sdxlPanel = document.getElementById('sdxlPanel');
-    if (sdxlPanel) sdxlPanel.style.display = (window._stageView === 'sdxl') ? 'flex' : 'none';
+    const inSdxl = (window._stageView === 'sdxl');
+    // SDXL controls live in the LEFT sidebar (like Camera/Edit/Create). When the
+    // SDXL tab is active we show the .sdxl-only section, hide the normal mode
+    // toggle + every other mode's sidebar sections, and leave the center as the
+    // output stage. Leaving SDXL restores the normal sidebar via setMode.
+    document.querySelectorAll('.sdxl-only').forEach(el => el.style.display = inSdxl ? '' : 'none');
+    const modeSec = document.querySelector('.mode-sec');
+    if (inSdxl) {
+        if (modeSec) modeSec.style.display = 'none';
+        // hide all the standard mode sections
+        document.querySelectorAll('.camera-only,.edit-only,.batch-only,.generate-only,.not-generate')
+            .forEach(el => el.style.display = 'none');
+    } else {
+        if (modeSec) modeSec.style.display = '';
+        // restore the normal sidebar layout for the current mode
+        if (typeof currentMode !== 'undefined' && typeof setMode === 'function') {
+            // re-run the section visibility for the active mode without side effects
+            _restoreSidebarForMode(currentMode);
+        }
+    }
     if (!sg || !ph) return;
-    // In studio/sdxl mode the community gallery never shows.
     if (window._stageView !== 'gallery') {
         sg.style.display = 'none';
         return;
