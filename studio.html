@@ -3137,7 +3137,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-search-grid{
     flex:1;overflow:auto;padding:14px 16px;display:grid;gap:12px;
     grid-template-columns:repeat(auto-fill,minmax(150px,1fr));align-content:start;
+    scrollbar-width:none;-ms-overflow-style:none;          /* Firefox / old Edge */
 }
+.sdxl-search-grid::-webkit-scrollbar{display:none}          /* Chrome / Safari */
+/* tags row also scrolls when it overflows — hide its bar too */
+.sdxl-search-tags{scrollbar-width:none;-ms-overflow-style:none}
+.sdxl-search-tags::-webkit-scrollbar{display:none}
 .sdxl-result{
     border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--surface-2);
     cursor:pointer;display:flex;flex-direction:column;transition:border-color .15s;
@@ -4499,7 +4504,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              (top-left of stage) so it sits alongside the Studio toggle
              and feels like a workspace switcher rather than a header
              link competing with subscription / billing chrome. -->
-        <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">SDXL 1.0 base</span></div>
+        <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">Default model</span></div>
         <div class="hdr-badge sdxl-hdr" id="sdxlVramPill" title="GPU VRAM" style="display:none"><span>&#9635;</span><span id="sdxlVramTxt">&ndash; / &ndash; GB</span></div>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <!-- User menu trigger — clickable avatar that opens a dropdown
@@ -4740,7 +4745,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec sdxl-only" id="sdxlSecBase" style="display:none">
       <div class="sec-label"><span class="icon">&#9636;</span> Base model</div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="sdxl-basename" id="sdxlBaseName" style="flex:1">SDXL 1.0 base</span>
+        <span class="sdxl-basename" id="sdxlBaseName" style="flex:1">Default model</span>
         <button class="gen-btn gen-btn-secondary" style="width:auto;padding:8px 10px" onclick="sdxlOpenSearch('Checkpoint')">Search</button>
         <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:auto;padding:8px 10px;display:none" onclick="sdxlResetBase()">Reset</button>
       </div>
@@ -20136,18 +20141,30 @@ async function sdxlRunSearch(reset){
         const r = await fetchT(`${API}/api/sdxl-studio/civitai/search`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
             credentials: 'include', body: JSON.stringify(payload),
-        }, 50000);
-        const d = await r.json();
+        }, 25000);
+        // Surface non-OK HTTP status explicitly instead of letting r.json()
+        // throw on an HTML error page (which used to look like a silent hang).
+        if (!r.ok){
+            let msg = `Search failed (HTTP ${r.status})`;
+            try { const ed = await r.json(); if (ed && ed.error) msg = ed.error; } catch {}
+            $('sdxlSearchStatus').textContent = msg;
+            _sdxlSearchLoading = false; return;
+        }
+        let d;
+        try { d = await r.json(); }
+        catch { $('sdxlSearchStatus').textContent = 'Search returned a bad response.'; _sdxlSearchLoading = false; return; }
         if (!d.ok){ $('sdxlSearchStatus').textContent = d.error || 'Search failed.'; _sdxlSearchLoading = false; return; }
         const grid = $('sdxlSearchGrid');
-        grid.insertAdjacentHTML('beforeend', d.items.map(_sdxlResultHtml).join(''));
+        grid.insertAdjacentHTML('beforeend', (d.items||[]).map(_sdxlResultHtml).join(''));
         _sdxlSearchCursor = d.next_cursor;
         _sdxlSearchDone = !d.next_cursor;
         $('sdxlSearchStatus').textContent = grid.children.length
             ? (_sdxlSearchDone ? `${grid.children.length} results` : 'Scroll for more…')
             : 'No results — try a different term or toggle NSFW.';
     } catch (e){
-        $('sdxlSearchStatus').textContent = 'Network error.';
+        // AbortError = our timeout fired; anything else = network/parse error.
+        const why = (e && e.name === 'AbortError') ? 'Search timed out (Civitai slow). Try again or narrow the search.' : 'Network error during search.';
+        $('sdxlSearchStatus').textContent = why;
     }
     _sdxlSearchLoading = false;
 }
@@ -20192,9 +20209,9 @@ function sdxlPickCheckpoint(url, name){
 }
 function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
-    $('sdxlBaseName').textContent = 'SDXL 1.0 base';
+    $('sdxlBaseName').textContent = 'Default model';
     $('sdxlBaseReset').style.display = 'none';
-    const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'SDXL 1.0 base';
+    const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Default model';
 }
 
 // VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
@@ -20284,7 +20301,7 @@ function _syncStageGalleryVisibility(){
         // (source image / mask / strength) are correctly hidden in txt2img —
         // the blanket .sdxl-only show above would otherwise reveal them all.
         if (typeof sdxlSetMode === 'function') sdxlSetMode(_sdxlMode || 'txt2img');
-        const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = (_sdxlSelectedBaseUrl ? ($('sdxlBaseName') ? $('sdxlBaseName').textContent : 'custom') : 'SDXL 1.0 base');
+        const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = (_sdxlSelectedBaseUrl ? ($('sdxlBaseName') ? $('sdxlBaseName').textContent : 'custom') : 'Default model');
         _sdxlUpdateVramPill();
     }
     const modeSec = document.querySelector('.mode-sec');
