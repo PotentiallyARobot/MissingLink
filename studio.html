@@ -20153,7 +20153,12 @@ async function sdxlRunSearch(reset){
 }
 
 function _sdxlResultHtml(it){
-    const thumb = it.thumb ? `${API}/api/sdxl-studio/civitai/thumb?url=${encodeURIComponent(it.thumb)}` : '';
+    // Civitai's image CDN serves images directly to <img> tags (no CORS needed
+    // for image loads), so use the raw URL first — it's faster and avoids the
+    // worker proxy entirely. If that fails (hotlink/region), fall back to the
+    // proxy, and if THAT fails, show a "no preview" box so the card keeps shape.
+    const raw = it.thumb || '';
+    const proxied = raw ? `${API}/api/sdxl-studio/civitai/thumb?url=${encodeURIComponent(raw)}` : '';
     const dl = (it.download_url || '').replace(/'/g, '');
     const nm = (it.name || '(untitled)').replace(/</g,'&lt;').replace(/"/g,'&quot;');
     const trig = (it.triggers || []).join(', ').replace(/'/g,'').replace(/</g,'&lt;');
@@ -20161,11 +20166,10 @@ function _sdxlResultHtml(it){
     const fn = (_sdxlSearchType === 'Checkpoint')
         ? `sdxlPickCheckpoint('${dl}','${nm.replace(/'/g,'')}')`
         : `sdxlPickLora('${dl}','${trig}')`;
-    // Image sits in a fixed-height frame so a missing/broken thumb collapses to
-    // a placeholder box (not a 1px line). onerror swaps to a label, keeping the
-    // card height stable.
-    const imgHtml = thumb
-        ? `<img loading="lazy" src="${thumb}" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no preview'}))">`
+    // onerror chain: raw → proxy → "no preview". data-stage tracks which try.
+    const imgHtml = raw
+        ? `<img loading="lazy" src="${raw}" data-proxy="${proxied}" data-stage="raw"
+             onerror="(function(el){ if(el.dataset.stage==='raw'){el.dataset.stage='proxy';el.src=el.dataset.proxy;} else {el.onerror=null;el.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no preview'}));} })(this)">`
         : `<div class="noimg">no preview</div>`;
     return `<div class="sdxl-result">
         <div class="thumbwrap">${imgHtml}</div>
