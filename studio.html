@@ -8025,6 +8025,11 @@ async function pollStatus(){
 function updateHeaderStatusBadge(connected){
     const dot = $('connDot'); const label = $('connLabel');
     if (window._stageView === 'sdxl' && typeof _sdxlUpdateVramPill === 'function') _sdxlUpdateVramPill();
+    // On the SDXL tab the badge reflects the SDXL T4 (managed by _sdxlSetGpuPill /
+    // _sdxlPollHealth), NOT the shared Qwen status — so don't let the Qwen
+    // /status poll overwrite it here. _sdxlBadgeOwned is set while the SDXL tab
+    // is controlling the badge.
+    if (window._stageView === 'sdxl' && _sdxlBadgeOwned) return;
     if (!connected) {
         dot.className = 'dot off';
         label.textContent = 'Offline';
@@ -20223,8 +20228,44 @@ function _sdxlWakeGpu(){
     try {
         if (!_user) return;
         if (typeof _user.tokens === 'number' && _user.tokens < 50) return;  // can't afford a gen
+        // Immediately reflect "warming" in the header status (the shared
+        // /status badge tracks the Qwen GPU, not the SDXL T4 — so without this
+        // the user gets no feedback that the SDXL GPU is spinning up).
+        _sdxlSetGpuPill('warming');
         fetch(`${API}/api/sdxl-studio/wake`, { method: 'POST', credentials: 'include' }).catch(() => {});
+        // Poll the SDXL worker's health directly until it answers, then flip to
+        // "ready". This is independent of the Qwen status poll.
+        _sdxlPollHealth();
     } catch {}
+}
+
+const _SDXL_HEALTH_URL = 'https://tylerfriddle--qwen-studio-gpu-sdxlstudioworker-health.modal.run';
+let _sdxlHealthTimer = null;
+var _sdxlBadgeOwned = false;   // true once the SDXL tab is driving the header badge
+function _sdxlSetGpuPill(state){
+    // Drive the header GPU badge for the SDXL tab. state: 'warming' | 'ready' | 'sleeping'.
+    const dot = $('connDot'), label = $('connLabel');
+    if (!dot || !label) return;
+    if (window._stageView !== 'sdxl') return;   // only override the badge on the SDXL tab
+    _sdxlBadgeOwned = true;
+    if (state === 'ready'){ dot.className = 'dot on'; label.textContent = 'GPU ready'; }
+    else if (state === 'warming'){ dot.className = 'dot cold'; label.textContent = 'GPU warming…'; }
+    else { dot.className = 'dot off'; label.textContent = 'GPU sleeping'; }
+}
+function _sdxlPollHealth(){
+    if (_sdxlHealthTimer) return;   // already polling
+    let tries = 0;
+    _sdxlHealthTimer = setInterval(async () => {
+        tries++;
+        if (tries > 60){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; return; }  // ~3 min cap
+        try {
+            const r = await fetch(_SDXL_HEALTH_URL, { method: 'GET' });
+            if (r.ok){
+                _sdxlSetGpuPill('ready');
+                clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null;
+            }
+        } catch {}
+    }, 3000);
 }
 function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
@@ -20277,6 +20318,10 @@ function setStageView(view){
     if (view === 'sdxl') {
         // Spin up the T4 on tab open (only if the user can actually generate).
         if (typeof _sdxlWakeGpu === 'function') _sdxlWakeGpu();
+    } else {
+        // Leaving SDXL — hand the header badge back to the shared Qwen status.
+        _sdxlBadgeOwned = false;
+        if (_sdxlHealthTimer){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; }
     }
     // Drive visibility. _syncStageGalleryVisibility reads window._stageView
     // and acts accordingly.
