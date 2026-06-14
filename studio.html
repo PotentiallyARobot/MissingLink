@@ -3109,6 +3109,9 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .sdxl-result:hover{border-color:var(--gold)}
 .sdxl-result img{width:100%;height:150px;object-fit:cover;display:block;background:#111}
+.sdxl-result .thumbwrap{width:100%;height:150px;background:#111;overflow:hidden}
+.sdxl-result .thumbwrap img{width:100%;height:150px;object-fit:cover;display:block}
+.sdxl-result .noimg{width:100%;height:150px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:10px;font-family:var(--font-mono);background:#161618}
 .sdxl-result .meta{padding:7px 8px;display:flex;flex-direction:column;gap:3px}
 .sdxl-result .nm{font-size:11px;color:var(--text);font-weight:600;line-height:1.25;max-height:2.5em;overflow:hidden}
 .sdxl-result .bm{font-size:9px;color:var(--text-muted);font-family:var(--font-mono)}
@@ -4461,6 +4464,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              (top-left of stage) so it sits alongside the Studio toggle
              and feels like a workspace switcher rather than a header
              link competing with subscription / billing chrome. -->
+        <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">SDXL 1.0 base</span></div>
+        <div class="hdr-badge sdxl-hdr" id="sdxlVramPill" title="GPU VRAM" style="display:none"><span>&#9635;</span><span id="sdxlVramTxt">&ndash; / &ndash; GB</span></div>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <!-- User menu trigger — clickable avatar that opens a dropdown
              with subscription / billing / account actions. Lives at the
@@ -4591,84 +4596,142 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
          Lives in the left command panel like Camera/Edit/Create. Toggled by
          setStageView('sdxl') via the .sdxl-only class. Output renders on the
          stage through the shared job poller. -->
-    <div class="sec sdxl-only" id="sdxlSidebar" style="display:none">
-
-            <div class="sdxl-row sdxl-modes">
-              <button class="sdxl-mode-btn active" data-m="txt2img" onclick="sdxlSetMode('txt2img')">Text → Image</button>
-              <button class="sdxl-mode-btn" data-m="img2img" onclick="sdxlSetMode('img2img')">Image → Image</button>
-              <button class="sdxl-mode-btn" data-m="inpaint" onclick="sdxlSetMode('inpaint')">Inpaint</button>
-            </div>
-
-            <div class="sdxl-field">
-              <label>Prompt</label>
-              <textarea id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
-            </div>
-            <div class="sdxl-field">
-              <label>Negative prompt</label>
-              <textarea id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
-            </div>
-
-            <!-- source image (img2img / inpaint) -->
-            <div class="sdxl-field sdxl-srcwrap" id="sdxlSrcField" style="display:none">
-              <label>Source image</label>
-              <div class="sdxl-drop" id="sdxlDrop" onclick="document.getElementById('sdxlFile').click()">
-                📷 Click or drop an image
-              </div>
-              <input type="file" id="sdxlFile" accept="image/*" hidden>
-            </div>
-
-            <!-- inpaint mask canvas -->
-            <div class="sdxl-field" id="sdxlMaskField" style="display:none">
-              <label>Mask — paint the area to regenerate</label>
-              <div class="sdxl-maskstage" id="sdxlMaskStage">
-                <img id="sdxlMaskBase" alt="">
-                <canvas id="sdxlMaskCanvas"></canvas>
-              </div>
-              <div class="sdxl-row">
-                <span class="sdxl-mini">Brush</span>
-                <input type="range" id="sdxlBrush" min="6" max="120" step="2" value="40" style="flex:1">
-                <button class="sdxl-secondary" onclick="sdxlClearMask()">Clear mask</button>
-              </div>
-            </div>
-
-            <div class="sdxl-row sdxl-sliders">
-              <div class="sdxl-slider"><span>Steps</span><input type="range" id="sdxlSteps" min="1" max="60" value="30"><b id="sdxlStepsV">30</b></div>
-              <div class="sdxl-slider"><span>Guidance</span><input type="range" id="sdxlCfg" min="1" max="15" step="0.5" value="7"><b id="sdxlCfgV">7</b></div>
-            </div>
-            <div class="sdxl-row sdxl-sliders">
-              <div class="sdxl-slider"><span>Width</span><input type="range" id="sdxlW" min="512" max="1024" step="64" value="1024"><b id="sdxlWV">1024</b></div>
-              <div class="sdxl-slider"><span>Height</span><input type="range" id="sdxlH" min="512" max="1024" step="64" value="1024"><b id="sdxlHV">1024</b></div>
-            </div>
-            <div class="sdxl-row sdxl-sliders" id="sdxlStrengthRow" style="display:none">
-              <div class="sdxl-slider"><span>Strength</span><input type="range" id="sdxlStrength" min="0.05" max="1" step="0.05" value="0.7"><b id="sdxlStrengthV">0.70</b></div>
-            </div>
-
-            <!-- base model (checkpoint) -->
-            <div class="sdxl-field">
-              <label>Base model</label>
-              <div class="sdxl-row">
-                <span class="sdxl-basename" id="sdxlBaseName">SDXL 1.0 base</span>
-                <button class="sdxl-secondary" onclick="sdxlOpenSearch('Checkpoint')">Search checkpoints</button>
-                <button class="sdxl-secondary" id="sdxlBaseReset" style="display:none" onclick="sdxlResetBase()">Reset</button>
-              </div>
-            </div>
-
-            <!-- LoRA stack (manual URLs) -->
-            <div class="sdxl-field">
-              <label>LoRAs <span class="sdxl-mini">(search, or paste a Civitai/HF URL)</span></label>
-              <div id="sdxlLoraList"></div>
-              <div class="sdxl-row">
-                <button class="sdxl-secondary" onclick="sdxlOpenSearch('LORA')">Search LoRAs</button>
-                <button class="sdxl-secondary" onclick="sdxlAddLora()">+ Add by URL</button>
-              </div>
-            </div>
-
-            <div class="sdxl-actions">
-              <span class="sdxl-status" id="sdxlStatus"></span>
-              <button class="sdxl-generate" id="sdxlGenBtn" onclick="sdxlGenerate()">✦ Generate · 50 tokens</button>
-            </div>
+    <!-- ── SDXL STUDIO CONTROLS (full port of the Colab SDXL Studio) ──
+         Lives in the left command panel; shown only on the SDXL tab via the
+         .sdxl-only class. Generation rides the shared queue; results land in
+         the shared History panel. -->
+    <div class="sec sdxl-only" id="sdxlSidebarModes" style="display:none">
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="sdxlModeTxt" onclick="sdxlSetMode('txt2img')">Text&rarr;Image</button>
+        <button class="mode-btn" id="sdxlModeImg" onclick="sdxlSetMode('img2img')">Image&rarr;Image</button>
+        <button class="mode-btn" id="sdxlModeInp" onclick="sdxlSetMode('inpaint')">Inpaint</button>
+      </div>
     </div>
 
+    <div class="sec sdxl-only" id="sdxlSecPrompt" style="display:none">
+      <div class="sec-label"><span class="icon">&#10022;</span> Prompt</div>
+      <textarea class="ta" id="sdxlPrompt" rows="3" placeholder="Describe the image\u2026"></textarea>
+      <div class="sec-label" style="margin:12px 0 8px"><span class="icon">&#8856;</span> Negative</div>
+      <textarea class="ta neg" id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
+    </div>
+
+    <!-- source image (img2img / inpaint) -->
+    <div class="sec sdxl-only" id="sdxlInitSec" style="display:none">
+      <div class="sec-label"><span class="icon">&#128247;</span> Source image</div>
+      <div class="sdxl-drop" id="sdxlDrop" onclick="document.getElementById('sdxlFile').click()">&#128247; Click or drop an image</div>
+      <input type="file" id="sdxlFile" accept="image/*" hidden>
+    </div>
+
+    <!-- inpaint mask -->
+    <div class="sec sdxl-only" id="sdxlInpaintSec" style="display:none">
+      <div class="sec-label"><span class="icon">&#128396;</span> Mask <span style="color:var(--text-muted);font-weight:400">paint area to regenerate</span></div>
+      <div class="sdxl-maskstage" id="sdxlMaskStage">
+        <img id="sdxlMaskBase" alt="">
+        <canvas id="sdxlMaskCanvas"></canvas>
+      </div>
+      <div class="slider-row" style="margin-top:10px"><span class="sl">Brush</span>
+        <input type="range" id="sdxlBrush" min="6" max="120" step="2" value="40"></div>
+      <button class="gen-btn gen-btn-secondary" style="width:100%;margin-top:6px" onclick="sdxlClearMask()">&#128465; Clear mask</button>
+      <div class="slider-row" style="margin-top:8px"><span class="sl">Strength</span>
+        <input type="range" id="sdxlStrength" min="0.05" max="1" step="0.05" value="0.7"><input class="sv" id="sdxlStrengthV" value="0.70"></div>
+    </div>
+
+    <!-- strength for img2img (shown for img2img; inpaint has its own above) -->
+    <div class="sec sdxl-only" id="sdxlStrengthSec" style="display:none">
+      <div class="slider-row"><span class="sl">Strength</span>
+        <input type="range" id="sdxlStrengthImg" min="0.05" max="1" step="0.05" value="0.7"><input class="sv" id="sdxlStrengthImgV" value="0.70"></div>
+      <div class="hintline">How much to change the source. Low = keep it; high = reinvent it.</div>
+    </div>
+
+    <!-- SIZE -->
+    <div class="sec sdxl-only" id="sdxlSecSize" style="display:none">
+      <div class="sec-label"><span class="icon">&#9638;</span> Size</div>
+      <select class="model-select" id="sdxlSizePreset" onchange="sdxlApplySize()">
+        <option value="1024x1024">1024 &times; 1024 &mdash; square</option>
+        <option value="1152x896">1152 &times; 896 &mdash; landscape</option>
+        <option value="896x1152">896 &times; 1152 &mdash; portrait</option>
+        <option value="1216x832">1216 &times; 832 &mdash; wide</option>
+        <option value="832x1216">832 &times; 1216 &mdash; tall</option>
+        <option value="custom">Custom</option>
+      </select>
+      <div class="slider-row" style="margin-top:12px"><span class="sl">Width</span>
+        <input type="range" id="sdxlW" min="512" max="1024" step="64" value="1024"><input class="sv" id="sdxlWV" value="1024"></div>
+      <div class="slider-row"><span class="sl">Height</span>
+        <input type="range" id="sdxlH" min="512" max="1024" step="64" value="1024"><input class="sv" id="sdxlHV" value="1024"></div>
+      <label class="lock-row" id="sdxlLockRow" title="Keep the width:height ratio fixed when you change one">
+        <input type="checkbox" id="sdxlAspectLock"><span class="lock-ico">&#128279;</span>
+        <span class="lock-txt">Constrain proportions</span></label>
+      <div class="slider-row" style="margin-top:4px"><span class="sl">Images</span>
+        <input type="range" id="sdxlBatch" min="1" max="2" step="1" value="1"><input class="sv" id="sdxlBatchV" value="1"></div>
+      <div class="hintline">Each image is its own 50-token job in the queue.</div>
+    </div>
+
+    <!-- ADVANCED -->
+    <div class="sec sdxl-only" id="sdxlSecAdv" style="display:none">
+      <div class="adv-toggle" id="sdxlAdvToggle" onclick="sdxlToggleAdv()"><span class="icon">&#9881;</span> Advanced settings <span id="sdxlAdvCaret">&#9656;</span></div>
+      <div class="adv-body" id="sdxlAdvBody">
+        <div class="sec-label" style="margin:2px 0 6px"><span class="icon">&#9881;</span> Sampler</div>
+        <select id="sdxlSampler" class="model-select" style="width:100%">
+          <option value="">Default (pipeline)</option>
+          <option value="Euler a">Euler a</option>
+          <option value="Euler">Euler</option>
+          <option value="Heun">Heun</option>
+          <option value="DPM++ 2M">DPM++ 2M</option>
+          <option value="DPM++ 2M Karras">DPM++ 2M Karras</option>
+          <option value="DPM++ 2M SDE">DPM++ 2M SDE</option>
+          <option value="DPM++ 2M SDE Karras">DPM++ 2M SDE Karras</option>
+          <option value="DPM++ SDE Karras">DPM++ SDE Karras</option>
+          <option value="DDIM">DDIM</option>
+          <option value="UniPC">UniPC</option>
+          <option value="LCM">LCM (for DMD2/Lightning/Turbo)</option>
+        </select>
+        <div class="hintline">DMD2/Lightning/Turbo models need LCM + ~4 steps + CFG ~1.2.</div>
+        <div class="slider-row"><span class="sl">Steps</span>
+          <input type="range" id="sdxlSteps" min="1" max="60" value="30"><input class="sv" id="sdxlStepsV" value="30"></div>
+        <div class="slider-row"><span class="sl">Guidance</span>
+          <input type="range" id="sdxlCfg" min="0" max="15" step="0.1" value="7.0"><input class="sv" id="sdxlCfgV" value="7.0"></div>
+        <div class="sec-label" style="margin:14px 0 6px"><span class="icon">&#9670;</span> Seed</div>
+        <div class="seed-row" style="display:flex;gap:6px">
+          <input type="number" id="sdxlSeed" value="42" style="flex:1">
+          <button class="gen-btn gen-btn-secondary" style="width:auto;padding:8px 12px" onclick="sdxlRandSeed()">&#127922;</button>
+        </div>
+        <label class="lock-row" id="sdxlRandSeedRow" title="Use a fresh random seed on every Generate">
+          <input type="checkbox" id="sdxlRandSeedEach" checked><span class="lock-ico">&#127922;</span>
+          <span class="lock-txt">Random seed each generation</span></label>
+      </div>
+    </div>
+
+    <!-- BASE MODEL -->
+    <div class="sec sdxl-only" id="sdxlSecBase" style="display:none">
+      <div class="sec-label"><span class="icon">&#9636;</span> Base model</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="sdxl-basename" id="sdxlBaseName" style="flex:1">SDXL 1.0 base</span>
+        <button class="gen-btn gen-btn-secondary" style="width:auto;padding:8px 10px" onclick="sdxlOpenSearch('Checkpoint')">Search</button>
+        <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:auto;padding:8px 10px;display:none" onclick="sdxlResetBase()">Reset</button>
+      </div>
+    </div>
+
+    <!-- LoRAs -->
+    <div class="sec sdxl-only" id="sdxlSecLora" style="display:none">
+      <div class="sec-label"><span class="icon">&#9880;</span> LoRAs</div>
+      <button class="gen-btn gen-btn-secondary" style="width:100%;margin-bottom:8px" onclick="sdxlOpenSearch('LORA')">&#128269; Browse Civitai LoRAs</button>
+      <input type="text" class="lora-url" id="sdxlLoraUrl" placeholder="paste HF or Civitai .safetensors URL" style="width:100%">
+      <div class="lora-row" style="display:flex;gap:6px;margin-top:6px">
+        <input type="text" class="lora-url" id="sdxlLoraName" placeholder="name (optional)" style="flex:1">
+        <input type="number" class="lora-url lora-scale" id="sdxlLoraScale" value="1.0" min="0" max="2" step="0.05" style="width:64px">
+      </div>
+      <div class="lora-row" style="display:flex;gap:6px;margin-top:8px">
+        <button class="gen-btn gen-btn-secondary" id="sdxlInspectLoraBtn" style="flex:0 0 38%" onclick="sdxlInspectLora()">&#128269; Inspect</button>
+        <button class="gen-btn gen-btn-secondary" id="sdxlAddLoraBtn" style="flex:1" onclick="sdxlAddLoraFromFields()">+ Add LoRA</button>
+      </div>
+      <div id="sdxlLoraInspect"></div>
+      <div id="sdxlLoraList"></div>
+    </div>
+
+    <div class="sec sdxl-only" id="sdxlSecGen" style="display:none">
+      <span class="sdxl-status" id="sdxlStatus"></span>
+      <button class="gen-btn" id="sdxlGenBtn" style="width:100%" onclick="sdxlGenerate()">&#10022; Generate &middot; 50 tokens</button>
+    </div>
 
     <!-- CAMERA MODE -->
     <div class="sec camera-only" id="secCamInput">
@@ -7918,6 +7981,7 @@ async function pollStatus(){
 // is happening without needing a separate progress panel.
 function updateHeaderStatusBadge(connected){
     const dot = $('connDot'); const label = $('connLabel');
+    if (window._stageView === 'sdxl' && typeof _sdxlUpdateVramPill === 'function') _sdxlUpdateVramPill();
     if (!connected) {
         dot.className = 'dot off';
         label.textContent = 'Offline';
@@ -19667,23 +19731,66 @@ let _sdxlPainting = false;
 
 function sdxlSetMode(m){
     _sdxlMode = m;
-    document.querySelectorAll('.sdxl-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.m === m));
+    $('sdxlModeTxt').classList.toggle('active', m === 'txt2img');
+    $('sdxlModeImg').classList.toggle('active', m === 'img2img');
+    $('sdxlModeInp').classList.toggle('active', m === 'inpaint');
     const needsSrc = (m === 'img2img' || m === 'inpaint');
-    $('sdxlSrcField').style.display = needsSrc ? 'flex' : 'none';
-    $('sdxlStrengthRow').style.display = needsSrc ? 'flex' : 'none';
-    $('sdxlMaskField').style.display = (m === 'inpaint') ? 'flex' : 'none';
+    $('sdxlInitSec').style.display = needsSrc ? '' : 'none';
+    $('sdxlInpaintSec').style.display = (m === 'inpaint') ? '' : 'none';
+    // img2img uses the standalone strength row; inpaint has its own strength
+    // slider inside the mask section.
+    $('sdxlStrengthSec').style.display = (m === 'img2img') ? '' : 'none';
     if (m === 'inpaint') sdxlSyncMask();
 }
 
+function sdxlApplySize(){
+    const v = $('sdxlSizePreset').value;
+    if (v === 'custom') return;
+    const [w,h] = v.split('x');
+    $('sdxlW').value = w; $('sdxlWV').value = w;
+    $('sdxlH').value = h; $('sdxlHV').value = h;
+}
+function sdxlToggleAdv(){
+    $('sdxlAdvBody').classList.toggle('open');
+    $('sdxlAdvCaret').innerHTML = $('sdxlAdvBody').classList.contains('open') ? '\u25BE' : '\u25B8';
+}
+function sdxlRandSeed(){ $('sdxlSeed').value = Math.floor(Math.random()*2e9); }
+
+// aspect lock
+let _sdxlAspect = null, _sdxlAspectBusy = false;
+function _sdxlSnapDim(v){ return Math.max(512, Math.min(1024, Math.round(v/64)*64)); }
+function _sdxlAspectAdjust(changed){
+    if (!_sdxlAspect || _sdxlAspectBusy) return;
+    _sdxlAspectBusy = true;
+    if (changed === 'width'){ const w = +$('sdxlWV').value||1024; const h=_sdxlSnapDim(w/_sdxlAspect); $('sdxlH').value=h; $('sdxlHV').value=h; }
+    else { const h = +$('sdxlHV').value||1024; const w=_sdxlSnapDim(h*_sdxlAspect); $('sdxlW').value=w; $('sdxlWV').value=w; }
+    $('sdxlSizePreset').value = 'custom';
+    _sdxlAspectBusy = false;
+}
+
 function _sdxlBindSliders(){
+    // slider ↔ number-readout sync for every paired control
     const pairs = [['sdxlSteps','sdxlStepsV',0],['sdxlCfg','sdxlCfgV',1],
-                   ['sdxlW','sdxlWV',0],['sdxlH','sdxlHV',0],['sdxlStrength','sdxlStrengthV',2]];
+                   ['sdxlW','sdxlWV',0],['sdxlH','sdxlHV',0],['sdxlBatch','sdxlBatchV',0],
+                   ['sdxlStrength','sdxlStrengthV',2],['sdxlStrengthImg','sdxlStrengthImgV',2]];
     pairs.forEach(([s,v,dp]) => {
-        const sl = $(s); if (!sl) return;
-        sl.addEventListener('input', () => { $(v).textContent = (+sl.value).toFixed(dp); });
+        const sl = $(s), out = $(v); if (!sl || !out) return;
+        const sync = () => { out.value !== undefined ? (out.value = (+sl.value).toFixed(dp)) : (out.textContent = (+sl.value).toFixed(dp)); };
+        sl.addEventListener('input', sync);
+        // allow typing in the number box to drive the slider
+        if (out.tagName === 'INPUT') out.addEventListener('change', () => { sl.value = out.value; });
     });
-    const brush = $('sdxlBrush');
-    // file upload
+    // width/height also set the preset to custom + honor aspect lock
+    ['input','change'].forEach(ev => {
+        const w = $('sdxlW'), h = $('sdxlH');
+        if (w) w.addEventListener(ev, () => { if(!_sdxlAspectBusy) $('sdxlSizePreset').value='custom'; _sdxlAspectAdjust('width'); });
+        if (h) h.addEventListener(ev, () => { if(!_sdxlAspectBusy) $('sdxlSizePreset').value='custom'; _sdxlAspectAdjust('height'); });
+    });
+    const lock = $('sdxlAspectLock');
+    if (lock) lock.addEventListener('change', () => {
+        if (lock.checked){ const w=+$('sdxlWV').value||1024, h=+$('sdxlHV').value||1024; _sdxlAspect = _sdxlImgAspect || (w/h); $('sdxlLockRow').classList.add('on'); }
+        else { _sdxlAspect = null; $('sdxlLockRow').classList.remove('on'); }
+    });
     const fileEl = $('sdxlFile');
     if (fileEl) fileEl.addEventListener('change', e => {
         const f = e.target.files[0]; if (!f) return;
@@ -19692,6 +19799,7 @@ function _sdxlBindSliders(){
         r.readAsDataURL(f);
     });
 }
+let _sdxlImgAspect = null;
 
 function _sdxlSetSource(dataUrl){
     _sdxlSrcDataUrl = dataUrl;
@@ -19773,22 +19881,68 @@ function _sdxlMaskDataUrl(){
     return out.toDataURL('image/png');
 }
 
-// LoRA rows
-function sdxlAddLora(){
-    const list = $('sdxlLoraList');
-    const row = document.createElement('div');
-    row.className = 'sdxl-lora-row';
-    row.innerHTML = "<input class='url' placeholder='Civitai/HF LoRA URL'>"
-        + "<input class='scale' type='number' step='0.05' value='1.0'>"
-        + "<button class='sdxl-secondary' onclick='this.parentNode.remove()'>×</button>";
-    list.appendChild(row);
+// ── LoRA stack (Colab-style: add from fields/search, inspect, render list) ──
+let _sdxlLoras = [];   // [{url, name, scale, base_model?, triggers?}]
+
+function _sdxlRenderLoraList(){
+    const box = $('sdxlLoraList');
+    if (!_sdxlLoras.length){ box.innerHTML = ''; return; }
+    box.innerHTML = _sdxlLoras.map((l, i) => `
+        <div class="lora-item" style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-top:6px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(l.name||l.url).replace(/</g,'&lt;')}</div>
+            ${l.base_model?`<div style="font-size:9px;color:var(--text-muted)">${l.base_model}</div>`:''}
+          </div>
+          <input type="number" value="${l.scale}" min="0" max="2" step="0.05" style="width:56px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px" onchange="_sdxlSetLoraScale(${i}, this.value)">
+          <button class="gen-btn gen-btn-secondary" style="width:auto;padding:4px 8px" onclick="_sdxlRemoveLora(${i})">×</button>
+        </div>`).join('');
 }
-function _sdxlCollectLoras(){
-    return Array.from(document.querySelectorAll('#sdxlLoraList .sdxl-lora-row')).map(r => ({
-        url: r.querySelector('.url').value.trim(),
-        scale: parseFloat(r.querySelector('.scale').value) || 1.0,
-    })).filter(l => l.url);
+function _sdxlSetLoraScale(i, v){ if (_sdxlLoras[i]) _sdxlLoras[i].scale = parseFloat(v)||1.0; }
+function _sdxlRemoveLora(i){ _sdxlLoras.splice(i,1); _sdxlRenderLoraList(); }
+function _sdxlAddLoraObj(o){
+    if (!o || !o.url) return;
+    if (_sdxlLoras.some(l => l.url === o.url)){ showNotif('That LoRA is already added.', 'info'); return; }
+    if (_sdxlLoras.length >= 6){ showNotif('Up to 6 LoRAs.', 'error'); return; }
+    _sdxlLoras.push({ url:o.url, name:o.name||'', scale: (o.scale!=null?o.scale:1.0), base_model:o.base_model||'', triggers:o.triggers||[] });
+    _sdxlRenderLoraList();
+    if (o.triggers && o.triggers.length && $('sdxlPrompt')){
+        const trig = o.triggers.join(', ');
+        const cur = $('sdxlPrompt').value;
+        if (cur.indexOf(trig) < 0) $('sdxlPrompt').value = (cur ? cur.replace(/\s*$/, ', ') : '') + trig;
+    }
 }
+// Add from the manual URL + name + scale fields.
+function sdxlAddLoraFromFields(){
+    const url = $('sdxlLoraUrl').value.trim();
+    if (!url){ showNotif('Paste a LoRA URL first.', 'error'); return; }
+    _sdxlAddLoraObj({ url, name: $('sdxlLoraName').value.trim(), scale: parseFloat($('sdxlLoraScale').value)||1.0 });
+    $('sdxlLoraUrl').value = ''; $('sdxlLoraName').value = '';
+}
+// Inspect: resolve a pasted URL's metadata via the civitai detail endpoint.
+async function sdxlInspectLora(){
+    const url = $('sdxlLoraUrl').value.trim();
+    if (!url){ showNotif('Paste a LoRA URL to inspect.', 'error'); return; }
+    const m = url.match(/\/models\/(\d+)/) || url.match(/\/api\/download\/models\/(\d+)/);
+    const box = $('sdxlLoraInspect');
+    box.innerHTML = '<div class="hintline">Inspecting…</div>';
+    try {
+        const body = m ? (url.indexOf('/api/download/') >= 0 ? { version_id: m[1] } : { model_id: m[1] }) : null;
+        if (!body){ box.innerHTML = '<div class="hintline">Could not parse a Civitai model id from that URL.</div>'; return; }
+        const r = await fetchT(`${API}/api/sdxl-studio/civitai/detail`, {
+            method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) }, 20000);
+        const d = await r.json();
+        if (!d.ok){ box.innerHTML = `<div class="hintline">${d.error||'inspect failed'}</div>`; return; }
+        const info = d.info;
+        box.innerHTML = `<div style="padding:7px 9px;margin-top:6px;border:1px solid var(--border);border-radius:7px;font-size:11px">
+            <div style="color:var(--text);font-weight:600">${(info.name||'').replace(/</g,'&lt;')}</div>
+            <div style="color:var(--text-muted)">${info.base_model||''} · ${info.file_mb?info.file_mb+' MB':''}</div>
+            ${(info.triggers||[]).length?`<div style="color:var(--gold);margin-top:3px">triggers: ${info.triggers.join(', ').replace(/</g,'&lt;')}</div>`:''}
+        </div>`;
+        // pre-fill the name field for the add step
+        if (info.name) $('sdxlLoraName').value = info.name;
+    } catch(e){ box.innerHTML = '<div class="hintline">Network error inspecting.</div>'; }
+}
+function _sdxlCollectLoras(){ return _sdxlLoras.map(l => ({ url:l.url, scale:l.scale })); }
 
 async function sdxlGenerate(){
     if (!_user){ $('loginModal').classList.add('open'); return; }
@@ -19802,67 +19956,84 @@ async function sdxlGenerate(){
         maskUrl = _sdxlMaskDataUrl();
         if (!maskUrl){ showNotif('Paint a region on the image to inpaint.', 'error'); return; }
     }
-    const payload = {
+    // strength comes from the per-mode control
+    const strength = (_sdxlMode === 'inpaint')
+        ? (+$('sdxlStrength').value || 0.7)
+        : (+$('sdxlStrengthImg').value || 0.7);
+    const batch = Math.max(1, Math.min(2, +$('sdxlBatch').value || 1));
+    const randomize = $('sdxlRandSeedEach').checked;
+    const baseSeed = +$('sdxlSeed').value || 0;
+
+    const basePayload = {
         mode: _sdxlMode,
         prompt,
         negative_prompt: $('sdxlNeg').value.trim(),
         steps: +$('sdxlSteps').value, cfg: +$('sdxlCfg').value,
         width: +$('sdxlW').value, height: +$('sdxlH').value,
-        strength: +$('sdxlStrength').value,
+        strength,
+        sampler: ($('sdxlSampler') ? $('sdxlSampler').value : ''),
         model_url: _sdxlSelectedBaseUrl || '',
-        randomize_seed: true,
         loras: _sdxlCollectLoras(),
     };
-    if (_sdxlMode === 'img2img' || _sdxlMode === 'inpaint') payload.image_b64 = _sdxlSrcDataUrl;
-    if (_sdxlMode === 'inpaint') payload.mask_b64 = maskUrl;
+    if (_sdxlMode === 'img2img' || _sdxlMode === 'inpaint') basePayload.image_b64 = _sdxlSrcDataUrl;
+    if (_sdxlMode === 'inpaint') basePayload.mask_b64 = maskUrl;
 
     const btn = $('sdxlGenBtn'); btn.disabled = true;
     $('sdxlStatus').textContent = 'Submitting…';
-    try {
-        const r = await fetchT(`${API}/api/sdxl-studio/generate`, {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            credentials: 'include', body: JSON.stringify(payload),
-        }, 60000);
-        const d = await r.json();
-        if (!d.ok){
-            if (r.status === 401){ $('loginModal').classList.add('open'); }
-            else if (r.status === 402){ showBuyModal(); }
-            else if (r.status === 429){ showNotif('Too many jobs queued. Wait for one to finish.', 'error'); }
-            else if (d.error === 'content_blocked'){ showNotif('Blocked: content involving minors is not allowed.', 'error'); }
-            else if (d.error === 'moderation_unavailable'){ showNotif('Safety check temporarily unavailable. Try again shortly.', 'error'); }
-            else { showNotif('Error: ' + (d.error || 'failed'), 'error'); }
-            $('sdxlStatus').textContent = '';
-            btn.disabled = false;
-            return;
+    let submitted = 0;
+    // Each image in the batch is its own queued job (the shared callback stores
+    // one image per job). Submit them sequentially.
+    for (let i = 0; i < batch; i++){
+        const payload = Object.assign({}, basePayload);
+        if (randomize){ payload.randomize_seed = true; }
+        else { payload.seed = baseSeed + i; payload.randomize_seed = false; }
+        try {
+            const r = await fetchT(`${API}/api/sdxl-studio/generate`, {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                credentials: 'include', body: JSON.stringify(payload),
+            }, 60000);
+            const d = await r.json();
+            if (!d.ok){
+                if (r.status === 401){ $('loginModal').classList.add('open'); }
+                else if (r.status === 402){ showBuyModal(); }
+                else if (r.status === 429){ showNotif('Too many jobs queued. Wait for one to finish.', 'error'); }
+                else if (d.error === 'content_blocked'){ showNotif('Blocked: content involving minors is not allowed.', 'error'); }
+                else if (d.error === 'moderation_unavailable'){ showNotif('Safety check temporarily unavailable. Try again shortly.', 'error'); }
+                else { showNotif('Error: ' + (d.error || 'failed'), 'error'); }
+                break;
+            }
+            if (d.tokens_remaining !== undefined && _user){
+                _user.tokens = d.tokens_remaining;
+                const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
+            }
+            myJobs = myJobs.filter(j => j.id !== d.job_id);
+            myJobs.unshift({
+                id: d.job_id, status: 'queued', mode: 'sdxl_studio',
+                thumb: _sdxlSrcDataUrl || null, result: null,
+                submittedAt: Date.now(), startedAt: Date.now(),
+            });
+            if (myJobs.length > 12) myJobs = myJobs.slice(0, 12);
+            renderQueue();
+            startJobPoll(d.job_id);
+            submitted++;
+        } catch (e){
+            showNotif('Network error submitting job.', 'error');
+            break;
         }
-        if (d.tokens_remaining !== undefined && _user){
-            _user.tokens = d.tokens_remaining;
-            const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
-        }
-        // Ride the shared job poller — flip to Studio so the result lands on
-        // the stage where the user can watch it, then track via myJobs.
-        $('sdxlStatus').textContent = 'Queued — generating on T4…';
-        myJobs = myJobs.filter(j => j.id !== d.job_id);
-        myJobs.unshift({
-            id: d.job_id, status: 'queued', mode: 'sdxl_studio',
-            thumb: _sdxlSrcDataUrl || null, result: null,
-            submittedAt: Date.now(), startedAt: Date.now(),
-        });
-        if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
-        renderQueue();
-        startJobPoll(d.job_id);
-        setStageView('studio');     // watch it complete on the stage
-        setTimeout(() => { btn.disabled = false; $('sdxlStatus').textContent = ''; }, 1500);
-    } catch (e){
-        showNotif('Network error submitting job.', 'error');
-        $('sdxlStatus').textContent = '';
-        btn.disabled = false;
     }
+    if (submitted > 0){
+        $('sdxlStatus').textContent = `Queued ${submitted} job${submitted>1?'s':''} — generating on T4…`;
+        setStageView('studio');   // watch results land on the stage
+    } else {
+        $('sdxlStatus').textContent = '';
+    }
+    setTimeout(() => { btn.disabled = false; $('sdxlStatus').textContent = ''; }, 1800);
 }
 
 function _sdxlInit(){
     _sdxlBindSliders();
     _sdxlInitMaskCanvas();
+    if (typeof sdxlSetMode === 'function') sdxlSetMode('txt2img');
 }
 
 // ── Civitai search (LoRA + checkpoint) ──
@@ -19948,36 +20119,34 @@ async function sdxlRunSearch(reset){
 function _sdxlResultHtml(it){
     const thumb = it.thumb ? `${API}/api/sdxl-studio/civitai/thumb?url=${encodeURIComponent(it.thumb)}` : '';
     const dl = (it.download_url || '').replace(/'/g, '');
-    const nm = (it.name || '').replace(/</g,'&lt;');
+    const nm = (it.name || '(untitled)').replace(/</g,'&lt;').replace(/"/g,'&quot;');
     const trig = (it.triggers || []).join(', ').replace(/'/g,'').replace(/</g,'&lt;');
     const label = (_sdxlSearchType === 'Checkpoint') ? 'Use as base' : 'Add LoRA';
     const fn = (_sdxlSearchType === 'Checkpoint')
         ? `sdxlPickCheckpoint('${dl}','${nm.replace(/'/g,'')}')`
         : `sdxlPickLora('${dl}','${trig}')`;
+    // Image sits in a fixed-height frame so a missing/broken thumb collapses to
+    // a placeholder box (not a 1px line). onerror swaps to a label, keeping the
+    // card height stable.
+    const imgHtml = thumb
+        ? `<img loading="lazy" src="${thumb}" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no preview'}))">`
+        : `<div class="noimg">no preview</div>`;
     return `<div class="sdxl-result">
-        ${thumb ? `<img loading="lazy" src="${thumb}" onerror="this.style.display='none'">` : `<div style="height:150px;background:#111"></div>`}
-        <div class="meta"><div class="nm">${nm}</div><div class="bm">${it.base_model||''}${it.nsfw?' · NSFW':''}</div></div>
+        <div class="thumbwrap">${imgHtml}</div>
+        <div class="meta"><div class="nm">${nm}</div><div class="bm">${(it.base_model||'')}${it.nsfw?' · NSFW':''}</div></div>
         <button class="add" onclick="${fn}">${label}</button>
     </div>`;
 }
 
 function sdxlPickLora(url, triggers){
-    sdxlAddLora();
-    const rows = document.querySelectorAll('#sdxlLoraList .sdxl-lora-row');
-    const row = rows[rows.length - 1];
-    if (row) row.querySelector('.url').value = url;
-    if (triggers && $('sdxlPrompt')){
-        // append trigger words to the prompt if not already present
-        const cur = $('sdxlPrompt').value;
-        if (triggers && cur.indexOf(triggers) < 0)
-            $('sdxlPrompt').value = (cur ? cur.replace(/\s*$/, ', ') : '') + triggers;
-    }
+    _sdxlAddLoraObj({ url, triggers: (triggers ? triggers.split(', ').filter(Boolean) : []) });
     showNotif('LoRA added' + (triggers ? ' (trigger words appended to prompt)' : ''), 'success');
 }
 function sdxlPickCheckpoint(url, name){
     _sdxlSelectedBaseUrl = url;
     $('sdxlBaseName').textContent = name || 'custom checkpoint';
     $('sdxlBaseReset').style.display = '';
+    const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = name || 'custom';
     sdxlCloseSearch();
     showNotif('Base model set — first generation with it will load the checkpoint (slower).', 'success');
 }
@@ -19985,6 +20154,27 @@ function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
     $('sdxlBaseName').textContent = 'SDXL 1.0 base';
     $('sdxlBaseReset').style.display = 'none';
+    const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'SDXL 1.0 base';
+}
+
+// VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
+// (used/total). Until the backend reports VRAM in the heartbeat, this shows an
+// honest "– / – GB" rather than a fabricated number.
+function _sdxlUpdateVramPill(){
+    const el = $('sdxlVramTxt'); if (!el) return;
+    let used = null, total = null;
+    try {
+        const gs = (typeof _gpuState !== 'undefined' && _gpuState) ? _gpuState : null;
+        if (gs){
+            used = gs.vram_used_gb ?? gs.vram_used ?? (gs.vram && gs.vram.used) ?? null;
+            total = gs.vram_total_gb ?? gs.vram_total ?? (gs.vram && gs.vram.total) ?? null;
+        }
+    } catch {}
+    if (used != null && total != null){
+        el.innerHTML = `${(+used).toFixed(2)} / ${(+total).toFixed(2)} GB`;
+    } else {
+        el.innerHTML = '&ndash; / &ndash; GB';
+    }
 }
 
 // Restore the standard sidebar section visibility for `mode` when leaving the
@@ -20047,6 +20237,12 @@ function _syncStageGalleryVisibility(){
     // toggle + every other mode's sidebar sections, and leave the center as the
     // output stage. Leaving SDXL restores the normal sidebar via setMode.
     document.querySelectorAll('.sdxl-only').forEach(el => el.style.display = inSdxl ? '' : 'none');
+    // SDXL header pills (base model + VRAM) only on the SDXL tab.
+    document.querySelectorAll('.sdxl-hdr').forEach(el => el.style.display = inSdxl ? '' : 'none');
+    if (inSdxl){
+        const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = (_sdxlSelectedBaseUrl ? ($('sdxlBaseName') ? $('sdxlBaseName').textContent : 'custom') : 'SDXL 1.0 base');
+        _sdxlUpdateVramPill();
+    }
     const modeSec = document.querySelector('.mode-sec');
     if (inSdxl) {
         if (modeSec) modeSec.style.display = 'none';
