@@ -4610,7 +4610,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <div class="sec sdxl-only" id="sdxlSecPrompt" style="display:none">
       <div class="sec-label"><span class="icon">&#10022;</span> Prompt</div>
-      <textarea class="ta" id="sdxlPrompt" rows="3" placeholder="Describe the image\u2026"></textarea>
+      <textarea class="ta" id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
       <div class="sec-label" style="margin:12px 0 8px"><span class="icon">&#8856;</span> Negative</div>
       <textarea class="ta neg" id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
     </div>
@@ -19710,12 +19710,13 @@ const STAGE_GALLERY_PAGE_SIZE = 20;
 // they want to make. Persisted in localStorage so the user's
 // preference sticks across reloads; explicit 'studio' from a prior
 // session is respected, but absence (first visit) defaults to gallery.
-window._stageView = (() => {
-    try {
-        const v = localStorage.getItem('studio_stage_view');
-        return (v === 'studio' || v === 'sdxl') ? v : 'gallery';
-    } catch { return 'gallery'; }
-})();
+// Page-load default is ALWAYS the gallery view — this is a hard product rule.
+// We deliberately do NOT restore a previously-saved stage view on load: a
+// reload should always land the user on the gallery (with Create mode), never
+// dump them back into the Studio or SDXL tab. The saved value is still written
+// when the user switches tabs (so other code can read "current view"), but it
+// is intentionally ignored for the initial render.
+window._stageView = 'gallery';
 
 // ─────────────────────────────────────────────────────────────────────
 //  SDXL STUDIO PANEL
@@ -20240,6 +20241,10 @@ function _syncStageGalleryVisibility(){
     // SDXL header pills (base model + VRAM) only on the SDXL tab.
     document.querySelectorAll('.sdxl-hdr').forEach(el => el.style.display = inSdxl ? '' : 'none');
     if (inSdxl){
+        // Re-assert the current SDXL mode so the mode-specific sections
+        // (source image / mask / strength) are correctly hidden in txt2img —
+        // the blanket .sdxl-only show above would otherwise reveal them all.
+        if (typeof sdxlSetMode === 'function') sdxlSetMode(_sdxlMode || 'txt2img');
         const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = (_sdxlSelectedBaseUrl ? ($('sdxlBaseName') ? $('sdxlBaseName').textContent : 'custom') : 'SDXL 1.0 base');
         _sdxlUpdateVramPill();
     }
