@@ -3034,6 +3034,10 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    a strength slider, and trigger chips. */
 .sdxl-lora-card{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;padding:9px 10px;margin-top:8px}
 .sdxl-lora-card .lora-card-top{display:flex;align-items:center;gap:8px}
+.sdxl-lora-card .lora-thumb{width:38px;height:38px;border-radius:6px;object-fit:cover;background:var(--surface-3);flex:0 0 auto;cursor:pointer}
+.sdxl-lora-card .lora-thumb.noimg{display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:18px}
+.sdxl-lora-card .lora-name-link{cursor:pointer;text-decoration:underline;text-decoration-color:rgba(212,160,23,.4)}
+.sdxl-lora-card .lora-name-link:hover{color:var(--gold)}
 .sdxl-lora-card .lora-card-name{flex:1;min-width:0;font-family:var(--font-mono);font-size:10px;color:var(--gold);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sdxl-lora-card .lora-status{font-weight:600}
 .sdxl-lora-card .lora-status.loading{color:var(--text-muted)}
@@ -3043,6 +3047,19 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-lora-card .lora-trigs{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
 .sdxl-lora-card .trigchip{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:3px 7px;font-size:9px;font-family:var(--font-mono);cursor:pointer}
 .sdxl-lora-card .trigchip:hover{border-color:var(--gold);color:var(--gold)}
+/* Pony quality-tag row under the prompt */
+.sdxl-pony-tags{margin-top:8px;padding:9px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(212,160,23,.04)}
+.sdxl-pony-label{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--gold)}
+.sdxl-pony-label span{font-weight:400;text-transform:none;color:var(--text-muted);letter-spacing:0}
+.sdxl-pony-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.trigchip.pony{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:4px 9px;font-size:9px;font-family:var(--font-mono);cursor:pointer}
+.trigchip.pony:hover{border-color:var(--gold);color:var(--gold)}
+/* Detail popup sample gallery */
+.sdxl-samp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-top:10px}
+.sdxl-samp{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.sdxl-samp img{width:100%;aspect-ratio:1/1;object-fit:cover;background:var(--surface-3);display:block}
+.sdxl-samp-body{padding:8px 9px}
+.sdxl-samp-prompt{font-family:var(--font-mono);font-size:9px;color:var(--text-dim);line-height:1.45;max-height:64px;overflow:hidden}
 .sdxl-only .lora-row{display:flex;gap:6px}
 .sdxl-only .lock-row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-muted);cursor:pointer;margin-top:8px}
 .sdxl-only .lock-row input[type="checkbox"]{width:auto;flex:0 0 auto}
@@ -3112,11 +3129,11 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-basename{flex:1;font-size:12px;color:var(--text);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ── Civitai search modal ── */
 .sdxl-search-modal{
-    position:absolute;inset:0;z-index:30;
-    background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;padding:18px;
+    position:fixed;inset:0;z-index:9600;
+    background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;padding:2vh 2vw;
 }
 .sdxl-search-box{
-    width:100%;max-width:1100px;height:90%;max-height:90%;background:var(--surface);
+    width:95vw;max-width:1600px;height:min(92vh,1000px);max-height:92vh;background:var(--surface);
     border:1px solid var(--border-strong);border-radius:12px;
     display:flex;flex-direction:column;overflow:hidden;
 }
@@ -4671,6 +4688,21 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec sdxl-only" id="sdxlSecPrompt" style="display:none">
       <div class="sec-label"><span class="icon">&#10022;</span> Prompt</div>
       <textarea class="ta" id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
+      <!-- Pony quality-tag chips — shown only when a Pony-family checkpoint is
+           active. Pony Diffusion V6 (and Pony Realism) were trained with a
+           score/rating/source tag system; without it output is much worse.
+           These are click-to-add — never auto-inserted into the prompt. -->
+      <div id="sdxlPonyTags" class="sdxl-pony-tags" style="display:none">
+        <div class="sdxl-pony-label">Pony quality tags <span>(click to add — recommended for Pony models)</span></div>
+        <div class="sdxl-pony-chips">
+          <button class="trigchip pony" onclick="_sdxlAddPonyTag('score_9, score_8_up, score_7_up')" title="The standard Pony quality prefix">score_9, score_8_up, score_7_up</button>
+          <button class="trigchip pony" onclick="_sdxlAddPonyTag('source_realistic')">source_realistic</button>
+          <button class="trigchip pony" onclick="_sdxlAddPonyTag('source_anime')">source_anime</button>
+          <button class="trigchip pony" onclick="_sdxlAddPonyTag('rating_safe')">rating_safe</button>
+          <button class="trigchip pony" onclick="_sdxlAddPonyTag('rating_explicit')">rating_explicit</button>
+          <button class="trigchip pony" onclick="_sdxlAddPonyNeg('score_6, score_5, score_4, low quality, worst quality')" title="Add to the negative prompt">+ neg: low scores</button>
+        </div>
+      </div>
       <div class="sec-label" style="margin:12px 0 8px"><span class="icon">&#8856;</span> Negative</div>
       <textarea class="ta neg" id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
     </div>
@@ -20023,6 +20055,7 @@ function _sdxlRestoreState(){
         _sdxlLoras = s.loras.filter(l => l && l.url).slice(0, 6).map(l => ({
             url: l.url, name: l.name || '', scale: (l.scale != null ? l.scale : 1.0),
             base_model: l.base_model || '', triggers: l.triggers || [],
+            thumb: l.thumb || '', version_id: l.version_id || '',
         }));
         _sdxlRenderLoraList();
     }
@@ -20060,9 +20093,19 @@ function _sdxlRenderLoraList(){
                 `<button class="trigchip" onclick="_sdxlAddTrigger('${(t||'').replace(/'/g,'')}')">+ ${(t||'').replace(/</g,'&lt;')}</button>`
             ).join('') + `</div>`;
         }
+        // Small thumbnail of the LoRA (loads Civitai img directly; falls back to
+        // a placeholder). Clicking the name (or thumb) opens the detail view.
+        const thumbRaw = l.thumb || '';
+        const thumbHtml = thumbRaw
+            ? `<img class="lora-thumb" loading="lazy" src="${thumbRaw}" onclick="_sdxlOpenLoraDetail(${i})"
+                 onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'lora-thumb noimg',textContent:'⬡'}))">`
+            : `<div class="lora-thumb noimg">⬡</div>`;
+        // The name is a link that opens the LoRA's detail/config page.
+        const nameLink = `<span class="lora-card-name lora-name-link" title="Open LoRA details" onclick="_sdxlOpenLoraDetail(${i})">${nm}</span>${status}`;
         return `<div class="sdxl-lora-card" data-i="${i}">
           <div class="lora-card-top">
-            <span class="lora-card-name" title="${nm}">${nm}${status}</span>
+            ${thumbHtml}
+            <span style="flex:1;min-width:0">${nameLink}</span>
             <button class="lora-x" onclick="_sdxlRemoveLora(${i})">✕</button>
           </div>
           <div class="slider-row" style="margin-top:8px">
@@ -20092,6 +20135,194 @@ function _sdxlLoraSlide(i, v, fromNumber){
 function _sdxlAddTrigger(t){
     const p = $('sdxlPrompt'); if (!p || !t) return;
     p.value = p.value.trim() ? (p.value.replace(/\s*$/,'') + ', ' + t) : t;
+}
+// Pony quality tags. Score tags belong at the FRONT of the prompt (that's how
+// Pony was trained), so prepend rather than append. Avoid duplicating.
+function _sdxlAddPonyTag(tag){
+    const p = $('sdxlPrompt'); if (!p || !tag) return;
+    const cur = p.value.trim();
+    if (cur.indexOf(tag) >= 0) return;   // already present
+    p.value = cur ? (tag + ', ' + cur) : tag;
+}
+function _sdxlAddPonyNeg(tag){
+    const n = $('sdxlNeg'); if (!n || !tag) return;
+    const cur = n.value.trim();
+    if (cur.indexOf(tag) >= 0) return;
+    n.value = cur ? (cur.replace(/\s*$/,'') + ', ' + tag) : tag;
+}
+// Show the Pony tag row only when the active base model is Pony-family. We
+// detect this from the base name / selected checkpoint label, plus the default
+// (which IS Pony Realism). Called on init, base change, and tab entry.
+function _sdxlUpdatePonyTagsVisibility(){
+    const row = $('sdxlPonyTags'); if (!row) return;
+    const nameEl = $('sdxlBaseName');
+    const label = (nameEl ? nameEl.textContent : '') || '';
+    // Default (no custom checkpoint selected) is Pony Realism → show.
+    const usingDefault = !(_sdxlSelectedBaseUrl);
+    const looksPony = /pony/i.test(label);
+    row.style.display = (usingDefault || looksPony) ? '' : 'none';
+}
+// Detail/config popup for a LoRA already in the stack — mirrors the Colab's
+// detail view: thumbnail, civitai link, trigger chips (click to add), a live
+// weight slider, and sample generations. Lets the user tune the LoRA's config.
+async function _sdxlOpenLoraDetail(i){
+    const l = _sdxlLoras[i]; if (!l) return;
+    let modal = $('sdxlLoraDetailModal');
+    if (!modal){
+        modal = document.createElement('div');
+        modal.id = 'sdxlLoraDetailModal';
+        modal.className = 'sdxl-search-modal';
+        modal.style.display = 'none';
+        modal.onclick = (e)=>{ if (e.target === modal) modal.style.display='none'; };
+        document.body.appendChild(modal);
+    }
+    const nm = (l.name || l.url).replace(/</g,'&lt;');
+    modal.innerHTML = `<div class="sdxl-search-box" style="max-width:880px">
+        <div class="sdxl-search-head">
+          <span>LoRA details</span>
+          <button class="sdxl-search-close" onclick="$('sdxlLoraDetailModal').style.display='none'">✕</button>
+        </div>
+        <div style="flex:1;overflow:auto;padding:20px" id="sdxlLoraDetailBody">
+          <div class="hintline">Loading details…</div>
+        </div>
+      </div>`;
+    modal.style.display = 'flex';
+    const body = $('sdxlLoraDetailBody');
+    // Resolve a civitai id from the stored version_id or the url.
+    const vid = l.version_id || ((l.url.match(/\/models\/(\d+)/)||[])[1]) || '';
+    let info = { name: l.name, base_model: l.base_model, triggers: l.triggers, thumb: l.thumb };
+    try {
+        if (vid){
+            const r = await fetchT(`${API}/api/sdxl-studio/civitai/detail`,
+                { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+                  body: JSON.stringify({ version_id: String(vid) }) }, 20000);
+            const d = await r.json();
+            if (d.ok && d.info) info = Object.assign(info, d.info);
+        }
+    } catch {}
+    const triggers = info.triggers || l.triggers || [];
+    const scale = (l.scale != null ? l.scale : 1.0);
+    const civUrl = info.civitai_url || (vid ? `https://civitai.com/models?modelVersionId=${vid}` : '');
+    const thumb = info.thumb || l.thumb || '';
+    const versions = info.versions || [];
+    // Version picker — Civitai pages bundle many versions under one model; let
+    // the user choose which to load (each has its own id/base/size/triggers).
+    let versionHtml = '';
+    if (versions.length > 1){
+        versionHtml = `
+          <div class="lbd-section" style="margin-top:18px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase">Version</div>
+          <select id="sdxlDetailVersion" class="lora-url" style="width:100%;margin-top:8px" onchange="_sdxlDetailPickVersion(${i})">
+            ${versions.map(v => {
+                const sel = String(v.version_id) === String(vid) ? ' selected' : '';
+                const mb = v.file_mb ? ` · ${v.file_mb} MB` : '';
+                const bm = v.base_model ? ` [${(v.base_model||'').replace(/</g,'&lt;')}]` : '';
+                return `<option value="${v.version_id}"${sel}>${(v.version_name||('v'+v.version_id)).replace(/</g,'&lt;')}${bm}${mb}</option>`;
+            }).join('')}
+          </select>`;
+    }
+    body.innerHTML = `
+      <div style="display:flex;gap:16px;align-items:flex-start">
+        ${thumb ? `<img src="${thumb}" style="width:160px;height:160px;object-fit:cover;border-radius:10px;border:1px solid var(--border)" onerror="this.style.display='none'">` : ''}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:16px;color:var(--text);font-weight:700">${nm}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${info.base_model||''} ${info.file_mb?('· '+info.file_mb+' MB'):''}${info.downloads?(' · '+info.downloads+' downloads'):''}</div>
+          ${civUrl?`<div style="margin-top:8px"><a href="${civUrl}" target="_blank" rel="noopener" style="color:var(--gold);font-size:11px;font-family:var(--font-mono)">view on civitai.com ↗</a></div>`:''}
+        </div>
+      </div>
+      ${versionHtml}
+      <div class="lbd-section" style="margin-top:18px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase">Strength</div>
+      <div class="slider-row" style="margin-top:8px">
+        <input type="range" min="0" max="2" step="0.05" value="${scale}"
+               oninput="_sdxlDetailWeight(${i}, this.value)">
+        <input class="sv" id="sdxlDetailWval" value="${(+scale).toFixed(2)}"
+               onchange="_sdxlDetailWeight(${i}, this.value, true)">
+      </div>
+      <div class="lbd-section" id="sdxlDetailTrigSec" style="margin-top:18px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase">
+        Trigger words ${triggers.length?'<span style="font-weight:400;text-transform:none;color:var(--text-muted)">(click to add to prompt)</span>':''}</div>
+      <div id="sdxlDetailTrigs">${triggers.length
+        ? `<div class="lora-trigs" style="margin-top:8px">${triggers.map(t=>`<button class="trigchip" onclick="_sdxlAddTrigger('${(t||'').replace(/'/g,'')}')">+ ${(t||'').replace(/</g,'&lt;')}</button>`).join('')}</div>`
+        : `<div class="hintline" style="margin-top:6px;color:var(--text-muted);font-size:10px">No trigger words listed — this LoRA likely activates without a keyword.</div>`}</div>
+      ${info.description?`<div class="lbd-section" style="margin-top:18px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase">Description</div><div style="font-size:12px;color:var(--text-dim);margin-top:6px;line-height:1.5;max-height:140px;overflow:auto">${(info.description||'').replace(/</g,'&lt;')}</div>`:''}
+      <div class="lbd-section" style="margin-top:18px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--text-muted);text-transform:uppercase">Sample generations</div>
+      <div id="sdxlDetailSamples" class="sdxl-samp-grid"><div class="hintline" style="color:var(--text-muted);font-size:10px">Loading samples…</div></div>
+    `;
+    // Load the sample gallery for the active version.
+    _sdxlLoadSamples(info.model_id || '', vid);
+}
+// Re-fetch detail when the user picks a different version, and update the
+// stack item's url/version/triggers so generation uses the chosen version.
+async function _sdxlDetailPickVersion(i){
+    const sel = $('sdxlDetailVersion'); if (!sel) return;
+    const newVid = sel.value;
+    const l = _sdxlLoras[i]; if (!l) return;
+    l.version_id = newVid;
+    l.url = `https://civitai.com/api/download/models/${newVid}`;
+    try {
+        const r = await fetchT(`${API}/api/sdxl-studio/civitai/detail`,
+            { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+              body: JSON.stringify({ version_id: String(newVid) }) }, 20000);
+        const d = await r.json();
+        if (d.ok && d.info){
+            l.triggers = d.info.triggers || l.triggers;
+            l.base_model = d.info.base_model || l.base_model;
+            // refresh the trigger chips + samples for the new version
+            const ts = $('sdxlDetailTrigs');
+            if (ts){
+                const tg = l.triggers || [];
+                ts.innerHTML = tg.length
+                    ? `<div class="lora-trigs" style="margin-top:8px">${tg.map(t=>`<button class="trigchip" onclick="_sdxlAddTrigger('${(t||'').replace(/'/g,'')}')">+ ${(t||'').replace(/</g,'&lt;')}</button>`).join('')}</div>`
+                    : `<div class="hintline" style="margin-top:6px;color:var(--text-muted);font-size:10px">No trigger words listed.</div>`;
+            }
+            _sdxlLoadSamples(d.info.model_id || '', newVid);
+        }
+    } catch {}
+    _sdxlRenderLoraList();
+    _sdxlSaveState();
+}
+// Fetch + render a model's community sample generations, each with its prompt
+// and a "use this prompt & settings" action (mirrors the Colab gallery).
+async function _sdxlLoadSamples(modelId, versionId){
+    const box = $('sdxlDetailSamples'); if (!box) return;
+    try {
+        const r = await fetchT(`${API}/api/sdxl-studio/civitai/samples`,
+            { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+              body: JSON.stringify({ model_id: modelId || undefined, version_id: versionId || undefined,
+                                     nsfw: !!($('sdxlSearchNsfw') && $('sdxlSearchNsfw').checked) }) }, 20000);
+        const d = await r.json();
+        if (!d.ok || !(d.samples||[]).length){ box.innerHTML = '<div class="hintline" style="color:var(--text-muted);font-size:10px">No samples available.</div>'; return; }
+        window._sdxlSampleMeta = {};
+        box.innerHTML = d.samples.map((s, k) => {
+            const meta = s.meta || {};
+            window._sdxlSampleMeta[k] = meta;
+            const prompt = (meta.prompt || '').replace(/</g,'&lt;').slice(0, 220);
+            return `<div class="sdxl-samp">
+                <img loading="lazy" src="${s.url}" onerror="this.style.opacity=.2">
+                <div class="sdxl-samp-body">
+                  <div class="sdxl-samp-prompt">${prompt || '<span style=\"color:var(--text-muted)\">no prompt</span>'}</div>
+                  <button class="gen-btn gen-btn-secondary" style="width:100%;margin-top:6px;padding:5px;font-size:10px" onclick="_sdxlUseSample(${k})">use this prompt &amp; settings</button>
+                </div>
+              </div>`;
+        }).join('');
+    } catch { box.innerHTML = '<div class="hintline" style="color:var(--text-muted);font-size:10px">Could not load samples.</div>'; }
+}
+// Apply a sample's prompt + settings into the SDXL controls.
+function _sdxlUseSample(k){
+    const meta = (window._sdxlSampleMeta || {})[k]; if (!meta) return;
+    if (meta.prompt && $('sdxlPrompt')) $('sdxlPrompt').value = meta.prompt;
+    if (meta.negativePrompt && $('sdxlNeg')) $('sdxlNeg').value = meta.negativePrompt;
+    if (meta.steps && $('sdxlSteps')){ const v=Math.max(1,Math.min(60,parseInt(meta.steps)||30)); $('sdxlSteps').value=v; if($('sdxlStepsV'))$('sdxlStepsV').value=v; }
+    if (meta.cfgScale && $('sdxlCfg')){ const v=Math.max(0,Math.min(15,parseFloat(meta.cfgScale)||7)); $('sdxlCfg').value=v; if($('sdxlCfgV'))$('sdxlCfgV').value=(+v).toFixed(1); }
+    if (meta.seed && $('sdxlSeed')) $('sdxlSeed').value = meta.seed;
+    showNotif('Applied sample prompt & settings.', 'success');
+    $('sdxlLoraDetailModal').style.display = 'none';
+}
+// Weight change from the detail popup — keeps card + popup + state in sync.
+function _sdxlDetailWeight(i, v, fromNumber){
+    const val = Math.max(0, Math.min(2, parseFloat(v) || 0));
+    if (_sdxlLoras[i]) _sdxlLoras[i].scale = val;
+    const wv = $('sdxlDetailWval'); if (wv && !fromNumber) wv.value = val.toFixed(2);
+    _sdxlRenderLoraList();   // reflect on the sidebar card
+    _sdxlSaveState();
 }
 // Update a single LoRA card's live status in place (driven by the per-job
 // download-progress ping). pct 0–99 => "loading… NN%"; pct >= 100 => "✓ loaded".
@@ -20127,13 +20358,15 @@ function _sdxlAddLoraObj(o){
     if (!o || !o.url) return;
     if (_sdxlLoras.some(l => l.url === o.url)){ showNotif('That LoRA is already added.', 'info'); return; }
     if (_sdxlLoras.length >= 6){ showNotif('Up to 6 LoRAs.', 'error'); return; }
-    _sdxlLoras.push({ url:o.url, name:o.name||'', scale: (o.scale!=null?o.scale:1.0), base_model:o.base_model||'', triggers:o.triggers||[] });
+    _sdxlLoras.push({
+        url:o.url, name:o.name||'', scale: (o.scale!=null?o.scale:1.0),
+        base_model:o.base_model||'', triggers:o.triggers||[],
+        thumb:o.thumb||'', version_id:o.version_id||''
+    });
     _sdxlRenderLoraList();
-    if (o.triggers && o.triggers.length && $('sdxlPrompt')){
-        const trig = o.triggers.join(', ');
-        const cur = $('sdxlPrompt').value;
-        if (cur.indexOf(trig) < 0) $('sdxlPrompt').value = (cur ? cur.replace(/\s*$/, ', ') : '') + trig;
-    }
+    // NOTE: trigger words are NOT auto-appended to the prompt. They're shown as
+    // clickable chips on the card (and in the detail view) so the user adds them
+    // deliberately — matching the Colab, which never auto-inserts triggers.
     _sdxlSaveState();
 }
 // Add from the manual URL + name + scale fields.
@@ -20266,6 +20499,7 @@ function _sdxlInit(){
     // Restore the user's last LoRA stack + checkpoint selection from a prior
     // session so a refresh lands them right back where they were.
     try { _sdxlRestoreState(); } catch {}
+    try { _sdxlUpdatePonyTagsVisibility(); } catch {}
 }
 
 // ── Civitai search (LoRA + checkpoint) ──
@@ -20346,6 +20580,10 @@ async function sdxlRunSearch(reset){
         catch { $('sdxlSearchStatus').textContent = 'Search returned a bad response.'; _sdxlSearchLoading = false; return; }
         if (!d.ok){ $('sdxlSearchStatus').textContent = d.error || 'Search failed.'; _sdxlSearchLoading = false; return; }
         const grid = $('sdxlSearchGrid');
+        // Keep the full item objects so picking a card has the thumb, name,
+        // version_id, etc. (the inline onclick can only carry strings).
+        if (!window._sdxlResultMap) window._sdxlResultMap = {};
+        (d.items||[]).forEach(it => { if (it && it.download_url) window._sdxlResultMap[it.download_url] = it; });
         grid.insertAdjacentHTML('beforeend', (d.items||[]).map(_sdxlResultHtml).join(''));
         _sdxlSearchCursor = d.next_cursor;
         _sdxlSearchDone = !d.next_cursor;
@@ -20401,8 +20639,18 @@ function _sdxlResultHtml(it){
 }
 
 function sdxlPickLora(url, triggers){
-    _sdxlAddLoraObj({ url, triggers: (triggers ? triggers.split(', ').filter(Boolean) : []) });
-    showNotif('LoRA added' + (triggers ? ' (trigger words appended to prompt)' : ''), 'success');
+    // Pull the full item (thumb, name, version_id, base_model) from the result
+    // map; fall back to just the url + triggers if it isn't there.
+    const it = (window._sdxlResultMap && window._sdxlResultMap[url]) || {};
+    _sdxlAddLoraObj({
+        url,
+        name: it.name || '',
+        base_model: it.base_model || '',
+        thumb: it.thumb || '',
+        version_id: it.version_id || '',
+        triggers: it.triggers || (triggers ? triggers.split(', ').filter(Boolean) : []),
+    });
+    showNotif('LoRA added.', 'success');
     _sdxlRefreshAppliedStates();   // gray out the card we just added, in place
 }
 // Re-evaluate the applied/grayed state of every visible search card without
@@ -20432,6 +20680,7 @@ function sdxlPickCheckpoint(url, name){
     $('sdxlBaseReset').style.display = '';
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = name || 'custom';
     _sdxlSaveState();
+    if (typeof _sdxlUpdatePonyTagsVisibility==='function') _sdxlUpdatePonyTagsVisibility();
     sdxlCloseSearch();
     // Spin up the T4 now (if the user is logged in and has tokens to generate),
     // so the container is booting while they set up the prompt. The checkpoint
@@ -20549,6 +20798,7 @@ function sdxlResetBase(){
     $('sdxlBaseReset').style.display = 'none';
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Pony Realism v2.2';
     _sdxlSaveState();
+    if (typeof _sdxlUpdatePonyTagsVisibility==='function') _sdxlUpdatePonyTagsVisibility();
 }
 
 // VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
