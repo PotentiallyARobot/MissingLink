@@ -3048,11 +3048,16 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-lora-card .trigchip{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:3px 7px;font-size:9px;font-family:var(--font-mono);cursor:pointer}
 .sdxl-lora-card .trigchip:hover{border-color:var(--gold);color:var(--gold)}
 /* Pony quality-tag row under the prompt */
-.sdxl-pony-tags{margin-top:8px;padding:9px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(212,160,23,.04)}
-.sdxl-pony-label{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--gold)}
-.sdxl-pony-label span{font-weight:400;text-transform:none;color:var(--text-muted);letter-spacing:0}
-.sdxl-pony-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.trigchip.pony{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:4px 9px;font-size:9px;font-family:var(--font-mono);cursor:pointer}
+.sdxl-pony-tags{margin-top:6px;padding:6px 8px;border:1px dashed var(--border);border-radius:7px;background:rgba(212,160,23,.04)}
+/* Collapsible section header (BASE MODEL) */
+.sdxl-collapse-head{display:flex;align-items:center;gap:6px}
+.sdxl-collapse-head .sdxl-basename{flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.sdxl-collapse-head .sdxl-collapse-chev{color:var(--text-muted);font-size:10px;flex:0 0 auto}
+.sdxl-collapse-head:hover .sdxl-collapse-chev{color:var(--gold)}
+.sdxl-pony-label{font-family:var(--font-mono);font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sdxl-pony-label span{display:none}
+.sdxl-pony-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.trigchip.pony{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:4px;padding:3px 7px;font-size:8px;font-family:var(--font-mono);cursor:pointer;line-height:1.2}
 .trigchip.pony:hover{border-color:var(--gold);color:var(--gold)}
 /* Detail popup sample gallery */
 .sdxl-samp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-top:10px}
@@ -3060,6 +3065,9 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-samp img{width:100%;aspect-ratio:1/1;object-fit:cover;background:var(--surface-3);display:block}
 .sdxl-samp-body{padding:8px 9px}
 .sdxl-samp-prompt{font-family:var(--font-mono);font-size:9px;color:var(--text-dim);line-height:1.45;max-height:64px;overflow:hidden}
+/* Detail popup body — scrolls but hides the bar (matches the search grid) */
+.sdxl-detail-body{flex:1;overflow:auto;padding:20px;scrollbar-width:none;-ms-overflow-style:none}
+.sdxl-detail-body::-webkit-scrollbar{display:none}
 .sdxl-only .lora-row{display:flex;gap:6px}
 .sdxl-only .lock-row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-muted);cursor:pointer;margin-top:8px}
 .sdxl-only .lock-row input[type="checkbox"]{width:auto;flex:0 0 auto}
@@ -4529,13 +4537,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="token-badge" id="tokenBadge" onclick="showBuyModal()" title="Click to buy more tokens">
                 <span>🪙</span><span id="tokenCount">0</span>
             </div>
-            <!-- Activity bell — shows incoming tips/remixes. The badge
-                 count comes from /api/studio/notifications (polled). The
-                 dropdown is built lazily into #notifDropdown by JS. -->
-            <button class="notif-bell" id="notifBell" onclick="toggleNotifPanel(event)" title="Activity" aria-haspopup="true" aria-expanded="false">
-                <span class="notif-bell-icon" aria-hidden="true">🔔</span>
-                <span class="notif-bell-badge" id="notifBellBadge" style="display:none">0</span>
-            </button>
         </div>
         <!-- Community Gallery button — opens the public gallery modal where
              anyone (logged in or not) can browse images other users have
@@ -4688,20 +4689,12 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec sdxl-only" id="sdxlSecPrompt" style="display:none">
       <div class="sec-label"><span class="icon">&#10022;</span> Prompt</div>
       <textarea class="ta" id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
-      <!-- Pony quality-tag chips — shown only when a Pony-family checkpoint is
-           active. Pony Diffusion V6 (and Pony Realism) were trained with a
-           score/rating/source tag system; without it output is much worse.
-           These are click-to-add — never auto-inserted into the prompt. -->
-      <div id="sdxlPonyTags" class="sdxl-pony-tags" style="display:none">
-        <div class="sdxl-pony-label">Pony quality tags <span>(click to add — recommended for Pony models)</span></div>
-        <div class="sdxl-pony-chips">
-          <button class="trigchip pony" onclick="_sdxlAddPonyTag('score_9, score_8_up, score_7_up')" title="The standard Pony quality prefix">score_9, score_8_up, score_7_up</button>
-          <button class="trigchip pony" onclick="_sdxlAddPonyTag('source_realistic')">source_realistic</button>
-          <button class="trigchip pony" onclick="_sdxlAddPonyTag('source_anime')">source_anime</button>
-          <button class="trigchip pony" onclick="_sdxlAddPonyTag('rating_safe')">rating_safe</button>
-          <button class="trigchip pony" onclick="_sdxlAddPonyTag('rating_explicit')">rating_explicit</button>
-          <button class="trigchip pony" onclick="_sdxlAddPonyNeg('score_6, score_5, score_4, low quality, worst quality')" title="Add to the negative prompt">+ neg: low scores</button>
-        </div>
+      <!-- Quality-tag chips — populated per checkpoint family (Pony, Illustrious,
+           NoobAI, Animagine…). Shown only when the active base matches a family
+           that uses special tags; click-to-add, never auto-inserted. -->
+      <div id="sdxlQualityTags" class="sdxl-pony-tags" style="display:none">
+        <div class="sdxl-pony-label" id="sdxlQualityLabel"></div>
+        <div class="sdxl-pony-chips" id="sdxlQualityChips"></div>
       </div>
       <div class="sec-label" style="margin:12px 0 8px"><span class="icon">&#8856;</span> Negative</div>
       <textarea class="ta neg" id="sdxlNeg" rows="2" placeholder="What to avoid (optional)"></textarea>
@@ -4799,26 +4792,30 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <!-- BASE MODEL -->
     <div class="sec sdxl-only" id="sdxlSecBase" style="display:none">
-      <div class="sec-label"><span class="icon">&#9636;</span> Base model
-        <span class="sdxl-basename" id="sdxlBaseName" style="float:right;font-weight:400;color:var(--text-muted)">Pony Realism v2.2</span>
+      <div class="sec-label sdxl-collapse-head" onclick="_sdxlToggleBase()" style="cursor:pointer">
+        <span class="icon">&#9636;</span> Base model
+        <span class="sdxl-basename" id="sdxlBaseName" style="font-weight:400;color:var(--text-muted)">Pony Realism v2.2</span>
+        <span class="sdxl-collapse-chev" id="sdxlBaseChev">&#9656;</span>
       </div>
-      <button class="gen-btn gen-btn-secondary" style="width:100%;margin-bottom:8px" onclick="sdxlOpenSearch('Checkpoint')">&#128269; Browse Civitai checkpoints</button>
-      <div class="lora-row" style="display:flex;gap:6px">
-        <input type="text" class="lora-url" id="sdxlBaseUrl" placeholder="Civitai download URL or HF repo" style="flex:1">
-        <input type="text" class="lora-url" id="sdxlBaseDisplayName" placeholder="display name" style="flex:0 0 38%">
+      <div id="sdxlBaseBody" style="display:none">
+        <button class="gen-btn gen-btn-secondary" style="width:100%;margin:8px 0" onclick="sdxlOpenSearch('Checkpoint')">&#128269; Browse Civitai checkpoints</button>
+        <div class="lora-row" style="display:flex;gap:6px">
+          <input type="text" class="lora-url" id="sdxlBaseUrl" placeholder="Civitai download URL or HF repo" style="flex:1">
+          <input type="text" class="lora-url" id="sdxlBaseDisplayName" placeholder="display name" style="flex:0 0 38%">
+        </div>
+        <button class="gen-btn" id="sdxlLoadModelBtn" style="width:100%;margin-top:8px" onclick="sdxlLoadModelFromFields()">&#8635; Load model</button>
+        <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:100%;margin-top:6px;display:none" onclick="sdxlResetBase()">Reset to default</button>
+        <!-- VAE selector — mirrors the Colab: checkpoint's own / fp16-fix / custom -->
+        <div class="lora-row" id="sdxlVaeRow" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <span class="sl" style="min-width:34px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);text-transform:uppercase">VAE</span>
+          <select id="sdxlVaeSelect" class="lora-url" style="flex:1" onchange="sdxlOnVaeChange()">
+            <option value="own">Checkpoint's own VAE</option>
+            <option value="fix">Safe fp16-fix VAE (fixes smear/black)</option>
+            <option value="custom">Custom VAE URL…</option>
+          </select>
+        </div>
+        <input type="text" class="lora-url" id="sdxlVaeUrl" placeholder="VAE .safetensors URL" style="width:100%;margin-top:6px;display:none">
       </div>
-      <button class="gen-btn" id="sdxlLoadModelBtn" style="width:100%;margin-top:8px" onclick="sdxlLoadModelFromFields()">&#8635; Load model</button>
-      <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:100%;margin-top:6px;display:none" onclick="sdxlResetBase()">Reset to default</button>
-      <!-- VAE selector — mirrors the Colab: checkpoint's own / fp16-fix / custom -->
-      <div class="lora-row" id="sdxlVaeRow" style="display:flex;align-items:center;gap:8px;margin-top:10px">
-        <span class="sl" style="min-width:34px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);text-transform:uppercase">VAE</span>
-        <select id="sdxlVaeSelect" class="lora-url" style="flex:1" onchange="sdxlOnVaeChange()">
-          <option value="own">Checkpoint's own VAE</option>
-          <option value="fix">Safe fp16-fix VAE (fixes smear/black)</option>
-          <option value="custom">Custom VAE URL…</option>
-        </select>
-      </div>
-      <input type="text" class="lora-url" id="sdxlVaeUrl" placeholder="VAE .safetensors URL" style="width:100%;margin-top:6px;display:none">
     </div>
 
     <!-- LoRAs -->
@@ -11955,6 +11952,26 @@ document.addEventListener('keydown',e=>{
 // ── Use output as input ───────────────────────────
 async function useAsInput(){
     if(!lastOutputFilename) return;
+    // SDXL tab: assign the output as the SDXL img2img/inpaint source. Switch to
+    // img2img if currently on txt2img so the source section is visible/used.
+    if (window._stageView === 'sdxl') {
+        try {
+            const r = await fetchT($('outImg').src, null, 10000);
+            const blob = await r.blob();
+            const dataUrl = await new Promise((res, rej) => {
+                const fr = new FileReader();
+                fr.onload = () => res(fr.result);
+                fr.onerror = rej;
+                fr.readAsDataURL(blob);
+            });
+            if (typeof _sdxlMode !== 'undefined' && _sdxlMode === 'txt2img' && typeof sdxlSetMode === 'function') {
+                sdxlSetMode('img2img');
+            }
+            _sdxlSetSource(dataUrl);
+            showNotif('Set as SDXL source image.', 'success');
+        } catch(e){ showNotif('Failed to set source. Please try again.', 'error'); }
+        return;
+    }
     try{
         // Create mode shortcut: the image is already in R2 (it's either
         // a fresh generation or a restored history tile). Pass the tile
@@ -20136,31 +20153,107 @@ function _sdxlAddTrigger(t){
     const p = $('sdxlPrompt'); if (!p || !t) return;
     p.value = p.value.trim() ? (p.value.replace(/\s*$/,'') + ', ' + t) : t;
 }
-// Pony quality tags. Score tags belong at the FRONT of the prompt (that's how
-// Pony was trained), so prepend rather than append. Avoid duplicating.
-function _sdxlAddPonyTag(tag){
-    const p = $('sdxlPrompt'); if (!p || !tag) return;
+// Collapse/expand the BASE MODEL section (starts collapsed — the active model
+// name is always visible in the header, so the controls only show on demand).
+function _sdxlToggleBase(){
+    const body = $('sdxlBaseBody'), chev = $('sdxlBaseChev');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    if (chev) chev.innerHTML = open ? '&#9656;' : '&#9662;';   // ▸ / ▾
+}
+// ── Per-family quality tags ──────────────────────────────────────────────
+// Each SDXL checkpoint family was trained with its own quality/aesthetic tag
+// convention; using the wrong ones (or none) gives worse output. We detect the
+// active family from the base-model name and show only its tags. Tags are
+// click-to-add — never auto-inserted. `pos:'front'` prepends (Pony score tags
+// belong at the start); otherwise we append. `neg:true` adds to the negative.
+const _SDXL_FAMILY_TAGS = {
+    pony: {
+        label: 'Pony quality tags',
+        match: /pony/i,
+        chips: [
+            { t: 'score_9, score_8_up, score_7_up', pos: 'front', title: 'Standard Pony quality prefix' },
+            { t: 'source_realistic' }, { t: 'source_anime' }, { t: 'source_cartoon' },
+            { t: 'rating_safe' }, { t: 'rating_questionable' }, { t: 'rating_explicit' },
+            { t: 'score_6, score_5, score_4, low quality, worst quality', neg: true, label: '+ neg: low scores' },
+        ],
+    },
+    illustrious: {
+        label: 'Illustrious quality tags',
+        match: /illustrious|illust(?![a-z])/i,
+        chips: [
+            { t: 'masterpiece, best quality, amazing quality', pos: 'front' },
+            { t: 'very aesthetic' }, { t: 'absurdres' }, { t: 'newest' },
+            { t: 'worst quality, low quality, lowres, bad anatomy', neg: true, label: '+ neg: low quality' },
+        ],
+    },
+    noobai: {
+        label: 'NoobAI quality tags',
+        match: /noob ?ai|noob[-_ ]?xl/i,
+        chips: [
+            { t: 'masterpiece, best quality, newest', pos: 'front' },
+            { t: 'very aesthetic' }, { t: 'absurdres' },
+            { t: 'rating_safe' }, { t: 'rating_explicit' },
+            { t: 'worst quality, old, early, low quality', neg: true, label: '+ neg: low quality' },
+        ],
+    },
+    animagine: {
+        label: 'Animagine quality tags',
+        match: /animagine/i,
+        chips: [
+            { t: 'masterpiece, best quality, very aesthetic, absurdres', pos: 'front' },
+            { t: 'newest' },
+            { t: 'lowres, bad anatomy, worst quality, low quality', neg: true, label: '+ neg: low quality' },
+        ],
+    },
+};
+// Add a quality tag: prepend to the prompt (front), append to the prompt, or
+// append to the negative. Dedupes so repeated clicks don't stack.
+function _sdxlAddQualityTag(tag, where){
+    if (!tag) return;
+    if (where === 'neg'){
+        const n = $('sdxlNeg'); if (!n) return;
+        const cur = n.value.trim();
+        if (cur.indexOf(tag) >= 0) return;
+        n.value = cur ? (cur.replace(/\s*$/,'') + ', ' + tag) : tag;
+        return;
+    }
+    const p = $('sdxlPrompt'); if (!p) return;
     const cur = p.value.trim();
-    if (cur.indexOf(tag) >= 0) return;   // already present
-    p.value = cur ? (tag + ', ' + cur) : tag;
-}
-function _sdxlAddPonyNeg(tag){
-    const n = $('sdxlNeg'); if (!n || !tag) return;
-    const cur = n.value.trim();
     if (cur.indexOf(tag) >= 0) return;
-    n.value = cur ? (cur.replace(/\s*$/,'') + ', ' + tag) : tag;
+    p.value = (where === 'front')
+        ? (cur ? (tag + ', ' + cur) : tag)
+        : (cur ? (cur.replace(/\s*$/,'') + ', ' + tag) : tag);
 }
-// Show the Pony tag row only when the active base model is Pony-family. We
-// detect this from the base name / selected checkpoint label, plus the default
-// (which IS Pony Realism). Called on init, base change, and tab entry.
-function _sdxlUpdatePonyTagsVisibility(){
-    const row = $('sdxlPonyTags'); if (!row) return;
+// Detect the active checkpoint family from its display name (the default is
+// Pony Realism). Returns a family key or null.
+function _sdxlActiveFamily(){
     const nameEl = $('sdxlBaseName');
     const label = (nameEl ? nameEl.textContent : '') || '';
-    // Default (no custom checkpoint selected) is Pony Realism → show.
-    const usingDefault = !(_sdxlSelectedBaseUrl);
-    const looksPony = /pony/i.test(label);
-    row.style.display = (usingDefault || looksPony) ? '' : 'none';
+    // No custom checkpoint selected → the baked default is Pony Realism.
+    if (!_sdxlSelectedBaseUrl) return 'pony';
+    for (const key in _SDXL_FAMILY_TAGS){
+        if (_SDXL_FAMILY_TAGS[key].match.test(label)) return key;
+    }
+    return null;
+}
+// Render the quality-tag row for the active family (or hide it if none match).
+function _sdxlUpdateQualityTags(){
+    const row = $('sdxlQualityTags'); if (!row) return;
+    const fam = _sdxlActiveFamily();
+    if (!fam || !_SDXL_FAMILY_TAGS[fam]){ row.style.display = 'none'; return; }
+    const cfg = _SDXL_FAMILY_TAGS[fam];
+    $('sdxlQualityLabel').textContent = cfg.label;
+    row.title = 'Click a tag to add it — recommended for this model family';
+    $('sdxlQualityChips').innerHTML = cfg.chips.map(c => {
+        const where = c.neg ? 'neg' : (c.pos === 'front' ? 'front' : 'end');
+        const lbl = (c.label || c.t).replace(/</g,'&lt;');
+        const esc = c.t.replace(/'/g, "\\'");
+        const title = c.title ? ` title="${c.title.replace(/"/g,'&quot;')}"` : '';
+        return `<button class="trigchip pony"${title} onclick="_sdxlAddQualityTag('${esc}','${where}')">${lbl}</button>`;
+    }).join('');
+    row.style.display = '';
 }
 // Detail/config popup for a LoRA already in the stack — mirrors the Colab's
 // detail view: thumbnail, civitai link, trigger chips (click to add), a live
@@ -20182,7 +20275,7 @@ async function _sdxlOpenLoraDetail(i){
           <span>LoRA details</span>
           <button class="sdxl-search-close" onclick="$('sdxlLoraDetailModal').style.display='none'">✕</button>
         </div>
-        <div style="flex:1;overflow:auto;padding:20px" id="sdxlLoraDetailBody">
+        <div class="sdxl-detail-body" id="sdxlLoraDetailBody">
           <div class="hintline">Loading details…</div>
         </div>
       </div>`;
@@ -20308,11 +20401,42 @@ async function _sdxlLoadSamples(modelId, versionId){
 // Apply a sample's prompt + settings into the SDXL controls.
 function _sdxlUseSample(k){
     const meta = (window._sdxlSampleMeta || {})[k]; if (!meta) return;
-    if (meta.prompt && $('sdxlPrompt')) $('sdxlPrompt').value = meta.prompt;
-    if (meta.negativePrompt && $('sdxlNeg')) $('sdxlNeg').value = meta.negativePrompt;
-    if (meta.steps && $('sdxlSteps')){ const v=Math.max(1,Math.min(60,parseInt(meta.steps)||30)); $('sdxlSteps').value=v; if($('sdxlStepsV'))$('sdxlStepsV').value=v; }
-    if (meta.cfgScale && $('sdxlCfg')){ const v=Math.max(0,Math.min(15,parseFloat(meta.cfgScale)||7)); $('sdxlCfg').value=v; if($('sdxlCfgV'))$('sdxlCfgV').value=(+v).toFixed(1); }
-    if (meta.seed && $('sdxlSeed')) $('sdxlSeed').value = meta.seed;
+    // Civitai's meta keys are inconsistent across uploads (e.g. "Steps" vs
+    // "steps", "CFG scale" vs "cfgScale", "Sampler", "Size"). Look up by any
+    // known variant so we reliably populate every control.
+    const pick = (...keys) => { for (const kk of keys){ if (meta[kk] !== undefined && meta[kk] !== null && meta[kk] !== '') return meta[kk]; } return undefined; };
+
+    const pos = pick('prompt', 'Prompt');
+    const neg = pick('negativePrompt', 'negative_prompt', 'Negative prompt', 'NegativePrompt');
+    const steps = pick('steps', 'Steps');
+    const cfg = pick('cfgScale', 'cfg_scale', 'CFG scale', 'CFGScale', 'cfg');
+    const seed = pick('seed', 'Seed');
+    const sampler = pick('sampler', 'Sampler');
+    const size = pick('Size', 'size');   // "832x1216"
+
+    if (pos !== undefined && $('sdxlPrompt')) $('sdxlPrompt').value = String(pos);
+    if (neg !== undefined && $('sdxlNeg')) $('sdxlNeg').value = String(neg);
+    if (steps !== undefined && $('sdxlSteps')){ const v=Math.max(1,Math.min(60,parseInt(steps)||30)); $('sdxlSteps').value=v; if($('sdxlStepsV'))$('sdxlStepsV').value=v; }
+    if (cfg !== undefined && $('sdxlCfg')){ const v=Math.max(0,Math.min(15,parseFloat(cfg)||7)); $('sdxlCfg').value=v; if($('sdxlCfgV'))$('sdxlCfgV').value=(+v).toFixed(1); }
+    if (seed !== undefined && $('sdxlSeed')) $('sdxlSeed').value = String(seed);
+    // Sampler: select the matching <option> if present (case-insensitive,
+    // tolerant of extra qualifiers like "DPM++ 2M Karras").
+    if (sampler !== undefined && $('sdxlSampler')){
+        const sel = $('sdxlSampler'); const want = String(sampler).toLowerCase();
+        for (const opt of sel.options){
+            const ov = opt.value.toLowerCase(), ot = opt.textContent.toLowerCase();
+            if (ov === want || ot === want || ot.indexOf(want) >= 0 || want.indexOf(ot) >= 0){ sel.value = opt.value; break; }
+        }
+    }
+    // Size: "WxH" → set width/height sliders + their number boxes (clamped/snapped).
+    if (size !== undefined && /^\d+\s*x\s*\d+$/i.test(String(size))){
+        const m = String(size).toLowerCase().split('x').map(s => parseInt(s.trim()));
+        if (m.length === 2 && $('sdxlW') && $('sdxlH')){
+            const w = _sdxlSnapDim(m[0]), h = _sdxlSnapDim(m[1]);
+            $('sdxlW').value = w; if ($('sdxlWV')) $('sdxlWV').value = w;
+            $('sdxlH').value = h; if ($('sdxlHV')) $('sdxlHV').value = h;
+        }
+    }
     showNotif('Applied sample prompt & settings.', 'success');
     $('sdxlLoraDetailModal').style.display = 'none';
 }
@@ -20499,7 +20623,7 @@ function _sdxlInit(){
     // Restore the user's last LoRA stack + checkpoint selection from a prior
     // session so a refresh lands them right back where they were.
     try { _sdxlRestoreState(); } catch {}
-    try { _sdxlUpdatePonyTagsVisibility(); } catch {}
+    try { _sdxlUpdateQualityTags(); } catch {}
 }
 
 // ── Civitai search (LoRA + checkpoint) ──
@@ -20680,7 +20804,7 @@ function sdxlPickCheckpoint(url, name){
     $('sdxlBaseReset').style.display = '';
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = name || 'custom';
     _sdxlSaveState();
-    if (typeof _sdxlUpdatePonyTagsVisibility==='function') _sdxlUpdatePonyTagsVisibility();
+    if (typeof _sdxlUpdateQualityTags==='function') _sdxlUpdateQualityTags();
     sdxlCloseSearch();
     // Spin up the T4 now (if the user is logged in and has tokens to generate),
     // so the container is booting while they set up the prompt. The checkpoint
@@ -20798,7 +20922,7 @@ function sdxlResetBase(){
     $('sdxlBaseReset').style.display = 'none';
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Pony Realism v2.2';
     _sdxlSaveState();
-    if (typeof _sdxlUpdatePonyTagsVisibility==='function') _sdxlUpdatePonyTagsVisibility();
+    if (typeof _sdxlUpdateQualityTags==='function') _sdxlUpdateQualityTags();
 }
 
 // VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
@@ -22050,16 +22174,11 @@ function _paintNotifBadge(){
     }
 }
 
-// Begin/refresh the slow background poll. Called once the user is known
-// to be logged in (from checkAuth). 60s is plenty for a tip feed and
-// keeps load trivial.
+// The activity bell was removed from the header (no one knew what it did), so
+// the background poll is disabled — no point fetching a feed nothing displays.
+// Kept as a no-op so existing callers (checkAuth) don't error.
 function startNotifPolling(){
-    if (!_user) return;
-    refreshNotifications();
-    if (_notifPollHandle) return;
-    _notifPollHandle = setInterval(() => {
-        if (_user) refreshNotifications();
-    }, 60000);
+    return;
 }
 
 function toggleNotifPanel(ev){
