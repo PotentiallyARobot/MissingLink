@@ -4507,7 +4507,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              (top-left of stage) so it sits alongside the Studio toggle
              and feels like a workspace switcher rather than a header
              link competing with subscription / billing chrome. -->
-        <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">Default model</span></div>
+        <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">Pony Realism v2.2</span></div>
         <div class="hdr-badge sdxl-hdr" id="sdxlVramPill" title="GPU VRAM" style="display:none"><span>&#9635;</span><span id="sdxlVramTxt">&ndash; / &ndash; GB</span></div>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <!-- User menu trigger — clickable avatar that opens a dropdown
@@ -4752,7 +4752,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec sdxl-only" id="sdxlSecBase" style="display:none">
       <div class="sec-label"><span class="icon">&#9636;</span> Base model</div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="sdxl-basename" id="sdxlBaseName" style="flex:1">Default model</span>
+        <span class="sdxl-basename" id="sdxlBaseName" style="flex:1">Pony Realism v2.2</span>
         <button class="gen-btn gen-btn-secondary" style="width:auto;padding:8px 10px" onclick="sdxlOpenSearch('Checkpoint')">Search</button>
         <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:auto;padding:8px 10px;display:none" onclick="sdxlResetBase()">Reset</button>
       </div>
@@ -16410,7 +16410,7 @@ function canCancelJob(j){
     if(!j) return false;
     if(j.status === 'queued' || j.status === 'waiting') return true;
     // Pre-generation stages: user can still bail out without wasting denoising steps
-    const PRE_GEN = new Set(['fetching', 'preparing', 'encoding_prompt', 'encoding_image']);
+    const PRE_GEN = new Set(['fetching', 'preparing', 'encoding_prompt', 'encoding_image', 'loading_model', 'loading_loras']);
     if(j.status === 'running' && (!j.stage || PRE_GEN.has(j.stage))) return true;
     // Post-generation delivery stall: the image is already produced and the
     // worker is stuck retrying the callback (stage 'callback', 'encoding', or
@@ -16681,6 +16681,17 @@ function renderQueue(){
                         subtext = `Creating${refTag} · ${fmt(elapsed)} / ~${fmt(est)}`;
                     }
                     pct = Math.min(90, (elapsed / est) * 100);
+                } else if (stage === 'loading_model') {
+                    // SDXL: swapping the base checkpoint — can include a one-time
+                    // multi-GB download from Civitai, the slow step that used to
+                    // look like a frozen "Queued".
+                    statusIcon = '📦'; statusText = 'Loading checkpoint';
+                    subtext = `Downloading model (one-time) · ${elapsed}s`;
+                    pct = 10;
+                } else if (stage === 'loading_loras') {
+                    statusIcon = '🧩'; statusText = 'Loading LoRAs';
+                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                    pct = 16;
                 } else if (stage === 'generating') {
                     statusIcon = '⚡'; statusText = 'Generating';
                     if (total > 0) {
@@ -20303,9 +20314,9 @@ function _sdxlPollHealth(){
 }
 function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
-    $('sdxlBaseName').textContent = 'Default model';
+    $('sdxlBaseName').textContent = 'Pony Realism v2.2';
     $('sdxlBaseReset').style.display = 'none';
-    const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Default model';
+    const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Pony Realism v2.2';
 }
 
 // VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
@@ -20397,7 +20408,7 @@ function _syncStageGalleryVisibility(){
         // (source image / mask / strength) are correctly hidden in txt2img —
         // the blanket .sdxl-only show above would otherwise reveal them all.
         if (typeof sdxlSetMode === 'function') sdxlSetMode(_sdxlMode || 'txt2img');
-        const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = (_sdxlSelectedBaseUrl ? ($('sdxlBaseName') ? $('sdxlBaseName').textContent : 'custom') : 'Default model');
+        const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = (_sdxlSelectedBaseUrl ? ($('sdxlBaseName') ? $('sdxlBaseName').textContent : 'custom') : 'Pony Realism v2.2');
         _sdxlUpdateVramPill();
     }
     const modeSec = document.querySelector('.mode-sec');
