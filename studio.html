@@ -3030,6 +3030,19 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-only .slider-row{display:flex;align-items:center;gap:10px}
 .sdxl-only .slider-row .sl{min-width:56px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)}
 .sdxl-only .slider-row input[type="range"]{flex:1}
+/* LoRA stack card — mirrors the Colab .lora-card: name + status, × remove,
+   a strength slider, and trigger chips. */
+.sdxl-lora-card{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;padding:9px 10px;margin-top:8px}
+.sdxl-lora-card .lora-card-top{display:flex;align-items:center;gap:8px}
+.sdxl-lora-card .lora-card-name{flex:1;min-width:0;font-family:var(--font-mono);font-size:10px;color:var(--gold);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sdxl-lora-card .lora-status{font-weight:600}
+.sdxl-lora-card .lora-status.loading{color:var(--text-muted)}
+.sdxl-lora-card .lora-status.ok{color:#34d399}
+.sdxl-lora-card .lora-x{background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 2px;line-height:1}
+.sdxl-lora-card .lora-x:hover{color:var(--red)}
+.sdxl-lora-card .lora-trigs{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.sdxl-lora-card .trigchip{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:3px 7px;font-size:9px;font-family:var(--font-mono);cursor:pointer}
+.sdxl-lora-card .trigchip:hover{border-color:var(--gold);color:var(--gold)}
 .sdxl-only .lora-row{display:flex;gap:6px}
 .sdxl-only .lock-row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-muted);cursor:pointer;margin-top:8px}
 .sdxl-only .lock-row input[type="checkbox"]{width:auto;flex:0 0 auto}
@@ -3150,6 +3163,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     height:auto;min-height:0;align-self:start;
 }
 .sdxl-result:hover{border-color:var(--gold);transform:translateY(-2px)}
+/* Applied state — mirrors the Colab .lb-loaded: grayed + desaturated so the
+   user can see at a glance which models are already in the stack / active. */
+.sdxl-result.applied{opacity:.55;filter:grayscale(.55)}
+.sdxl-result.applied:hover{border-color:var(--border);transform:none}
+.sdxl-result.applied .add{background:var(--surface-3);color:var(--text-muted);cursor:default}
+.sdxl-tag-applied{display:inline-block;margin-left:6px;color:var(--gold);font-weight:700;font-size:9px}
 /* Big SQUARE thumbnail (matches the Colab browser). aspect-ratio keeps it
    square and the flex pin stops it collapsing. */
 .sdxl-result .thumbwrap{width:100%;aspect-ratio:1/1;min-height:0;flex:0 0 auto;background:#111;overflow:hidden}
@@ -4507,7 +4526,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              (top-left of stage) so it sits alongside the Studio toggle
              and feels like a workspace switcher rather than a header
              link competing with subscription / billing chrome. -->
-        <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">Pony Realism v2.2</span></div>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <!-- User menu trigger — clickable avatar that opens a dropdown
              with subscription / billing / account actions. Lives at the
@@ -4749,12 +4767,26 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <!-- BASE MODEL -->
     <div class="sec sdxl-only" id="sdxlSecBase" style="display:none">
-      <div class="sec-label"><span class="icon">&#9636;</span> Base model</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span class="sdxl-basename" id="sdxlBaseName" style="flex:1">Pony Realism v2.2</span>
-        <button class="gen-btn gen-btn-secondary" style="width:auto;padding:8px 10px" onclick="sdxlOpenSearch('Checkpoint')">Search</button>
-        <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:auto;padding:8px 10px;display:none" onclick="sdxlResetBase()">Reset</button>
+      <div class="sec-label"><span class="icon">&#9636;</span> Base model
+        <span class="sdxl-basename" id="sdxlBaseName" style="float:right;font-weight:400;color:var(--text-muted)">Pony Realism v2.2</span>
       </div>
+      <button class="gen-btn gen-btn-secondary" style="width:100%;margin-bottom:8px" onclick="sdxlOpenSearch('Checkpoint')">&#128269; Browse Civitai checkpoints</button>
+      <div class="lora-row" style="display:flex;gap:6px">
+        <input type="text" class="lora-url" id="sdxlBaseUrl" placeholder="Civitai download URL or HF repo" style="flex:1">
+        <input type="text" class="lora-url" id="sdxlBaseDisplayName" placeholder="display name" style="flex:0 0 38%">
+      </div>
+      <button class="gen-btn" id="sdxlLoadModelBtn" style="width:100%;margin-top:8px" onclick="sdxlLoadModelFromFields()">&#8635; Load model</button>
+      <button class="gen-btn gen-btn-secondary" id="sdxlBaseReset" style="width:100%;margin-top:6px;display:none" onclick="sdxlResetBase()">Reset to default</button>
+      <!-- VAE selector — mirrors the Colab: checkpoint's own / fp16-fix / custom -->
+      <div class="lora-row" id="sdxlVaeRow" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+        <span class="sl" style="min-width:34px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);text-transform:uppercase">VAE</span>
+        <select id="sdxlVaeSelect" class="lora-url" style="flex:1" onchange="sdxlOnVaeChange()">
+          <option value="own">Checkpoint's own VAE</option>
+          <option value="fix">Safe fp16-fix VAE (fixes smear/black)</option>
+          <option value="custom">Custom VAE URL…</option>
+        </select>
+      </div>
+      <input type="text" class="lora-url" id="sdxlVaeUrl" placeholder="VAE .safetensors URL" style="width:100%;margin-top:6px;display:none">
     </div>
 
     <!-- LoRAs -->
@@ -16689,10 +16721,31 @@ function renderQueue(){
                     pct = 10;
                 } else if (stage === 'loading_loras') {
                     statusIcon = '🧩'; statusText = 'Loading LoRAs';
-                    subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
-                    pct = 16;
+                    // step/total encode per-LoRA download progress: each LoRA is
+                    // a 0–100 band, so LoRA N at P% → step=(N-1)*100+P, total=count*100.
+                    if (total > 0 && step >= 0) {
+                        const count = Math.max(1, Math.round(total / 100));
+                        const which = Math.min(count, Math.floor(step / 100) + 1);
+                        const pctIn = step % 100;
+                        subtext = `LoRA ${which}/${count} · ${pctIn}% · ${elapsed}s`;
+                        pct = 14 + (step / total) * 4;   // 14 → 18
+                        // Also drive the sidebar LoRA card's own status flag so
+                        // the slot itself shows "loading… NN%" → "✓ loaded",
+                        // matching the Colab. LoRA N (1-based) maps to index N-1.
+                        if (typeof _sdxlSetLoraCardStatus === 'function')
+                            _sdxlSetLoraCardStatus(which - 1, pctIn);
+                    } else {
+                        subtext = `${j.mode.toUpperCase()} · ${elapsed}s`;
+                        pct = 16;
+                    }
                 } else if (stage === 'generating') {
                     statusIcon = '⚡'; statusText = 'Generating';
+                    // LoRA downloads are done by the time generation starts —
+                    // mark every stack card "✓ loaded" so none stick on loading.
+                    if (_sdxlLoras.some(l => l.loading)){
+                        _sdxlLoras.forEach(l => { l.loading = false; l.loaded = true; });
+                        if (typeof _sdxlRenderLoraList === 'function') _sdxlRenderLoraList();
+                    }
                     if (total > 0) {
                         // Per-step pings (callback_on_step_end) give us step
                         // counts during denoising. The pre-first-step window
@@ -19947,21 +20000,128 @@ function _sdxlMaskDataUrl(){
 // ── LoRA stack (Colab-style: add from fields/search, inspect, render list) ──
 let _sdxlLoras = [];   // [{url, name, scale, base_model?, triggers?}]
 
+// Persist the user's last LoRA stack + base-model selection so a page refresh
+// restores exactly what they had loaded. Stored under one key as JSON.
+const _SDXL_STATE_KEY = 'sdxl_studio_state_v1';
+function _sdxlSaveState(){
+    try {
+        localStorage.setItem(_SDXL_STATE_KEY, JSON.stringify({
+            loras: _sdxlLoras,
+            baseUrl: (typeof _sdxlSelectedBaseUrl !== 'undefined') ? _sdxlSelectedBaseUrl : '',
+            baseName: ($('sdxlBaseName') ? $('sdxlBaseName').textContent : ''),
+            vaeMode: (typeof _sdxlVaeMode !== 'undefined' ? _sdxlVaeMode : 'own'),
+            vaeUrl: ($('sdxlVaeUrl') ? $('sdxlVaeUrl').value : ''),
+        }));
+    } catch {}
+}
+function _sdxlRestoreState(){
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(_SDXL_STATE_KEY) || 'null'); } catch {}
+    if (!s) return;
+    // Restore the LoRA stack.
+    if (Array.isArray(s.loras)) {
+        _sdxlLoras = s.loras.filter(l => l && l.url).slice(0, 6).map(l => ({
+            url: l.url, name: l.name || '', scale: (l.scale != null ? l.scale : 1.0),
+            base_model: l.base_model || '', triggers: l.triggers || [],
+        }));
+        _sdxlRenderLoraList();
+    }
+    // Restore the selected checkpoint (and its label).
+    if (s.baseUrl) {
+        _sdxlSelectedBaseUrl = s.baseUrl;
+        const nm = s.baseName || 'custom checkpoint';
+        if ($('sdxlBaseName')) $('sdxlBaseName').textContent = nm;
+        if ($('sdxlBaseReset')) $('sdxlBaseReset').style.display = '';
+        const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = nm;
+    }
+    // Restore VAE selection.
+    if (s.vaeMode && $('sdxlVaeSelect')){
+        _sdxlVaeMode = s.vaeMode;
+        $('sdxlVaeSelect').value = s.vaeMode;
+        if (s.vaeUrl && $('sdxlVaeUrl')) $('sdxlVaeUrl').value = s.vaeUrl;
+        $('sdxlVaeUrl').style.display = (s.vaeMode === 'custom') ? '' : 'none';
+    }
+
 function _sdxlRenderLoraList(){
     const box = $('sdxlLoraList');
-    if (!_sdxlLoras.length){ box.innerHTML = ''; return; }
-    box.innerHTML = _sdxlLoras.map((l, i) => `
-        <div class="lora-item" style="display:flex;align-items:center;gap:8px;padding:7px 9px;margin-top:6px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2)">
-          <div style="flex:1;min-width:0">
-            <div style="font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(l.name||l.url).replace(/</g,'&lt;')}</div>
-            ${l.base_model?`<div style="font-size:9px;color:var(--text-muted)">${l.base_model}</div>`:''}
+    if (!_sdxlLoras.length){ box.innerHTML = '<div class="hintline" style="margin-top:8px;color:var(--text-muted);font-size:10px">No LoRAs added.</div>'; return; }
+    // Colab-style card: name (+ status), × remove, a STRENGTH slider with a
+    // synced number box, and clickable trigger chips that append to the prompt.
+    box.innerHTML = _sdxlLoras.map((l, i) => {
+        const nm = (l.name || l.url).replace(/</g,'&lt;');
+        const status = l.loading
+            ? ` <span class="lora-status loading">${l.loadingMsg || 'loading…'}</span>`
+            : (l.loaded ? ` <span class="lora-status ok">✓ loaded</span>` : '');
+        const scale = (l.scale != null ? l.scale : 1.0);
+        let trig = '';
+        if (l.triggers && l.triggers.length){
+            trig = `<div class="lora-trigs">` + l.triggers.map(t =>
+                `<button class="trigchip" onclick="_sdxlAddTrigger('${(t||'').replace(/'/g,'')}')">+ ${(t||'').replace(/</g,'&lt;')}</button>`
+            ).join('') + `</div>`;
+        }
+        return `<div class="sdxl-lora-card" data-i="${i}">
+          <div class="lora-card-top">
+            <span class="lora-card-name" title="${nm}">${nm}${status}</span>
+            <button class="lora-x" onclick="_sdxlRemoveLora(${i})">✕</button>
           </div>
-          <input type="number" value="${l.scale}" min="0" max="2" step="0.05" style="width:56px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px" onchange="_sdxlSetLoraScale(${i}, this.value)">
-          <button class="gen-btn gen-btn-secondary" style="width:auto;padding:4px 8px" onclick="_sdxlRemoveLora(${i})">×</button>
-        </div>`).join('');
+          <div class="slider-row" style="margin-top:8px">
+            <span class="sl">strength</span>
+            <input type="range" min="0" max="2" step="0.05" value="${scale}"
+                   oninput="_sdxlLoraSlide(${i}, this.value)">
+            <input class="sv" value="${(+scale).toFixed(2)}"
+                   onchange="_sdxlLoraSlide(${i}, this.value, true)">
+          </div>
+          ${trig}
+        </div>`;
+    }).join('');
 }
-function _sdxlSetLoraScale(i, v){ if (_sdxlLoras[i]) _sdxlLoras[i].scale = parseFloat(v)||1.0; }
-function _sdxlRemoveLora(i){ _sdxlLoras.splice(i,1); _sdxlRenderLoraList(); }
+// Slider ↔ number sync for a LoRA's strength; persists the new scale.
+function _sdxlLoraSlide(i, v, fromNumber){
+    const val = Math.max(0, Math.min(2, parseFloat(v) || 0));
+    if (_sdxlLoras[i]) _sdxlLoras[i].scale = val;
+    const card = document.querySelector(`.sdxl-lora-card[data-i="${i}"]`);
+    if (card){
+        const range = card.querySelector('input[type=range]');
+        const num = card.querySelector('.sv');
+        if (range && !fromNumber) num.value = val.toFixed(2);
+        if (num && fromNumber) range.value = val;
+    }
+    _sdxlSaveState();
+}
+function _sdxlAddTrigger(t){
+    const p = $('sdxlPrompt'); if (!p || !t) return;
+    p.value = p.value.trim() ? (p.value.replace(/\s*$/,'') + ', ' + t) : t;
+}
+// Update a single LoRA card's live status in place (driven by the per-job
+// download-progress ping). pct 0–99 => "loading… NN%"; pct >= 100 => "✓ loaded".
+// Earlier LoRAs in the stack are implicitly done once a later one is reported.
+function _sdxlSetLoraCardStatus(i, pct){
+    if (i < 0 || i >= _sdxlLoras.length) return;
+    // Mark all LoRAs before i as loaded (the worker processes them in order).
+    for (let k = 0; k < i; k++){ _sdxlLoras[k].loading = false; _sdxlLoras[k].loaded = true; }
+    const l = _sdxlLoras[i];
+    if (pct >= 100){ l.loading = false; l.loaded = true; }
+    else { l.loading = true; l.loaded = false; l.loadingMsg = `loading… ${Math.max(0,Math.min(99,pct|0))}%`; }
+    // Update just this card's status span without rebuilding (keeps slider focus).
+    const card = document.querySelector(`.sdxl-lora-card[data-i="${i}"]`);
+    if (card){
+        const nameEl = card.querySelector('.lora-card-name');
+        if (nameEl){
+            const base = (l.name || l.url).replace(/</g,'&lt;');
+            const status = l.loaded ? ` <span class="lora-status ok">✓ loaded</span>`
+                         : ` <span class="lora-status loading">${l.loadingMsg||'loading…'}</span>`;
+            nameEl.innerHTML = base + status;
+        }
+    } else {
+        _sdxlRenderLoraList();  // card not in DOM (e.g. list re-rendered) — full repaint
+    }
+}
+// Clear transient loading flags (e.g. when a generation finishes or the stack
+// changes) so cards don't get stuck showing "loading…".
+function _sdxlClearLoraStatuses(){
+    _sdxlLoras.forEach(l => { l.loading = false; });
+}
+function _sdxlRemoveLora(i){ _sdxlLoras.splice(i,1); _sdxlRenderLoraList(); if (typeof _sdxlRefreshAppliedStates==='function') _sdxlRefreshAppliedStates(); _sdxlSaveState(); }
 function _sdxlAddLoraObj(o){
     if (!o || !o.url) return;
     if (_sdxlLoras.some(l => l.url === o.url)){ showNotif('That LoRA is already added.', 'info'); return; }
@@ -19973,6 +20133,7 @@ function _sdxlAddLoraObj(o){
         const cur = $('sdxlPrompt').value;
         if (cur.indexOf(trig) < 0) $('sdxlPrompt').value = (cur ? cur.replace(/\s*$/, ', ') : '') + trig;
     }
+    _sdxlSaveState();
 }
 // Add from the manual URL + name + scale fields.
 function sdxlAddLoraFromFields(){
@@ -20037,6 +20198,8 @@ async function sdxlGenerate(){
         sampler: ($('sdxlSampler') ? $('sdxlSampler').value : ''),
         model_url: _sdxlSelectedBaseUrl || '',
         loras: _sdxlCollectLoras(),
+        vae: (typeof _sdxlVaeMode !== 'undefined' ? _sdxlVaeMode : 'own'),
+        vae_url: (typeof _sdxlVaeMode !== 'undefined' && _sdxlVaeMode === 'custom' && $('sdxlVaeUrl')) ? ($('sdxlVaeUrl').value || '').trim() : '',
     };
     if (_sdxlMode === 'img2img' || _sdxlMode === 'inpaint') basePayload.image_b64 = _sdxlSrcDataUrl;
     if (_sdxlMode === 'inpaint') basePayload.mask_b64 = maskUrl;
@@ -20099,6 +20262,9 @@ function _sdxlInit(){
     _sdxlBindSliders();
     _sdxlInitMaskCanvas();
     if (typeof sdxlSetMode === 'function') sdxlSetMode('txt2img');
+    // Restore the user's last LoRA stack + checkpoint selection from a prior
+    // session so a refresh lands them right back where they were.
+    try { _sdxlRestoreState(); } catch {}
 }
 
 // ── Civitai search (LoRA + checkpoint) ──
@@ -20193,6 +20359,14 @@ async function sdxlRunSearch(reset){
     _sdxlSearchLoading = false;
 }
 
+function _sdxlIsApplied(it){
+    // Mirror the Colab's _isLoadedVersion: a card is "applied" if it's already
+    // in the LoRA stack (LoRA mode) or is the currently selected base
+    // (Checkpoint mode). Match on download_url.
+    const dl = it.download_url || '';
+    if (_sdxlSearchType === 'Checkpoint') return !!dl && dl === _sdxlSelectedBaseUrl;
+    return _sdxlLoras.some(l => l.url && l.url === dl);
+}
 function _sdxlResultHtml(it){
     // Civitai's image CDN serves images directly to <img> tags (no CORS needed
     // for image loads), so use the raw URL first — it's faster and avoids the
@@ -20203,8 +20377,12 @@ function _sdxlResultHtml(it){
     const dl = (it.download_url || '').replace(/'/g, '');
     const nm = (it.name || '(untitled)').replace(/</g,'&lt;').replace(/"/g,'&quot;');
     const trig = (it.triggers || []).join(', ').replace(/'/g,'').replace(/</g,'&lt;');
-    const label = (_sdxlSearchType === 'Checkpoint') ? 'Use as base' : 'Add LoRA';
-    const fn = (_sdxlSearchType === 'Checkpoint')
+    const isCkpt = (_sdxlSearchType === 'Checkpoint');
+    const applied = _sdxlIsApplied(it);
+    const label = applied
+        ? (isCkpt ? '✓ Active base' : '✓ In LoRA stack')
+        : (isCkpt ? 'Use as base' : '+ Add LoRA');
+    const fn = isCkpt
         ? `sdxlPickCheckpoint('${dl}','${nm.replace(/'/g,'')}')`
         : `sdxlPickLora('${dl}','${trig}')`;
     // onerror chain: raw → proxy → "no preview". data-stage tracks which try.
@@ -20212,28 +20390,69 @@ function _sdxlResultHtml(it){
         ? `<img loading="lazy" src="${raw}" data-proxy="${proxied}" data-stage="raw"
              onerror="(function(el){ if(el.dataset.stage==='raw'){el.dataset.stage='proxy';el.src=el.dataset.proxy;} else {el.onerror=null;el.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no preview'}));} })(this)">`
         : `<div class="noimg">no preview</div>`;
-    return `<div class="sdxl-result">
+    const appliedTag = applied
+        ? `<span class="sdxl-tag-applied">✓ ${isCkpt ? 'active' : 'in stack'}</span>` : '';
+    return `<div class="sdxl-result${applied ? ' applied' : ''}" data-url="${dl}">
         <div class="thumbwrap">${imgHtml}</div>
-        <div class="meta"><div class="nm">${nm}</div><div class="bm">${(it.base_model||'')}${it.nsfw?' · NSFW':''}</div></div>
-        <button class="add" onclick="${fn}">${label}</button>
+        <div class="meta"><div class="nm">${nm}</div><div class="bm">${(it.base_model||'')}${it.nsfw?' · NSFW':''}${appliedTag}</div></div>
+        <button class="add"${applied ? ' disabled' : ` onclick="${fn}"`}>${label}</button>
     </div>`;
 }
 
 function sdxlPickLora(url, triggers){
     _sdxlAddLoraObj({ url, triggers: (triggers ? triggers.split(', ').filter(Boolean) : []) });
     showNotif('LoRA added' + (triggers ? ' (trigger words appended to prompt)' : ''), 'success');
+    _sdxlRefreshAppliedStates();   // gray out the card we just added, in place
+}
+// Re-evaluate the applied/grayed state of every visible search card without
+// rebuilding the grid (matches the Colab's in-place update — keeps scroll
+// position and avoids re-requesting thumbnails).
+function _sdxlRefreshAppliedStates(){
+    const grid = $('sdxlSearchGrid'); if (!grid) return;
+    const isCkpt = (_sdxlSearchType === 'Checkpoint');
+    grid.querySelectorAll('.sdxl-result').forEach(card => {
+        const dl = card.getAttribute('data-url') || '';
+        const applied = isCkpt ? (!!dl && dl === _sdxlSelectedBaseUrl)
+                               : _sdxlLoras.some(l => l.url === dl);
+        card.classList.toggle('applied', applied);
+        const btn = card.querySelector('.add');
+        if (btn){
+            if (applied){
+                btn.disabled = true;
+                btn.removeAttribute('onclick');
+                btn.textContent = isCkpt ? '✓ Active base' : '✓ In LoRA stack';
+            }
+        }
+    });
 }
 function sdxlPickCheckpoint(url, name){
     _sdxlSelectedBaseUrl = url;
     $('sdxlBaseName').textContent = name || 'custom checkpoint';
     $('sdxlBaseReset').style.display = '';
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = name || 'custom';
+    _sdxlSaveState();
     sdxlCloseSearch();
     // Spin up the T4 now (if the user is logged in and has tokens to generate),
     // so the container is booting while they set up the prompt. The checkpoint
     // itself swaps in on the first generation that requests it.
     _sdxlWakeGpu();
     showNotif('Base model set — first generation with it will load the checkpoint (slower).', 'success');
+}
+// LOAD MODEL button — set the base from the URL + display-name fields (the
+// manual equivalent of picking a checkpoint from search).
+function sdxlLoadModelFromFields(){
+    const url = ($('sdxlBaseUrl').value || '').trim();
+    if (!url){ showNotif('Paste a checkpoint URL first.', 'error'); return; }
+    const name = ($('sdxlBaseDisplayName').value || '').trim() || 'custom checkpoint';
+    sdxlPickCheckpoint(url, name);
+    $('sdxlBaseUrl').value = ''; $('sdxlBaseDisplayName').value = '';
+}
+// VAE selector — reveal the custom-URL box only when "custom" is chosen.
+let _sdxlVaeMode = 'own', _sdxlVaeUrl = '';
+function sdxlOnVaeChange(){
+    _sdxlVaeMode = $('sdxlVaeSelect').value;
+    $('sdxlVaeUrl').style.display = (_sdxlVaeMode === 'custom') ? '' : 'none';
+    _sdxlSaveState();
 }
 // Fire the cold-start wake for the SDXL T4. Only meaningful for a logged-in
 // user who can actually generate (has tokens); skipped otherwise to avoid
@@ -20328,6 +20547,7 @@ function sdxlResetBase(){
     $('sdxlBaseName').textContent = 'Pony Realism v2.2';
     $('sdxlBaseReset').style.display = 'none';
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Pony Realism v2.2';
+    _sdxlSaveState();
 }
 
 // VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
@@ -22234,11 +22454,12 @@ function restorePersistedInputs(){
 #mlChat.collapsed .mlc-body,#mlChat.collapsed .mlc-input,#mlChat.collapsed .mlc-online{display:none;}
 /* Minimized: the whole window is gone; only #mlcLauncher remains. */
 #mlChat.minimized{display:none !important;}
-#mlcLauncher{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9001;
+#mlcLauncher{position:fixed;bottom:20px;right:20px;z-index:9001;
   display:flex;align-items:center;gap:8px;cursor:pointer;
   background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
-  padding:7px 14px;font-family:var(--font-display);font-weight:700;font-size:12px;
-  color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.4);}
+  padding:9px 16px;font-family:var(--font-display);font-weight:700;font-size:12px;
+  color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.4);transition:border-color .15s,transform .15s;}
+#mlcLauncher:hover{border-color:var(--gold);transform:translateY(-1px);}
 #mlcLauncher:hover{border-color:var(--gold-dark);color:var(--gold-light);}
 #mlcLauncher .mlc-launcher-count{font-family:var(--font-mono);font-weight:400;
   font-size:11px;color:var(--text-muted);}
