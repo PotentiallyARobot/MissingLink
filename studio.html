@@ -4508,7 +4508,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              and feels like a workspace switcher rather than a header
              link competing with subscription / billing chrome. -->
         <div class="hdr-badge sdxl-hdr" id="sdxlBasePill" title="SDXL base model" style="display:none"><span id="sdxlBasePillTxt">Pony Realism v2.2</span></div>
-        <div class="hdr-badge sdxl-hdr" id="sdxlVramPill" title="GPU VRAM" style="display:none"><span>&#9635;</span><span id="sdxlVramTxt">&ndash; / &ndash; GB</span></div>
         <div class="hdr-badge" id="connBadge" title="GPU state"><div class="dot" id="connDot"></div><span id="connLabel">Connecting</span></div>
         <!-- User menu trigger — clickable avatar that opens a dropdown
              with subscription / billing / account actions. Lives at the
@@ -8028,12 +8027,12 @@ async function pollStatus(){
 // is happening without needing a separate progress panel.
 function updateHeaderStatusBadge(connected){
     const dot = $('connDot'); const label = $('connLabel');
-    if (window._stageView === 'sdxl' && typeof _sdxlUpdateVramPill === 'function') _sdxlUpdateVramPill();
-    // On the SDXL tab the badge reflects the SDXL T4 (managed by _sdxlSetGpuPill /
-    // _sdxlPollHealth), NOT the shared Qwen status — so don't let the Qwen
-    // /status poll overwrite it here. _sdxlBadgeOwned is set while the SDXL tab
-    // is controlling the badge.
-    if (window._stageView === 'sdxl' && _sdxlBadgeOwned) return;
+    // On the SDXL tab the badge reflects the SDXL T4 ONLY, driven by the SDXL
+    // health poll (_sdxlPollHealth / _sdxlSetGpuPill). The shared /status poll
+    // reports the *Qwen* GPU (and a shared ready_at timestamp), which is a
+    // different container — letting it touch the badge here is exactly what
+    // made "GPU ready" show for a cold SDXL T4. So bail unconditionally.
+    if (window._stageView === 'sdxl') return;
     if (!connected) {
         dot.className = 'dot off';
         label.textContent = 'Offline';
@@ -20288,9 +20287,9 @@ function _sdxlSetGpuPill(state, stageLabel){
 function _sdxlPollHealth(){
     if (_sdxlHealthTimer) return;   // already polling
     let tries = 0;
-    _sdxlHealthTimer = setInterval(async () => {
+    const _check = async () => {
         tries++;
-        if (tries > 80){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; return; }  // ~4 min cap
+        if (tries > 80){ if (_sdxlHealthTimer){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; } return; }  // ~4 min cap
         // 1) Read the live startup phase from /status (the worker posts phases
         //    there via gpu-heartbeat) so we can SHOW the boot sequence.
         try {
@@ -20301,16 +20300,28 @@ function _sdxlPollHealth(){
                 _sdxlSetGpuPill('warming', _SDXL_STAGE_LABELS[stage] || ('Warming: ' + stage));
             }
         } catch {}
-        // 2) Health endpoint answering = container is actually up and serving.
+        // 2) Health endpoint answering = container is up. But only flip to
+        //    "ready" when it reports ready:true (model loaded + warmed) — a
+        //    200 alone just means the container is awake, not that the model
+        //    is resident.
         try {
             const r = await fetch(_SDXL_HEALTH_URL, { method: 'GET' });
             if (r.ok){
-                _sdxlSetGpuPill('ready');
-                const st = $('sdxlStatus'); if (st) st.textContent = '';
-                clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null;
+                let body = {};
+                try { body = await r.json(); } catch {}
+                if (body && body.ready){
+                    _sdxlSetGpuPill('ready');
+                    const st = $('sdxlStatus'); if (st) st.textContent = '';
+                    if (_sdxlHealthTimer){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; }
+                } else {
+                    // container awake but still loading the model / warming up
+                    _sdxlSetGpuPill('warming', 'Loading model…');
+                }
             }
         } catch {}
-    }, 2500);
+    };
+    _check();                                   // fire immediately on entry
+    _sdxlHealthTimer = setInterval(_check, 2500);
 }
 function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
@@ -20361,8 +20372,16 @@ function setStageView(view){
     // Opening the SDXL tab spins up the on-demand T4 (cold-start) so it's warm
     // by the time the user hits Generate. Fire-and-forget; debounced server-side.
     if (view === 'sdxl') {
-        // Spin up the T4 on tab open (only if the user can actually generate).
+        // Take ownership of the badge immediately and show a truthful initial
+        // state instead of whatever the Qwen poll last left. We then check the
+        // SDXL T4's REAL health (it may be cold, or genuinely warm from recent
+        // use) and the wake/poll updates it from there.
+        _sdxlBadgeOwned = true;
+        _sdxlSetGpuPill('warming', 'Checking GPU…');
         if (typeof _sdxlWakeGpu === 'function') _sdxlWakeGpu();
+        // Always poll health on entry (even if the user can't afford a gen) so
+        // the badge reflects the actual container state, not a stale label.
+        if (typeof _sdxlPollHealth === 'function') _sdxlPollHealth();
     } else {
         // Leaving SDXL — hand the header badge back to the shared Qwen status.
         _sdxlBadgeOwned = false;
