@@ -386,13 +386,12 @@ body.mode-create .batch-inputs-grid{
 body.mode-create .batch-input-tile{
     aspect-ratio:auto;                  /* drop forced 1:1 */
     width:auto;height:auto;
-    /* Let the image inside drive width up to the stage's max. Both
-       width and max-width sized so the tile can grow to fill the
-       generous Create stage rather than sitting at the original
-       220px batch-cap. The matching max-height keeps tall portrait
-       outputs from overflowing the viewport. */
-    max-width:min(900px, 100%);
-    max-height:calc(100vh - 200px);
+    /* Let the image inside drive size up to the full stage. Previously
+       capped at 900px, which left a single result looking small with dead
+       space around it on wide monitors. Now it fills the available width
+       (and height) while object-fit keeps the aspect ratio intact. */
+    max-width:100%;
+    max-height:calc(100vh - 160px);
     margin:0 auto;                      /* center within the column */
     align-self:center;                  /* override the .start used in batch */
 }
@@ -10016,7 +10015,7 @@ async function doGenerateMode(_autoRetried){
                 : (_generateQuality === 'high' ? 300_000 : 180_000));
             let jd = null;
             while (Date.now() < deadline) {
-                await new Promise(res => setTimeout(res, 2000));
+                await new Promise(res => setTimeout(res, 3000));
                 let pr;
                 try { pr = await fetchT(`${API}/api/studio/job/${pollJobId}`, null, 10000); }
                 catch { continue; }   // transient network hiccup — keep polling
@@ -21002,7 +21001,12 @@ function _sdxlPollHealth(){
         } catch {}
     };
     _check();                                   // fire immediately on entry
-    _sdxlHealthTimer = setInterval(_check, 2500);
+    // 6s (was 2.5s): the SDXL health check hits /api/studio/status (a
+    // Cloudflare-fronted Worker route) every tick. At 2.5s, combined with the
+    // queue/status/chat/job pollers, the total request rate to missinglink.build
+    // was high enough to trip Cloudflare rate-limiting (error 1015). 6s still
+    // surfaces boot progress promptly while roughly halving this poller's load.
+    _sdxlHealthTimer = setInterval(_check, 6000);
 }
 function sdxlResetBase(){
     _sdxlSelectedBaseUrl = '';
@@ -21131,6 +21135,18 @@ function _syncStageGalleryVisibility(){
         });
     } else {
         if (modeSec) modeSec.style.display = '';
+        // Clear the inline display:none we stamped on the center-stage batch
+        // elements when entering SDXL. Leaving a stale inline style here makes
+        // the Create-mode result render into a collapsed/mis-sized container
+        // (the focus stage / grid lose their CSS-driven inset:0 / flex sizing).
+        // Removing the inline value hands sizing back to the stylesheet; the
+        // elements' own logic (renderBatchInputs / focus open) then sets the
+        // correct display.
+        ['batchInputsGrid','batchGridToolbar','batchFocusStage','batchGrid',
+         'batchFooter','batchProgress'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.removeProperty('display');
+        });
         // restore the normal sidebar layout for the current mode
         if (typeof currentMode !== 'undefined' && typeof setMode === 'function') {
             // re-run the section visibility for the active mode without side effects
@@ -23414,7 +23430,7 @@ function restorePersistedInputs(){
     inputEl.style.overflowY = inputEl.scrollHeight > 80 ? 'auto' : 'hidden';
   });
 
-  function start(){ if(started) return; started=true; poll(); timer=setInterval(poll,3000); }
+  function start(){ if(started) return; started=true; poll(); timer=setInterval(poll,7000); }
   // Start polling right away. The window stays hidden until the first
   // authed (200) response, and hides itself again on 401, so logged-out
   // visitors never see it — no dependence on a page-scoped _user var
