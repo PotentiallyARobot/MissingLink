@@ -21087,12 +21087,29 @@ function _syncStageGalleryVisibility(){
         // hide all the standard mode sections
         document.querySelectorAll('.camera-only,.edit-only,.batch-only,.generate-only,.not-generate')
             .forEach(el => el.style.display = 'none');
+        // ALSO hide the Create/batch CENTER-STAGE elements — these live in the
+        // output area (not the sidebar), so the mode-class sweep above misses
+        // them and they'd bleed into the SDXL view (the reference-image grid,
+        // command/result grids, and focus stage). SDXL owns the center stage
+        // for its own output, so blank these while on the SDXL tab.
+        ['batchInputsGrid','batchGridToolbar','batchFocusStage','batchGrid',
+         'batchFooter','batchProgress'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
     } else {
         if (modeSec) modeSec.style.display = '';
         // restore the normal sidebar layout for the current mode
         if (typeof currentMode !== 'undefined' && typeof setMode === 'function') {
             // re-run the section visibility for the active mode without side effects
             _restoreSidebarForMode(currentMode);
+        }
+        // Restore the batch center-stage elements that have content. We only
+        // un-hide the input grid + toolbar if there are inputs; the result grid
+        // and focus stage manage their own visibility, so re-running the batch
+        // render reconciles them.
+        if (typeof renderBatchInputs === 'function') {
+            try { renderBatchInputs(); } catch {}
         }
     }
     if (!sg || !ph) return;
