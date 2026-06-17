@@ -9986,6 +9986,7 @@ async function doGenerateMode(_autoRetried){
                     background: _generateBackground,
                     moderation: _generateModeration,
                     reference_image_ids: refIds,
+                    job_id: synthJobId,
                 }),
                 // Frontend timeout slightly above the worker's so the
                 // worker's AbortController fires first with a useful error
@@ -10000,7 +10001,38 @@ async function doGenerateMode(_autoRetried){
             }, refIds.length
                 ? (_generateQuality === 'high' ? 390_000 : 270_000)
                 : (_generateQuality === 'high' ? 270_000 : 150_000));
-        const d = await r.json();
+        let d = await r.json();
+        // The route now runs generation as a BACKGROUND JOB (so the long
+        // OpenAI call + child-safety screening can't time out the HTTP
+        // response → no more 502s). On success it returns {ok, job_id};
+        // synchronous errors (insufficient_tokens, reference_not_owned,
+        // invalid_json) still come back inline with the old shape. If we got
+        // a job_id, poll /job/{id} until it's done, then reshape the result
+        // into the {images:[...]} form the rest of this function expects.
+        if (d.ok && d.job_id) {
+            const pollJobId = d.job_id;
+            const deadline = Date.now() + (refIds.length
+                ? (_generateQuality === 'high' ? 420_000 : 300_000)
+                : (_generateQuality === 'high' ? 300_000 : 180_000));
+            let jd = null;
+            while (Date.now() < deadline) {
+                await new Promise(res => setTimeout(res, 2000));
+                let pr;
+                try { pr = await fetchT(`${API}/api/studio/job/${pollJobId}`, null, 10000); }
+                catch { continue; }   // transient network hiccup — keep polling
+                try { jd = await pr.json(); } catch { continue; }
+                if (!jd || !jd.ok) continue;
+                if (jd.status === 'done' || jd.status === 'error') break;
+            }
+            if (!jd || jd.status !== 'done') {
+                throw new Error((jd && jd.error) ? jd.error : 'image_gen_timeout');
+            }
+            const res = jd.result || {};
+            const imgs = Array.isArray(res.images) && res.images.length
+                ? res.images
+                : (res.url ? [{ id: res.upload_id, url: res.url, w: res.w, h: res.h, filename: (res.upload_id || 'img') + '.png' }] : []);
+            d = { ok: true, images: imgs };
+        }
         if (!d.ok) {
             // Specially handle reference_not_owned: scrub the stale
             // slots so the user can retry without manually figuring
