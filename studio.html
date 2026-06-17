@@ -13203,6 +13203,28 @@ function sendBatchInputToEdit(inp){
 // and the user can immediately hit GENERATE if they want.
 async function sendBatchInputToCreate(inp){
     if (!inp || inp._placeholder) return;
+    // SDXL tab: assign this image to the SDXL img2img/inpaint source slot
+    // instead of the Qwen Create input. Switch to img2img so the slot is used.
+    if (window._stageView === 'sdxl') {
+        try {
+            const srcUrl = inp.url || inp.dataUrl;
+            if (!srcUrl){ showNotif('No image to assign.', 'error'); return; }
+            const r = await fetchT(srcUrl, null, 15000);
+            const blob = await r.blob();
+            const dataUrl = await new Promise((res, rej) => {
+                const fr = new FileReader();
+                fr.onload = () => res(fr.result);
+                fr.onerror = rej;
+                fr.readAsDataURL(blob);
+            });
+            if (typeof _sdxlMode !== 'undefined' && _sdxlMode === 'txt2img' && typeof sdxlSetMode === 'function') {
+                sdxlSetMode('img2img');
+            }
+            _sdxlSetSource(dataUrl);
+            showNotif('Assigned to SDXL source image.', 'success');
+        } catch(e){ showNotif('Failed to assign image. Please try again.', 'error'); }
+        return;
+    }
     setMode('generate');
 
     // ── History-restored tiles: re-upload to get a real upload_id ─────
@@ -19972,6 +19994,40 @@ function _sdxlSetSource(dataUrl){
     d.className = 'sdxl-drop has';
     d.innerHTML = "<img src='" + dataUrl + "' onclick=\"event.stopPropagation();sdxlZoom()\">"
         + "<button class='sdxl-clear' title='Clear' onclick=\"event.stopPropagation();sdxlClearSource()\">🗑</button>";
+    // Set the output W/H to match the SOURCE image's actual dimensions, snapped
+    // to step-64 and clamped to 512–2048. If a side exceeds 2048, scale the
+    // whole thing down proportionally so it fits (T4 limit) while keeping the
+    // image's exact aspect ratio.
+    try {
+        const probe = new Image();
+        probe.onload = () => {
+            let iw = probe.naturalWidth, ih = probe.naturalHeight;
+            if (!iw || !ih) return;
+            _sdxlImgAspect = iw / ih;
+            // Scale down if either side is over the 2048 cap (keep aspect).
+            const cap = 2048;
+            if (iw > cap || ih > cap){
+                const s = Math.min(cap / iw, cap / ih);
+                iw = iw * s; ih = ih * s;
+            }
+            // Scale UP if both sides are tiny (under the 512 floor), keep aspect.
+            const floor = 512;
+            if (iw < floor && ih < floor){
+                const s = Math.max(floor / iw, floor / ih);
+                iw = iw * s; ih = ih * s;
+            }
+            const w = _sdxlSnapDim(iw), h = _sdxlSnapDim(ih);
+            _sdxlAspectBusy = true;   // suppress the aspect-lock handler while we set both
+            if ($('sdxlW')) { $('sdxlW').value = w; }
+            if ($('sdxlWV')) { $('sdxlWV').value = w; }
+            if ($('sdxlH')) { $('sdxlH').value = h; }
+            if ($('sdxlHV')) { $('sdxlHV').value = h; }
+            if ($('sdxlSizePreset')) $('sdxlSizePreset').value = 'custom';
+            _sdxlAspectBusy = false;
+            if (_sdxlAspect) _sdxlAspect = _sdxlImgAspect;
+        };
+        probe.src = dataUrl;
+    } catch (e) {}
     if (_sdxlMode === 'inpaint') sdxlSyncMask();
 }
 function sdxlClearSource(){
