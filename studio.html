@@ -8801,7 +8801,20 @@ function handleJobTerminal(jobId, d){
                 // complete here and would otherwise wipe the batch view
                 // the user just restored.
                 log(`Job ${jobId} done (in history — batch view kept)`, 'success');
+            } else if (job.mode === 'agent_gen' || job.mode === 'agent_edit' || d.mode === 'agent_gen' || d.mode === 'agent_edit') {
+                // Create-mode / agent generations render their own result
+                // into the full-stage Create tile (via doGenerateMode's inline
+                // success path or the agent tool's placeholder swap). They must
+                // NOT be routed through showResult — that's the Camera/Edit
+                // single-image viewer (#outImg + result bar), which boxes the
+                // image in a small card and shows "seed:undefined · undefineds"
+                // because Create outputs have no seed/elapsed. The queue poller
+                // catches these same agen_* jobs on completion, so without this
+                // guard a Create result got dumped into the wrong, smaller
+                // viewer on top of the correct full-stage tile.
+                log(`Job ${jobId} done (Create/agent — rendered in stage)`, 'success');
             } else if (d.result) {
+                // Genuine Camera/Edit single result → the main viewer.
                 // Include the job id + share state in the result payload so
                 // showResult can wire up the image modal's Share button to
                 // publish this specific generation.
@@ -22549,8 +22562,18 @@ function restoreJobState(jobId){
     const job=myJobs.find(j=>j.id===jobId);
     if(!job) return;
     // Show the output — pass the job id so the lightbox knows what to
-    // share when the user clicks the output image.
-    if(job.result) showResult({ ...job.result, id: jobId });
+    // share when the user clicks the output image. Create/agent results
+    // are NOT routed through showResult (the Camera/Edit viewer) — same
+    // reason as in handleJobTerminal: it boxes the image and shows an
+    // undefined seed. For those, open the full-screen modal directly.
+    if (job.result) {
+        if (job.mode === 'agent_gen' || job.mode === 'agent_edit') {
+            const u = job.result.url;
+            if (u && typeof openModal === 'function') openModal(u, job.result.upload_id ? `${job.result.upload_id}.png` : null);
+        } else {
+            showResult({ ...job.result, id: jobId });
+        }
+    }
     // Restore input state
     const s=job.snapshot;
     if(!s) return;
