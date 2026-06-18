@@ -13345,7 +13345,8 @@ function sendBatchInputToEdit(inp){
 // Switching to Create mode happens before the slot assignment so the
 // user lands in the right view; Generate-mode panels become visible
 // and the user can immediately hit GENERATE if they want.
-async function sendBatchInputToCreate(inp){
+async function sendBatchInputToCreate(inp, opts){
+    const _silent = !!(opts && opts.silent);
     if (!inp || inp._placeholder) return;
     // SDXL tab: assign this image to the SDXL img2img/inpaint source slot
     // instead of the Qwen Create input. Switch to img2img so the slot is used.
@@ -13365,7 +13366,7 @@ async function sendBatchInputToCreate(inp){
                 sdxlSetMode('img2img');
             }
             _sdxlSetSource(dataUrl);
-            showNotif('Assigned to SDXL source image.', 'success');
+            if (!_silent) showNotif('Assigned to SDXL source image.', 'success');
         } catch(e){ showNotif('Failed to assign image. Please try again.', 'error'); }
         return;
     }
@@ -13456,7 +13457,7 @@ async function sendBatchInputToCreate(inp){
     // Notify on overwrite. Wording differs for single-ref vs multi-ref
     // since the user's mental model is different ("replaced the image"
     // vs "all slots were full").
-    if (didOverwrite) {
+    if (didOverwrite && !_silent) {
         if (maxSlots === 1) {
             showNotif('Reference image replaced.', 'info');
         } else {
@@ -22769,12 +22770,11 @@ function assignResultToInput(){
     const mode = (typeof currentMode === 'string') ? currentMode : 'generate';
     if (window._stageView === 'sdxl') {
         // SDXL tab owns its own assignment routing.
-        sendBatchInputToCreate(inp);
+        sendBatchInputToCreate(inp, { silent: true });
         return;
     }
     if (mode === 'camera') {
         if (typeof setInputImage === 'function') setInputImage(inp.id, inp.url, inp.w, inp.h);
-        showNotif('Assigned to Camera input.', 'success');
         log(`Assigned "${inp.fname || inp.id}" to Camera input`);
         return;
     }
@@ -22799,12 +22799,11 @@ function assignResultToInput(){
         if (typeof renderSlot === 'function') renderSlot(target);
         if (typeof persistSlots === 'function') persistSlots();
         if (typeof updateGenButton === 'function') updateGenButton();
-        showNotif(overwrite ? 'All edit slots full — replaced slot 1.' : `Assigned to Edit slot ${target + 1}.`, overwrite ? 'info' : 'success');
         log(`Assigned "${inp.fname || inp.id}" to Edit slot ${target + 1}`);
         return;
     }
     // Create (generate) mode — first empty reference slot.
-    sendBatchInputToCreate(inp);
+    sendBatchInputToCreate(inp, { silent: true });
 }
 
 // Result-bar "Reverse" — write a prompt that could have produced the
