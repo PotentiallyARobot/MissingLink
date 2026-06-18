@@ -5348,6 +5348,14 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="output-area" id="outputArea" style="position:relative">
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openOutImgModal()">
+        <!-- Create/Camera/Edit shared generating overlay. Shown while a
+             generation is in flight (currently wired for Create); the
+             spinner sits centered over the stage and is cleared when the
+             result lands or the job errors. -->
+        <div class="gen-overlay" id="genStageOverlay">
+            <div class="gen-spinner"></div>
+            <div class="gen-overlay-label" id="genStageLabel" style="color:var(--text-muted);font-size:13px;letter-spacing:1px">Generating…</div>
+        </div>
 
         <!-- ── STAGE COMMUNITY GALLERY ────────────────────────────────────
              Default view of the stage when there's no result image, no
@@ -5555,6 +5563,14 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="result-bar" id="resultBar" style="display:none">
         <span id="resultText"></span>
         <button class="use-input-btn" id="btnUseAsInput" onclick="useAsInput()" style="display:none">↩ Use as Input</button>
+        <!-- Create-mode result actions. Hidden for Camera/Edit results;
+             shown by showResult when the result is a Create/agent
+             generation (d.isCreate). "Assign to Input" drops the image
+             into the first empty reference slot (sendBatchInputToCreate);
+             "Reverse" writes a prompt that could have produced it. They
+             operate on a lightweight tile built from the current result. -->
+        <button class="use-input-btn" id="btnCreateAssign" onclick="assignResultToInput()" style="display:none" title="Assign this image to a reference input slot">↩ Assign to Input</button>
+        <button class="use-input-btn" id="btnCreateReverse" onclick="reverseResultImage(this)" style="display:none" title="Reverse-prompt this image">🔁 Reverse</button>
         <!-- One-click Share button — flips the in-image-modal share
              behavior into a result-bar affordance so users don't have
              to open the lightbox just to publish. Calls the same
@@ -8801,18 +8817,21 @@ function handleJobTerminal(jobId, d){
                 // complete here and would otherwise wipe the batch view
                 // the user just restored.
                 log(`Job ${jobId} done (in history — batch view kept)`, 'success');
-            } else if (job.mode === 'agent_gen' || job.mode === 'agent_edit' || d.mode === 'agent_gen' || d.mode === 'agent_edit') {
-                // Create-mode / agent generations render their own result
-                // into the full-stage Create tile (via doGenerateMode's inline
-                // success path or the agent tool's placeholder swap). They must
-                // NOT be routed through showResult — that's the Camera/Edit
-                // single-image viewer (#outImg + result bar), which boxes the
-                // image in a small card and shows "seed:undefined · undefineds"
-                // because Create outputs have no seed/elapsed. The queue poller
-                // catches these same agen_* jobs on completion, so without this
-                // guard a Create result got dumped into the wrong, smaller
-                // viewer on top of the correct full-stage tile.
-                log(`Job ${jobId} done (Create/agent — rendered in stage)`, 'success');
+            } else if ((job.mode === 'agent_gen' || job.mode === 'agent_edit' || d.mode === 'agent_gen' || d.mode === 'agent_edit') && d.result) {
+                // Create/agent generation completing via the queue poller
+                // (e.g. an AI-chat tool generation, or a job that finished
+                // after reload). Render it on the same full-stage #outImg
+                // viewer as Camera/Edit, with isCreate so the result bar
+                // shows Assign-to-Input / Reverse and omits the seed line.
+                const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
+                showResult({
+                    url: d.result.url, w: d.result.w, h: d.result.h,
+                    elapsed: d.result.elapsed, prompt: d.result.prompt || '',
+                    quality: d.result.quality || null,
+                    id: jobId, upload_id: d.result.upload_id || jobId,
+                    is_public: 0, mode: 'generate', isCreate: true,
+                });
+                log(`Job ${jobId} done (Create/agent — rendered full-stage)`, 'success');
             } else if (d.result) {
                 // Genuine Camera/Edit single result → the main viewer.
                 // Include the job id + share state in the result payload so
@@ -10006,22 +10025,26 @@ async function doGenerateMode(_autoRetried){
     const placeholderEstSec = refIds.length
         ? Math.round(_qualityBaseSec * 1.7)   // ref-edit overhead
         : _qualityBaseSec;
-    const newPlaceholder = {
-        id: placeholderId,
-        url: '',
-        fname: 'generating…',
-        selected: false,
-        _placeholder: true,
-        _placeholderLabel: refIds.length ? `Generating (+${refIds.length} ref${refIds.length === 1 ? '' : 's'})` : 'Generating',
-        _placeholderEstSec: placeholderEstSec,
-        _placeholderStartedAt: Date.now(),
-    };
-    // Replace, not append — Create mode is single-image-only.
-    _batchInputs = [newPlaceholder];
-    // Drop any focus state from a prior generation so the placeholder
-    // is what the user sees rather than a stale focused image.
+    // Loading treatment matches Camera/Edit: the stage does NOT get a
+    // placeholder tile. Instead we switch to the Studio stage, clear any
+    // prior result image, and show a "Generating…" state on the output
+    // area; live progress is surfaced by the queue panel (the synthetic
+    // job pushed below). This keeps Create on the same full-stage #outImg
+    // viewer as Camera/Edit rather than the boxed grid-tile surface.
+    if (typeof _switchToStudioForOutput === 'function') _switchToStudioForOutput();
+    _batchInputs = [];          // no grid tiles in Create anymore
     _batchFocusedId = null;
     renderBatchInputs();
+    // Stage: hide the previous result, show the generating overlay/text.
+    const _outImg = $('outImg');
+    const _outPh  = $('outPh');
+    const _genOv  = $('genStageOverlay');
+    if (_outImg) _outImg.style.display = 'none';
+    if (_outPh)  { _outPh.style.display = ''; _outPh.textContent = 'Generating…'; }
+    if (_genOv)  _genOv.classList.add('active');
+    if ($('resultBar')) $('resultBar').style.display = 'none';
+    // Track the (virtual) placeholder start time for elapsed calc below.
+    const newPlaceholder = { _placeholderStartedAt: Date.now() };
     const synthJobId = 'agen_' + Math.random().toString(36).slice(2, 10);
     let thumb = null;
     if (refIds.length && _generateRefs[0]) thumb = _generateRefs[0].url;
@@ -10197,43 +10220,37 @@ async function doGenerateMode(_autoRetried){
         // the first image replaces the placeholder and the rest get
         // appended — producing a vertical stack in Create mode (single
         // column, max-content rows, biggest first).
-        const newEntries = allImages.map(img => ({
-            id: img.id, url: img.url,
-            w: img.w, h: img.h,
-            fname: img.filename || `${img.id}.png`,
-            selected: false,
-            _genPrompt: prompt,
-            _genModel: 'gpt-image-2',
-            _genReferences: refIds,
-            _genElapsedSec: elapsedSec,
-            _genQuality: _generateQuality,
-        }));
-        const idx = _batchInputs.findIndex(b => b.id === placeholderId);
-        if (idx !== -1) {
-            // Replace placeholder with first, append rest at same insertion point.
-            _batchInputs.splice(idx, 1, ...newEntries);
-        } else {
-            _batchInputs.push(...newEntries);
-        }
-        // Create-mode stage behaves like Edit: the new result REPLACES
-        // the prior one rather than stacking below it. Drop every
-        // previously-completed generation tile (marked by _genModel)
-        // that isn't part of this response. Scoped deliberately:
-        //   • placeholders survive (a second in-flight generation the
-        //     user kicked off keeps its progress tile)
-        //   • plain uploads survive (Batch mode shares this array; we
-        //     must not nuke a user's curated batch set)
-        //   • everything removed here is already in History, so nothing
-        //     is lost — same recovery story Edit mode has.
-        const _newIds = new Set(newEntries.map(e => e.id));
-        _batchInputs = _batchInputs.filter(b =>
-            b._placeholder || !b._genModel || _newIds.has(b.id)
-        );
+        const img0 = allImages[0];
+        // Remove the in-flight placeholder tile (if the grid surface still
+        // holds one) — Create no longer renders results as grid tiles, it
+        // uses the same full-stage #outImg viewer as Camera/Edit. We still
+        // clean up any placeholder so a stale spinner tile can't linger.
+        _batchInputs = _batchInputs.filter(b => !b._genModel && !b._placeholder);
+        // Generation done — clear the generating overlay before presenting.
+        { const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active'); }
+        // Present the result on the main stage, exactly like Camera/Edit.
+        // isCreate:true tells showResult to (a) skip seed/elapsed-from-
+        // Lightning formatting, (b) show "Assign to Input" + "Reverse"
+        // instead of "Use as Input", and (c) omit the undefined seed line.
+        // Each new Create result REPLACES the previous one on the stage
+        // (showResult swaps outImg.src), matching the requested behavior.
+        showResult({
+            url: img0.url,
+            w: img0.w, h: img0.h,
+            elapsed: elapsedSec,
+            prompt: prompt,
+            quality: _generateQuality,
+            id: img0.id,
+            upload_id: img0.id,
+            is_public: 0,
+            mode: 'generate',
+            isCreate: true,
+        });
         // Aliases used below — keep `img` pointing at the FIRST image so
         // the rest of the success path (history sync, focus, etc.) reads
-        // the same way it did pre-n>1.
-        const img = allImages[0];
-        renderBatchInputs();
+        // the same way it did pre-stage-routing.
+        const img = img0;
+        renderBatchInputs();   // repaint the (now placeholder-free) input grid
         if (d.tokens_remaining !== undefined && _user) {
             _user.tokens = d.tokens_remaining;
             const tc = $('tokenCount'); if (tc) tc.textContent = d.tokens_remaining;
@@ -10243,15 +10260,14 @@ async function doGenerateMode(_autoRetried){
         renderQueue();
         if (typeof syncHistory === 'function') syncHistory().catch(() => {});
     } catch (e) {
-        const idx = _batchInputs.findIndex(b => b.id === placeholderId);
-        if (idx !== -1) {
-            _batchInputs[idx]._placeholderError = true;
-            _batchInputs[idx]._placeholderLabel = 'Failed';
-            renderBatchInputs();
-            setTimeout(() => {
-                const j = _batchInputs.findIndex(b => b.id === placeholderId);
-                if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
-            }, 3000);
+        // Clear the generating overlay and restore the stage placeholder.
+        const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
+        const _outImg = $('outImg');
+        if (_outImg && !(_outImg.src && !_outImg.src.endsWith('#'))) {
+            // No prior result to fall back to — show the placeholder text.
+            const _outPh = $('outPh');
+            if (_outPh) { _outPh.style.display = ''; }
+            if (typeof _refreshOutputPlaceholder === 'function') _refreshOutputPlaceholder();
         }
         const sj2 = myJobs.find(jj => jj.id === synthJobId);
         if (sj2) { sj2.status = 'error'; sj2.error = (e && e.message) || 'failed'; sj2.finishedAt = Date.now(); }
@@ -22147,46 +22163,51 @@ function renderEarnings(d){
 // Different from restoreJobState which uses the client-side job.snapshot.
 function restoreFromHistory(j){
     if (!j) return;
+    // Decide the target surface from the JOB's origin, not the current UI
+    // mode. A Create/agent generation (gpt-image-2, mode agent_gen/agent_edit)
+    // belongs on the Create full-stage tile; a Camera/Edit job belongs in the
+    // showResult viewer. Previously this keyed off `currentMode`, so clicking
+    // a Create image while in Camera mode fell through to showResult and got
+    // boxed in the small #outImg viewer with an undefined seed. Detect the
+    // origin and switch into Create mode first if needed.
+    const isCreateJob = (j.mode === 'agent_gen' || j.mode === 'agent_edit'
+        || j.backend === 'gpt-image-2'
+        || (typeof j.id === 'string' && j.id.indexOf('agen_') === 0));
+    if (isCreateJob && typeof currentMode !== 'undefined' && currentMode !== 'generate'
+        && typeof setMode === 'function') {
+        // Switch to Create mode so the full-stage grid surface is active.
+        // skipAutoPopulate so the switch doesn't try to pull camera/edit
+        // slot state we don't have here.
+        setMode('generate', { skipAutoPopulate: true });
+    }
     // Create mode keeps its own stage (a single tile in _batchInputs).
     // showResult drives Camera/Edit's outImg element which Create
     // doesn't render. Route to the Create stage explicitly so clicking
     // a history tile while in Create works the way the user expects:
     // the image takes over the canvas, and "Use as Input" / the ✨ tile
     // action drop it into the first empty reference slot.
-    if (typeof currentMode !== 'undefined' && currentMode === 'generate') {
-        // Build a tile entry shaped like a regular Create generation —
-        // matches what doGenerateMode produces — so the focus-stage
-        // logic, the meta strip, and the action buttons all read it
-        // the same way as a fresh result.
-        const tile = {
-            id: j.upload_id || j.id,
-            url: j.url,
-            w: j.w, h: j.h,
-            fname: (j.url || '').split('/').pop() || `${j.id}.png`,
-            selected: false,
-            _genPrompt: j.prompt || '',
-            _genModel: j.backend || 'gpt-image-2',
-            _genReferences: [],
-            _genElapsedSec: j.elapsed || 0,
-            _genQuality: j.quality || null,
-            _fromHistory: true,  // small flag in case downstream wants to know
-        };
-        _batchInputs = [tile];
-        _batchFocusedId = null;  // Create mode never enters focus stage
+    if (isCreateJob || (typeof currentMode !== 'undefined' && currentMode === 'generate')) {
+        // Create images use the same full-stage #outImg viewer as Camera/
+        // Edit (no grid tile, no focus box). Present via showResult with
+        // isCreate so the result bar shows Assign-to-Input / Reverse and
+        // omits the (nonexistent) seed.
+        _batchInputs = [];
+        _batchFocusedId = null;
         renderBatchInputs();
+        const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
+        showResult({
+            url: j.url, w: j.w, h: j.h,
+            prompt: j.prompt || '',
+            elapsed: j.elapsed,
+            quality: j.quality || null,
+            id: j.id, upload_id: j.upload_id || j.id,
+            is_public: !!j.is_public,
+            mode: 'generate',
+            isCreate: true,
+        });
         // Restore the prompt textarea so the user can iterate.
         const pe = $('generatePrompt');
         if (pe && j.prompt) pe.value = j.prompt;
-        // Set up "Use as Input" against this image too — the bottom
-        // bar is shared with Camera/Edit, so we point lastOutputFilename
-        // and outImg.src at the history image so a click on the
-        // existing button picks the right URL. The button's display
-        // is normally only flipped on by showResult; flip it manually.
-        const outImg = $('outImg');
-        if (outImg) outImg.src = j.url;
-        lastOutputFilename = tile.fname;
-        const btn = $('btnUseAsInput');
-        if (btn) btn.style.display = '';
         log(`Restored output from generation ${j.id}`);
         return;
     }
@@ -22697,18 +22718,58 @@ function showResult(d){
     if (d.prompt) outImg.dataset.prompt = d.prompt;
     else outImg.removeAttribute('data-prompt');
     $('outPh').style.display='none';
-    $('rngSeed').value=d.seed; $('vSeed').value=d.seed;
+    // Create/agent results have no seed and no Lightning-style metadata.
+    // Only populate the seed inputs (Camera/Edit's reroll controls) when a
+    // real seed exists, so a Create result doesn't write "undefined" into
+    // them or leak a stale seed into the next Camera generation.
+    const hasSeed = (d.seed !== undefined && d.seed !== null && d.seed !== '');
+    if (hasSeed) { $('rngSeed').value=d.seed; $('vSeed').value=d.seed; }
     $('resultBar').style.display='flex';
-    const tag=d.mode==='camera'?'':'✏️ ';
-    $('resultText').textContent=`${tag}${d.w}×${d.h} · ${d.elapsed}s · seed:${d.seed}`;
+    // Build the meta line piece-by-piece so missing fields (seed/elapsed on
+    // Create) are simply omitted rather than rendered as "undefined".
+    const _isCreate = !!d.isCreate;
+    const _tag = _isCreate ? '' : (d.mode==='camera'?'':'✏️ ');
+    const _metaParts = [];
+    if (d.w && d.h) _metaParts.push(`${d.w}×${d.h}`);
+    if (d.elapsed !== undefined && d.elapsed !== null && d.elapsed !== '') _metaParts.push(`${d.elapsed}s`);
+    if (_isCreate && d.quality && d.quality !== 'auto') _metaParts.push(d.quality);
+    if (hasSeed) _metaParts.push(`seed:${d.seed}`);
+    $('resultText').textContent = `${_tag}${_metaParts.join(' · ')}`;
     lastOutputFilename=d.url.split('/').pop();
-    $('btnUseAsInput').style.display='';
-    // Show the Share button when (a) we have a job id to share and (b)
-    // the viewer is logged in (anonymous viewers can't share). Label
-    // and styling track current share state so a single click toggles
-    // intuitively. Hidden in batch mode — batch images get their share
-    // affordances on the per-tile / history card instead.
+    // Button set depends on origin. Camera/Edit → "Use as Input". Create →
+    // "Assign to Input" + "Reverse" (its tile actions, surfaced on the bar).
+    // We stash the current result so those handlers can act on it without a
+    // tile object.
+    _lastResultForActions = {
+        id: d.id || (d.upload_id || null),
+        url: d.url, w: d.w, h: d.h,
+        fname: lastOutputFilename,
+        _genPrompt: d.prompt || '',
+        _genQuality: d.quality || null,
+        _genElapsedSec: d.elapsed || 0,
+    };
+    $('btnUseAsInput').style.display = _isCreate ? 'none' : '';
+    $('btnCreateAssign').style.display = _isCreate ? '' : 'none';
+    $('btnCreateReverse').style.display = _isCreate ? '' : 'none';
     updateShareResultButton();
+}
+
+// Holds the current single-image result so the result-bar Create actions
+// (Assign to Input / Reverse) can operate without a batch-tile object.
+let _lastResultForActions = null;
+
+// Result-bar "Assign to Input" — drop the current Create result into the
+// first empty reference slot, mirroring the tile's ✨ / Assign action.
+function assignResultToInput(){
+    if (!_lastResultForActions) return;
+    sendBatchInputToCreate(_lastResultForActions);  // async, fire-and-forget
+}
+
+// Result-bar "Reverse" — write a prompt that could have produced the
+// current result. Reuses the same reverse-prompt routine the tiles use.
+function reverseResultImage(btn){
+    if (!_lastResultForActions) return;
+    aiReverseInputTile(_lastResultForActions, btn);
 }
 
 // Repaint the result-bar Share button to match the underlying outImg
