@@ -8137,19 +8137,18 @@ function updateHeaderStatusBadge(connected){
     // made "GPU ready" show for a cold SDXL T4. So bail unconditionally.
     if (window._stageView === 'sdxl') return;
     // Create mode (currentMode === 'generate') does NOT use our Modal GPU at
-    // all — it generates via OpenAI's gpt-image-2 API (/api/studio/agent-
-    // image-gen). The shared /status poll reports the *Qwen* Modal container
-    // (used by Camera/Edit), so letting it paint "GPU ready" here told the
-    // user a local GPU was hot when none is involved in Create. Same class
-    // of bug as the SDXL guard above. We surface a backend-accurate label
-    // instead and skip the GPU state machine entirely. This is checked
-    // BEFORE the `connected` guard because Create's availability does not
-    // depend on the Modal GPU being reachable — a failed /status poll (which
-    // only tells us about the Qwen container) must not flip Create to
-    // "Offline". OpenAI is a remote service we don't health-check here.
+    // all — it generates via OpenAI's gpt-image-2 API. The shared /status
+    // poll reports the *Qwen* Modal container (used by Camera/Edit), so
+    // letting it paint "GPU ready" here told the user a local GPU was hot
+    // when none is involved in Create. Same class of bug as the SDXL guard
+    // above. We show a neutral "Ready" and skip the GPU state machine
+    // entirely. Checked BEFORE the `connected` guard because Create's
+    // availability does not depend on the Modal GPU being reachable — a
+    // failed /status poll (which only tells us about the Qwen container)
+    // must not flip Create to "Offline".
     if (currentMode === 'generate') {
         dot.className = 'dot on';
-        label.textContent = 'Create · OpenAI';
+        label.textContent = 'Ready';
         renderStartupOverlay();
         return;
     }
@@ -17402,17 +17401,28 @@ const AGENT_TOOL_HANDLERS = {
                     size: args.size || '1024x1024',
                     reference_image_ids: refIds,
                 }),
-                // Match the worker's per-path timeout: ref-image generations
-                // route through /v1/images/edits and need more wall time.
-                // The +30s buffer over the worker side ensures the worker's
-                // own AbortController fires first with a useful error
-                // (openai_error / detail) rather than us giving up first
-                // and turning a real upstream failure into "operation was
-                // aborted" with no signal about WHAT failed.
-            }, refIds.length ? 270_000 : 130_000);
+                // Frontend timeout must EXCEED the worker's own generation
+                // ceiling, because the worker now runs the call inline and
+                // returns the result on THIS response (no background poll).
+                // Worker AbortController ceilings (agent default quality=high):
+                //   plain + high → 240s, ref + high → 360s. We add a 30s
+                //   buffer so the worker's abort fires first with a useful
+                //   error rather than us giving up mid-flight.
+            }, refIds.length ? 390_000 : 270_000);
             const d = await r.json();
-            if (!d.ok) throw new Error(d.detail || d.error || 'image_gen_failed');
-            const img = (d.images || [])[0];
+            // The worker now runs generation inline and returns the terminal
+            // state on the POST: { ok, status, result:{images:[...]}, error }.
+            // Older shapes returned images at the top level (d.images), so we
+            // accept both. If the worker still came back 'running' (rare —
+            // client reconnect), fall through to the same error path.
+            if (d.status === 'error') throw new Error(d.error ? friendlyGenError(d.error) : 'image_gen_failed');
+            if (!d.ok && !d.images && !(d.result && d.result.images)) {
+                throw new Error(d.detail || d.error || 'image_gen_failed');
+            }
+            const _imgs = (d.result && Array.isArray(d.result.images) && d.result.images.length)
+                ? d.result.images
+                : (Array.isArray(d.images) ? d.images : []);
+            const img = _imgs[0];
             if (!img) throw new Error('no_image_returned');
             // Build the new entry. Stash the prompt that produced this
             // image on the tile object so the user can see what each
