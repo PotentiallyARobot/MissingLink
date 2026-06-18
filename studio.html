@@ -22758,11 +22758,53 @@ function showResult(d){
 // (Assign to Input / Reverse) can operate without a batch-tile object.
 let _lastResultForActions = null;
 
-// Result-bar "Assign to Input" — drop the current Create result into the
-// first empty reference slot, mirroring the tile's ✨ / Assign action.
+// Result-bar "Assign to Input" — drop the current result into the input
+// of whatever mode the user is CURRENTLY in, rather than forcing a switch
+// to Create. In Camera it becomes the input image; in Edit it fills the
+// first empty edit slot (or slot 1 if all full); in Create it goes to the
+// first empty reference slot. This keeps the user on their current page.
 function assignResultToInput(){
     if (!_lastResultForActions) return;
-    sendBatchInputToCreate(_lastResultForActions);  // async, fire-and-forget
+    const inp = _lastResultForActions;
+    const mode = (typeof currentMode === 'string') ? currentMode : 'generate';
+    if (window._stageView === 'sdxl') {
+        // SDXL tab owns its own assignment routing.
+        sendBatchInputToCreate(inp);
+        return;
+    }
+    if (mode === 'camera') {
+        if (typeof setInputImage === 'function') setInputImage(inp.id, inp.url, inp.w, inp.h);
+        showNotif('Assigned to Camera input.', 'success');
+        log(`Assigned "${inp.fname || inp.id}" to Camera input`);
+        return;
+    }
+    if (mode === 'edit') {
+        // First empty edit slot wins; fall back to slot 1 (index 0) if full.
+        let target = -1;
+        for (let i = 0; i < 3; i++) { if (!slots[i]) { target = i; break; } }
+        const overwrite = (target === -1);
+        if (overwrite) target = 0;
+        slots[target] = {
+            id: inp.id, url: inp.url,
+            filename: inp.fname || `${inp.id}.png`,
+            w: inp.w, h: inp.h,
+        };
+        // Match output size to the image when it lands in slot 1, same
+        // reasoning as sendBatchInputToEdit (avoids border hallucination).
+        if (target === 0 && inp.w && inp.h) {
+            const wEl = $('inpWidth'), hEl = $('inpHeight');
+            if (wEl) wEl.value = inp.w;
+            if (hEl) hEl.value = inp.h;
+        }
+        if (typeof renderSlot === 'function') renderSlot(target);
+        if (typeof persistSlots === 'function') persistSlots();
+        if (typeof updateGenButton === 'function') updateGenButton();
+        showNotif(overwrite ? 'All edit slots full — replaced slot 1.' : `Assigned to Edit slot ${target + 1}.`, overwrite ? 'info' : 'success');
+        log(`Assigned "${inp.fname || inp.id}" to Edit slot ${target + 1}`);
+        return;
+    }
+    // Create (generate) mode — first empty reference slot.
+    sendBatchInputToCreate(inp);
 }
 
 // Result-bar "Reverse" — write a prompt that could have produced the
