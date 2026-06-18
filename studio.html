@@ -10077,6 +10077,23 @@ async function doGenerateMode(_autoRetried){
         // into the {images:[...]} form the rest of this function expects.
         if (d.ok && d.job_id) {
             const pollJobId = d.job_id;
+            // The worker now runs generation INLINE and returns the terminal
+            // state directly on the POST (status 'done'/'error' + result),
+            // because waitUntil was being cancelled by Cloudflare before the
+            // long OpenAI call finished. If the POST already carries a
+            // terminal status, use it and skip polling entirely. We keep the
+            // poll loop below as a fallback for the rare case the POST comes
+            // back still 'running' (e.g. client reconnect, proxy buffering).
+            if (d.status === 'done' || d.status === 'error') {
+                if (d.status === 'error') {
+                    throw new Error(d.error ? friendlyGenError(d.error) : 'image_gen_failed');
+                }
+                const res0 = d.result || {};
+                const imgs0 = Array.isArray(res0.images) && res0.images.length
+                    ? res0.images
+                    : (res0.url ? [{ id: res0.upload_id, url: res0.url, w: res0.w, h: res0.h, filename: (res0.upload_id || 'img') + '.png' }] : []);
+                d = { ok: true, images: imgs0 };
+            } else {
             const deadline = Date.now() + (refIds.length
                 ? (_generateQuality === 'high' ? 420_000 : 300_000)
                 : (_generateQuality === 'high' ? 300_000 : 180_000));
@@ -10098,6 +10115,7 @@ async function doGenerateMode(_autoRetried){
                 ? res.images
                 : (res.url ? [{ id: res.upload_id, url: res.url, w: res.w, h: res.h, filename: (res.upload_id || 'img') + '.png' }] : []);
             d = { ok: true, images: imgs };
+            }
         }
         if (!d.ok) {
             // Specially handle reference_not_owned: scrub the stale
