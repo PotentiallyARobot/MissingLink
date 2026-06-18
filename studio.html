@@ -6414,6 +6414,10 @@ let _gpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
 // claim "GPU ready" — the badge stays on "Connecting…" so a page load can't
 // flash a stale ready state inherited from a previous session.
 let _gpuFirstPollDone = false;
+// Whether the most recent /status poll succeeded. Tracked so a mode switch
+// can repaint the header badge with the correct connected/offline state
+// without waiting for the next poll tick.
+let _gpuConnected = false;
 // Maximum ready_age_s we trust as a real "ready" signal. The Modal consumer
 // thread heartbeats every ~5s, and the server's READY_WINDOW_S is 30s. Any
 // ready_age_s much beyond the heartbeat interval means the heartbeat is
@@ -6572,6 +6576,35 @@ function notifyUploadError(code, data){
     } else {
         showNotif(code || 'Upload failed.', 'error');
     }
+}
+// Map a generation/job error code to a clear, human message. Job error
+// codes come straight from the worker (studio_jobs.error) and are otherwise
+// cryptic when surfaced raw via "Generation failed: <code>". Returns a
+// user-facing string; unknown codes fall back to the code itself so we
+// never swallow information.
+function friendlyGenError(code){
+    const c = (code || '').toString();
+    const map = {
+        // GPU queue: no Modal consumer claimed a queued job in time.
+        timeout_no_gpu_response:
+            'The image GPU didn\u2019t respond in time. It may have been cold-starting or briefly overloaded \u2014 your tokens were refunded. Please try again.',
+        // OpenAI-backed Create job that never completed (worker evicted
+        // mid-flight, or OpenAI stalled past our ceiling).
+        timeout_no_openai_response:
+            'The image service didn\u2019t respond in time. Your tokens were refunded \u2014 please try again.',
+        openai_error:
+            'The image service rejected the request. Try simplifying the prompt or lowering the quality, then retry.',
+        no_images_returned:
+            'No image came back from the service. Your tokens were refunded \u2014 please try again.',
+        all_outputs_blocked_or_empty:
+            'The result was blocked by the safety filter. Try rephrasing the prompt.',
+        insufficient_tokens:
+            'You don\u2019t have enough tokens for this generation.',
+    };
+    // Some codes arrive as "code: detail" (the worker appends a detail
+    // suffix on openai_error / reference_missing). Match on the prefix.
+    const base = c.split(':')[0].trim();
+    return map[c] || map[base] || c || 'Generation failed.';
 }
 // Admin-only: when an upload PASSES and the server returned moderation
 // scores (debug object, populated only for ADMIN_EMAIL), record the result
@@ -7812,6 +7845,14 @@ function setMode(mode, opts){
         }
     }
     currentMode = mode;
+    // The header badge reflects the active mode's backend (Modal GPU for
+    // Camera/Edit, OpenAI for Create). Repaint it now so switching INTO or
+    // OUT OF Create updates the label immediately rather than on the next
+    // /status tick. Guarded on the badge fn existing (defensive — setMode
+    // can run very early during boot before everything is defined).
+    if (typeof updateHeaderStatusBadge === 'function') {
+        updateHeaderStatusBadge(_gpuConnected || _gpuFirstPollDone);
+    }
     // Conditional GPU warmup. The Modal GPU only serves Camera and
     // Edit modes (Qwen-based pipeline). Create mode uses gpt-image-2
     // upstream and doesn't need this container, so warming for Create
@@ -8075,8 +8116,10 @@ async function pollStatus(){
         // can paint a confirmed state. Until this flips true the header
         // badge stays on "Connecting…" regardless of what's in _gpuState.
         _gpuFirstPollDone = true;
+        _gpuConnected = true;
         updateHeaderStatusBadge(true);
     }catch(e){
+        _gpuConnected = false;
         updateHeaderStatusBadge(false);
     }
 }
@@ -8093,6 +8136,23 @@ function updateHeaderStatusBadge(connected){
     // different container — letting it touch the badge here is exactly what
     // made "GPU ready" show for a cold SDXL T4. So bail unconditionally.
     if (window._stageView === 'sdxl') return;
+    // Create mode (currentMode === 'generate') does NOT use our Modal GPU at
+    // all — it generates via OpenAI's gpt-image-2 API (/api/studio/agent-
+    // image-gen). The shared /status poll reports the *Qwen* Modal container
+    // (used by Camera/Edit), so letting it paint "GPU ready" here told the
+    // user a local GPU was hot when none is involved in Create. Same class
+    // of bug as the SDXL guard above. We surface a backend-accurate label
+    // instead and skip the GPU state machine entirely. This is checked
+    // BEFORE the `connected` guard because Create's availability does not
+    // depend on the Modal GPU being reachable — a failed /status poll (which
+    // only tells us about the Qwen container) must not flip Create to
+    // "Offline". OpenAI is a remote service we don't health-check here.
+    if (currentMode === 'generate') {
+        dot.className = 'dot on';
+        label.textContent = 'Create · OpenAI';
+        renderStartupOverlay();
+        return;
+    }
     if (!connected) {
         dot.className = 'dot off';
         label.textContent = 'Offline';
@@ -8764,6 +8824,13 @@ function handleJobTerminal(jobId, d){
             if (shot) { shot.status = 'error'; renderBatchGrid(); }
         }
         log(`Job ${jobId} ${d.status}`, 'error');
+        // Surface a human-readable reason. Previously a failed job only
+        // logged to console, so the user saw their placeholder vanish with
+        // no explanation. Cancelled jobs are user-initiated, so we only
+        // toast on real errors.
+        if (d.status === 'error') {
+            showNotif('Generation failed: ' + friendlyGenError(d.error), 'error');
+        }
         checkAuth();
     }
 }
@@ -10086,7 +10153,7 @@ async function doGenerateMode(_autoRetried){
                 // Surface the underlying error so the user can act.
                 throw new Error('Reference image could not be loaded. Please try again.');
             }
-            throw new Error(d.detail || d.error || 'image_gen_failed');
+            throw new Error(friendlyGenError(d.error || d.detail || 'image_gen_failed'));
         }
         const allImages = Array.isArray(d.images) ? d.images : [];
         if (!allImages.length) throw new Error('no_image_returned');
