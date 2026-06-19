@@ -12367,7 +12367,7 @@ async function doGenerate(){
                 showNotif('This request was blocked: content involving minors is not allowed. Adult content is fine, but this was flagged and cannot be generated.', 'error');
             }
             else if (d.error === 'moderation_unavailable') {
-                showNotif('Safety check is temporarily unavailable, so this edit was not run. Please try again in a moment.', 'error');
+                showNotif('Safety check is temporarily unavailable, so this edit was not run. Please try again in a moment.' + (d.reason ? ` (${d.reason})` : ''), 'error');
             }
             else if (d.error === 'age_ack_required') {
                 // Server requires an 18+ acknowledgement for NSFW content in
@@ -22164,64 +22164,45 @@ function renderEarnings(d){
 // Different from restoreJobState which uses the client-side job.snapshot.
 function restoreFromHistory(j){
     if (!j) return;
-    // Decide the target surface from the JOB's origin, not the current UI
-    // mode. A Create/agent generation (gpt-image-2, mode agent_gen/agent_edit)
-    // belongs on the Create full-stage tile; a Camera/Edit job belongs in the
-    // showResult viewer. Previously this keyed off `currentMode`, so clicking
-    // a Create image while in Camera mode fell through to showResult and got
-    // boxed in the small #outImg viewer with an undefined seed. Detect the
-    // origin and switch into Create mode first if needed.
-    const isCreateJob = (j.mode === 'agent_gen' || j.mode === 'agent_edit'
-        || j.backend === 'gpt-image-2'
-        || (typeof j.id === 'string' && j.id.indexOf('agen_') === 0));
-    if (isCreateJob && typeof currentMode !== 'undefined' && currentMode !== 'generate'
-        && typeof setMode === 'function') {
-        // Switch to Create mode so the full-stage grid surface is active.
-        // skipAutoPopulate so the switch doesn't try to pull camera/edit
-        // slot state we don't have here.
-        setMode('generate', { skipAutoPopulate: true });
-    }
-    // Create mode keeps its own stage (a single tile in _batchInputs).
-    // showResult drives Camera/Edit's outImg element which Create
-    // doesn't render. Route to the Create stage explicitly so clicking
-    // a history tile while in Create works the way the user expects:
-    // the image takes over the canvas, and "Use as Input" / the ✨ tile
-    // action drop it into the first empty reference slot.
-    if (isCreateJob || (typeof currentMode !== 'undefined' && currentMode === 'generate')) {
-        // Create images use the same full-stage #outImg viewer as Camera/
-        // Edit (no grid tile, no focus box). Present via showResult with
-        // isCreate so the result bar shows Assign-to-Input / Reverse and
-        // omits the (nonexistent) seed.
-        _batchInputs = [];
-        _batchFocusedId = null;
-        renderBatchInputs();
-        const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
-        showResult({
-            url: j.url, w: j.w, h: j.h,
-            prompt: j.prompt || '',
-            elapsed: j.elapsed,
-            quality: j.quality || null,
-            id: j.id, upload_id: j.upload_id || j.id,
-            is_public: !!j.is_public,
-            mode: 'generate',
-            isCreate: true,
-        });
-        // Restore the prompt textarea so the user can iterate.
-        const pe = $('generatePrompt');
-        if (pe && j.prompt) pe.value = j.prompt;
-        log(`Restored output from generation ${j.id}`);
-        return;
-    }
-    // Camera / Edit / Batch — original behavior.
-    // Include the job id + current share state so the lightbox's Share
-    // button reflects what the user has already published.
+    // Clicking a history image loads it onto the stage in WHATEVER mode the
+    // user is currently in — it never switches modes. The stage (#outImg) is
+    // shared across Camera / Edit / Create, so we just present the image
+    // there, replacing whatever is currently shown. Mode only affects two
+    // cosmetic things: which result-bar buttons appear, and which prompt
+    // field (if any) we repopulate for easy iteration.
+    const mode = (typeof currentMode === 'string') ? currentMode : 'generate';
+    const isCreate = (mode === 'generate');
+
+    // Any grid/focus state from older Create rendering is cleared so it can't
+    // linger behind the stage image.
+    _batchInputs = [];
+    _batchFocusedId = null;
+    if (typeof renderBatchInputs === 'function') renderBatchInputs();
+    const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
+
+    // Present on the shared stage. isCreate drives the result-bar button set
+    // (Assign-to-Input / Reverse vs Use-as-Input) and suppresses the seed
+    // line for Create-origin images, but does NOT change the mode.
     showResult({
-        url: j.url, w: j.w, h: j.h, prompt: j.prompt,
-        seed: j.seed, elapsed: j.elapsed, mode: j.mode,
-        id: j.id, is_public: !!j.is_public,
+        url: j.url, w: j.w, h: j.h,
+        prompt: j.prompt || '',
+        seed: isCreate ? undefined : j.seed,
+        elapsed: j.elapsed,
+        quality: j.quality || null,
+        id: j.id, upload_id: j.upload_id || j.id,
+        is_public: !!j.is_public,
+        mode: mode,
+        isCreate: isCreate,
     });
-    if ($('promptInput') && j.prompt) $('promptInput').value = j.prompt;
-    if (j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
+
+    // Repopulate the prompt field for the current mode so the user can
+    // iterate from this image.
+    if (j.prompt) {
+        if (mode === 'generate' && $('generatePrompt')) $('generatePrompt').value = j.prompt;
+        else if (mode === 'edit' && $('customPrompt')) $('customPrompt').value = j.prompt;
+        else if ($('promptInput')) $('promptInput').value = j.prompt;
+    }
+    if (!isCreate && j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
 }
 
