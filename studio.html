@@ -3047,13 +3047,18 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sdxl-lora-card .trigchip{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:3px 7px;font-size:9px;font-family:var(--font-mono);cursor:pointer}
 .sdxl-lora-card .trigchip:hover{border-color:var(--gold);color:var(--gold)}
 /* Pony quality-tag row under the prompt */
-.sdxl-pony-tags{margin-top:6px;padding:6px 8px;border:1px dashed var(--border);border-radius:7px;background:rgba(212,160,23,.04)}
+.sdxl-pony-tags{margin-top:6px;padding:5px 8px;border:1px dashed var(--border);border-radius:7px;background:rgba(212,160,23,.04)}
+/* Collapsed state: hide the chip row, keep just the clickable label. */
+.sdxl-pony-tags.collapsed .sdxl-pony-chips{display:none}
+.sdxl-pony-label{cursor:pointer;display:flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--gold)}
+.sdxl-pony-label::after{content:"\25BE";font-size:8px;color:var(--text-muted);margin-left:auto}
+.sdxl-pony-tags.collapsed .sdxl-pony-label::after{content:"\25B8"}
+.sdxl-pony-label:hover::after{color:var(--gold)}
 /* Collapsible section header (BASE MODEL) */
 .sdxl-collapse-head{display:flex;align-items:center;gap:6px}
 .sdxl-collapse-head .sdxl-basename{flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
 .sdxl-collapse-head .sdxl-collapse-chev{color:var(--text-muted);font-size:10px;flex:0 0 auto}
 .sdxl-collapse-head:hover .sdxl-collapse-chev{color:var(--gold)}
-.sdxl-pony-label{font-family:var(--font-mono);font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sdxl-pony-label span{display:none}
 .sdxl-pony-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
 .trigchip.pony{background:var(--surface-3);border:1px solid var(--border);color:var(--text-muted);border-radius:4px;padding:3px 7px;font-size:8px;font-family:var(--font-mono);cursor:pointer;line-height:1.2}
@@ -3694,6 +3699,8 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .sidebar-prompt-row .prompt-lock{display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 
 .output-area{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:200px;overflow:hidden}
+.stage-clear-btn{position:absolute;top:10px;left:10px;z-index:6;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(9,9,11,.7);border:1px solid var(--border);border-radius:7px;color:var(--text-muted);font-size:14px;cursor:pointer;transition:all .15s;backdrop-filter:blur(4px)}
+.stage-clear-btn:hover{border-color:#e5484d;color:#e5484d;background:rgba(9,9,11,.85)}
 .output-area img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}
 
 /* ── Cold-boot startup overlay ──────────────────────────────────── */
@@ -4692,7 +4699,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
            NoobAI, Animagine…). Shown only when the active base matches a family
            that uses special tags; click-to-add, never auto-inserted. -->
       <div id="sdxlQualityTags" class="sdxl-pony-tags" style="display:none">
-        <div class="sdxl-pony-label" id="sdxlQualityLabel"></div>
+        <div class="sdxl-pony-label" id="sdxlQualityLabel" onclick="this.parentElement.classList.toggle('collapsed');this.parentElement.dataset.userToggled='1'" title="Show/hide quality tags"></div>
         <div class="sdxl-pony-chips" id="sdxlQualityChips"></div>
       </div>
       <div class="sec-label" style="margin:12px 0 8px"><span class="icon">&#8856;</span> Negative</div>
@@ -5346,6 +5353,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <!-- MAIN -->
 <div class="main">
     <div class="output-area" id="outputArea" style="position:relative">
+        <button class="stage-clear-btn" id="stageClearBtn" onclick="clearStage()" title="Clear the stage" aria-label="Clear the stage" style="display:none">🗑</button>
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openOutImgModal()">
         <!-- Create/Camera/Edit shared generating overlay. Shown while a
@@ -7982,6 +7990,7 @@ function setMode(mode, opts){
         // lives on outImg and is mode-agnostic, but auth state or
         // share-state can have changed while resultBar was hidden.
         if (typeof updateShareResultButton === 'function') updateShareResultButton();
+        if (typeof updateStageClearBtn === 'function') updateStageClearBtn();
     } else {
         if (outImg) outImg.style.display = 'none';
         if (outPh)  outPh.style.display  = '';
@@ -7989,6 +7998,7 @@ function setMode(mode, opts){
     }
 
     updateGenButton();
+    if (typeof updateStageClearBtn === 'function') updateStageClearBtn();
 
     // Show the batch inputs grid in the output area when we enter batch
     // mode; hide it otherwise so Camera/Edit aren't polluted by it.
@@ -10299,6 +10309,40 @@ function clearInput(){
 // nothing else; if the placeholder isn't currently visible (because
 // outImg is showing a real result), the text just updates in place
 // for the next time it's revealed.
+// Show/hide the stage clear button based on whether a result image is
+// currently displayed. Called wherever the stage image is set or cleared.
+function updateStageClearBtn(){
+    const btn = document.getElementById('stageClearBtn');
+    const img = document.getElementById('outImg');
+    if (!btn) return;
+    const hasImg = !!(img && img.src && !img.src.endsWith('#') && img.style.display !== 'none');
+    btn.style.display = hasImg ? 'flex' : 'none';
+}
+
+// Clear the stage: remove the current result image and restore the
+// context-appropriate placeholder. Does NOT touch inputs, history, or the
+// queue — only what's shown on the stage.
+function clearStage(){
+    const img = document.getElementById('outImg');
+    if (img) {
+        img.src = '#';
+        img.style.display = 'none';
+        img.removeAttribute('data-job-id');
+        img.removeAttribute('data-is-public');
+        img.removeAttribute('data-prompt');
+    }
+    const bar = document.getElementById('resultBar');
+    if (bar) bar.style.display = 'none';
+    const ph = document.getElementById('outPh');
+    if (ph) ph.style.display = '';
+    const ov = document.getElementById('genStageOverlay');
+    if (ov) ov.classList.remove('active');
+    lastOutputFilename = null;
+    _lastResultForActions = null;
+    if (typeof _refreshOutputPlaceholder === 'function') _refreshOutputPlaceholder();
+    updateStageClearBtn();
+}
+
 function _refreshOutputPlaceholder(){
     const ph = document.getElementById('outPh');
     if (!ph) return;
@@ -20470,6 +20514,7 @@ function _sdxlUpdateQualityTags(){
         const title = c.title ? ` title="${c.title.replace(/"/g,'&quot;')}"` : '';
         return `<button class="trigchip pony"${title} onclick="_sdxlAddQualityTag('${esc}','${where}')">${lbl}</button>`;
     }).join('');
+    if (!row.dataset.userToggled) row.classList.add('collapsed');
     row.style.display = '';
 }
 // Detail/config popup for a LoRA already in the stack — mirrors the Colab's
@@ -22739,6 +22784,7 @@ function showResult(d){
     $('btnCreateAssign').style.display = _isCreate ? '' : 'none';
     $('btnCreateReverse').style.display = _isCreate ? '' : 'none';
     updateShareResultButton();
+    updateStageClearBtn();
 }
 
 // Holds the current single-image result so the result-bar Create actions
