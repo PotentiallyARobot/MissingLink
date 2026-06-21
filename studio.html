@@ -8340,6 +8340,25 @@ let _startupLastStageText = null;
 let _coldbootGrantTried = false;
 
 function renderStartupOverlay(){
+    // FULL-SCREEN GPU MODAL REMOVED. All GPU boot + generation status now
+    // lives on the first queue tile (renderQueue already renders cold/warming/
+    // stage/step status per job). This function is kept as a guaranteed-hide
+    // no-op so every existing caller stays valid; it simply ensures the old
+    // overlay element is never visible. Boot status for a job-in-flight is the
+    // queue tile's responsibility; the header badge covers at-rest GPU state.
+    const overlay = $('startupOverlay');
+    if (overlay) overlay.style.display = 'none';
+    _startupFirstSeen = null;
+    _startupMaxPct = 0;
+    _startupCurrentStage = null;
+    _startupCurrentStageEnteredAt = 0;
+    _bootStartedAt = null;
+    _startupSawRealStage = false;
+    _startupLastStageText = null;
+    return;
+}
+
+function _renderStartupOverlay_DISABLED(){
     const overlay = $('startupOverlay');
     if (!overlay) return;
     const _gs = _gpuState;
@@ -8611,11 +8630,7 @@ function renderStartupOverlay(){
         stageText = 'Warming up…';
     }
 
-    // Best-effort one-time cold-boot token grant. The overlay is on
-    // screen here, so the user IS waiting on a cold boot. The server
-    // enforces once-per-user; this is fire-and-forget and never blocks
-    // the render.
-    claimColdbootBonus();
+    // Cold-boot token bonus removed — no grant call, no apology message.
 
     const stageEl = $('startupStage');
     const elapsedEl = $('startupElapsed');
