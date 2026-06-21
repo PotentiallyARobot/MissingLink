@@ -17017,10 +17017,18 @@ function renderQueue(){
                 } else if (stage === 'loading_model') {
                     // SDXL: swapping the base checkpoint — can include a one-time
                     // multi-GB download from Civitai, the slow step that used to
-                    // look like a frozen "Queued".
+                    // look like a frozen "Queued". The backend now streams byte
+                    // progress as step/total (pct out of 100), so show it.
                     statusIcon = '📦'; statusText = 'Loading checkpoint';
-                    subtext = `Downloading model (one-time) · ${elapsed}s`;
-                    pct = 10;
+                    if (total > 0 && step >= 0) {
+                        const dlPct = Math.min(100, Math.round((step / total) * 100));
+                        subtext = `Downloading model (one-time) · ${dlPct}% · ${elapsed}s`;
+                        // Map the 0-100% download into the 8→20 band of the tile bar.
+                        pct = 8 + (dlPct / 100) * 12;
+                    } else {
+                        subtext = `Downloading model (one-time) · ${elapsed}s`;
+                        pct = 10;
+                    }
                 } else if (stage === 'loading_loras') {
                     statusIcon = '🧩'; statusText = 'Loading LoRAs';
                     // step/total encode per-LoRA download progress: each LoRA is
