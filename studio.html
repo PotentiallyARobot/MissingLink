@@ -6438,6 +6438,11 @@ let _gpuState = { state: 'unknown', warming_for_s: 0, ready_age_s: null };
 // claim "GPU ready" — the badge stays on "Connecting…" so a page load can't
 // flash a stale ready state inherited from a previous session.
 let _gpuFirstPollDone = false;
+// True once the user has actually triggered a wake (clicked Generate / batch
+// generate / warmupGpu fired). Gates the cold-boot overlay so it only appears
+// for a boot the user actually started — a GPU sitting cold/sleeping at rest
+// shows no overlay. Cleared when the GPU reaches ready (boot finished).
+let _bootRequested = false;
 // Whether the most recent /status poll succeeded. Tracked so a mode switch
 // can repaint the header badge with the correct connected/offline state
 // without waiting for the next poll tick.
@@ -6954,6 +6959,10 @@ async function warmupGpu(){
     //
     // _receivedAt is bumped so the freshness checks in renderStartupOverlay
     // treat this as current data, not stale.
+    // The user (or an auto-wake) has triggered a real boot — mark it so the
+    // cold-boot overlay is allowed to show progress for THIS boot. Cleared
+    // when the GPU reaches ready (in pollStatus).
+    _bootRequested = true;
     _gpuState = Object.assign({}, _gpuState, {
         state: 'warming',
         startup_stage: 'booting',
@@ -8130,6 +8139,10 @@ async function pollStatus(){
         if(d.gpu){
             const prevState = _gpuState.state;
             _gpuState = Object.assign({}, d.gpu, { _receivedAt: Date.now() });
+            // Boot finished — once the GPU is ready, clear the boot-requested
+            // gate so the overlay won't reappear next time the GPU goes to
+            // sleep at rest.
+            if (d.gpu.state === 'ready') _bootRequested = false;
             if(prevState !== d.gpu.state || d.gpu.state === 'warming'){
                 renderQueue();
             }
@@ -8407,7 +8420,20 @@ function renderStartupOverlay(){
     const isCold     = _gs.state === 'cold';
     const isSleeping = _gs.state === 'sleeping';
     const isWarmingForReal = _gs.state === 'warming' && !heartbeatRecent;
-    const shouldShow = _gpuFirstPollDone && (isCold || isSleeping || isWarmingForReal);
+    // The boot overlay should ONLY appear when a boot is ACTUALLY happening:
+    // a real warming cycle. A 'sleeping' or 'cold' GPU AT REST is not booting
+    // — it's idle, waiting for the user to click Generate — so popping a
+    // "GPU warming up… 4s" panel over it is misleading (the user sees a boot
+    // that isn't running). With the 240s scaledown the GPU is 'sleeping' most
+    // of the time between jobs, which is exactly when this false overlay was
+    // firing. Sleeping/cold are communicated by the header badge only. The
+    // overlay returns when the user actually triggers a job: doGenerate()
+    // calls warmupGpu(), the state flips to 'warming', and THEN this shows
+    // real boot progress. _bootRequested gates the cold case so a click-to-
+    // wake still shows progress, but merely sitting on the tab does not.
+    const isWarmingActive = _gs.state === 'warming' && !heartbeatRecent;
+    const isColdAfterRequest = isCold && _bootRequested;
+    const shouldShow = _gpuFirstPollDone && (isWarmingActive || isColdAfterRequest);
 
     if (!shouldShow) {
         overlay.style.display = 'none';
