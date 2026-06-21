@@ -7877,21 +7877,17 @@ function setMode(mode, opts){
     if (typeof updateHeaderStatusBadge === 'function') {
         updateHeaderStatusBadge(_gpuConnected || _gpuFirstPollDone);
     }
-    // Conditional GPU warmup. The Modal GPU only serves Camera and
-    // Edit modes (Qwen-based pipeline). Create mode uses gpt-image-2
-    // upstream and doesn't need this container, so warming for Create
-    // is wasted compute. We also skip when the user isn't signed in
-    // OR has 0 tokens — no point spinning up a GPU they can't use.
-    // Past-due / fresh-signed-in users with credits do warm; the GPU
-    // is the slowest part of the loop so we want it cold-starting
-    // while they pick poses + upload references rather than after
-    // they hit Generate.
-    if ((mode === 'camera' || mode === 'edit')
-        && _user
-        && (_user.tokens || 0) > 0
-        && typeof warmupGpu === 'function') {
-        warmupGpu();
-    }
+    // GPU warmup is intentionally NOT triggered on tab-switch anymore.
+    // With the cost-tuned 240s scaledown window, warming when the user
+    // merely switches INTO Camera/Edit caused a race: the GPU would boot,
+    // sit idle while the user uploaded an image and set up the pose, hit
+    // the 4-min idle limit, and spin DOWN before they clicked Generate —
+    // wasting a full boot and forcing a second cold start at Generate time.
+    // The wake now happens where it belongs: in doGenerate() on click (it
+    // calls warmupGpu() when the GPU is sleeping/cold, and the job
+    // submission itself makes Modal boot + dispatch). This keeps the idle
+    // clock tied to actual jobs, not tab navigation. (Old behavior pre-warmed
+    // during pose-picking, which only made sense at the old 900s window.)
     // Re-evaluate the cold-boot overlay's visibility now that
     // currentMode has changed. Without this, a warming-up overlay
     // that was painted while the user was in Camera would persist
