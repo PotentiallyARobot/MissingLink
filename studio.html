@@ -16829,6 +16829,48 @@ async function cancelAllCancellableJobs(){
     log(`Cleared ${done} job${done === 1 ? '' : 's'} from queue`, 'success');
 }
 
+// Map the GPU's global startup stage (from _gpuState, set by the worker's
+// _post_startup pings) to a friendly label + a rough progress percent, so a
+// camera/edit job waiting on a cold boot shows what's actually happening
+// ("Loading model 60%") instead of a static "Queued" that looks frozen.
+// Returns null when the GPU isn't in a boot stage we recognize (caller falls
+// back to generic waiting text).
+function _gpuBootStatus(gs){
+    if (!gs) return null;
+    const st = gs.state;
+    // Only meaningful while the GPU is not yet ready.
+    if (st === 'ready') return null;
+    const stage = gs.startup_stage || null;
+    const prog = gs.startup_progress || 0;
+    const total = gs.startup_total || 0;
+    // Friendly label + the band of the tile bar each boot stage occupies.
+    // The bar climbs across stages so the user sees forward motion through
+    // the whole ~60-90s boot, not a stuck 5%.
+    const STAGES = {
+        booting:           { icon: '🔌', text: 'Starting GPU',        lo: 3,  hi: 8  },
+        loading_transformer:{ icon: '📦', text: 'Loading model',       lo: 8,  hi: 30 },
+        loading_text_encoder:{ icon: '📝', text: 'Loading text encoder',lo: 30, hi: 45 },
+        building_pipeline: { icon: '⚙️', text: 'Building pipeline',    lo: 45, hi: 60 },
+        registering:       { icon: '🧩', text: 'Preparing model',      lo: 60, hi: 75 },
+        loading_loras:     { icon: '🧩', text: 'Loading LoRAs',        lo: 75, hi: 85 },
+        moving_to_gpu:     { icon: '🚀', text: 'Moving to GPU',        lo: 85, hi: 95 },
+    };
+    const s = stage && STAGES[stage] ? STAGES[stage] : null;
+    if (!s) {
+        // Booting but no specific stage yet (or unknown stage): generic.
+        if (st === 'cold' || st === 'warming') {
+            return { icon: '🔌', text: 'Starting GPU', pct: 4, sub: null };
+        }
+        return null;
+    }
+    // Within-stage progress (e.g. registering N/total blocks) refines the bar.
+    let within = 0;
+    if (total > 0) within = Math.min(1, prog / total);
+    const pct = Math.round(s.lo + (s.hi - s.lo) * within);
+    const sub = (total > 0 && prog > 0) ? `${Math.round(within * 100)}%` : null;
+    return { icon: s.icon, text: s.text, pct, sub };
+}
+
 function renderQueue(){
     const activeJobs = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').sort((a, b) => (a.submittedAt || 0) - (b.submittedAt || 0));
     const now = Date.now();
@@ -16922,34 +16964,40 @@ function renderQueue(){
 
             if (j.status === 'queued') {
                 // DB is 'queued' — row created but worker hasn't dispatched
-                // to Modal yet (happens in the few ms before status='waiting').
-                // Rarely seen; same UX as waiting.
-                statusIcon = '⏳'; statusText = 'Queued';
+                // to Modal yet. If the GPU is mid-boot, surface the real boot
+                // stage so this doesn't sit at a frozen "Queued".
                 const waited = Math.floor((now - j.submittedAt) / 1000);
-                const ahead = j.othersAhead || 0;
-                subtext = ahead > 0
-                    ? `${ahead} ahead · ${waited}s`
-                    : `${j.mode.toUpperCase()} · ${waited}s`;
-                pct = 2;
-            } else if (j.status === 'waiting') {
-                // DB is 'waiting' — dispatched to Modal, no stage ping yet.
-                // If GPU is cold, Modal is cold-booting (can take 60-90s);
-                // otherwise job is sitting in Modal's input queue.
-                const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
-                if (_gpuState && _gpuState.state === 'cold') {
-                    statusIcon = '🔌'; statusText = 'Waiting for GPU to start';
-                    subtext = `Cold boot · ${waited}s`;
-                } else if (_gpuState && _gpuState.state === 'warming') {
-                    statusIcon = '🔌'; statusText = 'Waiting for GPU to start';
-                    subtext = `Warming · ${waited}s`;
+                const boot = _gpuBootStatus(_gpuState);
+                if (boot) {
+                    statusIcon = boot.icon; statusText = boot.text;
+                    subtext = boot.sub ? `${boot.sub} · ${waited}s` : `Cold boot · ${waited}s`;
+                    pct = boot.pct;
                 } else {
                     statusIcon = '⏳'; statusText = 'Queued';
                     const ahead = j.othersAhead || 0;
                     subtext = ahead > 0
                         ? `${ahead} ahead · ${waited}s`
                         : `${j.mode.toUpperCase()} · ${waited}s`;
+                    pct = 2;
                 }
-                pct = 5;
+            } else if (j.status === 'waiting') {
+                // DB is 'waiting' — dispatched to Modal. If the GPU is booting,
+                // show the live boot stage (loading model / building pipeline /
+                // moving to GPU) with a climbing bar instead of a static line.
+                const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
+                const boot = _gpuBootStatus(_gpuState);
+                if (boot) {
+                    statusIcon = boot.icon; statusText = boot.text;
+                    subtext = boot.sub ? `${boot.sub} · ${waited}s` : `Cold boot · ${waited}s`;
+                    pct = boot.pct;
+                } else {
+                    statusIcon = '⏳'; statusText = 'Queued';
+                    const ahead = j.othersAhead || 0;
+                    subtext = ahead > 0
+                        ? `${ahead} ahead · ${waited}s`
+                        : `${j.mode.toUpperCase()} · ${waited}s`;
+                    pct = 5;
+                }
             } else if (j.status === 'running') {
                 const elapsed = j.runningAt ? Math.floor((now - j.runningAt) / 1000) : (j.startedAt ? Math.floor((now - j.startedAt) / 1000) : 0);
                 if (stage === 'accepted' || stage === 'waiting_for_gpu') {
