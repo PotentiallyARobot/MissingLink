@@ -20898,7 +20898,22 @@ async function sdxlInspectLora(){
         if (info.name) $('sdxlLoraName').value = info.name;
     } catch(e){ box.innerHTML = '<div class="hintline">Network error inspecting.</div>'; }
 }
-function _sdxlCollectLoras(){ return _sdxlLoras.map(l => ({ url:l.url, scale:l.scale })); }
+function _sdxlCollectLoras(){
+    // Persist not just url+scale but the display metadata (name, thumbnail,
+    // version id, base model, triggers) too. Older code stored only url+scale,
+    // which meant a remixed LoRA card came back nameless with a ⬡ placeholder.
+    // Carrying these through means History → Remix shows the same card the
+    // user originally added — name, thumb, and trigger chips intact.
+    return _sdxlLoras.map(l => ({
+        url: l.url,
+        scale: l.scale,
+        name: l.name || '',
+        thumb: l.thumb || '',
+        version_id: l.version_id || '',
+        base_model: l.base_model || '',
+        triggers: Array.isArray(l.triggers) ? l.triggers : [],
+    }));
+}
 
 async function sdxlGenerate(){
     if (!_user){ $('loginModal').classList.add('open'); return; }
@@ -22495,6 +22510,10 @@ function remixFromHistory(j){
             }));
         if (typeof _sdxlRenderLoraList === 'function') _sdxlRenderLoraList();
         if (typeof _sdxlRefreshAppliedStates === 'function') _sdxlRefreshAppliedStates();
+        // Legacy history rows stored only {url, scale} — no name/thumb/triggers.
+        // Resolve those from Civitai in the background so the cards fill in with
+        // the real name + thumbnail instead of the bare URL and ⬡ placeholder.
+        _sdxlBackfillLoraMeta();
     }
 
     // Persist the reassigned stack/base/VAE so a refresh keeps the remix.
@@ -22507,6 +22526,63 @@ function remixFromHistory(j){
 
     showNotif('Remixed — settings reassigned from this image.', 'success');
     log(`Remixed settings from generation ${j.id}`);
+}
+
+// Fill in missing name / thumbnail / triggers for LoRAs in the current stack.
+// Newly generated images already carry this metadata through history; this is
+// the fallback for OLDER history rows (and any LoRA added before metadata was
+// persisted) that only stored {url, scale}. Resolves each via the existing
+// Civitai detail endpoint, then patches the matching stack entry and re-renders
+// so the card shows the real name + thumb instead of the URL + ⬡ placeholder.
+//
+// Runs in the background — fire-and-forget, one request per LoRA that needs it,
+// matched back by URL so a fast user removing/reordering LoRAs mid-fetch can't
+// write metadata onto the wrong card.
+async function _sdxlBackfillLoraMeta(){
+    // Snapshot the URLs that need enrichment right now.
+    const needing = _sdxlLoras.filter(l => l && l.url && (!l.name || !l.thumb));
+    if (!needing.length) return;
+    let anyChanged = false;
+    await Promise.all(needing.map(async (lora) => {
+        const url = lora.url;
+        // Parse a Civitai model/version id from the stored URL. Download URLs
+        // look like /api/download/models/<versionId>; page URLs are
+        // /models/<modelId>. Mirror sdxlInspectLora's parsing.
+        const isDownload = url.indexOf('/api/download/') >= 0;
+        const m = url.match(/\/models\/(\d+)/);
+        if (!m){ return; }  // non-Civitai (e.g. raw HF .safetensors) — nothing to resolve
+        const body = isDownload ? { version_id: m[1] } : { model_id: m[1] };
+        try {
+            const r = await fetchT(`${API}/api/sdxl-studio/civitai/detail`, {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                credentials:'include', body: JSON.stringify(body) }, 20000);
+            const d = await r.json();
+            if (!d || !d.ok || !d.info) return;
+            const info = d.info;
+            // Re-find the entry by URL — it may have moved/been removed while
+            // the request was in flight. Never patch by stale index.
+            const cur = _sdxlLoras.find(x => x.url === url);
+            if (!cur) return;
+            if (!cur.name && info.name){ cur.name = info.name; anyChanged = true; }
+            if (!cur.base_model && info.base_model){ cur.base_model = info.base_model; anyChanged = true; }
+            if ((!cur.triggers || !cur.triggers.length) && Array.isArray(info.triggers) && info.triggers.length){
+                cur.triggers = info.triggers; anyChanged = true;
+            }
+            if (!cur.version_id && info.version_id){ cur.version_id = String(info.version_id); anyChanged = true; }
+            // The detail endpoint has no dedicated thumb field; use the first
+            // community sample image as the card thumbnail (same image source
+            // the search grid uses).
+            if (!cur.thumb && Array.isArray(info.samples) && info.samples.length && info.samples[0].url){
+                cur.thumb = info.samples[0].url; anyChanged = true;
+            }
+        } catch { /* leave the placeholder; non-fatal */ }
+    }));
+    if (anyChanged){
+        if (typeof _sdxlRenderLoraList === 'function') _sdxlRenderLoraList();
+        // Persist the enriched metadata so the next remix is instant and a
+        // refresh keeps the resolved names/thumbs.
+        if (typeof _sdxlSaveState === 'function') _sdxlSaveState();
+    }
 }
 
 // Restore a full angle batch from history. We rebuild the _activeBatch
