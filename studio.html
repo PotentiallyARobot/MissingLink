@@ -1467,6 +1467,11 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    the absolutely-positioned grid version). Always visible, flex-sized, red. */
 .q-hist-delete{width:28px;height:28px;border-radius:50%;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.45);color:#ff6b6b;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;flex-shrink:0;margin-left:4px;transition:all .12s}
 .q-hist-delete:hover{background:var(--red);border-color:var(--red);color:var(--white);transform:scale(1.08)}
+/* Sidebar history-tile remix icon — overlaid on the top-left of the thumb.
+   Click = restore all settings + stage the image (remixFromHistory).
+   Plain tile click stays image-only (restoreFromHistory). */
+.q-hist-remix{position:absolute;top:1px;left:1px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.7);border:1px solid rgba(232,169,23,.5);color:var(--gold);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;z-index:2;opacity:.9;transition:all .12s}
+.q-hist-remix:hover{background:var(--gold);border-color:var(--gold);color:#0a0a0c;opacity:1;transform:scale(1.12)}
 
 /* ── Community Gallery modal ──────────────────────────────────────────
    Reuses the .history-modal-panel chrome so search behaves like history
@@ -1534,7 +1539,15 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* When inside .history-card-actions, drop the absolute positioning the
    buttons had on their own so flex layout handles spacing. */
 .history-card-actions .history-card-delete,
-.history-card-actions .history-card-share{position:static}
+.history-card-actions .history-card-share,
+.history-card-actions .history-card-remix{position:static}
+/* Remix button — top-of-thumbnail action that reloads every generation
+   setting (prompt, negative, LoRAs, size, steps, cfg, seed, sampler, base
+   model) from this image AND puts it on the stage. A plain card click only
+   stages the image; this one also restores the recipe so the user can
+   re-run or tweak it. Gold ring on hover to read as the "primary" action. */
+.history-card-remix{width:26px;height:26px;background:rgba(0,0,0,.65);border:1px solid var(--border);color:var(--text);border-radius:50%;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:.85;transition:all .15s;padding:0;line-height:1}
+.history-card-remix:hover{background:var(--gold);border-color:var(--gold);color:#0a0a0c;opacity:1;transform:scale(1.1)}
 .history-card-share{width:26px;height:26px;background:rgba(0,0,0,.65);border:1px solid var(--border);color:var(--text);border-radius:50%;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:.85;transition:all .15s;padding:0;line-height:1}
 .history-card-share:hover{background:var(--gold);border-color:var(--gold);color:#0a0a0c;opacity:1;transform:scale(1.1)}
 .history-card-share.shared{background:var(--gold-dim);border-color:var(--gold);color:var(--gold);opacity:1}
@@ -17247,11 +17260,15 @@ function renderHistorySidebar(){
             const j = g.item;
             tile.onclick = (ev) => {
                 if (ev.target.closest('.q-hist-delete')) return;
+                if (ev.target.closest('.q-hist-remix')) return;
                 restoreFromHistory(j);
             };
             const detail = j.elapsed ? `${j.elapsed}s` : '';
             tile.innerHTML = `
-                <div class="job-thumb"><img src="${j.url}" loading="lazy"></div>
+                <div class="job-thumb" style="position:relative">
+                    <img src="${j.url}" loading="lazy">
+                    <button class="q-hist-remix" title="Remix — reload prompts, LoRAs & settings, then stage" onclick="event.stopPropagation(); remixFromHistory(_historyItems.find(x=>x.id==='${j.id}'))">⟳</button>
+                </div>
                 <div class="job-info">
                     <div class="job-status">✅ Done</div>
                     <div class="job-mode">${(j.mode||'').toUpperCase()}${detail ? ' · ' + detail : ''}</div>
@@ -18673,6 +18690,7 @@ function renderHistoryModal(){
                 // own handlers, so don't double-fire the card restore.
                 if (ev.target.closest('.history-card-delete')) return;
                 if (ev.target.closest('.history-card-share')) return;
+                if (ev.target.closest('.history-card-remix')) return;
                 restoreFromHistory(j);
                 closeHistoryModal();
             };
@@ -18692,6 +18710,7 @@ function renderHistoryModal(){
                     <div class="hc-prompt">${escapeHtml(j.prompt || '')}</div>
                 </div>
                 <div class="history-card-actions">
+                    <button class="history-card-remix" title="Remix — reload this image's prompts, LoRAs & settings, then stage it" onclick="event.stopPropagation(); remixFromHistory(_historyItems.find(x=>x.id==='${j.id}')); closeHistoryModal()">⟳</button>
                     <button class="history-card-share${sharedCls}" title="${shareTitle}" onclick="event.stopPropagation(); toggleHistoryItemShare('${j.id}', ${j.is_public ? 0 : 1})">${shareIcon}</button>
                     <button class="history-card-delete" title="Delete this generation" onclick="event.stopPropagation(); deleteHistoryItem('${j.id}')">🗑</button>
                 </div>
@@ -22338,15 +22357,156 @@ function restoreFromHistory(j){
         isCreate: isCreate,
     });
 
-    // Repopulate the prompt field for the current mode so the user can
+    // Repopulate the prompt field for the current surface so the user can
     // iterate from this image.
-    if (j.prompt) {
+    if (window._stageView === 'sdxl') {
+        // SDXL has its own prompt + negative-prompt fields. Fill both so the
+        // user can re-run or tweak the exact settings from that history image.
+        if ($('sdxlPrompt')) $('sdxlPrompt').value = j.prompt || '';
+        if ($('sdxlNeg')) $('sdxlNeg').value = j.negative_prompt || '';
+    } else if (j.prompt) {
         if (mode === 'generate' && $('generatePrompt')) $('generatePrompt').value = j.prompt;
         else if (mode === 'edit' && $('customPrompt')) $('customPrompt').value = j.prompt;
         else if ($('promptInput')) $('promptInput').value = j.prompt;
     }
     if (!isCreate && j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
+}
+
+// ── REMIX ───────────────────────────────────────────────────────────────
+// Reassigns every generation setting that produced a history image — the
+// positive + negative prompts, the LoRA stack (with per-LoRA strengths), the
+// base checkpoint, VAE, size, steps, guidance/CFG, sampler, seed, and the
+// SDXL sub-mode — back into the SDXL Studio controls, THEN drops the image on
+// the stage. This is the difference between the small remix icon and a plain
+// thumbnail click: the plain click only stages the image (restoreFromHistory);
+// remix repopulates the whole recipe so the user can re-run or tweak it.
+//
+// All fields are optional and applied defensively. Older history rows (created
+// before the backend surfaced these on /history) only carry prompt/url, so
+// remix degrades gracefully to "prompt + image" for those.
+function remixFromHistory(j){
+    if (!j) return;
+    // 1) Make sure the SDXL controls are visible — remix only makes sense in
+    //    the SDXL studio (that's where these settings live). Switch the stage
+    //    view if we're not already there.
+    if (window._stageView !== 'sdxl' && typeof setStageView === 'function'){
+        setStageView('sdxl');
+    }
+
+    // 2) Sub-mode (txt2img / img2img / inpaint). Defaults to txt2img.
+    if (j.sdxl_mode && typeof sdxlSetMode === 'function'){
+        sdxlSetMode(j.sdxl_mode);
+    }
+
+    // 3) Prompts.
+    if ($('sdxlPrompt')) $('sdxlPrompt').value = j.prompt || '';
+    if ($('sdxlNeg'))    $('sdxlNeg').value    = j.negative_prompt || '';
+
+    // 4) Size — set the W/H sliders + their number readouts, and snap the
+    //    preset dropdown to a matching option (else "custom").
+    if (j.width && $('sdxlW') && $('sdxlWV')){ $('sdxlW').value = j.width; $('sdxlWV').value = j.width; }
+    if (j.height && $('sdxlH') && $('sdxlHV')){ $('sdxlH').value = j.height; $('sdxlHV').value = j.height; }
+    if (j.width && j.height && $('sdxlSizePreset')){
+        const wanted = `${j.width}x${j.height}`;
+        const hasOpt = Array.from($('sdxlSizePreset').options).some(o => o.value === wanted);
+        $('sdxlSizePreset').value = hasOpt ? wanted : 'custom';
+    }
+
+    // 5) Advanced: steps, guidance/cfg, sampler, seed. Open the Advanced
+    //    panel so the restored values are visible (only if it has a value to
+    //    show — avoids popping it open for legacy rows with nothing in it).
+    let touchedAdv = false;
+    if (j.steps != null && $('sdxlSteps') && $('sdxlStepsV')){
+        $('sdxlSteps').value = j.steps; $('sdxlStepsV').value = j.steps; touchedAdv = true;
+    }
+    if (j.cfg != null && $('sdxlCfg') && $('sdxlCfgV')){
+        const c = (+j.cfg).toFixed(1);
+        $('sdxlCfg').value = j.cfg; $('sdxlCfgV').value = c; touchedAdv = true;
+    }
+    if (j.sampler && $('sdxlSampler')){
+        const hasOpt = Array.from($('sdxlSampler').options).some(o => o.value === j.sampler);
+        if (hasOpt){ $('sdxlSampler').value = j.sampler; touchedAdv = true; }
+    }
+    if (j.seed != null && j.seed !== 0 && $('sdxlSeed')){
+        $('sdxlSeed').value = j.seed; touchedAdv = true;
+        // A remixed seed is an explicit choice — turn off "random each gen"
+        // so re-running reproduces the same image, not a fresh roll.
+        if ($('sdxlRandSeedEach')) $('sdxlRandSeedEach').checked = false;
+    }
+    if (touchedAdv){
+        const body = $('sdxlAdvBody');
+        if (body && !body.classList.contains('open') && typeof sdxlToggleAdv === 'function'){
+            sdxlToggleAdv();
+        }
+    }
+
+    // 6) img2img / inpaint strength.
+    if (j.strength != null){
+        if ($('sdxlStrengthImg') && $('sdxlStrengthImgV')){
+            $('sdxlStrengthImg').value = j.strength; $('sdxlStrengthImgV').value = (+j.strength).toFixed(2);
+        }
+        if ($('sdxlStrength') && $('sdxlStrengthV')){
+            $('sdxlStrength').value = j.strength; $('sdxlStrengthV').value = (+j.strength).toFixed(2);
+        }
+    }
+
+    // 7) Base checkpoint. j.model_url === '' means "default base"; restore the
+    //    selection + reset button state to match.
+    if (typeof j.model_url === 'string'){
+        if (j.model_url){
+            _sdxlSelectedBaseUrl = j.model_url;
+            if ($('sdxlBaseReset')) $('sdxlBaseReset').style.display = '';
+        } else {
+            _sdxlSelectedBaseUrl = '';
+            if ($('sdxlBaseReset')) $('sdxlBaseReset').style.display = 'none';
+        }
+    }
+
+    // 8) VAE.
+    if (j.vae && $('sdxlVaeSelect')){
+        _sdxlVaeMode = j.vae;
+        $('sdxlVaeSelect').value = j.vae;
+        if ($('sdxlVaeUrl')){
+            $('sdxlVaeUrl').value = (j.vae === 'custom' && j.vae_url) ? j.vae_url : '';
+            $('sdxlVaeUrl').style.display = (j.vae === 'custom') ? '' : 'none';
+        }
+    }
+
+    // 9) LoRA stack. History stores a compact [{url, scale}] list (that's all
+    //    the generate endpoint persists). Rebuild _sdxlLoras from it; names /
+    //    triggers / thumbs aren't stored, so we leave those blank — the URL +
+    //    strength are what reproduce the image. Marked loaded so the stack
+    //    doesn't show a spinner. Clearing first so remix is a clean reassign,
+    //    not a merge onto whatever was already loaded.
+    if (Array.isArray(j.loras)){
+        _sdxlLoras = j.loras
+            .filter(l => l && l.url)
+            .slice(0, 6)
+            .map(l => ({
+                url: l.url,
+                name: l.name || '',
+                scale: (l.scale != null ? l.scale : 1.0),
+                base_model: l.base_model || '',
+                triggers: l.triggers || [],
+                thumb: l.thumb || '',
+                version_id: l.version_id || '',
+                loaded: true, loading: false,
+            }));
+        if (typeof _sdxlRenderLoraList === 'function') _sdxlRenderLoraList();
+        if (typeof _sdxlRefreshAppliedStates === 'function') _sdxlRefreshAppliedStates();
+    }
+
+    // Persist the reassigned stack/base/VAE so a refresh keeps the remix.
+    if (typeof _sdxlSaveState === 'function') _sdxlSaveState();
+    // Refresh the per-checkpoint quality-tag chips for the (possibly new) base.
+    if (typeof _sdxlUpdateQualityTags === 'function') { try { _sdxlUpdateQualityTags(); } catch {} }
+
+    // 10) Finally, stage the image itself (same as a plain click).
+    restoreFromHistory(j);
+
+    showNotif('Remixed — settings reassigned from this image.', 'success');
+    log(`Remixed settings from generation ${j.id}`);
 }
 
 // Restore a full angle batch from history. We rebuild the _activeBatch
