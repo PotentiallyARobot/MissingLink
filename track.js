@@ -11,7 +11,14 @@
 (function () {
   "use strict";
 
-  var ENDPOINT = "/api/ev";          // ← matches the worker route in index.ts
+  // Absolute apex host, NOT a relative path. The marketing page is served from
+  // www.missinglink.build, but the worker that owns /api/ev answers cleanly
+  // only on the apex (missinglink.build). A relative "/api/ev" from the www
+  // page hits www, which 301-redirects to the apex — and browsers downgrade a
+  // redirected POST to GET, so the beacon arrived as a GET and the handler
+  // rejected it 405. Posting straight to the apex avoids the redirect. This is
+  // cross-origin, so the worker sets permissive CORS headers on /api/ev.
+  var ENDPOINT = "https://missinglink.build/api/ev";
   var MAX_CLICKS = 30;               // per page, to bound abuse/noise
 
   // ---- ids -----------------------------------------------------------------
@@ -41,7 +48,12 @@
       if (navigator.sendBeacon && navigator.sendBeacon(ENDPOINT, s)) return;
     } catch (e) {}
     try {
-      fetch(ENDPOINT, { method: "POST", body: s, keepalive: true, credentials: "include" });
+      // No credentials: this is now cross-origin (www page → apex worker) and
+      // the studio_token cookie wouldn't be sent cross-site regardless, so
+      // including credentials only adds strict credentialed-CORS requirements
+      // for no benefit. Logged-in attribution still works for same-origin
+      // pages (e.g. studio.html on the apex); the landing page is anonymous.
+      fetch(ENDPOINT, { method: "POST", body: s, keepalive: true });
     } catch (e) {}
   }
 
