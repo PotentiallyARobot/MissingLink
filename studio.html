@@ -16852,40 +16852,149 @@ async function cancelAllCancellableJobs(){
 // ("Loading model 60%") instead of a static "Queued" that looks frozen.
 // Returns null when the GPU isn't in a boot stage we recognize (caller falls
 // back to generic waiting text).
+// Client-side cold-boot progress tracking. The server emits discrete stage
+// heartbeats (booting → loading_transformer → … → ready), but they arrive
+// ~10s apart and Modal's container-provisioning window before our Python runs
+// emits NOTHING for the first ~15-30s. If the bar only moved on stage hits it
+// would sit frozen for long stretches and users give up (the reported symptom:
+// "COLD BOOT · 27s" parked at ~8%). So we ease the bar smoothly WITHIN each
+// stage's band using wall-clock time, anchored to when we first saw the boot
+// and re-anchored each time a real stage lands. The result is a bar that is
+// always climbing across the full ~90s boot.
+let _bootTrack = {
+    firstSeenAt: null,     // when this client first observed an active boot
+    stage: null,           // last server stage we acted on
+    stageEnteredAt: null,  // when that stage was first seen (client clock)
+    maxPct: 0,             // ratchet — never let the displayed bar reverse
+    stageIndex: 0,         // ordinal of current stage (for "Step N of M")
+};
+// Ordered boot sequence with each stage's band [lo,hi] and the rough seconds
+// we expect to spend in it (used to ease the bar within the band between
+// heartbeats). Tuned to a ~90s total cold boot. Labels are user-friendly and
+// describe WHAT is happening, not internal stage names.
+const _BOOT_SEQUENCE = [
+    { key: 'booting',              icon: '🔌', text: 'Starting GPU container', lo: 2,  hi: 14, secs: 18 },
+    { key: 'loading_transformer',  icon: '📦', text: 'Loading model weights',  lo: 14, hi: 42, secs: 22 },
+    { key: 'loading_text_encoder', icon: '📝', text: 'Loading text encoder',   lo: 42, hi: 55, secs: 10 },
+    { key: 'building_pipeline',    icon: '⚙️', text: 'Building pipeline',       lo: 55, hi: 66, secs: 9  },
+    { key: 'loading_loras',        icon: '🧩', text: 'Loading LoRAs',           lo: 66, hi: 74, secs: 7  },
+    { key: 'moving_to_gpu',        icon: '🚀', text: 'Moving model to GPU',     lo: 74, hi: 84, secs: 8  },
+    { key: 'registering',          icon: '🧠', text: 'Optimizing for this GPU', lo: 84, hi: 95, secs: 10 },
+    { key: 'compiling',            icon: '🧠', text: 'Optimizing for this GPU', lo: 84, hi: 95, secs: 10 },
+    { key: 'finalizing',           icon: '✨', text: 'Almost ready',            lo: 95, hi: 98, secs: 4  },
+    { key: 'warming_up',           icon: '✨', text: 'Almost ready',            lo: 96, hi: 99, secs: 4  },
+];
+const _BOOT_TOTAL_SECS = 90;   // typical cold boot; drives the pre-stage curve + ETA
+const _BOOT_STEP_COUNT = 7;    // user-facing "Step N of 7" (the meaningful stages)
+// A short reassurance line per stage so the tile says something human, not just
+// a stage name. Kept calm and honest — this only ever runs on a real cold boot.
+const _BOOT_REASSURE = {
+    booting:              'Spinning up a fresh GPU — first run after idle',
+    loading_transformer:  'Loading the image model into memory',
+    loading_text_encoder: 'Loading the prompt understanding model',
+    building_pipeline:    'Wiring the generation pipeline together',
+    loading_loras:        'Loading style adapters',
+    registering:          'Preparing the model for fast inference',
+    moving_to_gpu:        'Transferring weights onto the GPU',
+    compiling:            'Optimizing kernels for this GPU',
+    finalizing:           'Final checks',
+    warming_up:           'Final checks',
+};
+
+function _bootResetTrack(){
+    _bootTrack = { firstSeenAt: null, stage: null, stageEnteredAt: null, maxPct: 0, stageIndex: 0 };
+}
+
 function _gpuBootStatus(gs){
-    if (!gs) return null;
+    if (!gs) { return null; }
     const st = gs.state;
-    // Only meaningful while the GPU is not yet ready.
-    if (st === 'ready') return null;
+    if (st === 'ready') { _bootResetTrack(); return null; }
+    // Only render boot progress while the GPU is actually cold/warming.
+    if (st !== 'cold' && st !== 'warming') { return null; }
+
+    const now = Date.now();
+    if (_bootTrack.firstSeenAt === null) { _bootTrack.firstSeenAt = now; _bootTrack.maxPct = 0; }
+    const totalElapsed = (now - _bootTrack.firstSeenAt) / 1000;
+
     const stage = gs.startup_stage || null;
     const prog = gs.startup_progress || 0;
     const total = gs.startup_total || 0;
-    // Friendly label + the band of the tile bar each boot stage occupies.
-    // The bar climbs across stages so the user sees forward motion through
-    // the whole ~60-90s boot, not a stuck 5%.
-    const STAGES = {
-        booting:           { icon: '🔌', text: 'Starting GPU',        lo: 3,  hi: 8  },
-        loading_transformer:{ icon: '📦', text: 'Loading model',       lo: 8,  hi: 30 },
-        loading_text_encoder:{ icon: '📝', text: 'Loading text encoder',lo: 30, hi: 45 },
-        building_pipeline: { icon: '⚙️', text: 'Building pipeline',    lo: 45, hi: 60 },
-        registering:       { icon: '🧩', text: 'Preparing model',      lo: 60, hi: 75 },
-        loading_loras:     { icon: '🧩', text: 'Loading LoRAs',        lo: 75, hi: 85 },
-        moving_to_gpu:     { icon: '🚀', text: 'Moving to GPU',        lo: 85, hi: 95 },
-    };
-    const s = stage && STAGES[stage] ? STAGES[stage] : null;
-    if (!s) {
-        // Booting but no specific stage yet (or unknown stage): generic.
-        if (st === 'cold' || st === 'warming') {
-            return { icon: '🔌', text: 'Starting GPU', pct: 4, sub: null };
-        }
-        return null;
+    // A server stage is trustworthy only if it arrived recently. startup_age_s
+    // is the server's "seconds since the stage was written"; a large value
+    // means it's stale leftover from a previous boot cycle and we ignore it.
+    const age = gs.startup_age_s;
+    const stageFresh = stage && (age == null || age < 60);
+
+    // Find the current stage in the sequence (for band + ordinal + reassurance).
+    const seqIdx = stageFresh ? _BOOT_SEQUENCE.findIndex(s => s.key === stage) : -1;
+    const seq = seqIdx >= 0 ? _BOOT_SEQUENCE[seqIdx] : null;
+
+    // Re-anchor the intra-stage timer whenever a NEW fresh stage appears, so
+    // the within-band easing restarts from that stage's lo.
+    if (seq && _bootTrack.stage !== stage) {
+        _bootTrack.stage = stage;
+        _bootTrack.stageEnteredAt = now;
+        _bootTrack.stageIndex = Math.min(_BOOT_STEP_COUNT, seqIdx + 1);
     }
-    // Within-stage progress (e.g. registering N/total blocks) refines the bar.
-    let within = 0;
-    if (total > 0) within = Math.min(1, prog / total);
-    const pct = Math.round(s.lo + (s.hi - s.lo) * within);
-    const sub = (total > 0 && prog > 0) ? `${Math.round(within * 100)}%` : null;
-    return { icon: s.icon, text: s.text, pct, sub };
+
+    let icon, text, pct, reassure;
+    if (seq) {
+        // We have a fresh, known stage. Ease the bar from lo→hi over the
+        // stage's expected duration, so it keeps climbing between heartbeats.
+        icon = seq.icon; text = seq.text;
+        reassure = _BOOT_REASSURE[stage] || null;
+        const inStage = (now - (_bootTrack.stageEnteredAt || now)) / 1000;
+        let frac = Math.min(1, inStage / Math.max(1, seq.secs));
+        // If the server reports within-stage progress (e.g. registering N/total
+        // or a model download), prefer it — it's ground truth, not a guess.
+        if (total > 0 && prog >= 0) {
+            const serverFrac = Math.min(1, prog / total);
+            frac = Math.max(frac, serverFrac);
+        }
+        pct = seq.lo + (seq.hi - seq.lo) * frac;
+    } else {
+        // No fresh stage yet — either the very start (Modal still provisioning
+        // the container, before our Python emits anything) or a heartbeat gap.
+        // Drive the bar purely on elapsed time against the expected total so it
+        // ISN'T frozen at 4% during the long opening provisioning window.
+        icon = '🔌';
+        text = 'Starting GPU container';
+        reassure = _BOOT_REASSURE.booting;
+        // Time curve: front-loaded so motion is visible immediately, capped at
+        // 12% until a real stage lands (we don't want to over-promise before
+        // the model actually starts loading).
+        const t = Math.min(1, totalElapsed / 16);
+        pct = 2 + t * 10;   // 2 → 12 over the first 16s
+        _bootTrack.stageIndex = Math.max(_bootTrack.stageIndex, 1);
+    }
+
+    // Ratchet — the displayed bar may only ever increase this cycle.
+    _bootTrack.maxPct = Math.max(_bootTrack.maxPct, pct);
+    pct = Math.min(99, _bootTrack.maxPct);   // never show 100 until 'ready' closes it
+
+    // Build a rich subtext: step counter + within-stage % (if the server gave
+    // one) + a rough ETA. Keeps the user oriented on a long boot.
+    const stepN = Math.max(1, _bootTrack.stageIndex);
+    let detail;
+    if (total > 0 && prog > 0 && seq) {
+        detail = `${Math.round(Math.min(1, prog / total) * 100)}%`;
+    }
+    // ETA from the overall % against the expected total — coarse but reassuring.
+    let eta = null;
+    if (pct > 4 && pct < 97) {
+        const remainingFrac = (97 - pct) / 97;
+        const etaSec = Math.round(remainingFrac * _BOOT_TOTAL_SECS);
+        if (etaSec >= 5) eta = `~${etaSec}s left`;
+    }
+
+    return {
+        icon, text, pct: Math.round(pct),
+        stepN, stepTotal: _BOOT_STEP_COUNT,
+        detail: detail || null,
+        eta,
+        reassure: reassure || null,
+        elapsed: Math.round(totalElapsed),
+    };
 }
 
 function renderQueue(){
@@ -16986,8 +17095,14 @@ function renderQueue(){
                 const waited = Math.floor((now - j.submittedAt) / 1000);
                 const boot = _gpuBootStatus(_gpuState);
                 if (boot) {
-                    statusIcon = boot.icon; statusText = boot.text;
-                    subtext = boot.sub ? `${boot.sub} · ${waited}s` : `Cold boot · ${waited}s`;
+                    statusIcon = boot.icon;
+                    statusText = `${boot.text} · ${boot.stepN}/${boot.stepTotal}`;
+                    // Sub-line: reassurance + within-stage % (if any) + ETA.
+                    const parts = [];
+                    if (boot.reassure) parts.push(boot.reassure);
+                    if (boot.detail) parts.push(boot.detail);
+                    parts.push(boot.eta ? boot.eta : `${boot.elapsed}s`);
+                    subtext = parts.join(' · ');
                     pct = boot.pct;
                 } else {
                     statusIcon = '⏳'; statusText = 'Queued';
@@ -17004,8 +17119,13 @@ function renderQueue(){
                 const waited = j.startedAt ? Math.floor((now - j.startedAt) / 1000) : Math.floor((now - j.submittedAt) / 1000);
                 const boot = _gpuBootStatus(_gpuState);
                 if (boot) {
-                    statusIcon = boot.icon; statusText = boot.text;
-                    subtext = boot.sub ? `${boot.sub} · ${waited}s` : `Cold boot · ${waited}s`;
+                    statusIcon = boot.icon;
+                    statusText = `${boot.text} · ${boot.stepN}/${boot.stepTotal}`;
+                    const parts = [];
+                    if (boot.reassure) parts.push(boot.reassure);
+                    if (boot.detail) parts.push(boot.detail);
+                    parts.push(boot.eta ? boot.eta : `${boot.elapsed}s`);
+                    subtext = parts.join(' · ');
                     pct = boot.pct;
                 } else {
                     statusIcon = '⏳'; statusText = 'Queued';
