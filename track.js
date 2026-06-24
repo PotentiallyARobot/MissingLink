@@ -13,7 +13,7 @@
 
   // Build marker — bump on each deploy so you can verify which version is live:
   //   fetch('track.js?cb='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(t=>console.log(t.match(/TRACK_BUILD = "[^"]+"/)[0]))
-  var TRACK_BUILD = "2026-06-24-pointerdown-apex";
+  var TRACK_BUILD = "2026-06-24-direct-bind";
   try { if (window && window.console) console.debug("[track.js] build", TRACK_BUILD); } catch (e) {}
 
   // Absolute apex host, NOT a relative path. The marketing page is served from
@@ -168,6 +168,41 @@
   // Earliest reliable signals — fire the conversion before navigation begins.
   document.addEventListener("pointerdown", function (ev) { maybeNotebook(ev.target); }, true);
   document.addEventListener("touchstart", function (ev) { maybeNotebook(ev.target); }, { capture: true, passive: true });
+
+  // DIRECT per-card binding. The delegated document listeners above can be
+  // defeated if another script on the page calls stopPropagation on the event
+  // before it reaches document. Binding straight to each .hp-nb-card element
+  // (and on the element itself, capture phase) sidesteps that entirely — the
+  // element's own listener fires no matter what happens higher up the tree.
+  // We bind on pointerdown/mousedown/touchstart (all before navigation) and
+  // also on the link's click; maybeNotebook's dedupe makes the overlap safe.
+  function bindCard(card) {
+    if (!card || card.__mlBound) return;
+    card.__mlBound = true;
+    var fire = function () { maybeNotebook(card); };
+    card.addEventListener("pointerdown", fire, true);
+    card.addEventListener("mousedown", fire, true);
+    card.addEventListener("touchstart", fire, { capture: true, passive: true });
+    card.addEventListener("click", fire, true);
+    // Keyboard activation (Enter on a focused link).
+    card.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.keyCode === 13) fire();
+    }, true);
+  }
+  function bindAllCards() {
+    var cards = document.querySelectorAll(".hp-nb-card, a[href*='colab.research.google.com'], a[href$='.ipynb']");
+    for (var i = 0; i < cards.length; i++) bindCard(cards[i]);
+  }
+  // Bind now, and again on DOM ready in case the script ran in <head> or the
+  // cards were rendered after this executed.
+  bindAllCards();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindAllCards);
+  }
+  // Catch cards injected later (filtering, hydration, etc.).
+  try {
+    new MutationObserver(bindAllCards).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
 
   document.addEventListener("click", function (ev) {
     var t = ev.target;
