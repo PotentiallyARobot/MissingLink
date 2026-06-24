@@ -21188,7 +21188,9 @@ async function sdxlGenerate(){
     if (_sdxlMode === 'inpaint') basePayload.mask_b64 = maskUrl;
 
     const btn = $('sdxlGenBtn'); btn.disabled = true;
-    $('sdxlStatus').textContent = 'Submitting…';
+    // No status text next to the button — the queue tile communicates state
+    // (Submitting → cold-boot stages → Generating → done). A second status line
+    // here was redundant with the queue and cluttered the control panel.
     let submitted = 0;
     // Each image in the batch is its own queued job (the shared callback stores
     // one image per job). Submit them sequentially.
@@ -21231,14 +21233,10 @@ async function sdxlGenerate(){
         }
     }
     if (submitted > 0){
-        $('sdxlStatus').textContent = `Queued ${submitted} job${submitted>1?'s':''} — generating on T4…`;
-        // Stay on the SDXL tab — the result renders on the center stage here
-        // (showResult writes to #outImg, which the SDXL view leaves visible).
-        // Do NOT switch to the studio/Create workspace.
-    } else {
-        $('sdxlStatus').textContent = '';
+        // Status is shown in the queue tile, not next to the button. Stay on
+        // the SDXL tab — the result renders on the center stage here.
     }
-    setTimeout(() => { btn.disabled = false; $('sdxlStatus').textContent = ''; }, 1800);
+    setTimeout(() => { btn.disabled = false; }, 1800);
 }
 
 function _sdxlInit(){
@@ -21504,9 +21502,10 @@ function _sdxlSetGpuPill(state, stageLabel){
     if (state === 'ready'){ dot.className = 'dot on'; label.textContent = 'GPU ready'; }
     else if (state === 'warming'){ dot.className = 'dot cold'; label.textContent = stageLabel || 'GPU warming…'; }
     else { dot.className = 'dot off'; label.textContent = 'GPU sleeping'; }
-    // Mirror the phase into the SDXL status line in the sidebar too.
-    const st = $('sdxlStatus');
-    if (st && state === 'warming') st.textContent = stageLabel || 'GPU warming…';
+    // GPU phase is shown via the header badge (above) and the queue tile during
+    // a boot — we intentionally do NOT mirror it into #sdxlStatus by the
+    // controls, to keep status in one place (the queue), not floating by the
+    // Generate button.
 }
 function _sdxlPollHealth(opts){
     if (_sdxlHealthTimer) return;   // already polling
