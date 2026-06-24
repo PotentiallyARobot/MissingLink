@@ -4708,6 +4708,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec sdxl-only" id="sdxlSecPrompt" style="display:none">
       <div class="sec-label"><span class="icon">&#10022;</span> Prompt</div>
       <textarea class="ta" id="sdxlPrompt" rows="3" placeholder="Describe the image…"></textarea>
+      <!-- Tells the user the quality prefix we seeded into the prompt/negative
+           is intentional and should be kept. Text is set per-family by
+           _sdxlUpdateQualityTags so it names the right convention. -->
+      <div class="hintline" id="sdxlQualityKeepHint" style="display:none"></div>
       <!-- Quality-tag chips — populated per checkpoint family (Pony, Illustrious,
            NoobAI, Animagine…). Shown only when the active base matches a family
            that uses special tags; click-to-add, never auto-inserted. -->
@@ -20545,6 +20549,11 @@ const _SDXL_FAMILY_TAGS = {
     pony: {
         label: 'Pony quality tags',
         match: /pony/i,
+        // What we SEED into the fields by default (realism-tuned, matching the
+        // default Pony Realism base). Distinct from the click-chips below, which
+        // stay granular. Kept here so preload and chips share one source.
+        preloadPos: 'score_9, score_8_up, score_7_up, source_realistic, realistic, photorealistic',
+        preloadNeg: 'score_6, score_5, score_4, source_cartoon, source_anime, anime, cartoon, 3d, render, worst quality, low quality, blurry, deformed, bad anatomy, watermark, signature, text',
         chips: [
             { t: 'score_9, score_8_up, score_7_up', pos: 'front', title: 'Standard Pony quality prefix' },
             { t: 'source_realistic' }, { t: 'source_anime' }, { t: 'source_cartoon' },
@@ -20611,11 +20620,66 @@ function _sdxlActiveFamily(){
     }
     return null;
 }
+// Preload the prompt + negative fields with the active checkpoint family's
+// quality tags. These materially improve output (each family was trained to
+// expect its own quality convention), so we seed them by default and tell the
+// user to keep them. ONLY fills fields that are empty — never clobbers a saved
+// prompt, a restored session, or anything the user has started typing. Returns
+// true if it wrote anything (so callers can re-render the hint state).
+function _sdxlPreloadQualityTags(force){
+    const fam = _sdxlActiveFamily();
+    if (!fam) return false;               // unknown checkpoint family → no preset to seed
+    const def = _SDXL_FAMILY_TAGS[fam]; if (!def) return false;
+    const p = $('sdxlPrompt'), n = $('sdxlNeg');
+    if (!p || !n) return false;
+
+    // The positive prefix is the family's explicit `preloadPos` if defined,
+    // else its `pos:'front'` chip; the negative is `preloadNeg` else its
+    // `neg:true` chip. Explicit values let a family seed a richer default than
+    // its single granular chip (e.g. Pony seeds a full realism prefix).
+    let posTag = def.preloadPos || '', negTag = def.preloadNeg || '';
+    for (const c of def.chips){
+        if (c.neg && !negTag) negTag = c.t;
+        else if (c.pos === 'front' && !posTag) posTag = c.t;
+    }
+
+    let wrote = false;
+    // Only seed an EMPTY field (unless force=true, used when switching family
+    // and the existing content is itself a different family's untouched preset
+    // — see _sdxlMaybeReseedQualityTags). force never overwrites user text.
+    if (posTag && (force || !p.value.trim())){ p.value = posTag; wrote = true; }
+    if (negTag && (force || !n.value.trim())){ n.value = negTag; wrote = true; }
+
+    // Remember what we auto-seeded so a later family switch can tell "user
+    // hasn't touched our preset" apart from "user wrote their own prompt".
+    window._sdxlSeededPos = posTag;
+    window._sdxlSeededNeg = negTag;
+    return wrote;
+}
+
+// When the base checkpoint changes to a DIFFERENT family, swap the preset —
+// but only if the prompt/negative still contain exactly what WE seeded (i.e.
+// the user never edited them). If they typed anything of their own, we leave
+// it completely alone.
+function _sdxlMaybeReseedQualityTags(){
+    const p = $('sdxlPrompt'), n = $('sdxlNeg');
+    if (!p || !n) return;
+    const pUntouched = !p.value.trim() || p.value.trim() === (window._sdxlSeededPos || '').trim();
+    const nUntouched = !n.value.trim() || n.value.trim() === (window._sdxlSeededNeg || '').trim();
+    // Clear our old seed from the untouched fields so the preload can refill
+    // them with the new family's tags (force=true fills even though we just
+    // cleared them). User-edited fields are left as-is.
+    if (pUntouched) p.value = '';
+    if (nUntouched) n.value = '';
+    _sdxlPreloadQualityTags(false);
+}
+
 // Render the quality-tag row for the active family (or hide it if none match).
 function _sdxlUpdateQualityTags(){
     const row = $('sdxlQualityTags'); if (!row) return;
+    const keepHint = $('sdxlQualityKeepHint');
     const fam = _sdxlActiveFamily();
-    if (!fam || !_SDXL_FAMILY_TAGS[fam]){ row.style.display = 'none'; return; }
+    if (!fam || !_SDXL_FAMILY_TAGS[fam]){ row.style.display = 'none'; if (keepHint) keepHint.style.display = 'none'; return; }
     const cfg = _SDXL_FAMILY_TAGS[fam];
     $('sdxlQualityLabel').textContent = cfg.label;
     row.title = 'Click a tag to add it — recommended for this model family';
@@ -20628,6 +20692,14 @@ function _sdxlUpdateQualityTags(){
     }).join('');
     if (!row.dataset.userToggled) row.classList.add('collapsed');
     row.style.display = '';
+    // Tell the user the seeded prefix is intentional. Names the family so it's
+    // clear which convention applies (e.g. "Pony quality tags").
+    if (keepHint){
+        const famName = (cfg.label || 'quality tags').replace(/ quality tags$/i, '');
+        keepHint.innerHTML = '✦ The ' + famName.replace(/</g,'&lt;') +
+            ' quality tags are preloaded into your prompt and negative — keep them in for the best results.';
+        keepHint.style.display = '';
+    }
 }
 // Detail/config popup for a LoRA already in the stack — mirrors the Colab's
 // detail view: thumbnail, civitai link, trigger chips (click to add), a live
@@ -20935,6 +21007,14 @@ async function sdxlGenerate(){
     const randomize = $('sdxlRandSeedEach').checked;
     const baseSeed = +$('sdxlSeed').value || 0;
 
+    // GPU warmup is triggered HERE, on generation — not on tab entry. Fire the
+    // T4 cold-start now (fire-and-forget, debounced server-side) so the
+    // container is booting while the jobs enqueue below; the backend would
+    // wake it on the queued call regardless, but firing explicitly gives the
+    // user immediate "GPU warming" feedback via the badge. Only meaningful for
+    // a logged-in user with tokens (checked inside _sdxlWakeGpu).
+    _sdxlWakeGpu();
+
     const basePayload = {
         mode: _sdxlMode,
         prompt,
@@ -21013,6 +21093,11 @@ function _sdxlInit(){
     // session so a refresh lands them right back where they were.
     try { _sdxlRestoreState(); } catch {}
     try { _sdxlUpdateQualityTags(); } catch {}
+    // Seed the prompt + negative with the active family's quality tags (Pony by
+    // default). Runs AFTER restore so a saved/in-progress prompt is preserved —
+    // it only fills empty fields. The user is told (via the hint under the
+    // prompt) to keep these in for best results.
+    try { _sdxlPreloadQualityTags(false); } catch {}
 }
 
 // ── Civitai search (LoRA + checkpoint) ──
@@ -21194,11 +21279,12 @@ function sdxlPickCheckpoint(url, name){
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = name || 'custom';
     _sdxlSaveState();
     if (typeof _sdxlUpdateQualityTags==='function') _sdxlUpdateQualityTags();
+    if (typeof _sdxlMaybeReseedQualityTags==='function') _sdxlMaybeReseedQualityTags();
     sdxlCloseSearch();
-    // Spin up the T4 now (if the user is logged in and has tokens to generate),
-    // so the container is booting while they set up the prompt. The checkpoint
-    // itself swaps in on the first generation that requests it.
-    _sdxlWakeGpu();
+    // GPU warmup is NOT triggered here. Picking a base model only records the
+    // selection — the T4 cold-start fires on generation (see sdxlGenerate), so
+    // browsing/selecting models never spins up a GPU. The checkpoint swaps in
+    // on the first generation that requests it.
     showNotif('Base model set — first generation with it will load the checkpoint (slower).', 'success');
 }
 // LOAD MODEL button — set the base from the URL + display-name fields (the
@@ -21266,12 +21352,21 @@ function _sdxlSetGpuPill(state, stageLabel){
     const st = $('sdxlStatus');
     if (st && state === 'warming') st.textContent = stageLabel || 'GPU warming…';
 }
-function _sdxlPollHealth(){
+function _sdxlPollHealth(opts){
     if (_sdxlHealthTimer) return;   // already polling
+    // passive=true (the tab-entry case) means we are only OBSERVING, not
+    // waking. In that mode, if we find the container is cold/asleep we must
+    // resolve the badge to "sleeping" and stop — otherwise it would sit on
+    // "warming" forever even though nothing is booting it. During an actual
+    // wake (passive=false, from generate), a few non-answers are expected
+    // while the cold-start spins up, so we keep polling through them.
+    const passive = !!(opts && opts.passive);
     let tries = 0;
+    let coldStreak = 0;   // consecutive ticks where the container looked cold
     const _check = async () => {
         tries++;
         if (tries > 80){ if (_sdxlHealthTimer){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; } return; }  // ~4 min cap
+        let sawStartupStage = false;
         // 1) Read the live startup phase from /status (the worker posts phases
         //    there via gpu-heartbeat) so we can SHOW the boot sequence.
         try {
@@ -21279,6 +21374,7 @@ function _sdxlPollHealth(){
             const sd = await sr.json();
             const stage = sd && sd.gpu && sd.gpu.startup_stage;
             if (stage && stage !== 'ready'){
+                sawStartupStage = true;
                 _sdxlSetGpuPill('warming', _SDXL_STAGE_LABELS[stage] || ('Warming: ' + stage));
             }
         } catch {}
@@ -21286,21 +21382,41 @@ function _sdxlPollHealth(){
         //    "ready" when it reports ready:true (model loaded + warmed) — a
         //    200 alone just means the container is awake, not that the model
         //    is resident.
+        let healthAnswered = false;
         try {
             const r = await fetch(_SDXL_HEALTH_URL, { method: 'GET' });
             if (r.ok){
+                healthAnswered = true;
                 let body = {};
                 try { body = await r.json(); } catch {}
                 if (body && body.ready){
                     _sdxlSetGpuPill('ready');
                     const st = $('sdxlStatus'); if (st) st.textContent = '';
                     if (_sdxlHealthTimer){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; }
+                    return;
                 } else {
                     // container awake but still loading the model / warming up
                     _sdxlSetGpuPill('warming', 'Loading model…');
                 }
             }
         } catch {}
+        // 3) Passive observe-only resolution. If the health endpoint didn't
+        //    answer and /status reports no active startup stage, the container
+        //    is cold and nobody is waking it — so show "sleeping" and stop
+        //    rather than implying a warmup that isn't happening. Require two
+        //    consecutive cold ticks to avoid a transient network blip flipping
+        //    the badge to sleeping mid-boot.
+        if (passive && !healthAnswered && !sawStartupStage){
+            coldStreak++;
+            if (coldStreak >= 2){
+                _sdxlSetGpuPill('sleeping');
+                const st = $('sdxlStatus'); if (st) st.textContent = '';
+                if (_sdxlHealthTimer){ clearInterval(_sdxlHealthTimer); _sdxlHealthTimer = null; }
+                return;
+            }
+        } else {
+            coldStreak = 0;
+        }
     };
     _check();                                   // fire immediately on entry
     // 6s (was 2.5s): the SDXL health check hits /api/studio/status (a
@@ -21317,6 +21433,7 @@ function sdxlResetBase(){
     const bp = $('sdxlBasePillTxt'); if (bp) bp.textContent = 'Pony Realism v2.2';
     _sdxlSaveState();
     if (typeof _sdxlUpdateQualityTags==='function') _sdxlUpdateQualityTags();
+    if (typeof _sdxlMaybeReseedQualityTags==='function') _sdxlMaybeReseedQualityTags();
 }
 
 // VRAM pill. Populated from the GPU status payload IF it carries VRAM figures
@@ -21358,19 +21475,19 @@ function setStageView(view){
     document.querySelectorAll('.stage-tab').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.view === view);
     });
-    // Opening the SDXL tab spins up the on-demand T4 (cold-start) so it's warm
-    // by the time the user hits Generate. Fire-and-forget; debounced server-side.
+    // Opening the SDXL tab no longer spins up the T4. GPU warmup is tied to
+    // the generate action (see sdxlGenerate), not to tab navigation — opening
+    // a tab to look around should never cold-start a GPU. On entry we ONLY
+    // read the container's current health so the badge is truthful (it may be
+    // genuinely warm from recent use, or sleeping); we do not POST /wake here.
     if (view === 'sdxl') {
         // Take ownership of the badge immediately and show a truthful initial
-        // state instead of whatever the Qwen poll last left. We then check the
-        // SDXL T4's REAL health (it may be cold, or genuinely warm from recent
-        // use) and the wake/poll updates it from there.
+        // state instead of whatever the Qwen poll last left. _sdxlPollHealth
+        // is passive — it reads /status and the worker health endpoint but
+        // never triggers a cold-start.
         _sdxlBadgeOwned = true;
         _sdxlSetGpuPill('warming', 'Checking GPU…');
-        if (typeof _sdxlWakeGpu === 'function') _sdxlWakeGpu();
-        // Always poll health on entry (even if the user can't afford a gen) so
-        // the badge reflects the actual container state, not a stale label.
-        if (typeof _sdxlPollHealth === 'function') _sdxlPollHealth();
+        if (typeof _sdxlPollHealth === 'function') _sdxlPollHealth({ passive: true });
     } else {
         // Leaving SDXL — hand the header badge back to the shared Qwen status.
         _sdxlBadgeOwned = false;
