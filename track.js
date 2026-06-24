@@ -13,7 +13,7 @@
 
   // Build marker — bump on each deploy so you can verify which version is live:
   //   fetch('track.js?cb='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(t=>console.log(t.match(/TRACK_BUILD = "[^"]+"/)[0]))
-  var TRACK_BUILD = "2026-06-24-direct-bind";
+  var TRACK_BUILD = "2026-06-24-navhold";
   try { if (window && window.console) console.debug("[track.js] build", TRACK_BUILD); } catch (e) {}
 
   // Absolute apex host, NOT a relative path. The marketing page is served from
@@ -145,6 +145,24 @@
   // pointerdown immediately followed by touchstart on some devices) from
   // double-sending the same conversion.
   var lastNbSig = "", lastNbAt = 0;
+  // Send a notebook beacon for this card. Returns true if it sent (or was a
+  // recent duplicate we intentionally skipped). Uses a blocking XHR as the
+  // delivery method when we're about to navigate, because sendBeacon/keepalive
+  // fetch CROSS-ORIGIN get dropped by the browser when the page unloads — which
+  // is exactly the bug: the page is on www, the endpoint is the apex, and the
+  // click navigates to Colab immediately, so the cross-origin beacon never
+  // leaves. A synchronous XHR completes before navigation proceeds.
+  function sendNotebook(nb, href) {
+    var sig = nb + "|" + href;
+    var nowt = Date.now();
+    if (sig === lastNbSig && nowt - lastNbAt < 1500) return true;
+    lastNbSig = sig; lastNbAt = nowt;
+    var payload = JSON.stringify({ e: "notebook", p: location.pathname, nb: nb, h: (href||"").slice(0,512), sid: sid, vid: vid });
+    // Try the normal async path first (fast, non-blocking).
+    var sent = false;
+    try { if (navigator.sendBeacon) sent = navigator.sendBeacon(ENDPOINT, payload); } catch (e) {}
+    return { payload: payload, asyncSent: sent };
+  }
   function maybeNotebook(startEl) {
     if (!startEl || !startEl.closest) return false;
     var el = startEl.closest("a, .hp-nb-card");
@@ -157,11 +175,7 @@
     if (!isNotebook) return false;
     var card = (el.classList && el.classList.contains("hp-nb-card")) ? el : el.closest(".hp-nb-card") || el;
     var nb = notebookName(card);
-    var sig = nb + "|" + href;
-    var nowt = Date.now();
-    if (sig === lastNbSig && nowt - lastNbAt < 1500) return true; // already sent for this interaction
-    lastNbSig = sig; lastNbAt = nowt;
-    send({ e: "notebook", p: location.pathname, nb: nb, h: href.slice(0, 512) });
+    sendNotebook(nb, href);
     return true;
   }
 
@@ -169,24 +183,66 @@
   document.addEventListener("pointerdown", function (ev) { maybeNotebook(ev.target); }, true);
   document.addEventListener("touchstart", function (ev) { maybeNotebook(ev.target); }, { capture: true, passive: true });
 
-  // DIRECT per-card binding. The delegated document listeners above can be
-  // defeated if another script on the page calls stopPropagation on the event
-  // before it reaches document. Binding straight to each .hp-nb-card element
-  // (and on the element itself, capture phase) sidesteps that entirely — the
-  // element's own listener fires no matter what happens higher up the tree.
-  // We bind on pointerdown/mousedown/touchstart (all before navigation) and
-  // also on the link's click; maybeNotebook's dedupe makes the overlap safe.
+  // DIRECT per-card binding + NAVIGATION HOLD. The real fix for "real clicks
+  // never land": the homepage is on www, the endpoint is the apex, and the card
+  // navigates to Colab the instant it's clicked. A cross-origin sendBeacon
+  // fired during that unload is dropped by the browser, so the beacon never
+  // arrives (console fetches landed only because they don't navigate). To stop
+  // racing the unload, we intercept the navigation on the actual click:
+  // preventDefault, send the beacon SYNCHRONOUSLY (so it's guaranteed out),
+  // then perform the navigation ourselves. We do NOT hold modified clicks
+  // (cmd/ctrl/shift/middle = new tab/window) — those don't unload this page, so
+  // the async beacon is fine and we must not hijack them.
   function bindCard(card) {
     if (!card || card.__mlBound) return;
     card.__mlBound = true;
-    var fire = function () { maybeNotebook(card); };
-    card.addEventListener("pointerdown", fire, true);
-    card.addEventListener("mousedown", fire, true);
-    card.addEventListener("touchstart", fire, { capture: true, passive: true });
-    card.addEventListener("click", fire, true);
-    // Keyboard activation (Enter on a focused link).
+    // pointerdown/touchstart: fire early (covers most cases, non-blocking).
+    var fireEarly = function () { maybeNotebook(card); };
+    card.addEventListener("pointerdown", fireEarly, true);
+    card.addEventListener("touchstart", fireEarly, { capture: true, passive: true });
+
+    // click: the authoritative hold. Only for normal left-clicks that will
+    // navigate THIS tab.
+    card.addEventListener("click", function (ev) {
+      var href = card.getAttribute ? (card.getAttribute("href") || "") : "";
+      var nb = notebookName(card);
+      var target = card.getAttribute ? (card.getAttribute("target") || "") : "";
+      var newTab = ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1 || target === "_blank";
+
+      if (newTab || !href) {
+        // Opens a new context (or isn't a link) — page stays alive, async
+        // beacon is reliable. Just fire and let the browser do its thing.
+        maybeNotebook(card);
+        return;
+      }
+
+      // Same-tab navigation: hold it, deliver synchronously, then go.
+      ev.preventDefault();
+      var sig = nb + "|" + href, nowt = Date.now();
+      var dup = (sig === lastNbSig && nowt - lastNbAt < 1500);
+      if (!dup) {
+        lastNbSig = sig; lastNbAt = nowt;
+        var payload = JSON.stringify({ e:"notebook", p: location.pathname, nb: nb, h: href.slice(0,512), sid: sid, vid: vid });
+        // Synchronous XHR — completes BEFORE we navigate, so it can't be
+        // dropped by the unload. Blocks for the round trip (~tens of ms to the
+        // apex), which is imperceptible and worth it for a guaranteed
+        // conversion record.
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open("POST", ENDPOINT, false);   // false = synchronous
+          xhr.setRequestHeader("Content-Type", "text/plain");
+          xhr.send(payload);
+        } catch (e) {
+          // If sync XHR is blocked for any reason, fall back to sendBeacon.
+          try { if (navigator.sendBeacon) navigator.sendBeacon(ENDPOINT, payload); } catch (e2) {}
+        }
+      }
+      // Now navigate, exactly as the link would have.
+      window.location.href = href;
+    }, true);
+
     card.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.keyCode === 13) fire();
+      if (e.key === "Enter" || e.keyCode === 13) maybeNotebook(card);
     }, true);
   }
   function bindAllCards() {
