@@ -3974,12 +3974,18 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 .job-tile.waiting .job-thumb img,
 .job-tile.running .job-thumb img{opacity:.4}
 .job-info{flex:1;min-width:0;font-family:var(--font-mono);font-size:9px}
-.job-status{color:var(--text);font-weight:700;margin-bottom:1px;display:flex;align-items:center;gap:3px;font-size:10px}
-.job-mode{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.5px}
+.job-status{color:var(--text);font-weight:700;margin-bottom:1px;display:flex;align-items:center;gap:3px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.job-mode{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .job-cancel{position:absolute;top:3px;right:3px;width:18px;height:18px;background:rgba(239,68,68,.15);border:1px solid var(--red);color:var(--red);border-radius:50%;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;font-weight:700}
 .job-cancel:hover{background:var(--red);color:var(--white)}
 .job-progress{height:3px;background:var(--surface-3);border-radius:2px;margin-top:3px;overflow:hidden}
 .job-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),#ffcf4a);transition:width .4s ease-out;border-radius:2px}
+/* Cold-boot variant: a blue bar that represents GPU warmup as its own 0→100%
+   process, distinct from the yellow generation bar. When generation starts the
+   bar resets to 0 and reverts to gold (see renderQueue: tile.classList toggles
+   'booting'). The width transition is disabled on the reset frame so the bar
+   snaps back to 0 instead of visibly sliding leftward. */
+.job-progress-fill.booting{background:linear-gradient(90deg,#2f6df6,#5b9bff)}
 
 /* History tile (smaller) */
 .q-hist-tile{display:flex;gap:6px;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;align-items:center;cursor:pointer;transition:all .15s}
@@ -16873,16 +16879,16 @@ let _bootTrack = {
 // heartbeats). Tuned to a ~90s total cold boot. Labels are user-friendly and
 // describe WHAT is happening, not internal stage names.
 const _BOOT_SEQUENCE = [
-    { key: 'booting',              icon: '🔌', text: 'Starting GPU container', lo: 2,  hi: 14, secs: 18 },
-    { key: 'loading_transformer',  icon: '📦', text: 'Loading model weights',  lo: 14, hi: 42, secs: 22 },
-    { key: 'loading_text_encoder', icon: '📝', text: 'Loading text encoder',   lo: 42, hi: 55, secs: 10 },
-    { key: 'building_pipeline',    icon: '⚙️', text: 'Building pipeline',       lo: 55, hi: 66, secs: 9  },
-    { key: 'loading_loras',        icon: '🧩', text: 'Loading LoRAs',           lo: 66, hi: 74, secs: 7  },
-    { key: 'moving_to_gpu',        icon: '🚀', text: 'Moving model to GPU',     lo: 74, hi: 84, secs: 8  },
-    { key: 'registering',          icon: '🧠', text: 'Optimizing for this GPU', lo: 84, hi: 95, secs: 10 },
-    { key: 'compiling',            icon: '🧠', text: 'Optimizing for this GPU', lo: 84, hi: 95, secs: 10 },
-    { key: 'finalizing',           icon: '✨', text: 'Almost ready',            lo: 95, hi: 98, secs: 4  },
-    { key: 'warming_up',           icon: '✨', text: 'Almost ready',            lo: 96, hi: 99, secs: 4  },
+    { key: 'booting',              icon: '🔌', text: 'Starting GPU',        lo: 2,  hi: 14, secs: 18 },
+    { key: 'loading_transformer',  icon: '📦', text: 'Loading model',       lo: 14, hi: 42, secs: 22 },
+    { key: 'loading_text_encoder', icon: '📝', text: 'Loading encoder',     lo: 42, hi: 55, secs: 10 },
+    { key: 'building_pipeline',    icon: '⚙️', text: 'Building pipeline',   lo: 55, hi: 66, secs: 9  },
+    { key: 'loading_loras',        icon: '🧩', text: 'Loading LoRAs',       lo: 66, hi: 74, secs: 7  },
+    { key: 'moving_to_gpu',        icon: '🚀', text: 'Moving to GPU',       lo: 74, hi: 84, secs: 8  },
+    { key: 'registering',          icon: '🧠', text: 'Optimizing',          lo: 84, hi: 95, secs: 10 },
+    { key: 'compiling',            icon: '🧠', text: 'Optimizing',          lo: 84, hi: 95, secs: 10 },
+    { key: 'finalizing',           icon: '✨', text: 'Almost ready',        lo: 95, hi: 99, secs: 4  },
+    { key: 'warming_up',           icon: '✨', text: 'Almost ready',        lo: 96, hi: 99, secs: 4  },
 ];
 const _BOOT_TOTAL_SECS = 90;   // typical cold boot; drives the pre-stage curve + ETA
 const _BOOT_STEP_COUNT = 7;    // user-facing "Step N of 7" (the meaningful stages)
@@ -16958,7 +16964,7 @@ function _gpuBootStatus(gs){
         // Drive the bar purely on elapsed time against the expected total so it
         // ISN'T frozen at 4% during the long opening provisioning window.
         icon = '🔌';
-        text = 'Starting GPU container';
+        text = 'Starting GPU';
         reassure = _BOOT_REASSURE.booting;
         // Time curve: front-loaded so motion is visible immediately, capped at
         // 12% until a real stage lands (we don't want to over-promise before
@@ -16968,23 +16974,34 @@ function _gpuBootStatus(gs){
         _bootTrack.stageIndex = Math.max(_bootTrack.stageIndex, 1);
     }
 
-    // Ratchet — the displayed bar may only ever increase this cycle.
+    // Ratchet — the displayed bar may only ever increase this cycle. The cold
+    // boot is its OWN 0→100% process (rendered as a blue bar). It's allowed to
+    // reach 100 here — when the GPU becomes ready the overlay/tile flips to the
+    // generation phase and the bar resets to 0 + gold. We let the time curve
+    // ease all the way to 100 so a boot that runs slightly long still completes
+    // the bar instead of parking at 99 forever.
     _bootTrack.maxPct = Math.max(_bootTrack.maxPct, pct);
-    pct = Math.min(99, _bootTrack.maxPct);   // never show 100 until 'ready' closes it
+    pct = Math.min(100, _bootTrack.maxPct);
 
-    // Build a rich subtext: step counter + within-stage % (if the server gave
-    // one) + a rough ETA. Keeps the user oriented on a long boot.
+    // Step counter (shown in the subtext, NOT the title — keeps the title short
+    // so it never wraps to a second line).
     const stepN = Math.max(1, _bootTrack.stageIndex);
     let detail;
     if (total > 0 && prog > 0 && seq) {
         detail = `${Math.round(Math.min(1, prog / total) * 100)}%`;
     }
-    // ETA from the overall % against the expected total — coarse but reassuring.
+
+    // ETA is driven by ELAPSED TIME against the expected total — NOT by the bar
+    // %. Tying it to the bar made it freeze whenever the bar plateaued (the bug
+    // you saw: "~79s left" stuck). Time always advances, so this always ticks
+    // down. It floors at a few seconds and just shows "almost ready" past the
+    // estimate rather than going negative or vanishing.
     let eta = null;
-    if (pct > 4 && pct < 97) {
-        const remainingFrac = (97 - pct) / 97;
-        const etaSec = Math.round(remainingFrac * _BOOT_TOTAL_SECS);
-        if (etaSec >= 5) eta = `~${etaSec}s left`;
+    const remainSec = Math.round(_BOOT_TOTAL_SECS - totalElapsed);
+    if (remainSec >= 5) {
+        eta = `~${remainSec}s left`;
+    } else {
+        eta = 'almost ready';
     }
 
     return {
@@ -16994,6 +17011,7 @@ function _gpuBootStatus(gs){
         eta,
         reassure: reassure || null,
         elapsed: Math.round(totalElapsed),
+        booting: true,   // tells renderQueue to paint the bar blue
     };
 }
 
@@ -17084,6 +17102,7 @@ function renderQueue(){
             //   generating s/N    → smoothly animated between 20 and 85
             //   encoding          → 92%
             let statusText, statusIcon, subtext, pct = 2;
+            let bootingBar = false;   // true while this tile is showing GPU cold-boot progress (blue bar)
             const stage = j.stage || null;
             const step = j.step || 0;
             const total = j.totalSteps || 0;
@@ -17096,14 +17115,15 @@ function renderQueue(){
                 const boot = _gpuBootStatus(_gpuState);
                 if (boot) {
                     statusIcon = boot.icon;
-                    statusText = `${boot.text} · ${boot.stepN}/${boot.stepTotal}`;
-                    // Sub-line: reassurance + within-stage % (if any) + ETA.
-                    const parts = [];
-                    if (boot.reassure) parts.push(boot.reassure);
+                    statusText = boot.text;   // short — no step counter in the title (avoids wrap)
+                    // Subtext carries the orientation: step N/7, within-stage %
+                    // (if any), and a time-based ETA that always ticks down.
+                    const parts = [`${boot.stepN}/${boot.stepTotal}`];
                     if (boot.detail) parts.push(boot.detail);
-                    parts.push(boot.eta ? boot.eta : `${boot.elapsed}s`);
+                    parts.push(boot.eta);
                     subtext = parts.join(' · ');
                     pct = boot.pct;
+                    bootingBar = true;
                 } else {
                     statusIcon = '⏳'; statusText = 'Queued';
                     const ahead = j.othersAhead || 0;
@@ -17120,13 +17140,13 @@ function renderQueue(){
                 const boot = _gpuBootStatus(_gpuState);
                 if (boot) {
                     statusIcon = boot.icon;
-                    statusText = `${boot.text} · ${boot.stepN}/${boot.stepTotal}`;
-                    const parts = [];
-                    if (boot.reassure) parts.push(boot.reassure);
+                    statusText = boot.text;
+                    const parts = [`${boot.stepN}/${boot.stepTotal}`];
                     if (boot.detail) parts.push(boot.detail);
-                    parts.push(boot.eta ? boot.eta : `${boot.elapsed}s`);
+                    parts.push(boot.eta);
                     subtext = parts.join(' · ');
                     pct = boot.pct;
+                    bootingBar = true;
                 } else {
                     statusIcon = '⏳'; statusText = 'Queued';
                     const ahead = j.othersAhead || 0;
@@ -17320,7 +17340,23 @@ function renderQueue(){
             if (img.src !== (j.thumb || '')) img.src = j.thumb || '';
             tile.querySelector('.job-status').textContent = `${statusIcon} ${statusText}`;
             tile.querySelector('.job-mode').textContent = subtext;
-            tile.querySelector('.job-progress-fill').style.width = pctClamped.toFixed(2) + '%';
+            const fill = tile.querySelector('.job-progress-fill');
+            // Phase transition: cold-boot (blue, its own 0→100% process) →
+            // generation (gold, resets to 0). When we leave the boot phase, snap
+            // the bar back to 0 WITHOUT animating (disable the width transition
+            // for that one frame) so it doesn't visibly slide leftward, then
+            // re-enable so the gold generation fill animates up normally.
+            const wasBooting = tile.dataset.booting === '1';
+            if (wasBooting && !bootingBar) {
+                fill.style.transition = 'none';
+                fill.style.width = '0%';
+                // Force reflow so the 0% takes effect before transition is restored.
+                void fill.offsetWidth;
+                fill.style.transition = '';
+            }
+            fill.classList.toggle('booting', bootingBar);
+            tile.dataset.booting = bootingBar ? '1' : '0';
+            fill.style.width = pctClamped.toFixed(2) + '%';
             const cancelBtn = tile.querySelector('.job-cancel');
             if (canCancel) {
                 cancelBtn.style.display = '';
