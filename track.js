@@ -11,6 +11,11 @@
 (function () {
   "use strict";
 
+  // Build marker — bump on each deploy so you can verify which version is live:
+  //   fetch('track.js?cb='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(t=>console.log(t.match(/TRACK_BUILD = "[^"]+"/)[0]))
+  var TRACK_BUILD = "2026-06-24-pointerdown-apex";
+  try { if (window && window.console) console.debug("[track.js] build", TRACK_BUILD); } catch (e) {}
+
   // Absolute apex host, NOT a relative path. The marketing page is served from
   // www.missinglink.build, but the worker that owns /api/ev answers cleanly
   // only on the apex (missinglink.build). A relative "/api/ev" from the www
@@ -130,6 +135,40 @@
     return t.slice(0, 120);
   }
 
+  // Notebook conversion capture. Returns true if `el` (or an ancestor) is a
+  // notebook card/link and a beacon was sent. The conversion is the metric that
+  // matters here, and clicking a notebook card navigates to Colab IMMEDIATELY —
+  // a same-document unload that can cut off a beacon fired on the `click` event.
+  // So we fire on `pointerdown` (and `touchstart`), which happen a beat BEFORE
+  // the click completes and before navigation starts, guaranteeing the beacon
+  // is away. A short dedupe stops pointerdown + the following click (or a
+  // pointerdown immediately followed by touchstart on some devices) from
+  // double-sending the same conversion.
+  var lastNbSig = "", lastNbAt = 0;
+  function maybeNotebook(startEl) {
+    if (!startEl || !startEl.closest) return false;
+    var el = startEl.closest("a, .hp-nb-card");
+    if (!el) return false;
+    var href = el.getAttribute ? (el.getAttribute("href") || "") : "";
+    var isNotebook = el.classList && el.classList.contains("hp-nb-card");
+    if (!isNotebook && href && (/colab\.research\.google\.com/i.test(href) || /\.ipynb($|\?)/i.test(href))) {
+      isNotebook = true;
+    }
+    if (!isNotebook) return false;
+    var card = (el.classList && el.classList.contains("hp-nb-card")) ? el : el.closest(".hp-nb-card") || el;
+    var nb = notebookName(card);
+    var sig = nb + "|" + href;
+    var nowt = Date.now();
+    if (sig === lastNbSig && nowt - lastNbAt < 1500) return true; // already sent for this interaction
+    lastNbSig = sig; lastNbAt = nowt;
+    send({ e: "notebook", p: location.pathname, nb: nb, h: href.slice(0, 512) });
+    return true;
+  }
+
+  // Earliest reliable signals — fire the conversion before navigation begins.
+  document.addEventListener("pointerdown", function (ev) { maybeNotebook(ev.target); }, true);
+  document.addEventListener("touchstart", function (ev) { maybeNotebook(ev.target); }, { capture: true, passive: true });
+
   document.addEventListener("click", function (ev) {
     var t = ev.target;
     if (!t || !t.closest) return;
@@ -138,17 +177,10 @@
 
     var href = el.getAttribute ? (el.getAttribute("href") || "") : "";
 
-    // Notebook conversion — fire its OWN beacon immediately (navigation to
-    // Colab is imminent, so we must not batch or wait for the exit event).
-    var isNotebook = el.classList && el.classList.contains("hp-nb-card");
-    if (!isNotebook && href && (/colab\.research\.google\.com/i.test(href) || /\.ipynb($|\?)/i.test(href))) {
-      isNotebook = true;
-    }
-    if (isNotebook) {
-      var card = (el.classList && el.classList.contains("hp-nb-card")) ? el : el.closest(".hp-nb-card") || el;
-      send({ e: "notebook", p: location.pathname, nb: notebookName(card), h: href.slice(0, 512) });
-      return;
-    }
+    // Notebook conversion — fallback if pointerdown didn't catch it (e.g.
+    // keyboard activation). maybeNotebook's dedupe prevents a double-send when
+    // pointerdown already fired.
+    if (maybeNotebook(t)) return;
 
     // Generic meaningful click — capped + de-duped against rapid repeats.
     if (clickCount >= MAX_CLICKS) return;
