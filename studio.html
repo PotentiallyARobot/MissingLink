@@ -3989,6 +3989,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 }
 .edit-model-seg .ems-btn:hover{border-color:var(--gold);color:var(--gold)}
 .edit-model-seg .ems-btn.active{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+/* Agent Stop button — replaces the send arrow while a turn is running. */
+.agent-send.agent-stop{background:rgba(239,68,68,.12);border-color:var(--red);color:var(--red)}
+.agent-send.agent-stop:hover{background:var(--red);color:#fff}
+.agent-send.agent-stop:disabled{opacity:.6;cursor:default}
 /* Dim thumbnail during any in-flight status — same treatment across all
    states so there's no visual "change" as the job progresses (which was
    reading as stuttering). Tile border + progress bar communicate the state. */
@@ -5620,6 +5624,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <div class="agent-input-row">
                     <textarea id="agentInput" class="agent-input" rows="2" placeholder="Ask the agent…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentMessage()}"></textarea>
                     <button class="agent-send" id="agentSendBtn" onclick="sendAgentMessage()" title="Send (Enter)">➤</button>
+                    <button class="agent-send agent-stop" id="agentStopBtn" onclick="stopAgent()" title="Stop the agent" style="display:none">■</button>
                 </div>
             </div>
         </div>
@@ -6772,10 +6777,17 @@ function _notifCancel(){
     if (r) r(false);
 }
 
-function fetchT(url,opts,ms){
+function fetchT(url,opts,ms,extSignal){
     ms=ms||8000;
     const c=new AbortController();
     const t=setTimeout(()=>c.abort(),ms);
+    // Optional external AbortSignal (e.g. a user-clicked Stop / Cancel) aborts
+    // the request in addition to the timeout. Honored immediately if it's
+    // already aborted; otherwise hooked once.
+    if(extSignal){
+        if(extSignal.aborted) c.abort();
+        else extSignal.addEventListener('abort',()=>c.abort(),{once:true});
+    }
     opts=opts||{}; opts.signal=c.signal; opts.credentials='include';
     return fetch(url,opts).finally(()=>clearTimeout(t));
 }
@@ -10182,6 +10194,9 @@ async function doGenerateMode(_autoRetried){
     renderQueue();
     const tickHandle = setInterval(() => { try { renderQueue(); } catch {} }, 1000);
     try {
+        const ctrl = new AbortController();
+        const _sj = myJobs.find(jj => jj.id === synthJobId);
+        if (_sj) _sj._abort = ctrl;
         let r;
         r = await fetchT(`${API}/api/studio/agent-image-gen`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10219,7 +10234,7 @@ async function doGenerateMode(_autoRetried){
                 // Frontend adds 30s buffer to each.
             }, refIds.length
                 ? (_generateQuality === 'high' ? 390_000 : 270_000)
-                : (_generateQuality === 'high' ? 270_000 : 150_000));
+                : (_generateQuality === 'high' ? 270_000 : 150_000), ctrl.signal);
         let d = await r.json();
         // The route now runs generation as a BACKGROUND JOB (so the long
         // OpenAI call + child-safety screening can't time out the HTTP
@@ -16831,6 +16846,10 @@ function startJobPoll(jobId){
 // Matches the server-side DELETE /api/studio/job/:id guard.
 function canCancelJob(j){
     if(!j) return false;
+    // Synthetic gpt-image generations (agent / Create mode, id "agen_…") are
+    // abortable client-side at any point — let the user cancel them immediately
+    // instead of waiting for the long upstream call.
+    if(j.id && j.id.indexOf('agen_') === 0) return true;
     if(j.status === 'queued' || j.status === 'waiting') return true;
     // Pre-generation stages: user can still bail out without wasting denoising steps
     const PRE_GEN = new Set(['fetching', 'preparing', 'encoding_prompt', 'encoding_image', 'loading_model', 'loading_loras']);
@@ -16852,6 +16871,21 @@ function canCancelJob(j){
 async function cancelJob(jobId){
     const job=myJobs.find(j=>j.id===jobId);
     if(!canCancelJob(job)) return;
+    // Synthetic gpt-image generations (id "agen_…", agent / Create mode): abort
+    // the in-flight client request so the generate handler's catch clears its
+    // placeholder + tile. Best-effort server DELETE refunds the Create-mode
+    // row; it's a harmless 404 for agent-spawned ones whose server-side id we
+    // don't track on the client.
+    if(job.id && job.id.indexOf('agen_') === 0){
+        try { if (job._abort) job._abort.abort(); } catch(e){}
+        try { await fetchT(`${API}/api/studio/job/${jobId}`,{method:'DELETE'},5000); } catch(e){}
+        job.status='cancelled';
+        myJobs = myJobs.filter(x => x.id !== jobId);
+        renderQueue();
+        updateGenButton();
+        log(`Generation ${jobId} cancelled`,'success');
+        return;
+    }
     try{
         const r=await fetchT(`${API}/api/studio/job/${jobId}`,{method:'DELETE'},6000);
         const d=await r.json();
@@ -17580,6 +17614,8 @@ function toggleAgentMinimized(){
 
 let _agentMessages = [];      // OpenAI Responses input-item array
 let _agentRunning = false;    // gates re-entry while a turn is in flight
+let _agentCancelled = false;  // set by the Stop button; checked between steps in the loop
+let _agentAbort = null;       // AbortController for the in-flight model call, so Stop can abort it
 const AGENT_MAX_TOOL_ITERATIONS = 8;  // hard cap on tool-call rounds per user message
 
 // Build a snapshot of the current batch state in a shape the model can
@@ -17810,6 +17846,9 @@ const AGENT_TOOL_HANDLERS = {
             try { renderQueue(); } catch {}
         }, 1000);
         try {
+            const ctrl = new AbortController();
+            const _sj = myJobs.find(jj => jj.id === synthJobId);
+            if (_sj) _sj._abort = ctrl;
             const r = await fetchT(`${API}/api/studio/agent-image-gen`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 // n is forced to 1 here — the agent's tool schema has no n
@@ -17829,7 +17868,7 @@ const AGENT_TOOL_HANDLERS = {
                 //   plain + high → 240s, ref + high → 360s. We add a 30s
                 //   buffer so the worker's abort fires first with a useful
                 //   error rather than us giving up mid-flight.
-            }, refIds.length ? 390_000 : 270_000);
+            }, refIds.length ? 390_000 : 270_000, ctrl.signal);
             const d = await r.json();
             // The worker now runs generation inline and returns the terminal
             // state on the POST: { ok, status, result:{images:[...]}, error }.
@@ -18201,10 +18240,11 @@ const AGENT_TOOL_HANDLERS = {
 
 // One round-trip to the worker. Returns the parsed output items.
 async function _agentCallModel(){
+    _agentAbort = new AbortController();
     const r = await fetchT(`${API}/api/studio/agent-chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: _agentMessages, edit_model_pref: (typeof _editModelPref !== 'undefined' ? _editModelPref : 'auto') }),
-    }, 100_000);
+    }, 100_000, _agentAbort.signal);
     const d = await r.json();
     if (!d.ok) {
         throw new Error(d.detail || d.error || 'agent_chat_failed');
@@ -18220,16 +18260,19 @@ async function _agentRunTurn(){
     let iterations = 0;
     while (iterations < AGENT_MAX_TOOL_ITERATIONS) {
         iterations++;
+        if (_agentCancelled) { _agentRemoveThinking(); _agentRender('tool', { text: 'Stopped.' }); return; }
         _agentRender('thinking', iterations === 1 ? 'thinking…' : 'thinking…');
         let output;
         try {
             output = await _agentCallModel();
         } catch (e) {
             _agentRemoveThinking();
+            if (_agentCancelled) { _agentRender('tool', { text: 'Stopped.' }); return; }
             _agentRender('tool', { text: `Agent call failed: ${e.message}`, error: true });
             return;
         }
         _agentRemoveThinking();
+        if (_agentCancelled) { _agentRender('tool', { text: 'Stopped.' }); return; }
         if (!output.length) {
             _agentRender('tool', { text: 'Agent returned no output', error: true });
             return;
@@ -18396,6 +18439,32 @@ async function _agentRunTurn(){
     _agentRender('tool', { text: `Stopped after ${AGENT_MAX_TOOL_ITERATIONS} tool rounds (loop guard)`, error: true });
 }
 
+// Stop the agent mid-run: flag the loop to bail, abort the in-flight model
+// call, and abort any generations this run spawned that are still active.
+function stopAgent(){
+    if (!_agentRunning) return;
+    _agentCancelled = true;
+    try { if (_agentAbort) _agentAbort.abort(); } catch (e) {}
+    cancelAgentInFlightJobs();
+    const sb = document.getElementById('agentStopBtn');
+    if (sb) sb.disabled = true;
+    _agentRender('tool', { text: 'Stopping…' });
+}
+
+// Abort the client-side request for any synthetic gpt-image jobs the agent
+// spawned that are still in flight. Each generate handler's catch block then
+// clears its placeholder + queue tile. (Qwen edits are GPU jobs in the queue;
+// cancel those from the queue's ✕, which refunds via the server.)
+function cancelAgentInFlightJobs(){
+    if (typeof myJobs === 'undefined' || !Array.isArray(myJobs)) return;
+    for (const j of myJobs) {
+        if (j && j.id && j.id.indexOf('agen_') === 0 &&
+            (j.status === 'running' || j.status === 'queued' || j.status === 'waiting')) {
+            try { if (j._abort) j._abort.abort(); } catch (e) {}
+        }
+    }
+}
+
 async function sendAgentMessage(){
     if (_agentRunning) return;
     if (!_user) { document.getElementById('loginModal').classList.add('open'); return; }
@@ -18417,8 +18486,11 @@ async function sendAgentMessage(){
     if (!text) return;
 
     _agentRunning = true;
+    _agentCancelled = false;
     input.disabled = true;
-    if (sendBtn) sendBtn.disabled = true;
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.style.display = 'none'; }
+    const stopBtn0 = document.getElementById('agentStopBtn');
+    if (stopBtn0) { stopBtn0.style.display = ''; stopBtn0.disabled = false; }
     input.value = '';
 
     // Render the user bubble
@@ -18441,8 +18513,12 @@ async function sendAgentMessage(){
         await _agentRunTurn();
     } finally {
         _agentRunning = false;
+        _agentCancelled = false;
+        _agentAbort = null;
         input.disabled = false;
-        if (sendBtn) sendBtn.disabled = false;
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.style.display = ''; }
+        const stopBtn1 = document.getElementById('agentStopBtn');
+        if (stopBtn1) { stopBtn1.style.display = 'none'; stopBtn1.disabled = false; }
         input.focus();
     }
 }
