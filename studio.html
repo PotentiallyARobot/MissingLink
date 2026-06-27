@@ -12924,6 +12924,18 @@ function renderBatchInputs(){
     const outImg = $('outImg');
     if (inBatchMode && outImg) outImg.style.display = 'none';
 
+    // Also hide any leftover RESULT grid (#batchGrid) belonging to a different
+    // mode or an earlier batch. When the input grid is the stage surface,
+    // hasActiveResults is false (no active result batch for THIS mode), so a
+    // lingering #batchGrid must not stay painted behind the input tiles — that
+    // was the cause of newly-added images appearing as a cramped strip on top
+    // of a big leftover image. renderBatchGrid re-shows it when a real batch
+    // for this mode renders.
+    const _staleResultGrid = $('batchGrid');
+    if (_staleResultGrid && inBatchMode && !hasActiveResults) {
+        _staleResultGrid.style.display = 'none';
+    }
+
     // Placeholder text should hide whenever the grid OR focus is filling the area
     const outPh = $('outPh');
     if (outPh && (showGrid || showFocus)) outPh.style.display = 'none';
@@ -15353,17 +15365,21 @@ function renderBatchGrid(){
         grid.className = 'batch-grid';
         area.appendChild(grid);
     }
+    // An active batch is rendering, so the result grid owns the stage — make
+    // sure it's visible. renderBatchInputs may have hidden it while clearing a
+    // stale/off-mode grid off the stage, so un-hide it on every real render.
+    grid.style.display = '';
     // Apply layout based on batch kind (angles = 3x3 hero, batch-edit = uniform
     // auto-fill grid). Set on every render in case a new batch replaced an old
     // one with a different kind.
-    grid.dataset.kind = _activeBatch.kind || 'angles';
+    grid.dataset.kind = _activeBatch.kind || 'batch-edit';
 
     // For uniform-tile kinds (batch-edit and angles-many), mirror the
     // same column-count heuristic the input grid uses — same N tiles,
     // same orphan-avoidance, same visual mapping. The 'angles' kind has
     // its own fixed 3×3 hero layout and should NOT get this var, so we
     // explicitly clear it in that case.
-    const kind = _activeBatch.kind || 'angles';
+    const kind = _activeBatch.kind || 'batch-edit';
     if (kind === 'batch-edit' || kind === 'angles-many') {
         grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_activeBatch.shots.length)));
     } else {
