@@ -3967,6 +3967,28 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 .job-tile.cancelled{opacity:.4}
 .job-thumb{width:40px;height:40px;border-radius:4px;background:var(--surface-3);flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .job-thumb img{width:100%;height:100%;object-fit:cover}
+/* Empty-thumb placeholder — shown in an active queue tile while a job is
+   creating and has no preview image yet (e.g. text-to-image with no
+   reference). A gold spinner on a faint tint so the box reads as "working"
+   instead of an empty black square. The .no-img class is toggled in
+   renderQueue and cleared the moment a real thumb URL exists. */
+.job-thumb.no-img img{display:none}
+.job-thumb.no-img{background:linear-gradient(135deg,rgba(232,169,23,.16),rgba(232,169,23,.03))}
+.job-thumb.no-img::after{
+    content:"";width:18px;height:18px;box-sizing:border-box;
+    border:2px solid rgba(232,169,23,.25);border-top-color:var(--gold);
+    border-radius:50%;animation:spin .8s linear infinite;
+}
+/* Agent edit-model selector (Auto / Qwen / GPT) — a small segmented control
+   in the batch tools column. Active option gets the gold treatment. */
+.edit-model-seg{display:flex;gap:6px;margin-top:2px}
+.edit-model-seg .ems-btn{
+    flex:1;background:var(--surface-2);border:1px solid var(--border);
+    color:var(--text-muted);font-family:var(--font-mono);font-size:11px;
+    padding:6px 8px;border-radius:6px;cursor:pointer;transition:all .15s;
+}
+.edit-model-seg .ems-btn:hover{border-color:var(--gold);color:var(--gold)}
+.edit-model-seg .ems-btn.active{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
 /* Dim thumbnail during any in-flight status — same treatment across all
    states so there's no visual "change" as the job progresses (which was
    reading as stuttering). Tile border + progress bar communicate the state. */
@@ -5066,6 +5088,17 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <span id="aiPlanStatus" class="ai-status"></span>
         </div>
         <div class="ai-audit-panel" id="aiAuditPanel" style="display:none"></div>
+    </div>
+
+    <div class="sec batch-only" style="display:none">
+        <div class="sec-label"><span class="icon">🤖</span> AGENT EDIT MODEL
+            <span class="sec-label-count">which model the agent edits with</span>
+        </div>
+        <div class="edit-model-seg" id="editModelSeg">
+            <button type="button" class="ems-btn active" data-pref="auto" onclick="setEditModelPref('auto')" title="Let the agent choose — defaults to Qwen (faster &amp; cheaper) and uses GPT when the request calls for it">Auto</button>
+            <button type="button" class="ems-btn" data-pref="qwen" onclick="setEditModelPref('qwen')" title="Force the in-house Qwen Image Edit pipeline for every agent edit">Qwen</button>
+            <button type="button" class="ems-btn" data-pref="gpt" onclick="setEditModelPref('gpt')" title="Force gpt-image-2 for every agent edit">GPT</button>
+        </div>
     </div>
 
     <div class="sec batch-only" style="display:none">
@@ -9187,6 +9220,21 @@ let _generateRefs = [null, null, null, null];
 // PNG output (which gpt-image-2 doesn't support). The Background
 // section's Transparent button enables/disables based on this.
 let _generateModel = 'gpt-image-2';
+
+// Agent edit-model preference: 'auto' (agent decides), 'qwen', or 'gpt'.
+// Sent to /api/studio/agent-chat each turn; the worker turns it into a
+// directive in the agent's instructions. Persisted so it survives reloads.
+let _editModelPref = (function(){ try { return localStorage.getItem('ml_edit_model_pref') || 'auto'; } catch { return 'auto'; } })();
+function setEditModelPref(p){
+    if (p !== 'auto' && p !== 'qwen' && p !== 'gpt') p = 'auto';
+    _editModelPref = p;
+    try { localStorage.setItem('ml_edit_model_pref', p); } catch {}
+    const seg = document.getElementById('editModelSeg');
+    if (seg) seg.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', b.dataset.pref === p));
+}
+// Sync the active button to the persisted value on load (the script runs
+// after the markup, so the element already exists).
+try { setEditModelPref(_editModelPref); } catch {}
 // Size handling has two modes: a preset string (1024x1024 etc.) or
 // 'custom' which delegates to _generateCustomW × _generateCustomH.
 // At submit time, genGetEffectiveSize() resolves the active state to
@@ -12808,23 +12856,26 @@ function bslotFileChange(slotIdx){
 // Cap (6) keeps tiles from getting tiny when there are lots of uploads.
 function bestBatchColumnCount(N){
     if (N <= 0) return 1;
-    if (N <= 6) return N;  // single-row layout for small batches
-    // Cap the column count so individual tiles don't shrink to nothing on
-    // big batches (e.g. the 96-pose set). For N=96 we want a manageable
-    // grid like 8×12 — not a 10-wide row of tiny squares. We use 8 (the
-    // azimuth count) as the cap because every "column slice" of the 96
-    // grid corresponds to one azimuth direction, which is a meaningful
-    // visual grouping for users to scan.
+    if (N <= 3) return N;            // 1–3 read fine as a single row
+    // Aim for a balanced, roughly-square grid that fills the stage rather
+    // than a single wide row. The previous "fewest orphans" rule returned N
+    // columns for prime counts (e.g. 7 → 7 columns), producing a one-row
+    // strip that overflowed narrow stages and left the lower stage empty.
+    // We now search a narrow band around √N and pick the column count with
+    // the fewest empty trailing cells, breaking ties toward MORE columns
+    // (wider tiles, fewer rows — better on a landscape stage). Capped at 8
+    // so the big 96-pose survey still lands on its 8-wide azimuth grid.
     const maxCols = 8;
-    // Start at min(ceil(√N), maxCols) — for typical small batches this
-    // is sqrt-like; for big batches it's capped so we don't pick a
-    // value larger than maxCols and skip the whole loop.
-    const startCols = Math.min(maxCols, Math.ceil(Math.sqrt(N)));
-    let best = startCols;
-    let bestOrphans = (N % best === 0) ? 0 : (best - (N % best));
-    for (let c = startCols; c <= maxCols; c++) {
-        const orphans = (N % c === 0) ? 0 : (c - (N % c));
-        if (orphans < bestOrphans) { best = c; bestOrphans = orphans; }
+    const root = Math.sqrt(N);
+    const lo = Math.min(maxCols, Math.max(2, Math.floor(root)));
+    const hi = Math.min(maxCols, Math.ceil(root) + 1);
+    let best = lo, bestWaste = Infinity;
+    for (let c = lo; c <= hi; c++) {
+        const rows = Math.ceil(N / c);
+        const waste = rows * c - N;          // empty cells in the last row
+        if (waste < bestWaste || (waste === bestWaste && c > best)) {
+            best = c; bestWaste = waste;
+        }
     }
     return best;
 }
@@ -17354,6 +17405,11 @@ function renderQueue(){
             tile.className = `job-tile ${j.status}`;
             const img = tile.querySelector('.job-thumb img');
             if (img.src !== (j.thumb || '')) img.src = j.thumb || '';
+            // Show the spinner placeholder while there's no preview image yet
+            // (text-to-image with no reference); drop it the moment a real
+            // thumb URL exists (a reference image, or the finished result).
+            const thumbBox = tile.querySelector('.job-thumb');
+            if (thumbBox) thumbBox.classList.toggle('no-img', !(j.thumb && j.thumb.length));
             tile.querySelector('.job-status').textContent = `${statusIcon} ${statusText}`;
             tile.querySelector('.job-mode').textContent = subtext;
             const fill = tile.querySelector('.job-progress-fill');
@@ -18147,7 +18203,7 @@ const AGENT_TOOL_HANDLERS = {
 async function _agentCallModel(){
     const r = await fetchT(`${API}/api/studio/agent-chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: _agentMessages }),
+        body: JSON.stringify({ messages: _agentMessages, edit_model_pref: (typeof _editModelPref !== 'undefined' ? _editModelPref : 'auto') }),
     }, 100_000);
     const d = await r.json();
     if (!d.ok) {
@@ -23313,7 +23369,12 @@ function restoreJobState(jobId){
 function loadJobResult(jobId){ restoreJobState(jobId); }
 
 function clearFinishedJobs(){
-    const stuck = myJobs.filter(j => (j.status === 'running' || j.status === 'waiting') && j.startedAt && (Date.now() - j.startedAt > 300000));
+    const _now = Date.now();
+    const stuck = myJobs.filter(j => {
+        if (j.status !== 'running' && j.status !== 'waiting') return false;
+        const startTs = j.runningAt || j.startedAt;
+        return (startTs && (_now - startTs > 300000)) || (j.submittedAt && (_now - j.submittedAt > 480000));
+    });
     for (const s of stuck) {
         s.status = 'error';
         s.error = 'Timed out';
@@ -23328,7 +23389,17 @@ function clearFinishedJobs(){
 setInterval(() => {
     const now = Date.now();
     for (const j of myJobs) {
-        if ((j.status === 'running' || j.status === 'waiting') && j.startedAt && (now - j.startedAt > 300000)) {
+        // Time out a running/waiting job after 5 min since it actually started
+        // (runningAt/startedAt), OR — as an absolute backstop — 8 min since it
+        // was SUBMITTED. submittedAt is set once and never updated, so this
+        // catches jobs whose startedAt keeps getting refreshed by queue polling
+        // (which previously let a hung generation climb past the 5-min mark
+        // indefinitely). 8 min is safely beyond the longest legitimate ceiling
+        // (~7 min for a 4K / reference generation), so real jobs aren't cut off.
+        const _startTs = j.runningAt || j.startedAt;
+        const _overRun = _startTs && (now - _startTs > 300000);
+        const _overAbs = j.submittedAt && (now - j.submittedAt > 480000);
+        if ((j.status === 'running' || j.status === 'waiting') && (_overRun || _overAbs)) {
             j.status = 'error';
             j.error = 'Timed out';
             if (pollTimers[j.id]) { clearInterval(pollTimers[j.id]); delete pollTimers[j.id]; }
