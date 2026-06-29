@@ -5387,6 +5387,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <button type="button" class="ems-btn active" data-preset="fast" onclick="applyPanoPreset('fast')" title="Lightning 4-step distilled — a few seconds, CFG off">⚡ Fast</button>
                 <button type="button" class="ems-btn" data-preset="quality" onclick="applyPanoPreset('quality')" title="No Lightning · 40 steps · CFG 4 — slower but maximum fidelity (Tencent's documented recipe)">✨ Quality</button>
             </div>
+            <button type="button" class="ai-tiny-btn" id="btnPanoAutoPrompt" onclick="autoPanoPrompt({force:true})" style="display:none;margin-top:6px" title="Let an LLM look at your input image and write a 360° scene prompt + negative tailored to it">✨ Auto-describe scene from image</button>
             <div id="camGenHint" style="color:var(--text-muted);font-size:11px;margin-top:7px;line-height:1.45">Renders one view at the angle set above.</div>
         </div>
 
@@ -6500,6 +6501,8 @@ let _camMultiCount = 6; // 6 | 20, only relevant when _camGenType === 'multi'
 let _panoPromptStash = null, _panoNegStash = null, _panoLockStash = null;
 let _panoSettingsStash = null;   // { lightning, steps, cfg } captured on entering 360°
 let _panoPreset = 'fast';        // 'fast' | 'quality'
+let _panoAutoCache = {};         // imageId -> { prompt, negative_prompt } from the LLM
+let _panoAutoBusy = false;       // in-flight guard for the auto-describe call
 // Default scene + negative auto-filled into the prompt boxes when the user
 // picks 360°. The positive is a plain scene description (NOT angle tokens),
 // which is what the HY-Pano ERP template wants; both are fully editable.
@@ -9229,6 +9232,12 @@ function setInputImage(id,url,w,h){
             id, url, w: w || null, h: h || null,
         }));
     } catch (e) {}
+    // In 360° mode, adding an image auto-writes a panorama scene prompt +
+    // negative for it via the vision LLM (cached per image; the call itself
+    // no-ops outside Camera→360° mode).
+    if (typeof _camGenType !== 'undefined' && _camGenType === 'pano' && typeof autoPanoPrompt === 'function') {
+        try { autoPanoPrompt({}); } catch (e) {}
+    }
 }
 
 // ─── Generate mode (gpt-image-2) ──────────────────────────────────
@@ -12692,6 +12701,14 @@ function setCamGenType(type){
     if (panoRow) panoRow.style.display = (type === 'pano') ? 'flex' : 'none';
     const anglesRow = document.getElementById('anglesLoraRow');
     if (anglesRow) anglesRow.style.display = (type === 'pano') ? 'none' : '';
+    const autoBtn = document.getElementById('btnPanoAutoPrompt');
+    if (autoBtn) autoBtn.style.display = (type === 'pano') ? '' : 'none';
+
+    // Entering 360° with an image already loaded → auto-describe it (cache hit
+    // is instant; otherwise this fires the LLM once for this image).
+    if (type === 'pano' && prev !== 'pano' && (typeof imageId !== 'undefined') && imageId) {
+        autoPanoPrompt({});
+    }
 
     // Camera pose is meaningless for a panorama — dim + disable it so it's
     // clear it has no effect (non-destructive: uses opacity, not display, so
@@ -12752,6 +12769,67 @@ function applyPanoPreset(name){
     if (seg) seg.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', b.dataset.preset === name));
     _updateCamGenHint();
     updateGenButton();
+}
+
+// AUTO-DESCRIBE — when an image is added in 360° mode, ask the vision LLM to
+// look at it and write a panorama SCENE prompt (positive) + a negative prompt
+// tuned for that specific photo, then drop them into the prompt fields. The
+// backend always prepends HY-Pano's Chinese quality negative, so the LLM's
+// English negative is additive. Results are cached per image id so switching
+// in/out of 360° (or re-adding the same image) reuses them with no extra
+// token spend. opts.force re-runs the call (the ✨ button), bypassing cache.
+async function autoPanoPrompt(opts){
+    opts = opts || {};
+    if (_camGenType !== 'pano') return;
+    if (typeof currentMode === 'string' && currentMode !== 'camera') return;
+    const id = (typeof imageId !== 'undefined') ? imageId : null;
+    if (!id) { if (opts.force && typeof showNotif === 'function') showNotif('Add an input image first.', 'error'); return; }
+    const pi = $('promptInput'), np = $('negPrompt');
+
+    // Cache hit → apply instantly, no API/token spend.
+    if (!opts.force && _panoAutoCache[id]) {
+        if (pi && _panoAutoCache[id].prompt) pi.value = _panoAutoCache[id].prompt;
+        if (np && _panoAutoCache[id].negative_prompt) np.value = _panoAutoCache[id].negative_prompt;
+        return;
+    }
+    if (_panoAutoBusy) return;
+    if (typeof _user !== 'undefined' && !_user) return; // not logged in → skip silently (auto path)
+
+    _panoAutoBusy = true;
+    const btn = document.getElementById('btnPanoAutoPrompt');
+    const origLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Describing…'; }
+    const prevPi = pi ? pi.value : '';
+    if (pi) { pi.value = '⏳ Generating a 360° scene description from your image…'; pi.disabled = true; }
+    const _restore = () => {
+        if (pi) { pi.disabled = false; if (pi.value.indexOf('⏳') === 0) pi.value = (prevPi && prevPi.indexOf('⏳') !== 0) ? prevPi : PANO_PROMPT_DEFAULT; }
+    };
+    try {
+        const r = await fetchT(`${API}/api/studio/ai-pano-prompt`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ image_id: id }),
+        }, 30000);
+        if (r.status === 401) { _restore(); $('loginModal').classList.add('open'); return; }
+        const d = await r.json().catch(() => ({ error: 'bad_response' }));
+        if (d && !d.error) {
+            _panoAutoCache[id] = { prompt: d.prompt || '', negative_prompt: d.negative_prompt || '' };
+            if (pi) { pi.disabled = false; pi.value = d.prompt || prevPi || PANO_PROMPT_DEFAULT; }
+            if (np && d.negative_prompt) np.value = d.negative_prompt;
+        } else {
+            _restore();
+            if (opts.force && typeof showNotif === 'function') {
+                showNotif((d && d.error === 'insufficient_tokens')
+                    ? 'Not enough tokens to auto-describe this image.'
+                    : 'Couldn\u2019t auto-describe this image — using the default scene prompt.', 'error');
+            }
+        }
+    } catch (e) {
+        _restore();
+    } finally {
+        if (pi) pi.disabled = false;
+        if (btn) { btn.disabled = false; btn.textContent = origLabel || '\u2728 Auto-describe scene from image'; }
+        _panoAutoBusy = false;
+    }
 }
 
 async function generatePanorama(){
