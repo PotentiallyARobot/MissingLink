@@ -9189,6 +9189,9 @@ async function uploadFile(file){
         // Prefer server-returned dims if available, else use client-read dims
         setInputImage(d.id, d.url, d.w || dims.w, d.h || dims.h);
         log(`Uploaded ${file.name} (${dims.w}×${dims.h})`);
+        // Hand the upload response back so callers (e.g. the 360 viewer's
+        // capture-to-history flow) can reference the new upload id/url.
+        return d;
     }catch(e){ showNotif('Upload failed. Check your connection and try again.', 'error'); }
 }
 
@@ -12804,8 +12807,8 @@ async function generatePanorama(){
         lora_lightning: lightning,
         lora_pano: panoLora,
         lora_angles: 0,
-        width: 1952,
-        height: 960,
+        width: 2048,
+        height: 1024,
     };
 
     const snapshot = {
@@ -23055,12 +23058,24 @@ function restoreFromHistory(j){
     const mode = (typeof currentMode === 'string') ? currentMode : 'generate';
     const isCreate = (mode === 'generate');
 
+    // Is this history item a panorama? The server tags pano jobs with
+    // mode==='pano'; fall back to the 2:1 equirectangular aspect for any
+    // older row that predates the mode tag.
+    const isPanoItem = (j.mode === 'pano') ||
+        (!!j.w && !!j.h && Math.abs((j.w / j.h) - 2) < 0.06);
+
     // Any grid/focus state from older Create rendering is cleared so it can't
     // linger behind the stage image.
     _batchInputs = [];
     _batchFocusedId = null;
     if (typeof renderBatchInputs === 'function') renderBatchInputs();
     const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
+
+    // Loading a panorama in Camera mode wipes the stage first so the 360
+    // sphere comes up on a clean slate (no prior grid or flat image lingering
+    // behind the overlay), then maps the equirect onto the sphere. In other
+    // modes showResult falls through to the flat equirectangular image.
+    if (isPanoItem && mode === 'camera' && typeof clearStage === 'function') clearStage();
 
     // Present on the shared stage. isCreate drives the result-bar button set
     // (Assign-to-Input / Reverse vs Use-as-Input) and suppresses the seed
@@ -23075,6 +23090,7 @@ function restoreFromHistory(j){
         is_public: !!j.is_public,
         mode: mode,
         isCreate: isCreate,
+        isPano: isPanoItem,
     });
 
     // Repopulate the prompt field for the current surface so the user can
@@ -23832,11 +23848,13 @@ function showResult(d){
     $('btnUseAsInput').style.display = _isCreate ? 'none' : '';
     $('btnCreateAssign').style.display = _isCreate ? '' : 'none';
     $('btnCreateReverse').style.display = _isCreate ? '' : 'none';
-    // Panorama results get the interactive 360 viewer overlaid on the stage;
-    // any other result hides it (and reveals the normal flat #outImg). The
-    // result's flat URL is remembered so the viewer's "view equirectangular"
-    // and "use as input" controls and the result bar can act on it.
-    if (d.isPano || d.mode === 'pano') {
+    // Panorama results map onto the interactive 360 sphere ONLY in Camera
+    // mode. In any other mode (Edit / Create) a pano loads as the flat
+    // equirectangular image on the normal stage — the sphere is a
+    // Camera-surface affordance. Non-pano results always hide the viewer.
+    const _isPanoResult = (d.isPano || d.mode === 'pano');
+    const _curMode = (typeof currentMode === 'string') ? currentMode : 'generate';
+    if (_isPanoResult && _curMode === 'camera') {
         if (window.PanoViewer) PanoViewer.show(d.url, d);
     } else {
         if (window.PanoViewer) PanoViewer.hide();
@@ -24760,8 +24778,10 @@ function restorePersistedInputs(){
 //    • 🖼 Equirect / 🌐 360°  — toggle between the flat image and the
 //      sphere view (hiding the overlay reveals the flat #outImg beneath).
 //    • 📌 Use view as input    — capture the CURRENT framing from the
-//      canvas and assign it as the Camera input image (uploadFile →
-//      setInputImage). Falls back to a hint if the canvas is CORS-tainted.
+//      canvas, assign it as the Camera input image (uploadFile →
+//      setInputImage), AND save it as an independent history entry via
+//      /api/studio/save-output. Falls back to a hint if the canvas is
+//      CORS-tainted.
 //    • ⬇ Equirect              — download the flat equirectangular PNG.
 //  The renderer uses preserveDrawingBuffer:true so the canvas can be
 //  captured at any time. It is created lazily on first show() and the
@@ -24962,8 +24982,42 @@ window.PanoViewer = (function(){
       if(btn){ btn.disabled=true; btn.textContent='⏳ Uploading…'; }
       const file = new File([blob], `pano-view-${Date.now()}.png`, { type:'image/png' });
       if(typeof uploadFile==='function'){
-        await uploadFile(file); // sets it as the Camera input + persists
-        if(typeof showNotif==='function') showNotif('Current view assigned as the new input image.', 'success');
+        const up = await uploadFile(file); // sets it as the Camera input + persists the upload
+        // Also register the captured frame as an INDEPENDENT history entry —
+        // a no-cost `done` job pointing at the just-uploaded image. The bytes
+        // were already moderated at upload time, so this is a cheap DB insert.
+        let savedToHistory = false;
+        if(up && up.id && typeof fetchT==='function'){
+          try{
+            const cw = (renderer.domElement && renderer.domElement.width)  || 0;
+            const chh= (renderer.domElement && renderer.domElement.height) || 0;
+            const r = await fetchT(`${API}/api/studio/save-output`, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ upload_id: up.id, w: cw, h: chh, mode:'camera', prompt:'' })
+            }, 15000);
+            const sd = await r.json().catch(()=>null);
+            if(sd && sd.ok){
+              savedToHistory = true;
+              // Optimistically surface it at the top of history this session
+              // (a reload would re-fetch it from the server anyway).
+              if(Array.isArray(_historyItems)){
+                _historyItems.unshift({
+                  id: sd.id, mode:'camera', url: up.url, upload_id: up.id,
+                  w: sd.w||cw, h: sd.h||chh, prompt:'', negative_prompt:'',
+                  seed:0, elapsed:0, batch_id:null, is_public:0,
+                  created_at: sd.created_at || Math.floor(Date.now()/1000),
+                  finished_at: sd.finished_at || Math.floor(Date.now()/1000),
+                });
+              }
+              if(typeof renderHistorySidebar==='function') renderHistorySidebar();
+              if(typeof renderHistoryModal==='function') renderHistoryModal();
+            }
+          }catch(_e){ /* history save is best-effort; the input was still set */ }
+        }
+        if(typeof showNotif==='function')
+          showNotif(savedToHistory
+            ? 'Current view set as the new input image and saved to history.'
+            : 'Current view assigned as the new input image.', 'success');
       }
     }catch(err){
       // Tainted canvas (cross-origin texture without CORS) or capture failure.
