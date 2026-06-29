@@ -5364,52 +5364,29 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec not-generate">
+        <!-- Camera mode: pick what Generate produces. Single = one render at the
+             current pose; Multi = a coherent 6- or 20-view set; 360° = a seamless
+             panorama (auto-fills a scene prompt below). The single GENERATE button
+             adapts its label, cost, and action to the selection. -->
+        <div class="camera-only" id="camGenTypeWrap" style="margin-bottom:10px">
+            <div class="sec-label" style="margin-bottom:6px"><span class="icon">🎛️</span> GENERATION TYPE</div>
+            <div class="edit-model-seg" id="camGenTypeSeg">
+                <button type="button" class="ems-btn active" data-camgen="single" onclick="setCamGenType('single')" title="One render at the camera angle set above">📷 Single</button>
+                <button type="button" class="ems-btn" data-camgen="multi" onclick="setCamGenType('multi')" title="A coherent set of views around your subject">🎬 Multi</button>
+                <button type="button" class="ems-btn" data-camgen="pano" onclick="setCamGenType('pano')" title="Expand the photo into a seamless 360° panorama">🌐 360°</button>
+            </div>
+            <!-- How many views — shown only for Multi. -->
+            <div class="edit-model-seg" id="camMultiCountSeg" style="display:none;margin-top:6px">
+                <button type="button" class="ems-btn active" data-count="6" onclick="setCamMultiCount(6)">6 views</button>
+                <button type="button" class="ems-btn" data-count="20" onclick="setCamMultiCount(20)">20 views</button>
+            </div>
+            <div id="camGenHint" style="color:var(--text-muted);font-size:11px;margin-top:7px;line-height:1.45">Renders one view at the angle set above.</div>
+        </div>
+
         <button class="gen-btn" id="btnGen" onclick="doGenerate()">⚡ GENERATE</button>
-        <!-- Camera mode only: one click, 6 jobs queued, one per canonical
-             azimuth. Uses current elevation/distance/seed so the user has
-             a coherent set they can compare side-by-side. -->
-        <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles" onclick="generateAllAngles()" disabled style="margin-top:8px">
-            🔄 All 6 Angles
-        </button>
-        <!-- Bigger 20-angle "full coverage" set. Same flow as 6-angles but
-             exceeds the 12-job server queue cap, so generateAngleBatch
-             stashes the overflow and the completion poller drains it. -->
-        <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles20" onclick="generateAllAngles20()" disabled style="margin-top:6px">
-            🎬 All 20 Angles
-        </button>
-        <!-- Full 96-pose canonical set: every prompt the LoRA was trained
-             on (8 azimuths × 4 elevations × 3 distances). Same client-side
-             queue draining as the 20-angle flow handles the 12-job cap. -->
-        <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles96" onclick="generateAllAngles96()" disabled style="margin-top:6px">
-            🌐 All 96 Angles
-        </button>
-        <!-- Panorama mode: expand the input photo into a seamless 360°
-             equirectangular panorama (HunyuanWorld 2.0 / HY-Pano 2.0 + the
-             Lightning 4-step LoRA, 2048×1024). The result is shown in an
-             interactive 360 viewer on the stage; "assign as input" captures
-             the current framing as a new input image. -->
-        <button class="gen-btn gen-btn-secondary camera-only" id="btnPanorama" onclick="generatePanorama()" disabled style="margin-top:6px;border-color:var(--gold);color:var(--gold)">
-            🌐 Panorama (360°)
-        </button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
             <span style="color:var(--text-muted)">Cost</span>
-            <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.02</span>
-        </div>
-        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
-            <span style="color:var(--text-muted)">All 6 Angles</span>
-            <span style="color:var(--gold);font-weight:700">🪙 600 tokens</span>
-        </div>
-        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
-            <span style="color:var(--text-muted)">All 20 Angles</span>
-            <span style="color:var(--gold);font-weight:700">🪙 2000 tokens</span>
-        </div>
-        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
-            <span style="color:var(--text-muted)">All 96 Angles</span>
-            <span style="color:var(--gold);font-weight:700">🪙 9600 tokens</span>
-        </div>
-        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
-            <span style="color:var(--text-muted)">Panorama (360°)</span>
-            <span style="color:var(--gold);font-weight:700">🪙 100 tokens</span>
+            <span style="color:var(--gold);font-weight:700" id="camCostText">🪙 100 tokens · ~$0.02</span>
         </div>
         <div class="token-cost" id="balanceLine" style="display:none;justify-content:space-between;padding:4px 0 0">
             <span style="color:var(--text-muted)">Balance</span>
@@ -6503,6 +6480,21 @@ let myJobs=[]; // {id, status, mode, thumb, result}
 // Job ids submitted as panorama jobs, so the completion handler routes the
 // result into the 360 viewer even if mode/d.mode get normalized upstream.
 let _panoJobs = new Set();
+// Camera-mode generation type chosen via the GENERATION TYPE selector:
+//   'single' — one render at the current pose (the classic flow)
+//   'multi'  — a coherent N-view set (N = _camMultiCount, 6 or 20)
+//   'pano'   — a 360° equirectangular panorama
+// The single GENERATE button reads this to decide what to run.
+let _camGenType = 'single';
+let _camMultiCount = 6; // 6 | 20, only relevant when _camGenType === 'multi'
+// Stashes so entering/leaving panorama mode doesn't destroy the user's angle
+// prompt, negative, or prompt-lock state. Restored when they switch back.
+let _panoPromptStash = null, _panoNegStash = null, _panoLockStash = null;
+// Default scene + negative auto-filled into the prompt boxes when the user
+// picks 360°. The positive is a plain scene description (NOT angle tokens),
+// which is what the HY-Pano ERP template wants; both are fully editable.
+const PANO_PROMPT_DEFAULT = 'the surrounding environment, continuing the scene naturally in every direction, coherent sky above and ground below, evenly lit, photorealistic';
+const PANO_NEG_DEFAULT = 'blurry, low quality, distorted, warped horizon, visible seam, duplicated objects, people, text, watermark';
 let pollTimers={}; // jobId → interval
 // Server-synced GPU state from /api/studio/status — updated by pollStatus.
 // Shape: { state: 'unknown'|'cold'|'warming'|'ready', warming_for_s, ready_age_s }
@@ -8130,30 +8122,44 @@ function setMode(mode, opts){
 
 function updateGenButton(){
     const MAX_QUEUED = 12;  // matches STUDIO_MAX_QUEUED on the worker
-    const btnAll = $('btnAllAngles');
     // The primary GENERATE button is NEVER disabled — clicking it always
-    // does *something* (sign-in flow, token-buy modal, error notif, or
-    // the actual generation). Disabled buttons are confusing because the
-    // user often can't tell *why* it's grayed out. Instead we keep the
-    // label contextual ("SIGN IN TO GENERATE", "QUEUE FULL", etc.) and
-    // route the click to whatever action makes sense for that state.
-    // doGenerate() at the click site does the precondition checks and
-    // surfaces a notification when the action isn't possible.
+    // does *something* (sign-in flow, token-buy modal, error notif, or the
+    // actual generation). We keep the label contextual and route the click.
+    // The dispatched routine (single/multi/pano) does the real precondition
+    // checks and surfaces a notification when the action isn't possible.
     const gen = $('btnGen');
+    if (!gen) return;
     gen.disabled = false;
 
-    if(!_user){ gen.textContent='🔑 SIGN IN TO GENERATE';
-        if(btnAll){ btnAll.disabled=true; } return; }
-    if(_user.tokens<100){ gen.textContent='🪙 GET TOKENS';
-        if(btnAll){ btnAll.disabled=true; } return; }
+    // Cost line reflects the current camera selection; other modes show the
+    // flat single-job cost (batch surfaces its multiplied cost in the label).
+    const costEl = document.getElementById('camCostText');
+    if (costEl) {
+        costEl.textContent = (currentMode === 'camera' && _camGenType === 'multi')
+            ? `🪙 ${_camMultiCount * 100} tokens`
+            : '🪙 100 tokens · ~$0.02';
+    }
+
+    if(!_user){ gen.textContent='🔑 SIGN IN TO GENERATE'; return; }
+    if(_user.tokens<100){ gen.textContent='🪙 GET TOKENS'; return; }
     const activeCount=myJobs.filter(j=>j.status==='queued'||j.status==='waiting'||j.status==='running').length;
-    if(activeCount>=MAX_QUEUED){ gen.textContent=`⏳ QUEUE FULL (${activeCount}/${MAX_QUEUED})`;
-        if(btnAll){ btnAll.disabled=true; } return; }
+    if(activeCount>=MAX_QUEUED){ gen.textContent=`⏳ QUEUE FULL (${activeCount}/${MAX_QUEUED})`; return; }
     gen.textContent='⚡ GENERATE';
     if (currentMode === 'camera') {
-        // Label only — button stays clickable. doGenerate shows a notif
-        // when imageId is missing.
-        if (!imageId) gen.textContent = '⚡ GENERATE (upload an image first)';
+        // Label adapts to the GENERATION TYPE selection. Button stays
+        // clickable; the dispatched routine handles missing-image / token /
+        // queue notifs.
+        if (!imageId) {
+            gen.textContent = '⚡ GENERATE (upload an image first)';
+        } else if (_camGenType === 'multi') {
+            const need = _camMultiCount * 100;
+            gen.textContent = (_user.tokens < need)
+                ? `🪙 NEED ${need} TOKENS`
+                : `🎬 GENERATE ${_camMultiCount} VIEWS`;
+        } else if (_camGenType === 'pano') {
+            gen.textContent = '🌐 GENERATE PANORAMA';
+        }
+        // 'single' keeps the default ⚡ GENERATE label.
     } else if (currentMode === 'batch') {
         const selectedCount = _batchInputs.filter(b => b.selected && !b._placeholder).length;
         const cp = $('batchPrompt') ? $('batchPrompt').value.trim() : '';
@@ -8173,46 +8179,6 @@ function updateGenButton(){
         const cp = $('customPrompt') ? $('customPrompt').value.trim() : '';
         if (f.length === 0) gen.textContent = '⚡ GENERATE (add images first)';
         else if (!cp) gen.textContent = '⚡ GENERATE (write a prompt first)';
-    }
-
-    // All-Angles button: camera-mode-only, needs 600 tokens, and enough
-    // queue headroom for 6 jobs on top of what's already there.
-    if (btnAll) {
-        if (currentMode !== 'camera' || !imageId) { btnAll.disabled = true; btnAll.textContent = '🔄 All 6 Angles'; }
-        else if (_user.tokens < 600) { btnAll.disabled = true; btnAll.textContent = '🪙 Need 600 tokens'; }
-        else if (activeCount + 6 > MAX_QUEUED) { btnAll.disabled = true; btnAll.textContent = `⏳ Need ${6 - (MAX_QUEUED - activeCount)} free slots`; }
-        else { btnAll.disabled = false; btnAll.textContent = '🔄 All 6 Angles'; }
-    }
-
-    // All-20-Angles button: same gating as 6-angles but with 2000 tokens
-    // and a much smaller queue requirement (only need 1 slot to start —
-    // the rest auto-submit as completions free up slots client-side).
-    const btnAll20 = $('btnAllAngles20');
-    if (btnAll20) {
-        if (currentMode !== 'camera' || !imageId) { btnAll20.disabled = true; btnAll20.textContent = '🎬 All 20 Angles'; }
-        else if (_user.tokens < 2000) { btnAll20.disabled = true; btnAll20.textContent = '🪙 Need 2000 tokens'; }
-        else if (activeCount >= MAX_QUEUED) { btnAll20.disabled = true; btnAll20.textContent = '⏳ Queue full'; }
-        else { btnAll20.disabled = false; btnAll20.textContent = '🎬 All 20 Angles'; }
-    }
-
-    // All-96-Angles button: same gating shape, 9600 tokens. Same client-side
-    // drain handles the queue overflow.
-    const btnAll96 = $('btnAllAngles96');
-    if (btnAll96) {
-        if (currentMode !== 'camera' || !imageId) { btnAll96.disabled = true; btnAll96.textContent = '🌐 All 96 Angles'; }
-        else if (_user.tokens < 9600) { btnAll96.disabled = true; btnAll96.textContent = '🪙 Need 9600 tokens'; }
-        else if (activeCount >= MAX_QUEUED) { btnAll96.disabled = true; btnAll96.textContent = '⏳ Queue full'; }
-        else { btnAll96.disabled = false; btnAll96.textContent = '🌐 All 96 Angles'; }
-    }
-
-    // Panorama button: camera-mode-only, one job (100 tokens), needs a queue
-    // slot and an input image to expand into 360°.
-    const btnPano = $('btnPanorama');
-    if (btnPano) {
-        if (currentMode !== 'camera' || !imageId) { btnPano.disabled = true; btnPano.textContent = '🌐 Panorama (360°)'; }
-        else if (_user.tokens < 100) { btnPano.disabled = true; btnPano.textContent = '🪙 Need 100 tokens'; }
-        else if (activeCount >= MAX_QUEUED) { btnPano.disabled = true; btnPano.textContent = '⏳ Queue full'; }
-        else { btnPano.disabled = false; btnPano.textContent = '🌐 Panorama (360°)'; }
     }
 }
 
@@ -12409,6 +12375,14 @@ function loraPayload(mode){
 
 async function doGenerate(){
     if(!_user){ $('loginModal').classList.add('open'); return; }
+    // Camera mode routes by the GENERATION TYPE selector. Multi and 360° each
+    // run their own preflight + submission, so dispatch to them BEFORE this
+    // function's single-shot preflight to avoid double-charging/checks.
+    // 'single' falls through to the normal camera path below.
+    if (currentMode === 'camera') {
+        if (_camGenType === 'pano') return generatePanorama();
+        if (_camGenType === 'multi') return (_camMultiCount === 20) ? generateAllAngles20() : generateAllAngles();
+    }
     // Batch mode delegates to its own dedicated submission routine — each
     // selected input becomes its own job routed through _activeBatch.
     // Its own preflight checks emit notifs for missing prompt / no
@@ -12648,6 +12622,72 @@ async function doGenerate(){
 // size, steps and seam blend regardless of forwarded params. The result is
 // rendered in an interactive 360 viewer on the stage (see PanoViewer +
 // showResult), with "assign as input" and "view equirectangular" controls.
+// ── Camera generation-type selector (Single / Multi / 360°) ─────────
+// Drives the single GENERATE button. Switching to 360° auto-fills a scene
+// prompt + negative (stashing the angle prompt) and locks the prompt so the
+// pose widget can't overwrite it; switching back restores everything.
+function setCamGenType(type){
+    if (type !== 'single' && type !== 'multi' && type !== 'pano') type = 'single';
+    const prev = _camGenType;
+    _camGenType = type;
+
+    const seg = document.getElementById('camGenTypeSeg');
+    if (seg) seg.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', b.dataset.camgen === type));
+    const mc = document.getElementById('camMultiCountSeg');
+    if (mc) mc.style.display = (type === 'multi') ? 'flex' : 'none';
+
+    const pi = document.getElementById('promptInput');
+    const np = document.getElementById('negPrompt');
+    const lockEl = document.getElementById('promptLock');
+    if (type === 'pano' && prev !== 'pano') {
+        // Entering 360°: stash angle prompt / negative / lock, swap in scene defaults.
+        if (pi) { _panoPromptStash = pi.value; pi.value = PANO_PROMPT_DEFAULT; }
+        if (np) { _panoNegStash = np.value; if (!np.value.trim()) np.value = PANO_NEG_DEFAULT; }
+        _panoLockStash = !!window._promptLocked;
+        window._promptLocked = true; // keep the pose widget from clobbering the scene prompt
+        if (lockEl) { lockEl.classList.add('locked'); lockEl.textContent = '🔒'; }
+    } else if (type !== 'pano' && prev === 'pano') {
+        // Leaving 360°: restore whatever was there before.
+        if (pi && _panoPromptStash !== null) { pi.value = _panoPromptStash; _panoPromptStash = null; }
+        if (np && _panoNegStash !== null) { np.value = _panoNegStash; _panoNegStash = null; }
+        window._promptLocked = !!_panoLockStash;
+        if (lockEl) { lockEl.classList.toggle('locked', !!_panoLockStash); lockEl.textContent = _panoLockStash ? '🔒' : '🔓'; }
+        _panoLockStash = null;
+    }
+
+    // Camera pose is meaningless for a panorama — dim + disable it so it's
+    // clear it has no effect (non-destructive: uses opacity, not display, so
+    // the camera-only show/hide on mode switch isn't disturbed).
+    const pose = document.getElementById('secCamPose');
+    if (pose) {
+        pose.style.opacity = (type === 'pano') ? '0.4' : '';
+        pose.style.pointerEvents = (type === 'pano') ? 'none' : '';
+    }
+
+    _updateCamGenHint();
+    updateGenButton();
+}
+
+function setCamMultiCount(n){
+    _camMultiCount = (parseInt(n) === 20) ? 20 : 6;
+    const mc = document.getElementById('camMultiCountSeg');
+    if (mc) mc.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.count) === _camMultiCount));
+    _updateCamGenHint();
+    updateGenButton();
+}
+
+function _updateCamGenHint(){
+    const h = document.getElementById('camGenHint');
+    if (!h) return;
+    if (_camGenType === 'multi') {
+        h.textContent = `Renders ${_camMultiCount} coherent views around your subject — they land as a grid.`;
+    } else if (_camGenType === 'pano') {
+        h.textContent = 'Expands your photo into a 360° panorama. The prompt above describes what fills the scene — edit it freely. Camera angle is ignored.';
+    } else {
+        h.textContent = 'Renders one view at the angle set above.';
+    }
+}
+
 async function generatePanorama(){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     if(currentMode!=='camera'){ showNotif('Switch to Camera mode to make a panorama.', 'error'); return; }
@@ -12670,11 +12710,18 @@ async function generatePanorama(){
     // LoRA is fixed at 1.0; angles is irrelevant here (forced off).
     const lvRaw = parseFloat($('rngLoraLightning').value);
     const lightning = Number.isFinite(lvRaw) ? lvRaw : 1.0;
+    // Scene description for the panorama. The selector auto-fills a real scene
+    // prompt and locks the box, so it normally holds the right thing — but as
+    // a safety net, if angle tokens (`<sks> …`) somehow remain, send empty so
+    // the backend falls back to its default scene rather than feeding pose
+    // words into the "extend according to:" slot.
+    let panoPrompt = ($('promptInput').value || '').trim();
+    if (/<sks>/i.test(panoPrompt)) panoPrompt = '';
     const payload = {
         mode: 'pano',
         pano: true,
         image_ids: [imageId],
-        prompt: $('promptInput').value,
+        prompt: panoPrompt,
         negative_prompt: $('negPrompt').value.trim(),
         seed: parseInt($('rngSeed').value),
         randomize_seed: $('chkRand').checked,
@@ -12702,7 +12749,7 @@ async function generatePanorama(){
         input_image_url: imageUrl,
     };
 
-    const btn = $('btnPanorama');
+    const btn = $('btnGen');
     const origText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = '⏳ SUBMITTING...'; }
     try {
@@ -12759,7 +12806,9 @@ async function generatePanorama(){
         log('Panorama failed: ' + e.message, 'error');
         showNotif('Could not start panorama: ' + e.message, 'error');
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = origText || '🌐 Panorama (360°)'; }
+        // Re-enable + relabel via updateGenButton so the button reflects the
+        // current selection (it owns the camera-mode label now).
+        if (btn) btn.disabled = false;
         updateGenButton();
     }
 }
