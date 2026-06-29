@@ -5383,6 +5383,14 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <button class="gen-btn gen-btn-secondary camera-only" id="btnAllAngles96" onclick="generateAllAngles96()" disabled style="margin-top:6px">
             🌐 All 96 Angles
         </button>
+        <!-- Panorama mode: expand the input photo into a seamless 360°
+             equirectangular panorama (HunyuanWorld 2.0 / HY-Pano 2.0 + the
+             Lightning 4-step LoRA, 2048×1024). The result is shown in an
+             interactive 360 viewer on the stage; "assign as input" captures
+             the current framing as a new input image. -->
+        <button class="gen-btn gen-btn-secondary camera-only" id="btnPanorama" onclick="generatePanorama()" disabled style="margin-top:6px;border-color:var(--gold);color:var(--gold)">
+            🌐 Panorama (360°)
+        </button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
             <span style="color:var(--text-muted)">Cost</span>
             <span style="color:var(--gold);font-weight:700">🪙 100 tokens · ~$0.02</span>
@@ -5398,6 +5406,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
             <span style="color:var(--text-muted)">All 96 Angles</span>
             <span style="color:var(--gold);font-weight:700">🪙 9600 tokens</span>
+        </div>
+        <div class="token-cost camera-only" style="display:flex;justify-content:space-between;padding:4px 0 0">
+            <span style="color:var(--text-muted)">Panorama (360°)</span>
+            <span style="color:var(--gold);font-weight:700">🪙 100 tokens</span>
         </div>
         <div class="token-cost" id="balanceLine" style="display:none;justify-content:space-between;padding:4px 0 0">
             <span style="color:var(--text-muted)">Balance</span>
@@ -6488,6 +6500,9 @@ let hwOpen=true;
 let currentMode='generate';
 let slots=[null,null,null];
 let myJobs=[]; // {id, status, mode, thumb, result}
+// Job ids submitted as panorama jobs, so the completion handler routes the
+// result into the 360 viewer even if mode/d.mode get normalized upstream.
+let _panoJobs = new Set();
 let pollTimers={}; // jobId → interval
 // Server-synced GPU state from /api/studio/status — updated by pollStatus.
 // Shape: { state: 'unknown'|'cold'|'warming'|'ready', warming_for_s, ready_age_s }
@@ -7946,6 +7961,10 @@ function setMode(mode, opts){
         }
     }
     currentMode = mode;
+    // A panorama result lives only in Camera mode's stage; switching to any
+    // other mode hides the 360 viewer overlay so it can't sit on top of the
+    // edit/create/batch workspace.
+    if (mode !== 'camera' && window.PanoViewer) PanoViewer.hide();
     // The header badge reflects the active mode's backend (Modal GPU for
     // Camera/Edit, OpenAI for Create). Repaint it now so switching INTO or
     // OUT OF Create updates the label immediately rather than on the next
@@ -8184,6 +8203,16 @@ function updateGenButton(){
         else if (_user.tokens < 9600) { btnAll96.disabled = true; btnAll96.textContent = '🪙 Need 9600 tokens'; }
         else if (activeCount >= MAX_QUEUED) { btnAll96.disabled = true; btnAll96.textContent = '⏳ Queue full'; }
         else { btnAll96.disabled = false; btnAll96.textContent = '🌐 All 96 Angles'; }
+    }
+
+    // Panorama button: camera-mode-only, one job (100 tokens), needs a queue
+    // slot and an input image to expand into 360°.
+    const btnPano = $('btnPanorama');
+    if (btnPano) {
+        if (currentMode !== 'camera' || !imageId) { btnPano.disabled = true; btnPano.textContent = '🌐 Panorama (360°)'; }
+        else if (_user.tokens < 100) { btnPano.disabled = true; btnPano.textContent = '🪙 Need 100 tokens'; }
+        else if (activeCount >= MAX_QUEUED) { btnPano.disabled = true; btnPano.textContent = '⏳ Queue full'; }
+        else { btnPano.disabled = false; btnPano.textContent = '🌐 Panorama (360°)'; }
     }
 }
 
@@ -8947,6 +8976,15 @@ function handleJobTerminal(jobId, d){
                     is_public: 0, mode: 'generate', isCreate: true,
                 });
                 log(`Job ${jobId} done (Create/agent — rendered full-stage)`, 'success');
+            } else if ((job.mode === 'pano' || d.mode === 'pano' || _panoJobs.has(jobId)) && d.result) {
+                // Panorama result → render in the interactive 360 viewer on the
+                // stage. showResult sees isPano and hands the equirect to
+                // PanoViewer; the result bar's "Use as Input" assigns the flat
+                // equirect, and the viewer adds "use this view as input".
+                const _ov = $('genStageOverlay'); if (_ov) _ov.classList.remove('active');
+                _panoJobs.delete(jobId);
+                showResult({ ...d.result, id: jobId, is_public: 0, mode: 'pano', isPano: true });
+                log(`Job ${jobId} done (panorama — 360 viewer)`, 'success');
             } else if (d.result) {
                 // Genuine Camera/Edit single result → the main viewer.
                 // Include the job id + share state in the result payload so
@@ -10460,6 +10498,7 @@ function clearStage(){
     if (ph) ph.style.display = '';
     const ov = document.getElementById('genStageOverlay');
     if (ov) ov.classList.remove('active');
+    if (window.PanoViewer) PanoViewer.hide();
     lastOutputFilename = null;
     _lastResultForActions = null;
     if (typeof _refreshOutputPlaceholder === 'function') _refreshOutputPlaceholder();
@@ -12600,7 +12639,130 @@ async function doGenerate(){
     }
 }
 
-// ── Canonical 96-pose set from fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA ──
+// ── Panorama (360°) generation ───────────────────────────────────────
+// Camera-mode action: take the current input photo and expand it into a
+// seamless 360° equirectangular panorama using HunyuanWorld 2.0 / HY-Pano
+// 2.0 stacked on the Lightning 4-step LoRA (2048×1024, the Colab cell's
+// settings). Submits to the same /api/studio/generate endpoint with
+// mode:'pano'; the Modal worker's pano branch forces the correct LoRAs,
+// size, steps and seam blend regardless of forwarded params. The result is
+// rendered in an interactive 360 viewer on the stage (see PanoViewer +
+// showResult), with "assign as input" and "view equirectangular" controls.
+async function generatePanorama(){
+    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(currentMode!=='camera'){ showNotif('Switch to Camera mode to make a panorama.', 'error'); return; }
+    if(!imageId){ showNotif('Upload an image first.', 'error'); return; }
+    if(_user.tokens<100){ showBuyModal(); return; }
+    const MAX_QUEUED = 12;
+    const activeCount = myJobs.filter(j => j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
+    if (activeCount >= MAX_QUEUED) {
+        showNotif(`Queue full (${activeCount}/${MAX_QUEUED}). Wait for a slot to free up.`, 'error');
+        return;
+    }
+
+    _switchToStudioForOutput();
+    if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') { warmupGpu(); }
+
+    // Pano always runs at 2048×1024, 4-step Lightning, guidance off — the
+    // Modal worker re-forces these, but we send them so the intent is explicit
+    // and so a future worker that trusts the payload still does the right
+    // thing. Lightning strength follows the slider (default 1.0); the pano
+    // LoRA is fixed at 1.0; angles is irrelevant here (forced off).
+    const lvRaw = parseFloat($('rngLoraLightning').value);
+    const lightning = Number.isFinite(lvRaw) ? lvRaw : 1.0;
+    const payload = {
+        mode: 'pano',
+        pano: true,
+        image_ids: [imageId],
+        prompt: $('promptInput').value,
+        negative_prompt: $('negPrompt').value.trim(),
+        seed: parseInt($('rngSeed').value),
+        randomize_seed: $('chkRand').checked,
+        guidance_scale: 1.0,
+        inference_steps: 4,
+        lora_lightning: lightning,
+        lora_pano: 1.0,
+        lora_angles: 0,
+        width: 2048,
+        height: 1024,
+    };
+
+    const snapshot = {
+        mode: 'pano',
+        prompt: payload.prompt,
+        negative_prompt: payload.negative_prompt,
+        seed: payload.seed,
+        guidance_scale: payload.guidance_scale,
+        inference_steps: payload.inference_steps,
+        lora_lightning: payload.lora_lightning,
+        lora_pano: payload.lora_pano,
+        width: payload.width,
+        height: payload.height,
+        input_image_id: imageId,
+        input_image_url: imageUrl,
+    };
+
+    const btn = $('btnPanorama');
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ SUBMITTING...'; }
+    try {
+        const r = await fetchT(`${API}/api/studio/generate`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        }, 30000);
+        const d = await r.json();
+        if (!d.ok) {
+            if (r.status === 401) { $('loginModal').classList.add('open'); }
+            else if (r.status === 402) { showBuyModal(); }
+            else if (r.status === 429) { showNotif('Max jobs queued. Wait for one to finish or cancel one.'); }
+            else if (d.error === 'content_blocked') {
+                showNotif('This request was blocked: content involving minors is not allowed.', 'error');
+            }
+            else if (d.error === 'age_ack_required') {
+                // Server requires an 18+ acknowledgement for NSFW panorama
+                // content (same gate as Camera/Edit). Open the age gate; once
+                // acknowledged, replay this panorama generation automatically.
+                _ageGateThenRetry = generatePanorama;
+                openAgeGate();
+            }
+            else if (d.error === 'moderation_unavailable') {
+                showNotif('Safety check is temporarily unavailable, so this panorama was not run. Please try again in a moment.', 'error');
+            }
+            else { log('Error: ' + (d.error || 'Failed'), 'error'); showNotif('Could not start panorama: ' + (d.error || 'failed'), 'error'); }
+            return;
+        }
+        if (d.tokens_remaining !== undefined && _user) {
+            _user.tokens = d.tokens_remaining;
+            $('tokenCount').textContent = d.tokens_remaining;
+            $('sidebarBalance').textContent = `${d.tokens_remaining} (${Math.floor(d.tokens_remaining/100)} images)`;
+            $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
+        }
+        if (_activeBatch) clearBatchGrid();
+        myJobs = myJobs.filter(j => j.id !== d.job_id);
+        _panoJobs.add(d.job_id);
+        myJobs.unshift({
+            id: d.job_id,
+            status: 'waiting',
+            mode: 'pano',
+            thumb: imageUrl,
+            result: null,
+            submittedAt: Date.now(),
+            startedAt: Date.now(),
+            snapshot,
+            editTargetSlot: null,
+        });
+        if (myJobs.length > 10) myJobs = myJobs.slice(0, 10);
+        renderQueue();
+        log(`Panorama job ${d.job_id} submitted`);
+        startJobPoll(d.job_id);
+    } catch (e) {
+        log('Panorama failed: ' + e.message, 'error');
+        showNotif('Could not start panorama: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText || '🌐 Panorama (360°)'; }
+        updateGenButton();
+    }
+}
 // Source: https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA
 // Format: <sks> {azimuth} {elevation} {distance}
 // 8 azimuths × 4 elevations × 3 distances = 96 distinct poses.
@@ -23547,6 +23709,15 @@ function showResult(d){
     $('btnUseAsInput').style.display = _isCreate ? 'none' : '';
     $('btnCreateAssign').style.display = _isCreate ? '' : 'none';
     $('btnCreateReverse').style.display = _isCreate ? '' : 'none';
+    // Panorama results get the interactive 360 viewer overlaid on the stage;
+    // any other result hides it (and reveals the normal flat #outImg). The
+    // result's flat URL is remembered so the viewer's "view equirectangular"
+    // and "use as input" controls and the result bar can act on it.
+    if (d.isPano || d.mode === 'pano') {
+        if (window.PanoViewer) PanoViewer.show(d.url, d);
+    } else {
+        if (window.PanoViewer) PanoViewer.hide();
+    }
     updateShareResultButton();
     updateStageClearBtn();
 }
@@ -24453,6 +24624,244 @@ function restorePersistedInputs(){
   // (top-level `let` is not visible on window, which is why an earlier
   // gate never fired).
   start();
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+//  PanoViewer — interactive 360° equirectangular viewer for the stage
+// ----------------------------------------------------------------------
+//  Renders a panorama result inside #outputArea using three.js (already
+//  loaded, r128): the equirect texture is mapped onto the inside of a
+//  sphere and the user looks around by dragging (mouse/touch) and zooms
+//  with the scroll wheel. A small toolbar offers:
+//    • 🖼 Equirect / 🌐 360°  — toggle between the flat image and the
+//      sphere view (hiding the overlay reveals the flat #outImg beneath).
+//    • 📌 Use view as input    — capture the CURRENT framing from the
+//      canvas and assign it as the Camera input image (uploadFile →
+//      setInputImage). Falls back to a hint if the canvas is CORS-tainted.
+//    • ⬇ Equirect              — download the flat equirectangular PNG.
+//  The renderer uses preserveDrawingBuffer:true so the canvas can be
+//  captured at any time. It is created lazily on first show() and the
+//  render loop is paused on hide() so it costs nothing when not in use.
+// ══════════════════════════════════════════════════════════════════════
+window.PanoViewer = (function(){
+  let root=null, renderer=null, scene=null, camera=null, sphere=null;
+  let raf=null, ro=null;
+  let lon=0, lat=0, isDown=false, downX=0, downY=0, downLon=0, downLat=0;
+  let autoRotate=true, fov=75;
+  let curUrl=null, built=false;
+  let texLoader=null;
+
+  function host(){ return document.getElementById('outputArea'); }
+
+  function build(){
+    if(built) return;
+    const h=host(); if(!h) return;
+
+    root=document.createElement('div');
+    root.id='panoViewer';
+    root.style.cssText=
+      'position:absolute;inset:0;display:none;z-index:6;'+
+      'background:var(--black);overflow:hidden;border-radius:inherit;';
+
+    // three.js renderer ------------------------------------------------
+    renderer=new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    renderer.domElement.style.cssText='width:100%;height:100%;display:block;cursor:grab;touch-action:none;';
+    root.appendChild(renderer.domElement);
+
+    scene=new THREE.Scene();
+    camera=new THREE.PerspectiveCamera(fov, 1, 0.1, 1100);
+    camera.position.set(0,0,0.01);
+
+    const geo=new THREE.SphereGeometry(500, 64, 40);
+    geo.scale(-1, 1, 1); // flip so we view the texture from the inside
+    sphere=new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color:0x222222 }));
+    scene.add(sphere);
+
+    texLoader=new THREE.TextureLoader();
+    texLoader.setCrossOrigin('anonymous'); // keep the canvas capture-able
+
+    // toolbar ----------------------------------------------------------
+    const bar=document.createElement('div');
+    bar.style.cssText=
+      'position:absolute;left:50%;bottom:12px;transform:translateX(-50%);'+
+      'display:flex;gap:8px;align-items:center;padding:6px;'+
+      'background:rgba(9,9,11,.72);border:1px solid var(--border);'+
+      'border-radius:12px;backdrop-filter:blur(6px);z-index:2;';
+    const mkBtn=(label, title)=>{
+      const b=document.createElement('button');
+      b.textContent=label; b.title=title||'';
+      b.style.cssText=
+        'font:600 12px/1 system-ui,sans-serif;color:var(--text);cursor:pointer;'+
+        'background:var(--surface-2);border:1px solid var(--border-light);'+
+        'padding:8px 10px;border-radius:8px;white-space:nowrap;';
+      b.onmouseenter=()=>{ b.style.borderColor='var(--gold)'; b.style.color='var(--gold)'; };
+      b.onmouseleave=()=>{ b.style.borderColor='var(--border-light)'; b.style.color='var(--text)'; };
+      return b;
+    };
+
+    const btnToggle=mkBtn('🖼 Equirect','Show the flat equirectangular image');
+    btnToggle.onclick=()=>{
+      const showingFlat = root.style.display==='none';
+      if(showingFlat){
+        // back to 360
+        root.style.display='block';
+        btnToggle.textContent='🖼 Equirect';
+        resize(); startLoop();
+      } else {
+        // show flat image underneath
+        stopLoop();
+        root.style.display='none';
+        btnToggle.textContent='🌐 360°';
+        const oi=document.getElementById('outImg');
+        if(oi){ oi.style.display=''; }
+      }
+    };
+
+    const btnRotate=mkBtn('⏸ Auto-rotate','Pause / resume auto-rotation');
+    btnRotate.onclick=()=>{
+      autoRotate=!autoRotate;
+      btnRotate.textContent = autoRotate ? '⏸ Auto-rotate' : '▶ Auto-rotate';
+    };
+
+    const btnUse=mkBtn('📌 Use view as input','Capture the current framing as a new Camera input');
+    btnUse.onclick=()=>captureViewAsInput(btnUse);
+
+    const btnDl=mkBtn('⬇ Equirect','Download the flat equirectangular PNG');
+    btnDl.onclick=()=>{
+      if(!curUrl) return;
+      const a=document.createElement('a');
+      a.href=curUrl; a.download=(curUrl.split('/').pop()||'panorama')+'';
+      document.body.appendChild(a); a.click(); a.remove();
+    };
+
+    bar.appendChild(btnToggle);
+    bar.appendChild(btnRotate);
+    bar.appendChild(btnUse);
+    bar.appendChild(btnDl);
+    root.appendChild(bar);
+
+    // hint -------------------------------------------------------------
+    const hint=document.createElement('div');
+    hint.textContent='Drag to look · scroll to zoom';
+    hint.style.cssText=
+      'position:absolute;left:50%;top:10px;transform:translateX(-50%);'+
+      'font:500 11px/1 system-ui,sans-serif;color:var(--text-muted);'+
+      'background:rgba(9,9,11,.55);padding:5px 9px;border-radius:8px;'+
+      'pointer-events:none;z-index:2;letter-spacing:.3px;';
+    root.appendChild(hint);
+
+    // interaction ------------------------------------------------------
+    const el=renderer.domElement;
+    const onDown=(x,y)=>{ isDown=true; autoRotate=false; btnRotate.textContent='▶ Auto-rotate';
+      downX=x; downY=y; downLon=lon; downLat=lat; el.style.cursor='grabbing'; };
+    const onMove=(x,y)=>{ if(!isDown) return;
+      lon = downLon - (x-downX)*0.16;
+      lat = downLat + (y-downY)*0.16;
+      lat = Math.max(-85, Math.min(85, lat)); };
+    const onUp=()=>{ isDown=false; el.style.cursor='grab'; };
+
+    el.addEventListener('mousedown', e=>onDown(e.clientX,e.clientY));
+    window.addEventListener('mousemove', e=>onMove(e.clientX,e.clientY));
+    window.addEventListener('mouseup', onUp);
+    el.addEventListener('touchstart', e=>{ if(e.touches[0]) onDown(e.touches[0].clientX,e.touches[0].clientY); }, {passive:true});
+    el.addEventListener('touchmove', e=>{ if(e.touches[0]){ onMove(e.touches[0].clientX,e.touches[0].clientY); e.preventDefault(); } }, {passive:false});
+    el.addEventListener('touchend', onUp);
+    el.addEventListener('wheel', e=>{
+      e.preventDefault();
+      fov = Math.max(30, Math.min(90, fov + (e.deltaY>0 ? 3 : -3)));
+      camera.fov=fov; camera.updateProjectionMatrix();
+    }, {passive:false});
+
+    h.appendChild(root);
+    built=true;
+  }
+
+  function resize(){
+    if(!renderer||!root) return;
+    const w=root.clientWidth||host().clientWidth||800;
+    const h=root.clientHeight||host().clientHeight||450;
+    renderer.setSize(w, h, false);
+    camera.aspect = w/Math.max(1,h);
+    camera.updateProjectionMatrix();
+  }
+
+  function frame(){
+    raf=requestAnimationFrame(frame);
+    if(autoRotate && !isDown) lon += 0.04;
+    const phi = THREE.MathUtils.degToRad(90 - lat);
+    const theta = THREE.MathUtils.degToRad(lon);
+    const tx = 500 * Math.sin(phi) * Math.cos(theta);
+    const ty = 500 * Math.cos(phi);
+    const tz = 500 * Math.sin(phi) * Math.sin(theta);
+    camera.lookAt(tx, ty, tz);
+    renderer.render(scene, camera);
+  }
+  function startLoop(){ if(!raf) frame(); }
+  function stopLoop(){ if(raf){ cancelAnimationFrame(raf); raf=null; } }
+
+  async function captureViewAsInput(btn){
+    if(!renderer){ return; }
+    if(typeof _user!=='undefined' && !_user){ const lm=document.getElementById('loginModal'); if(lm) lm.classList.add('open'); return; }
+    const orig=btn?btn.textContent:'';
+    try{
+      renderer.render(scene, camera); // ensure the latest frame is in the buffer
+      const blob = await new Promise((res)=> renderer.domElement.toBlob(res, 'image/png'));
+      if(!blob){ throw new Error('empty'); }
+      if(btn){ btn.disabled=true; btn.textContent='⏳ Uploading…'; }
+      const file = new File([blob], `pano-view-${Date.now()}.png`, { type:'image/png' });
+      if(typeof uploadFile==='function'){
+        await uploadFile(file); // sets it as the Camera input + persists
+        if(typeof showNotif==='function') showNotif('Current view assigned as the new input image.', 'success');
+      }
+    }catch(err){
+      // Tainted canvas (cross-origin texture without CORS) or capture failure.
+      if(typeof showNotif==='function')
+        showNotif('Couldn\u2019t capture this view directly. Use “Use as Input” on the result bar to assign the full equirectangular image instead.', 'error');
+    }finally{
+      if(btn){ btn.disabled=false; btn.textContent=orig||'📌 Use view as input'; }
+    }
+  }
+
+  return {
+    show(url, _d){
+      build();
+      if(!root) return;
+      curUrl=url;
+      // (re)load the equirect texture onto the sphere
+      texLoader.load(url, (tex)=>{
+        if(tex){
+          if('colorSpace' in tex) { try { tex.colorSpace = THREE.SRGBColorSpace; } catch(e){} }
+          else if('encoding' in tex) { try { tex.encoding = THREE.sRGBEncoding; } catch(e){} }
+          sphere.material.map = tex;
+          sphere.material.color.setHex(0xffffff);
+          sphere.material.needsUpdate = true;
+        }
+      }, undefined, ()=>{
+        if(typeof showNotif==='function') showNotif('Could not load the panorama into the 360 viewer.', 'error');
+      });
+      // reset view + show
+      lon=0; lat=0; fov=75; autoRotate=true;
+      if(camera){ camera.fov=fov; camera.updateProjectionMatrix(); }
+      root.style.display='block';
+      // The flat #outImg sits beneath the overlay; keep it in the DOM (the
+      // image modal + share still reference it) but the overlay covers it.
+      if(!ro && 'ResizeObserver' in window){
+        ro=new ResizeObserver(()=>{ if(root.style.display!=='none') resize(); });
+        ro.observe(host());
+      }
+      // Reset the toggle button label to the 360 state.
+      const tgl = root.querySelector('button');
+      if(tgl) tgl.textContent='🖼 Equirect';
+      resize();
+      startLoop();
+    },
+    hide(){
+      stopLoop();
+      if(root) root.style.display='none';
+    },
+    isActive(){ return !!(root && root.style.display!=='none'); },
+  };
 })();
 </script>
 
