@@ -5359,7 +5359,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5"><input type="number" class="sv" id="vCfg" value="1" min="1" max="8" step="0.5"></div>
         <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
         <div class="slider-row"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
-        <div class="slider-row camera-only"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="panoLoraRow" style="display:none" title="HunyuanWorld 2.0 / HY-Pano 2.0 strength — how strongly the panorama LoRA expands the scene into 360°. 1.0 is the trained default; lower it if the expansion drifts too far from the input."><span class="sl">Panorama LoRA</span><input type="range" id="rngLoraPano" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraPano" value="1.0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row camera-only" id="anglesLoraRow"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
@@ -5379,6 +5380,12 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="edit-model-seg" id="camMultiCountSeg" style="display:none;margin-top:6px">
                 <button type="button" class="ems-btn active" data-count="6" onclick="setCamMultiCount(6)">6 views</button>
                 <button type="button" class="ems-btn" data-count="20" onclick="setCamMultiCount(20)">20 views</button>
+            </div>
+            <!-- Quality preset — shown only for 360°. Fast = Lightning 4-step;
+                 Quality = no Lightning, 40 steps + CFG (Tencent's HY-Pano recipe). -->
+            <div class="edit-model-seg" id="camPanoPresetSeg" style="display:none;margin-top:6px">
+                <button type="button" class="ems-btn active" data-preset="fast" onclick="applyPanoPreset('fast')" title="Lightning 4-step distilled — a few seconds, CFG off">⚡ Fast</button>
+                <button type="button" class="ems-btn" data-preset="quality" onclick="applyPanoPreset('quality')" title="No Lightning · 40 steps · CFG 4 — slower but maximum fidelity (Tencent's documented recipe)">✨ Quality</button>
             </div>
             <div id="camGenHint" style="color:var(--text-muted);font-size:11px;margin-top:7px;line-height:1.45">Renders one view at the angle set above.</div>
         </div>
@@ -6488,8 +6495,11 @@ let _panoJobs = new Set();
 let _camGenType = 'single';
 let _camMultiCount = 6; // 6 | 20, only relevant when _camGenType === 'multi'
 // Stashes so entering/leaving panorama mode doesn't destroy the user's angle
-// prompt, negative, or prompt-lock state. Restored when they switch back.
+// prompt, negative, prompt-lock state, or the shared CFG/steps/Lightning slider
+// values (the presets overwrite those while in 360°). Restored on switch back.
 let _panoPromptStash = null, _panoNegStash = null, _panoLockStash = null;
+let _panoSettingsStash = null;   // { lightning, steps, cfg } captured on entering 360°
+let _panoPreset = 'fast';        // 'fast' | 'quality'
 // Default scene + negative auto-filled into the prompt boxes when the user
 // picks 360°. The positive is a plain scene description (NOT angle tokens),
 // which is what the HY-Pano ERP template wants; both are fully editable.
@@ -12640,20 +12650,45 @@ function setCamGenType(type){
     const np = document.getElementById('negPrompt');
     const lockEl = document.getElementById('promptLock');
     if (type === 'pano' && prev !== 'pano') {
-        // Entering 360°: stash angle prompt / negative / lock, swap in scene defaults.
+        // Entering 360°: stash angle prompt / negative / lock + the shared
+        // CFG/steps/Lightning sliders (the presets overwrite them), swap in
+        // scene defaults, then apply the Fast preset.
         if (pi) { _panoPromptStash = pi.value; pi.value = PANO_PROMPT_DEFAULT; }
         if (np) { _panoNegStash = np.value; if (!np.value.trim()) np.value = PANO_NEG_DEFAULT; }
         _panoLockStash = !!window._promptLocked;
         window._promptLocked = true; // keep the pose widget from clobbering the scene prompt
         if (lockEl) { lockEl.classList.add('locked'); lockEl.textContent = '🔒'; }
+        _panoSettingsStash = {
+            lightning: $('rngLoraLightning') ? $('rngLoraLightning').value : '1',
+            steps:     $('rngSteps') ? $('rngSteps').value : '4',
+            cfg:       $('rngCfg') ? $('rngCfg').value : '1',
+        };
+        applyPanoPreset(_panoPreset || 'fast');
     } else if (type !== 'pano' && prev === 'pano') {
-        // Leaving 360°: restore whatever was there before.
+        // Leaving 360°: restore everything that was swapped/overwritten.
         if (pi && _panoPromptStash !== null) { pi.value = _panoPromptStash; _panoPromptStash = null; }
         if (np && _panoNegStash !== null) { np.value = _panoNegStash; _panoNegStash = null; }
         window._promptLocked = !!_panoLockStash;
         if (lockEl) { lockEl.classList.toggle('locked', !!_panoLockStash); lockEl.textContent = _panoLockStash ? '🔒' : '🔓'; }
         _panoLockStash = null;
+        if (_panoSettingsStash) {
+            const restore = (rid, vid, val) => { const r=$(rid), v=$(vid); if(r) r.value=val; if(v) v.value=val; };
+            restore('rngLoraLightning', 'vLoraLightning', _panoSettingsStash.lightning);
+            restore('rngSteps', 'vSteps', _panoSettingsStash.steps);
+            restore('rngCfg', 'vCfg', _panoSettingsStash.cfg);
+            _panoSettingsStash = null;
+        }
     }
+
+    // Pano-only controls: the Fast/Quality preset selector and the Panorama
+    // LoRA strength slider show only in 360°; the Angles slider (irrelevant to
+    // panoramas) is hidden there.
+    const presetSeg = document.getElementById('camPanoPresetSeg');
+    if (presetSeg) presetSeg.style.display = (type === 'pano') ? 'flex' : 'none';
+    const panoRow = document.getElementById('panoLoraRow');
+    if (panoRow) panoRow.style.display = (type === 'pano') ? 'flex' : 'none';
+    const anglesRow = document.getElementById('anglesLoraRow');
+    if (anglesRow) anglesRow.style.display = (type === 'pano') ? 'none' : '';
 
     // Camera pose is meaningless for a panorama — dim + disable it so it's
     // clear it has no effect (non-destructive: uses opacity, not display, so
@@ -12682,10 +12717,38 @@ function _updateCamGenHint(){
     if (_camGenType === 'multi') {
         h.textContent = `Renders ${_camMultiCount} coherent views around your subject — they land as a grid.`;
     } else if (_camGenType === 'pano') {
-        h.textContent = 'Expands your photo into a 360° panorama. The prompt above describes what fills the scene — edit it freely. Camera angle is ignored.';
+        h.textContent = (_panoPreset === 'quality')
+            ? 'Quality: no Lightning · 40 steps · CFG — slowest, highest fidelity (Tencent\u2019s recipe). The prompt above describes the scene; camera angle is ignored.'
+            : 'Fast: Lightning 4-step — a few seconds. The prompt above describes the scene; camera angle is ignored. Adjust FOV in the 360 viewer after it renders.';
     } else {
         h.textContent = 'Renders one view at the angle set above.';
     }
+}
+
+// Fast vs Quality panorama presets. These set the SHARED CFG/steps/Lightning
+// sliders (you can still fine-tune them afterwards); the values come straight
+// from Tencent's documented HY-Pano recipes:
+//   Fast    — Lightning 4-step distilled, CFG off (guidance handled by the
+//             distilled adapter). Seconds per pano.
+//   Quality — no Lightning, 40 steps, true-CFG ~4 with the quality negative.
+//             The model's native non-distilled recipe; minutes per pano.
+function applyPanoPreset(name){
+    name = (name === 'quality') ? 'quality' : 'fast';
+    _panoPreset = name;
+    const setPair = (rid, vid, val) => { const r = $(rid), v = $(vid); if (r) r.value = val; if (v) v.value = val; };
+    if (name === 'quality') {
+        setPair('rngLoraLightning', 'vLoraLightning', 0);
+        setPair('rngSteps', 'vSteps', 40);
+        setPair('rngCfg', 'vCfg', 4);
+    } else {
+        setPair('rngLoraLightning', 'vLoraLightning', 1);
+        setPair('rngSteps', 'vSteps', 4);
+        setPair('rngCfg', 'vCfg', 1);
+    }
+    const seg = document.getElementById('camPanoPresetSeg');
+    if (seg) seg.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', b.dataset.preset === name));
+    _updateCamGenHint();
+    updateGenButton();
 }
 
 async function generatePanorama(){
@@ -12710,6 +12773,17 @@ async function generatePanorama(){
     // LoRA is fixed at 1.0; angles is irrelevant here (forced off).
     const lvRaw = parseFloat($('rngLoraLightning').value);
     const lightning = Number.isFinite(lvRaw) ? lvRaw : 1.0;
+    // Read the live sliders so they actually affect the render. The backend's
+    // pano branch honors steps freely, and CFG whenever Lightning isn't the
+    // thing driving the denoise (i.e. Lightning low/off, or steps > 8) — with
+    // Lightning engaged at a distilled step count it intentionally pins
+    // true_cfg to 1.0 because the 4-step adapter breaks under CFG. So: turn
+    // Lightning down/off and raise steps to make CFG bite.
+    const cfg = parseFloat($('rngCfg').value);
+    const steps = parseInt($('rngSteps').value);
+    // HY-Pano strength from its dedicated slider (1.0 = trained default).
+    const plRaw = $('rngLoraPano') ? parseFloat($('rngLoraPano').value) : 1.0;
+    const panoLora = Number.isFinite(plRaw) ? plRaw : 1.0;
     // Scene description for the panorama. The selector auto-fills a real scene
     // prompt and locks the box, so it normally holds the right thing — but as
     // a safety net, if angle tokens (`<sks> …`) somehow remain, send empty so
@@ -12725,13 +12799,13 @@ async function generatePanorama(){
         negative_prompt: $('negPrompt').value.trim(),
         seed: parseInt($('rngSeed').value),
         randomize_seed: $('chkRand').checked,
-        guidance_scale: 1.0,
-        inference_steps: 4,
+        guidance_scale: Number.isFinite(cfg) ? cfg : 1.0,
+        inference_steps: Number.isFinite(steps) ? steps : 4,
         lora_lightning: lightning,
-        lora_pano: 1.0,
+        lora_pano: panoLora,
         lora_angles: 0,
-        width: 2048,
-        height: 1024,
+        width: 1952,
+        height: 960,
     };
 
     const snapshot = {
@@ -24007,6 +24081,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngCfg',            'vCfg');
     bindSliderPair('rngSteps',          'vSteps');
     bindSliderPair('rngLoraLightning',  'vLoraLightning');
+    bindSliderPair('rngLoraPano',       'vLoraPano');
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
     initOverlayDragging();
@@ -24697,6 +24772,7 @@ window.PanoViewer = (function(){
   let raf=null, ro=null;
   let lon=0, lat=0, isDown=false, downX=0, downY=0, downLon=0, downLat=0;
   let autoRotate=true, fov=75;
+  let fovSlider=null;   // toolbar FOV control (kept in sync with wheel zoom)
   let curUrl=null, built=false;
   let texLoader=null;
 
@@ -24784,15 +24860,40 @@ window.PanoViewer = (function(){
       document.body.appendChild(a); a.click(); a.remove();
     };
 
+    // FOV control. This is a VIEWER setting (the perspective camera's field of
+    // view) — not a generation parameter. HY-Pano maps the input to a full ERP
+    // implicitly with no FOV input, so this only changes how wide the lens is
+    // as you look around: lower = zoomed in / telephoto, higher = wide-angle.
+    const fovWrap=document.createElement('label');
+    fovWrap.title='Field of view (viewer zoom). Lower = telephoto, higher = wide-angle. Also bound to scroll-wheel zoom.';
+    fovWrap.style.cssText=
+      'display:flex;gap:6px;align-items:center;font:600 12px/1 system-ui,sans-serif;'+
+      'color:var(--text);background:var(--surface-2);border:1px solid var(--border-light);'+
+      'padding:6px 10px;border-radius:8px;white-space:nowrap;';
+    const fovLabel=document.createElement('span'); fovLabel.textContent='🔭 FOV';
+    fovSlider=document.createElement('input');
+    fovSlider.type='range'; fovSlider.min='30'; fovSlider.max='100'; fovSlider.step='1';
+    fovSlider.value=String(fov); fovSlider.style.cssText='width:84px;cursor:pointer;accent-color:var(--gold)';
+    const fovVal=document.createElement('span');
+    fovVal.textContent=fov+'°'; fovVal.style.cssText='min-width:30px;text-align:right;color:var(--text-muted)';
+    fovSlider.oninput=()=>{
+      fov=parseFloat(fovSlider.value)||75;
+      fovVal.textContent=Math.round(fov)+'°';
+      if(camera){ camera.fov=fov; camera.updateProjectionMatrix(); }
+    };
+    fovWrap._valEl=fovVal;
+    fovWrap.appendChild(fovLabel); fovWrap.appendChild(fovSlider); fovWrap.appendChild(fovVal);
+
     bar.appendChild(btnToggle);
     bar.appendChild(btnRotate);
+    bar.appendChild(fovWrap);
     bar.appendChild(btnUse);
     bar.appendChild(btnDl);
     root.appendChild(bar);
 
     // hint -------------------------------------------------------------
     const hint=document.createElement('div');
-    hint.textContent='Drag to look · scroll to zoom';
+    hint.textContent='Drag to look · scroll or FOV slider to zoom';
     hint.style.cssText=
       'position:absolute;left:50%;top:10px;transform:translateX(-50%);'+
       'font:500 11px/1 system-ui,sans-serif;color:var(--text-muted);'+
@@ -24818,8 +24919,9 @@ window.PanoViewer = (function(){
     el.addEventListener('touchend', onUp);
     el.addEventListener('wheel', e=>{
       e.preventDefault();
-      fov = Math.max(30, Math.min(90, fov + (e.deltaY>0 ? 3 : -3)));
+      fov = Math.max(30, Math.min(100, fov + (e.deltaY>0 ? 3 : -3)));
       camera.fov=fov; camera.updateProjectionMatrix();
+      if(fovSlider){ fovSlider.value=String(fov); if(fovSlider.parentNode&&fovSlider.parentNode._valEl) fovSlider.parentNode._valEl.textContent=Math.round(fov)+'°'; }
     }, {passive:false});
 
     h.appendChild(root);
@@ -24892,6 +24994,7 @@ window.PanoViewer = (function(){
       // reset view + show
       lon=0; lat=0; fov=75; autoRotate=true;
       if(camera){ camera.fov=fov; camera.updateProjectionMatrix(); }
+      if(fovSlider){ fovSlider.value=String(fov); if(fovSlider.parentNode&&fovSlider.parentNode._valEl) fovSlider.parentNode._valEl.textContent=fov+'°'; }
       root.style.display='block';
       // The flat #outImg sits beneath the overlay; keep it in the DOM (the
       // image modal + share still reference it) but the overlay covers it.
