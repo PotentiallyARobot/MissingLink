@@ -5445,6 +5445,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <button class="stage-video-btn" id="stageVideoBtn" onclick="openVideoModal()" title="Animate this image into a video (SeeDance 2.0, with audio)" aria-label="Generate video from this image">🎬 Video</button>
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openOutImgModal()">
+        <!-- Stage video element. Used when a generated video is staged from
+             History (or auto-staged on completion). Shares the stage with
+             #outImg; clearStage()/updateStageClearBtn() treat it as a normal
+             stage element. -->
+        <video id="outVideo" style="display:none;max-width:100%;max-height:100%;border-radius:8px" controls playsinline></video>
         <!-- Create/Camera/Edit shared generating overlay. Shown while a
              generation is in flight (currently wired for Create); the
              spinner sits centered over the stage and is cleared when the
@@ -9130,6 +9135,13 @@ async function syncHistory(opts){
         if($('historyModal').style.display !== 'none'){
             renderHistoryModal();
         }
+        // On a fresh load (offset 0), also pull completed videos and merge them
+        // into history so they survive reload and sit alongside images.
+        if (offset === 0 && typeof syncVideoHistory === 'function') {
+            await syncVideoHistory();
+            renderHistorySidebar();
+            if($('historyModal').style.display !== 'none') renderHistoryModal();
+        }
         return true;
     }catch(e){
         return false;
@@ -10538,11 +10550,14 @@ function clearInput(){
 function updateStageClearBtn(){
     const btn = document.getElementById('stageClearBtn');
     const img = document.getElementById('outImg');
+    const vid = document.getElementById('outVideo');
     const hasImg = !!(img && img.src && !img.src.endsWith('#') && img.style.display !== 'none');
-    if (btn) btn.style.display = hasImg ? 'flex' : 'none';
-    // The "make video" button rides the same has-image condition.
+    const hasVid = !!(vid && vid.getAttribute('src') && vid.style.display !== 'none');
+    if (btn) btn.style.display = (hasImg || hasVid) ? 'flex' : 'none';
+    // The "make video" button only applies to a staged IMAGE — hide it when a
+    // video is on the stage (you can't animate a video).
     const vbtn = document.getElementById('stageVideoBtn');
-    if (vbtn) vbtn.style.display = hasImg ? 'inline-flex' : 'none';
+    if (vbtn) vbtn.style.display = (hasImg && !hasVid) ? 'inline-flex' : 'none';
 }
 
 // ── Image-to-video (SeeDance 2.0, with audio, via fal.ai) ───────────────
@@ -10720,8 +10735,20 @@ async function _pollVideoJob(jobKey, videoId){
             job.status = 'done'; job.result = d.video_url; job._videoUrl = d.video_url; job._seed = d.seed;
             renderQueue();
             if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+            // Build a history item and surface it everywhere: History panel,
+            // and staged on the canvas so it's immediately usable.
+            const now = Math.floor(Date.now() / 1000);
+            const p = (d.params || {});
+            const vitem = {
+                id: videoId, _isVideo: true, mode: 'video',
+                url: d.video_url, seed: (d.seed != null ? d.seed : null),
+                prompt: p.prompt || '', resolution: p.resolution || null,
+                duration: p.duration || null, created_at: now, finished_at: now,
+            };
+            if (typeof addVideoToHistory === 'function') addVideoToHistory(vitem);
             _showVideoResult(d.video_url, d.seed, job._videoSourceUrl, elapsed, videoId);
-            showNotif('🎬 Video ready.', 'success');
+            if (typeof showVideoInStage === 'function') showVideoInStage(vitem);
+            showNotif('🎬 Video ready — added to History.', 'success');
             return;
         }
         if (d && d.status === 'failed') {
@@ -10762,6 +10789,98 @@ function _showVideoResult(url, seed, sourceUrl, elapsed, videoId){
     const go = $('vmGenerate'); go.disabled = false; go.textContent = 'Generate again';
 }
 
+// Put a finished video onto the shared stage (the same surface images use).
+// Hides the image/placeholder/pano, shows #outVideo, and flips the result bar
+// to a video label. The 🗑 clear button then treats it like any stage element.
+function showVideoInStage(item){
+    if (!item || !item.url) return;
+    if (_activeBatch && typeof clearBatchGrid === 'function') clearBatchGrid();
+    const img = $('outImg');
+    if (img) { img.src = '#'; img.style.display = 'none'; }
+    if (window.PanoViewer) PanoViewer.hide();
+    const ov = $('genStageOverlay'); if (ov) ov.classList.remove('active');
+    $('outPh').style.display = 'none';
+    const v = $('outVideo');
+    if (v) {
+        v.src = item.url;
+        v.style.display = '';
+        if (item.id) v.dataset.videoId = item.id;
+        try { v.load(); } catch(e){}
+    }
+    // Result bar shows a video-flavored meta line; no image-only actions apply.
+    const parts = [];
+    if (item.resolution) parts.push(item.resolution);
+    if (item.duration && item.duration !== 'auto') parts.push(`${item.duration}s`);
+    if (item.seed != null && item.seed !== '') parts.push(`seed:${item.seed}`);
+    $('resultText').textContent = `🎬 ${parts.join(' · ')}`;
+    $('resultBar').style.display = 'flex';
+    // Hide the image-result action buttons — they don't apply to a video.
+    ['btnUseAsInput','btnCreateAssign','btnCreateReverse'].forEach(id => { const b=$(id); if(b) b.style.display='none'; });
+    lastResult = null;
+    _lastResultForActions = null;
+    lastOutputFilename = (item.url.split('/').pop() || null);
+    updateShareResultButton();
+    updateStageClearBtn();
+}
+
+// Click handler for a video card in History.
+function restoreVideoFromHistory(j){
+    if (!j) return;
+    showVideoInStage(j);
+    log(`Staged video ${j.id || ''}`);
+}
+
+// Merge a freshly-finished or fetched video into _historyItems as a single
+// item flagged _isVideo, then re-render both history surfaces. De-dupes by id.
+function addVideoToHistory(item){
+    if (!item || !item.id) return;
+    if (!Array.isArray(_historyItems)) return;
+    if (_historyItems.some(x => x.id === item.id)) return;
+    // Newest first — videos sort by created_at alongside images.
+    _historyItems.unshift(item);
+    _historyItems.sort((a,b) => (b.finished_at||b.created_at||0) - (a.finished_at||a.created_at||0));
+    try { renderHistorySidebar(); } catch(e){}
+    if ($('historyModal') && $('historyModal').style.display !== 'none') { try { renderHistoryModal(); } catch(e){} }
+}
+
+// Fetch the user's completed videos and merge them into history. Called from
+// syncHistory so videos survive reload and show alongside images.
+async function syncVideoHistory(){
+    if (!_user) return;
+    try {
+        const r = await fetchT(`${API}/api/studio/video/list?limit=40`, null, 15000);
+        const d = await r.json().catch(() => ({}));
+        if (!d || !d.ok || !Array.isArray(d.items)) return;
+        for (const it of d.items) {
+            const p = it.params || {};
+            const vitem = {
+                id: it.id, _isVideo: true, mode: 'video',
+                url: it.video_url,
+                seed: (it.seed != null ? it.seed : (p.seed != null ? p.seed : null)),
+                prompt: p.prompt || '',
+                resolution: p.resolution || null,
+                duration: p.duration || null,
+                created_at: it.created_at || 0,
+                finished_at: it.finished_at || it.created_at || 0,
+            };
+            if (!_historyItems.some(x => x.id === vitem.id)) _historyItems.push(vitem);
+        }
+        _historyItems.sort((a,b) => (b.finished_at||b.created_at||0) - (a.finished_at||a.created_at||0));
+    } catch (e) { /* best-effort */ }
+}
+
+// Delete a video history item (server + local).
+async function deleteVideoHistoryItem(id){
+    if (!id) return;
+    try { await fetchT(`${API}/api/studio/video/delete`, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id }) }, 12000); } catch(e){}
+    _historyItems = _historyItems.filter(x => x.id !== id);
+    try { renderHistorySidebar(); } catch(e){}
+    if ($('historyModal') && $('historyModal').style.display !== 'none') { try { renderHistoryModal(); } catch(e){} }
+    // If that video is on the stage, clear it.
+    const v = $('outVideo');
+    if (v && v.dataset.videoId === id && typeof clearStage === 'function') clearStage();
+}
+
 // Clear the stage: remove the current result image and restore the
 // context-appropriate placeholder. Does NOT touch inputs, history, or the
 // queue — only what's shown on the stage.
@@ -10773,6 +10892,15 @@ function clearStage(){
         img.removeAttribute('data-job-id');
         img.removeAttribute('data-is-public');
         img.removeAttribute('data-prompt');
+    }
+    // Tear down any staged video too — it's a stage element like the image.
+    const vid = document.getElementById('outVideo');
+    if (vid) {
+        try { vid.pause(); } catch(e){}
+        vid.removeAttribute('src');
+        try { vid.load(); } catch(e){}
+        vid.style.display = 'none';
+        vid.removeAttribute('data-video-id');
     }
     const bar = document.getElementById('resultBar');
     if (bar) bar.style.display = 'none';
@@ -18225,7 +18353,26 @@ function renderHistorySidebar(){
     for (const g of grouped.slice(0, 6)) {
         const tile = document.createElement('div');
         tile.className = 'q-hist-tile';
-        if (g.kind === 'single') {
+        if (g.kind === 'single' && g.item._isVideo) {
+            const j = g.item;
+            tile.onclick = (ev) => {
+                if (ev.target.closest('.q-hist-delete')) return;
+                restoreVideoFromHistory(j);
+            };
+            tile.innerHTML = `
+                <div class="job-thumb" style="position:relative;background:#000">
+                    <video src="${j.url}#t=0.1" muted preload="metadata" playsinline style="width:100%;height:100%;object-fit:cover"></video>
+                    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+                        <span style="background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px">▶</span>
+                    </div>
+                </div>
+                <div class="job-info">
+                    <div class="job-status">🎬 Video</div>
+                    <div class="job-mode">${j.resolution ? String(j.resolution).toUpperCase() : 'VIDEO'}</div>
+                </div>
+                <button class="q-hist-delete" title="Delete this video" onclick="event.stopPropagation(); deleteVideoHistoryItem('${j.id}')">🗑</button>
+            `;
+        } else if (g.kind === 'single') {
             const j = g.item;
             tile.onclick = (ev) => {
                 if (ev.target.closest('.q-hist-delete')) return;
@@ -19683,9 +19830,40 @@ function renderHistoryModal(){
 
     // Append new cards in order
     for (const g of grouped) {
-        if (g.kind === 'single') {
+        if (g.kind === 'single' && g.item._isVideo) {
             const j = g.item;
-            // Include the share state in the entryId so the diff logic
+            // Match the currentEntryIds scheme for singles (is_public falsy → 0)
+            // so the diff-removal pass doesn't prune this card every render.
+            const entryId = `single:${j.id}:0`;
+            if (existingIds.has(entryId)) continue;
+            const when = j.finished_at || j.created_at || 0;
+            const whenLabel = when ? timeAgo(when * 1000) : '';
+            const card = document.createElement('div');
+            card.className = 'history-card';
+            card.dataset.jobId = entryId;
+            card.onclick = (ev) => {
+                if (ev.target.closest('.history-card-delete')) return;
+                restoreVideoFromHistory(j);
+                closeHistoryModal();
+            };
+            card.innerHTML = `
+                <div class="history-card-thumb" style="background:#000;position:relative">
+                    <video src="${j.url}#t=0.1" muted preload="metadata" playsinline style="width:100%;height:100%;object-fit:cover"></video>
+                    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+                        <span style="background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:15px">▶</span>
+                    </div>
+                </div>
+                <div class="history-card-meta">
+                    <span class="hc-mode">🎬 VIDEO</span>${whenLabel}
+                    <div class="hc-prompt">${escapeHtml(j.prompt || '')}</div>
+                </div>
+                <div class="history-card-actions">
+                    <button class="history-card-delete" title="Delete this video" onclick="event.stopPropagation(); deleteVideoHistoryItem('${j.id}')">🗑</button>
+                </div>
+            `;
+            grid.appendChild(card);
+        } else if (g.kind === 'single') {
+            const j = g.item;
             // above tears down + rebuilds the card when the user
             // toggles share/unshare. Without this the card would keep
             // its stale Share/Shared button styling after toggle.
@@ -24228,6 +24406,13 @@ function showResult(d){
     const outImg = $('outImg');
     outImg.src = d.url;
     outImg.style.display='';
+    // A staged image takes over the stage — tear down any staged video.
+    const _ov2 = $('outVideo');
+    if (_ov2 && _ov2.style.display !== 'none') {
+        try { _ov2.pause(); } catch(e){}
+        _ov2.removeAttribute('src'); try { _ov2.load(); } catch(e){}
+        _ov2.style.display = 'none'; _ov2.removeAttribute('data-video-id');
+    }
     // Stash the underlying job id + share state on the element so the
     // image modal's Share button knows what to publish when the user
     // clicks the output. Cleared if d has no id (e.g. orphaned restore).
