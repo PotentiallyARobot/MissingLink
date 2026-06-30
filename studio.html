@@ -5387,7 +5387,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <button type="button" class="ems-btn active" data-preset="fast" onclick="applyPanoPreset('fast')" title="Lightning 4-step distilled — a few seconds, CFG off">⚡ Fast</button>
                 <button type="button" class="ems-btn" data-preset="quality" onclick="applyPanoPreset('quality')" title="No Lightning · 40 steps · CFG 4 — slower but maximum fidelity (Tencent's documented recipe)">✨ Quality</button>
             </div>
-            <button type="button" class="ai-tiny-btn" id="btnPanoAutoPrompt" onclick="autoPanoPrompt({force:true})" style="display:none;margin-top:6px" title="Let an LLM look at your input image and write a 360° scene prompt + negative tailored to it">✨ Auto-describe scene from image</button>
+            <button type="button" class="ai-tiny-btn" id="btnPanoAutoPrompt" onclick="autoPanoPrompt({force:true})" style="display:none;margin-top:6px" title="Re-run the LLM to rewrite the 360° scene prompt + negative for this image">🔄 Regenerate prompt</button>
             <div id="camGenHint" style="color:var(--text-muted);font-size:11px;margin-top:7px;line-height:1.45">Renders one view at the angle set above.</div>
         </div>
 
@@ -12827,7 +12827,7 @@ async function autoPanoPrompt(opts){
         _restore();
     } finally {
         if (pi) pi.disabled = false;
-        if (btn) { btn.disabled = false; btn.textContent = origLabel || '\u2728 Auto-describe scene from image'; }
+        if (btn) { btn.disabled = false; btn.textContent = origLabel || '\ud83d\udd04 Regenerate prompt'; }
         _panoAutoBusy = false;
     }
 }
@@ -24867,6 +24867,7 @@ function restorePersistedInputs(){
 // ══════════════════════════════════════════════════════════════════════
 window.PanoViewer = (function(){
   let root=null, renderer=null, scene=null, camera=null, sphere=null;
+  let flatImg=null, hintEl=null;   // in-viewer flat equirect <img> + the hint overlay
   let raf=null, ro=null;
   let lon=0, lat=0, isDown=false, downX=0, downY=0, downLon=0, downLat=0;
   let autoRotate=true, fov=75;
@@ -24891,6 +24892,15 @@ window.PanoViewer = (function(){
     renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
     renderer.domElement.style.cssText='width:100%;height:100%;display:block;cursor:grab;touch-action:none;';
     root.appendChild(renderer.domElement);
+
+    // Flat equirectangular <img>, shown when the user toggles out of 360°.
+    // It lives INSIDE the viewer (under the toolbar) so the toolbar — and the
+    // "back to 360°" toggle — stay visible in flat mode. Hidden by default.
+    flatImg=document.createElement('img');
+    flatImg.style.cssText=
+      'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;'+
+      'display:none;background:var(--black);z-index:1;';
+    root.appendChild(flatImg);
 
     scene=new THREE.Scene();
     camera=new THREE.PerspectiveCamera(fov, 1, 0.1, 1100);
@@ -24925,19 +24935,28 @@ window.PanoViewer = (function(){
 
     const btnToggle=mkBtn('🖼 Equirect','Show the flat equirectangular image');
     btnToggle.onclick=()=>{
-      const showingFlat = root.style.display==='none';
+      // Flip between the 360 sphere (the WebGL canvas) and the flat equirect
+      // <img> — both INSIDE the viewer, so the toolbar (and this button) stay
+      // visible either way. The viewer overlay (root) is never hidden here;
+      // that's reserved for show()/hide() turning the whole viewer on/off.
+      const showingFlat = (flatImg && flatImg.style.display !== 'none');
+      const canvasEl = renderer && renderer.domElement;
       if(showingFlat){
-        // back to 360
-        root.style.display='block';
+        // back to 360°
+        if(flatImg) flatImg.style.display='none';
+        if(canvasEl) canvasEl.style.display='';
+        if(hintEl) hintEl.style.display='';
         btnToggle.textContent='🖼 Equirect';
+        btnToggle.title='Show the flat equirectangular image';
         resize(); startLoop();
       } else {
-        // show flat image underneath
+        // show the flat equirectangular image
         stopLoop();
-        root.style.display='none';
+        if(flatImg){ if(curUrl) flatImg.src=curUrl; flatImg.style.display=''; }
+        if(canvasEl) canvasEl.style.display='none';
+        if(hintEl) hintEl.style.display='none';
         btnToggle.textContent='🌐 360°';
-        const oi=document.getElementById('outImg');
-        if(oi){ oi.style.display=''; }
+        btnToggle.title='Back to the interactive 360° sphere';
       }
     };
 
@@ -24950,7 +24969,7 @@ window.PanoViewer = (function(){
     const btnUse=mkBtn('📌 Use view as input','Capture the current framing as a new Camera input');
     btnUse.onclick=()=>captureViewAsInput(btnUse);
 
-    const btnDl=mkBtn('⬇ Equirect','Download the flat equirectangular PNG');
+    const btnDl=mkBtn('⬇ Download','Download the flat equirectangular PNG');
     btnDl.onclick=()=>{
       if(!curUrl) return;
       const a=document.createElement('a');
@@ -24998,6 +25017,7 @@ window.PanoViewer = (function(){
       'background:rgba(9,9,11,.55);padding:5px 9px;border-radius:8px;'+
       'pointer-events:none;z-index:2;letter-spacing:.3px;';
     root.appendChild(hint);
+    hintEl=hint;
 
     // interaction ------------------------------------------------------
     const el=renderer.domElement;
@@ -25134,9 +25154,14 @@ window.PanoViewer = (function(){
         ro=new ResizeObserver(()=>{ if(root.style.display!=='none') resize(); });
         ro.observe(host());
       }
+      // Reset to the 360° sphere view (canvas shown, flat img hidden) and
+      // preload the flat equirect so the toggle is instant.
+      if(flatImg){ flatImg.src=url; flatImg.style.display='none'; }
+      if(renderer && renderer.domElement) renderer.domElement.style.display='';
+      if(hintEl) hintEl.style.display='';
       // Reset the toggle button label to the 360 state.
       const tgl = root.querySelector('button');
-      if(tgl) tgl.textContent='🖼 Equirect';
+      if(tgl){ tgl.textContent='🖼 Equirect'; tgl.title='Show the flat equirectangular image'; }
       resize();
       startLoop();
     },
