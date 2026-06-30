@@ -3714,6 +3714,34 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .output-area{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:200px;overflow:hidden}
 .stage-clear-btn{position:absolute;top:10px;left:10px;z-index:7;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(9,9,11,.7);border:1px solid var(--border);border-radius:7px;color:var(--text-muted);font-size:14px;cursor:pointer;transition:all .15s;backdrop-filter:blur(4px)}
 .stage-clear-btn:hover{border-color:#e5484d;color:#e5484d;background:rgba(9,9,11,.85)}
+/* Stage "make video" button — mirrors the clear button, top-RIGHT. */
+.stage-video-btn{position:absolute;top:10px;right:10px;z-index:7;height:30px;padding:0 10px;display:none;align-items:center;gap:5px;background:rgba(9,9,11,.7);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;backdrop-filter:blur(4px)}
+.stage-video-btn:hover{border-color:var(--gold);color:var(--gold);background:rgba(9,9,11,.9)}
+/* ── Video generation modal ────────────────────────────────────────── */
+.vm-overlay{position:fixed;inset:0;z-index:1200;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.66);backdrop-filter:blur(3px);padding:20px}
+.vm-overlay.open{display:flex}
+.vm-modal{width:min(860px,96vw);max-height:92vh;overflow:auto;background:var(--surface,#18181b);border:1px solid var(--border,#2a2a2e);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.vm-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border,#2a2a2e);font-weight:700;font-size:15px;color:var(--text,#e7e7ea)}
+.vm-close{background:none;border:none;color:var(--text-muted,#9a9aa2);font-size:22px;line-height:1;cursor:pointer;padding:0 4px}
+.vm-close:hover{color:var(--text,#fff)}
+.vm-body{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:18px}
+@media(max-width:640px){.vm-body{grid-template-columns:1fr}}
+.vm-media{display:flex;flex-direction:column;gap:10px}
+.vm-media img,.vm-media video{width:100%;border-radius:9px;background:#000;max-height:300px;object-fit:contain;border:1px solid var(--border,#2a2a2e)}
+.vm-status{font-size:12.5px;color:var(--text-muted,#9a9aa2);min-height:18px;line-height:1.45}
+.vm-fields{display:flex;flex-direction:column;gap:11px}
+.vm-fields label{font-size:12px;font-weight:600;color:var(--text-muted,#9a9aa2);display:block;margin-bottom:4px}
+.vm-fields textarea,.vm-fields select,.vm-fields input[type=number],.vm-fields input[type=file]{width:100%;box-sizing:border-box;background:var(--surface-2,#0e0e10);border:1px solid var(--border-light,#33333a);border-radius:8px;color:var(--text,#e7e7ea);padding:8px 10px;font-size:13px;font-family:inherit}
+.vm-fields textarea{min-height:70px;resize:vertical}
+.vm-row{display:flex;gap:10px}
+.vm-row>div{flex:1}
+.vm-check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text,#e7e7ea);font-weight:500}
+.vm-check input{width:auto;margin:0}
+.vm-cost{font-size:12.5px;color:var(--text-muted,#9a9aa2);margin-top:2px}
+.vm-cost b{color:var(--gold,#e3b341)}
+.vm-go{width:100%;padding:11px;border:none;border-radius:9px;background:var(--gold,#e3b341);color:#1a1a1a;font-weight:700;font-size:14px;cursor:pointer}
+.vm-go:disabled{opacity:.5;cursor:not-allowed}
+.vm-dl{display:inline-block;margin-top:6px;font-size:13px;color:var(--gold,#e3b341);text-decoration:none}
 .output-area img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in}
 
 /* ── Cold-boot startup overlay ──────────────────────────────────── */
@@ -5411,6 +5439,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <div class="main">
     <div class="output-area" id="outputArea" style="position:relative">
         <button class="stage-clear-btn" id="stageClearBtn" onclick="clearStage()" title="Clear the stage" aria-label="Clear the stage" style="display:none">🗑</button>
+        <button class="stage-video-btn" id="stageVideoBtn" onclick="openVideoModal()" title="Animate this image into a video (SeeDance 2.0, with audio)" aria-label="Generate video from this image">🎬 Video</button>
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openOutImgModal()">
         <!-- Create/Camera/Edit shared generating overlay. Shown while a
@@ -10474,9 +10503,184 @@ function clearInput(){
 function updateStageClearBtn(){
     const btn = document.getElementById('stageClearBtn');
     const img = document.getElementById('outImg');
-    if (!btn) return;
     const hasImg = !!(img && img.src && !img.src.endsWith('#') && img.style.display !== 'none');
-    btn.style.display = hasImg ? 'flex' : 'none';
+    if (btn) btn.style.display = hasImg ? 'flex' : 'none';
+    // The "make video" button rides the same has-image condition.
+    const vbtn = document.getElementById('stageVideoBtn');
+    if (vbtn) vbtn.style.display = hasImg ? 'inline-flex' : 'none';
+}
+
+// ── Image-to-video (SeeDance 2.0, with audio, via fal.ai) ───────────────
+const VIDEO_TOKEN_COST = 4000;
+let _videoState = { id: null, polling: false, sourceDataUri: null, t0: 0, timer: null };
+
+async function _vmCaptureSource(){
+    // Snapshot the current stage image as a data URI so the worker can hand it
+    // to fal without needing a public URL. Same-origin, so no CORS taint.
+    const img = $('outImg');
+    if (!img || !img.src || img.src.endsWith('#')) return null;
+    try {
+        const r = await fetchT(img.src, null, 15000);
+        const blob = await r.blob();
+        return await new Promise((res, rej) => {
+            const fr = new FileReader();
+            fr.onload = () => res(fr.result);
+            fr.onerror = rej;
+            fr.readAsDataURL(blob);
+        });
+    } catch (e) { return null; }
+}
+
+function _vmSyncResolution(){
+    const tier = $('vmTier').value;
+    const resSel = $('vmResolution');
+    const opt1080 = resSel ? resSel.querySelector('option[value="1080p"]') : null;
+    if (!opt1080) return;
+    if (tier === 'fast') {
+        opt1080.disabled = true;
+        if (resSel.value === '1080p') resSel.value = '720p';
+    } else {
+        opt1080.disabled = false;
+    }
+}
+
+async function openVideoModal(){
+    const img = $('outImg');
+    if (!img || !img.src || img.src.endsWith('#')) { showNotif('No image on the stage to animate.', 'error'); return; }
+    // Reset UI
+    $('vmSourceImg').src = img.src;
+    $('vmSourceImg').style.display = '';
+    const v = $('vmResultVideo'); v.style.display = 'none'; v.removeAttribute('src'); try { v.load(); } catch(e){}
+    $('vmDownload').style.display = 'none';
+    $('vmStatus').textContent = '';
+    const go = $('vmGenerate');
+    go.disabled = false; go.textContent = 'Generate video';
+    if (typeof _user !== 'undefined' && _user && _user.tokens < VIDEO_TOKEN_COST) {
+        go.disabled = true;
+        $('vmStatus').textContent = `You need ${VIDEO_TOKEN_COST.toLocaleString()} tokens for a video (you have ${(_user.tokens||0).toLocaleString()}).`;
+    }
+    _vmSyncResolution();
+    $('videoModal').classList.add('open');
+    // Capture the source bytes in the background so submit is instant.
+    _videoState.sourceDataUri = null;
+    _vmCaptureSource().then(d => { _videoState.sourceDataUri = d; });
+}
+
+function closeVideoModal(){
+    $('videoModal').classList.remove('open');
+    _videoState.polling = false;
+    if (_videoState.timer) { clearTimeout(_videoState.timer); _videoState.timer = null; }
+}
+
+function _vmReadFile(file){
+    return new Promise((res) => {
+        if (!file) return res(null);
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = () => res(null);
+        fr.readAsDataURL(file);
+    });
+}
+
+async function submitVideo(){
+    if (_videoState.polling) return;
+    const go = $('vmGenerate');
+    // Ensure the source frame is captured (open() kicks this off; await if needed).
+    if (!_videoState.sourceDataUri) {
+        $('vmStatus').textContent = 'Reading source image…';
+        _videoState.sourceDataUri = await _vmCaptureSource();
+    }
+    if (!_videoState.sourceDataUri) { showNotif('Could not read the source image.', 'error'); return; }
+
+    // Reset any previous result.
+    const v = $('vmResultVideo'); v.style.display = 'none'; v.removeAttribute('src');
+    $('vmDownload').style.display = 'none';
+    $('vmSourceImg').style.display = '';
+
+    const endFile = ($('vmEndFrame').files || [])[0];
+    const endUri = endFile ? await _vmReadFile(endFile) : null;
+    const seedRaw = parseInt($('vmSeed').value);
+    const payload = {
+        image_data_uri: _videoState.sourceDataUri,
+        prompt: ($('vmPrompt').value || '').trim(),
+        tier: $('vmTier').value,
+        resolution: $('vmResolution').value,
+        duration: $('vmDuration').value,
+        aspect_ratio: $('vmAspect').value,
+        generate_audio: $('vmAudio').checked,
+    };
+    if (endUri) payload.end_image_data_uri = endUri;
+    if (Number.isFinite(seedRaw) && seedRaw >= 0) payload.seed = seedRaw;
+
+    go.disabled = true; go.textContent = 'Submitting…';
+    $('vmStatus').textContent = 'Submitting to SeeDance…';
+    try {
+        const r = await fetchT(`${API}/api/studio/video/create`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        }, 60000);
+        if (r.status === 401) { $('loginModal').classList.add('open'); go.disabled = false; go.textContent = 'Generate video'; return; }
+        const d = await r.json().catch(() => ({}));
+        if (!d || d.error) {
+            go.disabled = false; go.textContent = 'Generate video';
+            if (d && d.error === 'insufficient_tokens') $('vmStatus').textContent = `Not enough tokens — need ${VIDEO_TOKEN_COST.toLocaleString()}.`;
+            else if (d && d.error === 'video_unavailable') $('vmStatus').textContent = 'Video generation isn’t configured on the server (missing FAL_KEY).';
+            else $('vmStatus').textContent = 'Submit failed' + (d && d.detail ? `: ${d.detail}` : '.');
+            return;
+        }
+        // Charged — reflect new balance and begin polling.
+        if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+        _videoState.id = d.id;
+        _videoState.polling = true;
+        _videoState.t0 = Date.now();
+        go.textContent = 'Generating…';
+        $('vmStatus').textContent = 'In queue… this usually takes 1–4 minutes.';
+        _vmPoll();
+    } catch (e) {
+        go.disabled = false; go.textContent = 'Generate video';
+        $('vmStatus').textContent = 'Network error submitting the video. Please try again.';
+    }
+}
+
+async function _vmPoll(){
+    if (!_videoState.polling || !_videoState.id) return;
+    const go = $('vmGenerate');
+    const elapsed = Math.round((Date.now() - _videoState.t0) / 1000);
+    // Give up after ~15 minutes of polling (the job may still finish server-side).
+    if (elapsed > 900) {
+        _videoState.polling = false;
+        $('vmStatus').textContent = 'Still rendering after 15 min — it may finish shortly. Try regenerating if it stalls.';
+        go.disabled = false; go.textContent = 'Generate video';
+        return;
+    }
+    try {
+        const r = await fetchT(`${API}/api/studio/video/status?id=${encodeURIComponent(_videoState.id)}`, null, 15000);
+        const d = await r.json().catch(() => ({}));
+        if (d && d.status === 'done' && d.video_url) {
+            _videoState.polling = false;
+            const v = $('vmResultVideo');
+            v.src = d.video_url; v.style.display = ''; try { v.load(); } catch(e){}
+            $('vmSourceImg').style.display = 'none';
+            const dl = $('vmDownload'); dl.href = d.video_url; dl.style.display = '';
+            $('vmStatus').textContent = `Done${d.seed != null ? ` · seed ${d.seed}` : ''} · ${elapsed}s.`;
+            go.disabled = false; go.textContent = 'Generate again';
+            if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+            return;
+        }
+        if (d && d.status === 'failed') {
+            _videoState.polling = false;
+            $('vmStatus').textContent = 'Generation failed — your 4,000 tokens were refunded.';
+            go.disabled = false; go.textContent = 'Generate video';
+            if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+            return;
+        }
+        // Still running.
+        const qp = (d && typeof d.queue_position === 'number') ? ` · queue position ${d.queue_position}` : '';
+        $('vmStatus').textContent = `Rendering… ${elapsed}s${qp}`;
+    } catch (e) {
+        // transient — keep going
+    }
+    _videoState.timer = setTimeout(_vmPoll, 5000);
 }
 
 // Clear the stage: remove the current result image and restore the
@@ -23180,6 +23384,7 @@ function restoreFromHistory(j){
         mode: mode,
         isCreate: isCreate,
         isPano: isPanoItem,
+        _fromHistory: true,
     });
 
     // Repopulate the prompt field for the current surface so the user can
@@ -23933,6 +24138,11 @@ function showResult(d){
         _genPrompt: d.prompt || '',
         _genQuality: d.quality || null,
         _genElapsedSec: d.elapsed || 0,
+        // History-restored images carry a studio_jobs id, not a studio_uploads
+        // id. Tagging this lets sendBatchInputToCreate re-upload on assign so
+        // the Create ref-ownership preflight doesn't flag it as stale and
+        // "clean it up" (the spurious "Cleaned up old reference" toast).
+        _fromHistory: !!d._fromHistory,
     };
     $('btnUseAsInput').style.display = _isCreate ? 'none' : '';
     $('btnCreateAssign').style.display = _isCreate ? '' : 'none';
@@ -25184,6 +25394,81 @@ window.PanoViewer = (function(){
   };
 })();
 </script>
+
+<!-- ── Video generation modal (SeeDance 2.0 image-to-video, with audio) ── -->
+<div class="vm-overlay" id="videoModal" onclick="if(event.target===this)closeVideoModal()">
+  <div class="vm-modal">
+    <div class="vm-head">
+      <span>🎬 Generate Video — SeeDance 2.0 (with audio)</span>
+      <button class="vm-close" onclick="closeVideoModal()" aria-label="Close">×</button>
+    </div>
+    <div class="vm-body">
+      <div class="vm-media">
+        <img id="vmSourceImg" alt="Source frame">
+        <video id="vmResultVideo" controls playsinline style="display:none"></video>
+        <div class="vm-status" id="vmStatus"></div>
+        <a class="vm-dl" id="vmDownload" download href="#" style="display:none">⬇ Download video</a>
+      </div>
+      <div class="vm-fields">
+        <div>
+          <label for="vmPrompt">Motion prompt — describe the shot (camera, action, sound)</label>
+          <textarea id="vmPrompt" placeholder="e.g. Slow cinematic push-in, the subject turns toward camera, hair moving in a gentle breeze. Ambient room tone."></textarea>
+        </div>
+        <div class="vm-row">
+          <div>
+            <label for="vmTier">Tier</label>
+            <select id="vmTier" onchange="_vmSyncResolution()">
+              <option value="standard">Standard (up to 1080p)</option>
+              <option value="fast">Fast (cheaper · 720p max)</option>
+            </select>
+          </div>
+          <div>
+            <label for="vmResolution">Resolution</label>
+            <select id="vmResolution">
+              <option value="480p">480p</option>
+              <option value="720p" selected>720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </div>
+        </div>
+        <div class="vm-row">
+          <div>
+            <label for="vmDuration">Duration</label>
+            <select id="vmDuration">
+              <option value="auto" selected>Auto</option>
+              <option>4</option><option>5</option><option>6</option><option>7</option>
+              <option>8</option><option>9</option><option>10</option><option>11</option>
+              <option>12</option><option>13</option><option>14</option><option>15</option>
+            </select>
+          </div>
+          <div>
+            <label for="vmAspect">Aspect ratio</label>
+            <select id="vmAspect">
+              <option value="auto" selected>Auto (from image)</option>
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="1:1">1:1</option>
+              <option value="21:9">21:9</option>
+            </select>
+          </div>
+        </div>
+        <label class="vm-check"><input type="checkbox" id="vmAudio" checked> Generate synchronized audio</label>
+        <div class="vm-row">
+          <div>
+            <label for="vmSeed">Seed (optional)</label>
+            <input type="number" id="vmSeed" placeholder="random" min="0">
+          </div>
+          <div>
+            <label for="vmEndFrame">End frame (optional)</label>
+            <input type="file" id="vmEndFrame" accept="image/*">
+          </div>
+        </div>
+        <div class="vm-cost">Cost: <b>4,000 tokens</b> per video · audio included. Charged on submit, refunded automatically if it fails.</div>
+        <button class="vm-go" id="vmGenerate" onclick="submitVideo()">Generate video</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
