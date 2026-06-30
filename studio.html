@@ -5384,9 +5384,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
         <div class="slider-row"><span class="sl">Seed</span><input type="number" class="seed-input" id="vSeed" value="42" min="0" max="2147483647" step="1" placeholder="any integer 0–2147483647"><input type="hidden" id="rngSeed" value="42"></div>
         <label class="check-row"><input type="checkbox" id="chkRand"> Randomize Seed</label>
-        <div class="slider-row"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5"><input type="number" class="sv" id="vCfg" value="1" min="1" max="8" step="0.5"></div>
-        <div class="slider-row"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
-        <div class="slider-row"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowCfg"><span class="sl">CFG</span><input type="range" id="rngCfg" min="1" max="8" value="1" step="0.5"><input type="number" class="sv" id="vCfg" value="1" min="1" max="8" step="0.5"></div>
+        <div class="slider-row" id="rowSteps"><span class="sl">Steps</span><input type="range" id="rngSteps" min="1" max="50" value="4"><input type="number" class="sv" id="vSteps" value="4" min="1" max="50" step="1"></div>
+        <div class="slider-row" id="rowLightning"><span class="sl">Lightning LoRA</span><input type="range" id="rngLoraLightning" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraLightning" value="1.0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="panoLoraRow" style="display:none" title="HunyuanWorld 2.0 / HY-Pano 2.0 strength — how strongly the panorama LoRA expands the scene into 360°. 1.0 is the trained default; lower it if the expansion drifts too far from the input."><span class="sl">Panorama LoRA</span><input type="range" id="rngLoraPano" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraPano" value="1.0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row camera-only" id="anglesLoraRow"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
@@ -12885,11 +12885,6 @@ function setCamGenType(type){
         _panoLockStash = !!window._promptLocked;
         window._promptLocked = true; // keep the pose widget from clobbering the scene prompt
         if (lockEl) { lockEl.classList.add('locked'); lockEl.textContent = '🔒'; }
-        _panoSettingsStash = {
-            lightning: $('rngLoraLightning') ? $('rngLoraLightning').value : '1',
-            steps:     $('rngSteps') ? $('rngSteps').value : '4',
-            cfg:       $('rngCfg') ? $('rngCfg').value : '1',
-        };
         applyPanoPreset(_panoPreset || 'fast');
     } else if (type !== 'pano' && prev === 'pano') {
         // Leaving 360°: restore everything that was swapped/overwritten.
@@ -12898,13 +12893,6 @@ function setCamGenType(type){
         window._promptLocked = !!_panoLockStash;
         if (lockEl) { lockEl.classList.toggle('locked', !!_panoLockStash); lockEl.textContent = _panoLockStash ? '🔒' : '🔓'; }
         _panoLockStash = null;
-        if (_panoSettingsStash) {
-            const restore = (rid, vid, val) => { const r=$(rid), v=$(vid); if(r) r.value=val; if(v) v.value=val; };
-            restore('rngLoraLightning', 'vLoraLightning', _panoSettingsStash.lightning);
-            restore('rngSteps', 'vSteps', _panoSettingsStash.steps);
-            restore('rngCfg', 'vCfg', _panoSettingsStash.cfg);
-            _panoSettingsStash = null;
-        }
     }
 
     // Pano-only controls: the Fast/Quality preset selector and the Panorama
@@ -12916,6 +12904,14 @@ function setCamGenType(type){
     if (panoRow) panoRow.style.display = (type === 'pano') ? 'flex' : 'none';
     const anglesRow = document.getElementById('anglesLoraRow');
     if (anglesRow) anglesRow.style.display = (type === 'pano') ? 'none' : '';
+    // The shared CFG / Steps / Lightning sliders don't apply to panoramas —
+    // pano derives those from the Fast/Quality preset at submit time. Hide them
+    // in 360° so they're never shown, edited, or left in a pano state that
+    // could bleed into Camera/Edit. They reappear (untouched) outside pano.
+    ['rowCfg', 'rowSteps', 'rowLightning'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (type === 'pano') ? 'none' : '';
+    });
     const autoBtn = document.getElementById('btnPanoAutoPrompt');
     if (autoBtn) autoBtn.style.display = (type === 'pano') ? '' : 'none';
 
@@ -12960,26 +12956,16 @@ function _updateCamGenHint(){
     }
 }
 
-// Fast vs Quality panorama presets. These set the SHARED CFG/steps/Lightning
-// sliders (you can still fine-tune them afterwards); the values come straight
-// from Tencent's documented HY-Pano recipes:
-//   Fast    — Lightning 4-step distilled, CFG off (guidance handled by the
-//             distilled adapter). Seconds per pano.
-//   Quality — no Lightning, 40 steps, true-CFG ~4 with the quality negative.
-//             The model's native non-distilled recipe; minutes per pano.
+// Fast vs Quality panorama presets. Pano is FULLY decoupled from the shared
+// CFG/steps/Lightning sliders — those are hidden in 360° and never touched, so
+// switching back to Camera/Edit can't inherit pano values. The actual
+// generation values are derived from _panoPreset at submit time
+// (see generatePanorama), straight from Tencent's documented HY-Pano recipes:
+//   Fast    — Lightning 4-step distilled, CFG off. Seconds per pano.
+//   Quality — no Lightning, 40 steps, true-CFG ~4. Minutes per pano.
 function applyPanoPreset(name){
     name = (name === 'quality') ? 'quality' : 'fast';
     _panoPreset = name;
-    const setPair = (rid, vid, val) => { const r = $(rid), v = $(vid); if (r) r.value = val; if (v) v.value = val; };
-    if (name === 'quality') {
-        setPair('rngLoraLightning', 'vLoraLightning', 0);
-        setPair('rngSteps', 'vSteps', 40);
-        setPair('rngCfg', 'vCfg', 4);
-    } else {
-        setPair('rngLoraLightning', 'vLoraLightning', 1);
-        setPair('rngSteps', 'vSteps', 4);
-        setPair('rngCfg', 'vCfg', 1);
-    }
     const seg = document.getElementById('camPanoPresetSeg');
     if (seg) seg.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', b.dataset.preset === name));
     _updateCamGenHint();
@@ -13062,22 +13048,15 @@ async function generatePanorama(){
     _switchToStudioForOutput();
     if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') { warmupGpu(); }
 
-    // Pano always runs at 2048×1024, 4-step Lightning, guidance off — the
-    // Modal worker re-forces these, but we send them so the intent is explicit
-    // and so a future worker that trusts the payload still does the right
-    // thing. Lightning strength follows the slider (default 1.0); the pano
-    // LoRA is fixed at 1.0; angles is irrelevant here (forced off).
-    const lvRaw = parseFloat($('rngLoraLightning').value);
-    const lightning = Number.isFinite(lvRaw) ? lvRaw : 1.0;
-    // Read the live sliders so they actually affect the render. The backend's
-    // pano branch honors steps freely, and CFG whenever Lightning isn't the
-    // thing driving the denoise (i.e. Lightning low/off, or steps > 8) — with
-    // Lightning engaged at a distilled step count it intentionally pins
-    // true_cfg to 1.0 because the 4-step adapter breaks under CFG. So: turn
-    // Lightning down/off and raise steps to make CFG bite.
-    const cfg = parseFloat($('rngCfg').value);
-    const steps = parseInt($('rngSteps').value);
-    // HY-Pano strength from its dedicated slider (1.0 = trained default).
+    // Pano runs at 2048×1024. CFG / steps / Lightning come from the SELECTED
+    // PRESET, not the shared sliders (which are hidden in 360° and never
+    // touched, so Camera/Edit keep their own values). Fast = Lightning 4-step,
+    // CFG off; Quality = no Lightning, 40 steps, true-CFG ~4 (Tencent's recipe).
+    const _isQuality = (_panoPreset === 'quality');
+    const lightning = _isQuality ? 0 : 1.0;
+    const steps = _isQuality ? 40 : 4;
+    const cfg = _isQuality ? 4 : 1;
+    // HY-Pano strength from its dedicated (pano-only) slider (1.0 = trained default).
     const plRaw = $('rngLoraPano') ? parseFloat($('rngLoraPano').value) : 1.0;
     const panoLora = Number.isFinite(plRaw) ? plRaw : 1.0;
     // Scene description for the panorama. The selector auto-fills a real scene
@@ -24014,8 +23993,15 @@ function restoreJobState(jobId){
     if($('customPrompt')) $('customPrompt').value=s.prompt||'';
     if($('negPrompt')) $('negPrompt').value=s.negative_prompt||'';
     $('rngSeed').value=s.seed||42; $('vSeed').value=s.seed||42;
-    $('rngCfg').value=s.guidance_scale||1; $('vCfg').value=s.guidance_scale||1;
-    $('rngSteps').value=s.inference_steps||4; $('vSteps').value=s.inference_steps||4;
+    // Pano jobs derive CFG/steps from their preset, not these shared sliders
+    // (which belong to Camera/Edit). Restoring a pano job must NOT dump its
+    // CFG=4 / 40-step recipe into the Camera sliders — pin them to the Camera
+    // defaults instead so the sliders stay clean.
+    const _isPanoJob = (s.mode === 'pano');
+    const cfgVal   = _isPanoJob ? 1 : (s.guidance_scale || 1);
+    const stepsVal = _isPanoJob ? 4 : (s.inference_steps || 4);
+    $('rngCfg').value=cfgVal; $('vCfg').value=cfgVal;
+    $('rngSteps').value=stepsVal; $('vSteps').value=stepsVal;
     // New per-LoRA sliders. Fall back to legacy single lora_scale if snapshot is old.
     // Treat a stored 0 the same as missing: a Lightning weight of 0 is never a
     // deliberate user choice (it just disables the distilled adapter and yields
