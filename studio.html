@@ -6438,6 +6438,7 @@ function snapValues(){
     bd=999;bi=0;DI.forEach((d,i)=>{const df=Math.abs(distR-d.r);if(df<bd){bd=df;bi=i;}});
     distR=DI[bi].r;
     updateScene();
+    if (window._onCamAngleCommitted) window._onCamAngleCommitted();
 }
 function ndc(e){const r=canv.getBoundingClientRect();return new THREE.Vector2(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1);}
 function hitGround(n){rc.setFromCamera(n,cam);const v=new THREE.Vector3();return rc.ray.intersectPlane(GP,v)?v:null;}
@@ -6462,6 +6463,7 @@ function syncFromDropdowns(){
     const di=DI.find(d=>d.l===document.getElementById('selDist').value); if(di) distR=di.r;
     updateScene();
     syncMobilePoseChips();
+    if (window._onCamAngleCommitted) window._onCamAngleCommitted();
 }
 // ── Mobile pose chips ─────────────────────────────────────────
 // Populate the horizontal chip strip in the mobile action bar with all 8
@@ -6540,6 +6542,33 @@ let _panoAutoBusy = false;       // in-flight guard for the auto-describe call
 // which is what the HY-Pano ERP template wants; both are fully editable.
 const PANO_PROMPT_DEFAULT = 'the surrounding environment, continuing the scene naturally in every direction, coherent sky above and ground below, evenly lit, photorealistic';
 const PANO_NEG_DEFAULT = 'blurry, low quality, distorted, warped horizon, visible seam, duplicated objects, people, text, watermark';
+// Default negative for camera-angle (pose) shots — discourages the model from
+// returning a collage / multiple views / borders, which the multi-angle LoRA
+// occasionally does. Set automatically when the angle changes (unless the user
+// has typed a custom negative, which we preserve).
+const CAM_NEG_DEFAULT = 'blurry, low quality, distorted, deformed, duplicate, multiple views, split screen, collage, frame, border, watermark, text';
+// A *committed* camera-angle change (dropdown pick, mobile chip, or drag
+// release): ensure we're in Camera mode and refresh the negative prompt for the
+// shot. The positive prompt is already handled by updatePromptFromCamera (which
+// the change path calls via updateScene). Respects the 🔒 lock and preserves a
+// negative the user typed themselves. Defined in this block so the *_DEFAULT
+// constants are in-scope; called from the pose block's change handlers (a
+// cross-block call to a global function is safe at interaction time).
+window._onCamAngleCommitted = function(){
+    if (typeof currentMode === 'string' && currentMode !== 'camera' && typeof setMode === 'function') {
+        setMode('camera', { switchToStudio: true });
+    }
+    if (window._promptLocked) return;
+    const np = document.getElementById('negPrompt');
+    if (np) {
+        const cur = (np.value || '').trim();
+        // Only (re)set when blank, already the camera default, or a stale pano
+        // negative — never clobber a custom negative the user authored.
+        if (cur === '' || cur === CAM_NEG_DEFAULT || cur === PANO_NEG_DEFAULT) {
+            np.value = CAM_NEG_DEFAULT;
+        }
+    }
+};
 let pollTimers={}; // jobId → interval
 // Server-synced GPU state from /api/studio/status — updated by pollStatus.
 // Shape: { state: 'unknown'|'cold'|'warming'|'ready', warming_for_s, ready_age_s }
