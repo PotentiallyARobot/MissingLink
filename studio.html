@@ -5390,6 +5390,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" id="panoLoraRow" style="display:none" title="HunyuanWorld 2.0 / HY-Pano 2.0 strength — how strongly the panorama LoRA expands the scene into 360°. 1.0 is the trained default; lower it if the expansion drifts too far from the input."><span class="sl">Panorama LoRA</span><input type="range" id="rngLoraPano" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraPano" value="1.0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row camera-only" id="anglesLoraRow"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation, Edit mode only. Default 0 (off)."><span class="sl">Unchained (eval)</span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
     <div class="sec not-generate">
@@ -6851,6 +6852,7 @@ async function checkAuth(){
         const d=await r.json();
         if(d.logged_in){
             _user=d;
+            if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
             $('authIn').style.display='flex';
             $('authOut').style.display='none';
             $('userMenuTrigger').style.display='';
@@ -8008,6 +8010,8 @@ function setMode(mode, opts){
         }
     }
     currentMode = mode;
+    // EVAL-ONLY: refresh the Unchained slider's visibility for the new mode.
+    if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
     // A panorama result lives only in Camera mode's stage; switching to any
     // other mode hides the 360 viewer overlay so it can't sit on top of the
     // edit/create/batch workspace.
@@ -12649,11 +12653,27 @@ function loraPayload(mode){
         ? (parseFloat($('rngLoraAngles').value) || 0)
         : 0;
     const anything2real = parseFloat($('rngLoraAnything2Real').value) || 0;
+    // EVAL-ONLY Unchained LoRA: only sent on EDIT jobs (the worker further
+    // gates it to a single account, so it's 0 for everyone else regardless).
+    const unchained = (mode === 'edit') ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
     return {
         lora_lightning: lightning,
         lora_angles: angles,
         lora_anything2real: anything2real,
+        lora_unchained: unchained,
     };
+}
+
+// EVAL-ONLY: the Unchained slider is visible to a single account, and only in
+// Edit mode (where we're evaluating it). The worker enforces the same email
+// gate server-side, so this is purely about not showing the control to anyone
+// else; it isn't a security boundary on its own.
+function _applyUnchainedGate(){
+    const row = document.getElementById('rowUnchained');
+    if (!row) return;
+    const okEmail = !!(_user && (_user.email || '').toLowerCase() === 'ace0278@gmail.com');
+    const show = okEmail && (typeof currentMode === 'string') && currentMode === 'edit';
+    row.style.display = show ? '' : 'none';
 }
 
 async function doGenerate(){
@@ -12806,6 +12826,7 @@ async function doGenerate(){
         lora_lightning: payload.lora_lightning,
         lora_angles: payload.lora_angles,
         lora_anything2real: payload.lora_anything2real,
+        lora_unchained: payload.lora_unchained,
         width: payload.width,
         height: payload.height,
         input_image_id: currentMode==='camera' ? imageId : null,
@@ -24110,6 +24131,8 @@ function restoreJobState(jobId){
     $('rngLoraLightning').value = lightVal; $('vLoraLightning').value = lightVal;
     $('rngLoraAngles').value = anglesVal; $('vLoraAngles').value = anglesVal;
     $('rngLoraAnything2Real').value = a2rVal; $('vLoraAnything2Real').value = a2rVal;
+    const unchVal = (s.lora_unchained != null) ? s.lora_unchained : 0;
+    if ($('rngLoraUnchained')) { $('rngLoraUnchained').value = unchVal; $('vLoraUnchained').value = unchVal; }
     if(s.width) $('inpWidth').value=s.width;
     if(s.height) $('inpHeight').value=s.height;
     updateGenButton();
@@ -24480,6 +24503,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraPano',       'vLoraPano');
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
+    bindSliderPair('rngLoraUnchained', 'vLoraUnchained');
     initOverlayDragging();
     initModalDragging();
     window.addEventListener('resize', () => { if (_notifPanelOpen) _positionNotifPanel(); });
