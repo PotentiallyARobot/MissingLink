@@ -5416,6 +5416,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 <button type="button" class="ems-btn" data-preset="quality" onclick="applyPanoPreset('quality')" title="No Lightning · 40 steps · CFG 4 — slower but maximum fidelity (Tencent's documented recipe)">✨ Quality</button>
             </div>
             <button type="button" class="ai-tiny-btn" id="btnPanoAutoPrompt" onclick="autoPanoPrompt({force:true})" style="display:none;margin-top:6px" title="Re-run the LLM to rewrite the 360° scene prompt + negative for this image">🔄 Regenerate prompt</button>
+            <input type="file" id="panoUploadInput" accept="image/*" style="display:none" onchange="loadPanoFromFile(this.files && this.files[0]); this.value='';">
+            <button type="button" class="ai-tiny-btn" id="btnPanoUpload" onclick="document.getElementById('panoUploadInput').click()" style="display:none;margin-top:6px" title="Upload an equirectangular (2:1) panorama image and view it in the 360° sphere — no generation, just viewing">🖼 Load panorama to view</button>
             <div id="camGenHint" style="color:var(--text-muted);font-size:11px;margin-top:7px;line-height:1.45">Renders one view at the angle set above.</div>
         </div>
 
@@ -10628,59 +10630,103 @@ async function submitVideo(){
             else $('vmStatus').textContent = 'Submit failed' + (d && d.detail ? `: ${d.detail}` : '.');
             return;
         }
-        // Charged — reflect new balance and begin polling.
+        // Charged — reflect new balance, register a tracked QUEUE job (so it
+        // survives closing this modal), and begin polling that job. The poller
+        // is keyed to the job, not the modal, so closing the window no longer
+        // orphans it — the result is delivered whenever it finishes.
         if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+        const vidKey = 'vidjob_' + d.id;
+        const srcUrl = $('vmSourceImg').src || '';
+        myJobs = myJobs.filter(j => j.id !== vidKey);
+        myJobs.unshift({
+            id: vidKey,
+            status: 'running',
+            mode: 'video',
+            thumb: srcUrl,
+            result: null,
+            _videoId: d.id,
+            _videoSourceUrl: srcUrl,
+            submittedAt: Date.now(),
+            startedAt: Date.now(),
+            runningAt: Date.now(),
+        });
+        if (myJobs.length > 12) myJobs = myJobs.slice(0, 12);
+        renderQueue();
         _videoState.id = d.id;
-        _videoState.polling = true;
-        _videoState.t0 = Date.now();
+        _videoState.polling = false;   // the queue poller owns it now
         go.textContent = 'Generating…';
-        $('vmStatus').textContent = 'In queue… this usually takes 1–4 minutes.';
-        _vmPoll();
+        $('vmStatus').textContent = 'In queue… you can close this window — it’ll appear in the queue and pop back up when ready.';
+        _pollVideoJob(vidKey, d.id);
     } catch (e) {
         go.disabled = false; go.textContent = 'Generate video';
         $('vmStatus').textContent = 'Network error submitting the video. Please try again.';
     }
 }
 
-async function _vmPoll(){
-    if (!_videoState.polling || !_videoState.id) return;
-    const go = $('vmGenerate');
-    const elapsed = Math.round((Date.now() - _videoState.t0) / 1000);
-    // Give up after ~15 minutes of polling (the job may still finish server-side).
+// Poll a tracked video job. Keyed to the queue job (not the modal), so it
+// keeps running after the modal closes and delivers the result whenever it
+// finishes. Updates the modal in place if it happens to be open on this job.
+async function _pollVideoJob(jobKey, videoId){
+    const job = myJobs.find(j => j.id === jobKey);
+    if (!job) return;   // cancelled / cleared
+    const elapsed = Math.round((Date.now() - (job.submittedAt || Date.now())) / 1000);
+    const modalOpen = $('videoModal').classList.contains('open') && _videoState.id === videoId;
+    // Give up polling after ~15 min (the job may still finish server-side; the
+    // user can reopen later once history lands — see note in the summary).
     if (elapsed > 900) {
-        _videoState.polling = false;
-        $('vmStatus').textContent = 'Still rendering after 15 min — it may finish shortly. Try regenerating if it stalls.';
-        go.disabled = false; go.textContent = 'Generate video';
+        if (modalOpen) {
+            const go = $('vmGenerate'); go.disabled = false; go.textContent = 'Generate video';
+            $('vmStatus').textContent = 'Still rendering after 15 min — it may finish shortly.';
+        }
         return;
     }
     try {
-        const r = await fetchT(`${API}/api/studio/video/status?id=${encodeURIComponent(_videoState.id)}`, null, 15000);
+        const r = await fetchT(`${API}/api/studio/video/status?id=${encodeURIComponent(videoId)}`, null, 15000);
         const d = await r.json().catch(() => ({}));
         if (d && d.status === 'done' && d.video_url) {
-            _videoState.polling = false;
-            const v = $('vmResultVideo');
-            v.src = d.video_url; v.style.display = ''; try { v.load(); } catch(e){}
-            $('vmSourceImg').style.display = 'none';
-            const dl = $('vmDownload'); dl.href = d.video_url; dl.style.display = '';
-            $('vmStatus').textContent = `Done${d.seed != null ? ` · seed ${d.seed}` : ''} · ${elapsed}s.`;
-            go.disabled = false; go.textContent = 'Generate again';
+            job.status = 'done'; job.result = d.video_url; job._videoUrl = d.video_url; job._seed = d.seed;
+            renderQueue();
             if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+            _showVideoResult(d.video_url, d.seed, job._videoSourceUrl, elapsed, videoId);
+            showNotif('🎬 Video ready.', 'success');
             return;
         }
         if (d && d.status === 'failed') {
-            _videoState.polling = false;
-            $('vmStatus').textContent = 'Generation failed — your 4,000 tokens were refunded.';
-            go.disabled = false; go.textContent = 'Generate video';
+            job.status = 'error'; job.error = 'Video failed';
+            renderQueue();
             if (typeof checkAuth === 'function') checkAuth().catch(() => {});
+            if (modalOpen) {
+                const go = $('vmGenerate'); go.disabled = false; go.textContent = 'Generate video';
+                $('vmStatus').textContent = 'Generation failed — your 4,000 tokens were refunded.';
+            }
+            showNotif('Video generation failed — 4,000 tokens refunded.', 'error');
             return;
         }
-        // Still running.
-        const qp = (d && typeof d.queue_position === 'number') ? ` · queue position ${d.queue_position}` : '';
-        $('vmStatus').textContent = `Rendering… ${elapsed}s${qp}`;
+        // Still running — refresh the tile's elapsed counter + modal status.
+        const qp = (d && typeof d.queue_position === 'number') ? ` · queue ${d.queue_position}` : '';
+        if (modalOpen) $('vmStatus').textContent = `Rendering… ${elapsed}s${qp}`;
+        renderQueue();
     } catch (e) {
         // transient — keep going
     }
-    _videoState.timer = setTimeout(_vmPoll, 5000);
+    setTimeout(() => _pollVideoJob(jobKey, videoId), 5000);
+}
+
+// Present a finished video. Opens the modal (re-attaching to the result) if it
+// isn't already showing this job, so a video the user walked away from still
+// gets delivered.
+function _showVideoResult(url, seed, sourceUrl, elapsed, videoId){
+    if (!$('videoModal').classList.contains('open')) {
+        if (sourceUrl) $('vmSourceImg').src = sourceUrl;
+        $('videoModal').classList.add('open');
+    }
+    _videoState.id = videoId; _videoState.polling = false;
+    const v = $('vmResultVideo');
+    v.src = url; v.style.display = ''; try { v.load(); } catch(e){}
+    $('vmSourceImg').style.display = 'none';
+    const dl = $('vmDownload'); dl.href = url; dl.style.display = '';
+    $('vmStatus').textContent = `Done${seed != null ? ` · seed ${seed}` : ''}${elapsed ? ` · ${elapsed}s` : ''}.`;
+    const go = $('vmGenerate'); go.disabled = false; go.textContent = 'Generate again';
 }
 
 // Clear the stage: remove the current result image and restore the
@@ -12914,6 +12960,8 @@ function setCamGenType(type){
     });
     const autoBtn = document.getElementById('btnPanoAutoPrompt');
     if (autoBtn) autoBtn.style.display = (type === 'pano') ? '' : 'none';
+    const upBtn = document.getElementById('btnPanoUpload');
+    if (upBtn) upBtn.style.display = (type === 'pano') ? '' : 'none';
 
     // Entering 360° with an image already loaded → auto-describe it (cache hit
     // is instant; otherwise this fires the LLM once for this image).
@@ -12940,6 +12988,48 @@ function setCamMultiCount(n){
     if (mc) mc.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.count) === _camMultiCount));
     _updateCamGenHint();
     updateGenButton();
+}
+
+// Load a user-supplied equirectangular image straight into the 360° sphere
+// viewer — no generation. Routed through showResult as a synthetic pano result
+// so the result bar, Download, Use-as-input and the sphere all behave exactly
+// like a generated panorama.
+function loadPanoFromFile(file){
+    if (!file) return;
+    if (!/^image\//.test(file.type || '')) { showNotif('Please choose an image file.', 'error'); return; }
+    const fr = new FileReader();
+    fr.onload = () => {
+        const dataUrl = fr.result;
+        const probe = new Image();
+        probe.onload = () => {
+            const w = probe.naturalWidth || 0, h = probe.naturalHeight || 0;
+            // The sphere only renders in Camera mode on the studio stage.
+            if (currentMode !== 'camera' && typeof setMode === 'function') setMode('camera', { switchToStudio: true });
+            if (typeof _switchToStudioForOutput === 'function') _switchToStudioForOutput();
+            showResult({
+                url: dataUrl,
+                w: w || 2048,
+                h: h || 1024,
+                mode: 'pano',
+                isPano: true,
+                prompt: '',
+                _fromHistory: false,
+            });
+            // showResult derives lastOutputFilename from the URL, which is
+            // meaningless for a data URI — set a clean name for the
+            // Use-as-input / Download paths.
+            lastOutputFilename = file.name || 'panorama.png';
+            if (w && h && Math.abs((w / h) - 2) > 0.25) {
+                showNotif('Loaded — heads up, this image isn’t 2:1, so the 360° wrap may look stretched.', 'info');
+            } else {
+                log('Loaded panorama into the 360° viewer');
+            }
+        };
+        probe.onerror = () => showNotif('Could not read that image.', 'error');
+        probe.src = dataUrl;
+    };
+    fr.onerror = () => showNotif('Could not read that file.', 'error');
+    fr.readAsDataURL(file);
 }
 
 function _updateCamGenHint(){
@@ -17406,6 +17496,9 @@ function startJobPoll(jobId){
 // Matches the server-side DELETE /api/studio/job/:id guard.
 function canCancelJob(j){
     if(!j) return false;
+    // Video (fal) jobs don't use the image job DELETE/refund path — hide cancel
+    // (the poller resolves + refunds on failure server-side).
+    if(j.mode === 'video') return false;
     // Synthetic gpt-image generations (agent / Create mode, id "agen_…") are
     // abortable client-side at any point — let the user cancel them immediately
     // instead of waiting for the long upstream call.
