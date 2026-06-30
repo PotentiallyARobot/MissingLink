@@ -7865,6 +7865,17 @@ async function doManageSubscription(){
 function setMode(mode, opts){
     opts = opts || {};
     const prevMode = currentMode;
+    // Leaving Camera while 360° is the active generation type? Cleanly exit it
+    // FIRST (while currentMode is still 'camera' so the leave-pano branch runs
+    // correctly). The pano presets overwrite the SHARED CFG/steps/Lightning
+    // sliders — Quality sets Lightning=0 / 40 steps — and setCamGenType's
+    // leave path restores them. Without this, those values leak into Edit /
+    // Create or a later Camera session and silently blur the render (and make
+    // the Angles LoRA look broken). Also re-asserts camera adapter defaults.
+    if (mode !== 'camera' && typeof _camGenType !== 'undefined' && _camGenType === 'pano'
+        && typeof setCamGenType === 'function') {
+        setCamGenType('single');
+    }
     // When a user explicitly clicks a studio mode button (Camera / Edit /
     // Batch / Create), picking a mode means "show me the workspace" — so
     // leave the Community Gallery view if it's open. setStageView('studio')
