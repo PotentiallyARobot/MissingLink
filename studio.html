@@ -3717,6 +3717,13 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* Stage "make video" button — mirrors the clear button, top-RIGHT. */
 .stage-video-btn{position:absolute;top:10px;right:10px;z-index:7;height:30px;padding:0 10px;display:none;align-items:center;gap:5px;background:rgba(9,9,11,.7);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;backdrop-filter:blur(4px)}
 .stage-video-btn:hover{border-color:var(--gold);color:var(--gold);background:rgba(9,9,11,.9)}
+/* SDXL-only vertical stack of "send to Edit / Camera" buttons, sitting
+   directly under the stage Video button (top-right of the stage). Visibility
+   is driven by updateStageClearBtn(): shown only on the SDXL tab when a still
+   image is staged. Same pill styling as the Video button. */
+.stage-send-stack{position:absolute;top:48px;right:10px;z-index:7;display:none;flex-direction:column;gap:6px}
+.stage-send-stack .stage-send-btn{height:30px;padding:0 10px;display:flex;align-items:center;justify-content:center;gap:5px;background:rgba(9,9,11,.7);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;backdrop-filter:blur(4px)}
+.stage-send-stack .stage-send-btn:hover{border-color:var(--gold);color:var(--gold);background:rgba(9,9,11,.9)}
 /* ── Video generation modal ────────────────────────────────────────── */
 .vm-overlay{position:fixed;inset:0;z-index:1200;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.66);backdrop-filter:blur(3px);padding:20px}
 .vm-overlay.open{display:flex}
@@ -5453,6 +5460,15 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="output-area" id="outputArea" style="position:relative">
         <button class="stage-clear-btn" id="stageClearBtn" onclick="clearStage()" title="Clear the stage" aria-label="Clear the stage" style="display:none">🗑</button>
         <button class="stage-video-btn" id="stageVideoBtn" onclick="openVideoModal()" title="Animate this image into a video (SeeDance 2.0, with audio)" aria-label="Generate video from this image">🎬 Video</button>
+        <!-- SDXL-only: send the staged image into Edit / Camera as their input
+             image and switch to that workspace. Shown by updateStageClearBtn()
+             only on the SDXL tab with a still image staged (SDXL's own
+             result-bar "Use as Input" targets its img2img source, so this is
+             the only route from an SDXL result into Camera/Edit). -->
+        <div class="stage-send-stack" id="stageSendStack">
+            <button class="stage-send-btn" id="stageSendEditBtn" onclick="sendStageToEdit()" title="Send this image to Edit as the input and switch to Edit" aria-label="Send this image to Edit">✏️ Edit</button>
+            <button class="stage-send-btn" id="stageSendCameraBtn" onclick="sendStageToCamera()" title="Send this image to Camera as the input and switch to Camera" aria-label="Send this image to Camera">📷 Camera</button>
+        </div>
         <span class="out-placeholder" id="outPh">Upload an image and generate</span>
         <img id="outImg" style="display:none" onclick="openOutImgModal()">
         <!-- Stage video element. Used when a generated video is staged from
@@ -5949,7 +5965,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="profile-dialog-panel" onclick="event.stopPropagation()">
         <div class="profile-dialog-head">
             <div class="profile-dialog-title" id="profileDialogTitle">👤 Profile</div>
-            <button class="modal-close" onclick="closeProfileDialog()">×</button>
+            <button class="modal-close" id="profileDialogClose" onclick="closeProfileDialog()">×</button>
         </div>
         <div class="profile-dialog-body">
             <!-- Shown only when the dialog is opened as the first-publish
@@ -5976,7 +5992,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <span class="profile-dialog-field-counter" id="profileDialogNameCounter">0 / 30</span>
                 </label>
                 <input id="profileDialogName" type="text" maxlength="30" placeholder="Leave blank to stay anonymous" autocomplete="off" spellcheck="false">
-                <div class="profile-dialog-field-hint">
+                <div class="profile-dialog-field-hint" id="profileDialogFieldHint">
                     1–30 characters. Letters, numbers, spaces, basic punctuation.
                     Leave blank and you'll show up as your anonymous @hex handle.
                 </div>
@@ -7085,6 +7101,10 @@ async function checkAuth(){
         // and stay silent — no need to nag.
         window.history.replaceState({},'','/studio.html');
     }
+    // Onboarding: require a username before a signed-in user can continue.
+    // Runs on every checkAuth (page load + poll); the function no-ops when
+    // the user already has a name or the gate is already up.
+    if (typeof maybeShowUsernameOnboarding === 'function') maybeShowUsernameOnboarding();
 }
 
 function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.html`; }
@@ -7718,16 +7738,55 @@ function openProfileDialog(profileOpts){
     // "name yourself before you post" rather than generic settings.
     // The actual save logic is identical; only the framing changes,
     // plus the action buttons resume the parked publish on close.
+    //
+    // Onboarding-context mode — opened on first sign-in for a user who
+    // has no username yet (see maybeShowUsernameOnboarding). This one is a
+    // HARD gate: no ×, no Cancel, backdrop/Escape are ignored, and a
+    // non-empty name is required before Continue enables. The user cannot
+    // proceed into the app until they pick a username.
     const isPublishCtx = !!(profileOpts && profileOpts.context === 'publish');
-    _profileDialogContext = isPublishCtx ? 'publish' : 'settings';
+    const isOnboardingCtx = !!(profileOpts && profileOpts.context === 'onboarding');
+    _profileDialogContext = isOnboardingCtx ? 'onboarding' : (isPublishCtx ? 'publish' : 'settings');
     const titleEl = $('profileDialogTitle');
     const hintEl = $('profileDialogPublishHint');
     const cancelBtn = $('profileDialogCancel');
     const saveBtn = $('profileDialogSave');
-    if (titleEl) titleEl.textContent = isPublishCtx ? '👤 Choose a username' : '👤 Profile';
-    if (hintEl) hintEl.style.display = isPublishCtx ? '' : 'none';
-    if (cancelBtn) cancelBtn.textContent = isPublishCtx ? 'Post anonymously' : 'Cancel';
-    if (saveBtn) saveBtn.textContent = isPublishCtx ? 'Save & continue' : 'Save';
+    const closeBtn = $('profileDialogClose');
+    const fieldHintEl = $('profileDialogFieldHint');
+    if (titleEl) titleEl.textContent = isOnboardingCtx ? '👋 Choose your username'
+        : (isPublishCtx ? '👤 Choose a username' : '👤 Profile');
+    // Header hint text is set per-context (rather than relying on the HTML
+    // default) so switching between contexts in one session never leaks the
+    // wrong copy.
+    if (hintEl) {
+        if (isOnboardingCtx) {
+            hintEl.textContent = "Welcome! Pick a username to get started — it's how you'll appear across the app and on anything you share. You can change it later in your profile.";
+            hintEl.style.display = '';
+        } else if (isPublishCtx) {
+            hintEl.textContent = "You're about to publish to the community gallery. Pick a username so people can credit your work — or post anonymously under your @handle.";
+            hintEl.style.display = '';
+        } else {
+            hintEl.style.display = 'none';
+        }
+    }
+    // Onboarding requires a real name, so drop the "leave blank to stay
+    // anonymous" affordances (placeholder + field hint) in that context.
+    if (input) input.placeholder = isOnboardingCtx ? 'Enter a username' : 'Leave blank to stay anonymous';
+    if (fieldHintEl) fieldHintEl.textContent = isOnboardingCtx
+        ? '1–30 characters. Letters, numbers, spaces, basic punctuation.'
+        : "1–30 characters. Letters, numbers, spaces, basic punctuation. Leave blank and you'll show up as your anonymous @hex handle.";
+    // No dismiss affordances in onboarding — the × and Cancel are hidden,
+    // and closeProfileDialog() ignores backdrop/Escape while onboarding.
+    if (closeBtn) closeBtn.style.display = isOnboardingCtx ? 'none' : '';
+    if (cancelBtn) {
+        cancelBtn.textContent = isPublishCtx ? 'Post anonymously' : 'Cancel';
+        cancelBtn.style.display = isOnboardingCtx ? 'none' : '';
+    }
+    if (saveBtn) saveBtn.textContent = isOnboardingCtx ? 'Continue'
+        : (isPublishCtx ? 'Save & continue' : 'Save');
+    // Float above every other overlay (age gate is 10080) so nothing that
+    // fires on load — e.g. the workflow primer — can sit on top of the gate.
+    dlg.style.zIndex = isOnboardingCtx ? '10090' : '';
 
     // The viewer's own @hex handle isn't in the auth payload, so
     // derive it locally the same way the server does for consistency.
@@ -7796,6 +7855,13 @@ function _onProfileInputChange(){
         const hue = (typeof _hashHue === 'function') ? _hashHue(shown) : 200;
         avEl.style.background = `hsl(${hue},58%,62%)`;
     }
+    // Onboarding is a required step — a username must be entered before the
+    // Continue button enables. (Other contexts allow empty = stay anonymous,
+    // so their Save button is always enabled.)
+    if (_profileDialogContext === 'onboarding') {
+        const saveBtn = $('profileDialogSave');
+        if (saveBtn) saveBtn.disabled = (v.trim().length === 0);
+    }
 }
 
 async function saveProfileDialog(){
@@ -7803,7 +7869,16 @@ async function saveProfileDialog(){
     const input = $('profileDialogName');
     const saveBtn = $('profileDialogSave');
     if (!input) return;
+    const isOnboarding = _profileDialogContext === 'onboarding';
+    const isPublish = _profileDialogContext === 'publish';
     const raw = input.value || '';
+    // Onboarding requires a real username — never let an empty submit through
+    // (Continue is disabled when empty; this is the server-side-safe backstop
+    // so an empty value can't clear the name and slip past the gate).
+    if (isOnboarding && raw.replace(/^@+/, '').trim().length === 0) {
+        showNotif('Please enter a username to continue.', 'error');
+        return;
+    }
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
     try {
         const r = await fetchT(`${API}/api/studio/profile`, {
@@ -7814,6 +7889,13 @@ async function saveProfileDialog(){
         const d = await r.json();
         if (!d.ok) {
             showNotif(`Couldn't save: ${d.error || 'unknown'}`, 'error');
+            return;
+        }
+        // Defensive: onboarding must finish with a real name persisted. If the
+        // server came back with an empty value, keep the gate up rather than
+        // letting the user through nameless.
+        if (isOnboarding && !d.display_name) {
+            showNotif('Please enter a valid username.', 'error');
             return;
         }
         _user.display_name = d.display_name || null;
@@ -7828,23 +7910,38 @@ async function saveProfileDialog(){
         }
         if (typeof renderGallery === 'function') renderGallery();
         if (typeof renderStageGallery === 'function') renderStageGallery();
-        showNotif(d.display_name ? `Display name set to "${d.display_name}"` : 'Display name cleared — back to anonymous handle.', 'success');
+        showNotif(
+            isOnboarding
+                ? `Welcome, ${d.display_name}! You're all set.`
+                : (d.display_name ? `Display name set to "${d.display_name}"` : 'Display name cleared — back to anonymous handle.'),
+            'success'
+        );
         // Resume a parked publish if this dialog was opened as the
-        // first-publish username prompt. closeProfileDialog() clears
-        // the context but we capture it first.
-        const resume = _profileDialogContext === 'publish';
-        closeProfileDialog({ keepPending: true });
+        // first-publish username prompt. force:true lets the close go
+        // through even in onboarding (which otherwise blocks dismissal).
+        const resume = isPublish;
+        closeProfileDialog({ keepPending: true, force: true });
         if (resume) _resumePendingPublish();
     } catch (e) {
         showNotif(`Network error: ${e.message}`, 'error');
     } finally {
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = isOnboarding ? 'Continue' : (isPublish ? 'Save & continue' : 'Save');
+        }
     }
 }
 
 function closeProfileDialog(closeOpts){
     const dlg = $('profileDialog');
     if (!dlg) return;
+    // Onboarding is a hard gate: the user must choose a username before they
+    // can use the app. Ignore every dismiss attempt (backdrop click, Escape,
+    // any stray programmatic close) EXCEPT the forced close the save path
+    // fires once a username has actually been persisted.
+    if (_profileDialogContext === 'onboarding' && !(closeOpts && closeOpts.force)) {
+        return;
+    }
     dlg.classList.remove('open');
     dlg.style.display = 'none';
 
@@ -7857,6 +7954,25 @@ function closeProfileDialog(closeOpts){
     _profileDialogContext = 'settings';
     if (wasPublish && !(closeOpts && closeOpts.keepPending)) {
         _resumePendingPublish();
+    }
+}
+
+// Onboarding gate: a signed-in user who hasn't chosen a username yet must
+// pick one before they can use the app. Opens the profile dialog in its
+// blocking "onboarding" mode. Called from checkAuth() on page load and on
+// the /auth/me poll — covers every entry (Google OAuth return, email
+// confirmation, and returning accounts created before usernames existed).
+// Guards:
+//   - only for a signed-in user with no display_name
+//   - never re-opens (or steals focus) while the dialog is already up, so
+//     the 30s auth poll can't interrupt someone mid-type
+function maybeShowUsernameOnboarding(){
+    if (!_user) return;
+    if (_user.display_name && String(_user.display_name).trim().length > 0) return;
+    const dlg = document.getElementById('profileDialog');
+    if (dlg && dlg.classList.contains('open')) return;  // already prompting
+    if (typeof openProfileDialog === 'function') {
+        openProfileDialog({ context: 'onboarding' });
     }
 }
 
@@ -10687,6 +10803,10 @@ function updateStageClearBtn(){
     // video is on the stage (you can't animate a video).
     const vbtn = document.getElementById('stageVideoBtn');
     if (vbtn) vbtn.style.display = (hasImg && !hasVid) ? 'inline-flex' : 'none';
+    // SDXL-only "send to Edit / Camera" stack — same still-image condition as
+    // the Video button, but additionally gated to the SDXL tab.
+    const sstack = document.getElementById('stageSendStack');
+    if (sstack) sstack.style.display = (hasImg && !hasVid && window._stageView === 'sdxl') ? 'flex' : 'none';
 }
 
 // ── Image-to-video (SeeDance 2.0, with audio, via fal.ai) ───────────────
@@ -12900,6 +13020,55 @@ async function useAsInput(){
         }
     }catch(e){ showNotif('Failed. Please try again.', 'error'); }
 }
+
+// Send the currently-staged image into Camera or Edit as their input, then
+// switch to that workspace. Used by the SDXL stage buttons (SDXL's own
+// result-bar "Use as Input" assigns to its img2img source, so this is the
+// dedicated route from an SDXL result into Camera/Edit).
+//
+// Mirrors useAsInput()'s mechanism: fetch the staged image by URL and
+// RE-UPLOAD it so it becomes a fresh studio_uploads row. That's required
+// because a staged result's underlying id is a studio_jobs id, and the
+// generate backend resolves input image_ids only against studio_uploads —
+// passing the job id would fail as no_valid_images. We capture + convert the
+// image BEFORE switching modes so a stage teardown during the view change
+// can't strip the source out from under us.
+async function _sendStageToMode(targetMode){
+    const outImg = $('outImg');
+    const src = outImg && outImg.src;
+    const hasImg = !!(src && !src.endsWith('#') && outImg.style.display !== 'none');
+    if (!hasImg){ showNotif('No image on the stage to send.', 'error'); return; }
+    const fname = lastOutputFilename || 'image.png';
+    let file;
+    try {
+        const r = await fetchT(src, null, 10000);
+        const blob = await r.blob();
+        file = new File([blob], fname, { type: blob.type || 'image/png' });
+    } catch (e) {
+        showNotif('Failed to read the staged image. Please try again.', 'error');
+        return;
+    }
+    // Exit the SDXL/gallery stage view and reveal the target workspace, then
+    // let the mode's own uploader place the image (Camera → single input cell;
+    // Edit → first empty slot, falling back to slot 1). These uploaders handle
+    // the studio_uploads insert, dimension sync, preview render, and persistence.
+    setMode(targetMode, { switchToStudio: true });
+    try {
+        if (targetMode === 'camera') {
+            await uploadFile(file);
+            log('Sent staged image to Camera input');
+        } else {
+            let t = slots.findIndex(s => s === null);
+            if (t === -1) t = 0;
+            await uploadToSlot(t, file);
+            log(`Sent staged image to Edit slot ${t + 1}`);
+        }
+    } catch (e) {
+        showNotif('Failed to assign the image. Please try again.', 'error');
+    }
+}
+function sendStageToCamera(){ return _sendStageToMode('camera'); }
+function sendStageToEdit(){ return _sendStageToMode('edit'); }
 
 function toggleLock(){
     window._promptLocked=!window._promptLocked;
@@ -22906,6 +23075,10 @@ function setStageView(view){
     _syncStageGalleryVisibility();
     // SDXL Studio is Pro-only — paint / clear its lock veil for this view.
     if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
+    // Re-sync the stage-corner buttons: the SDXL-only "send to Edit / Camera"
+    // stack must appear on entering the SDXL tab (with an image staged) and
+    // disappear on leaving it, even though the staged image itself is unchanged.
+    if (typeof updateStageClearBtn === 'function') updateStageClearBtn();
 }
 
 // Called from every generate-submit code path right after preflight
@@ -23913,17 +24086,29 @@ function restoreFromHistory(j){
         _fromHistory: true,
     });
 
-    // Repopulate the prompt field for the current surface so the user can
-    // iterate from this image.
-    if (window._stageView === 'sdxl') {
-        // SDXL has its own prompt + negative-prompt fields. Fill both so the
-        // user can re-run or tweak the exact settings from that history image.
-        if ($('sdxlPrompt')) $('sdxlPrompt').value = j.prompt || '';
-        if ($('sdxlNeg')) $('sdxlNeg').value = j.negative_prompt || '';
-    } else if (j.prompt) {
-        if (mode === 'generate' && $('generatePrompt')) $('generatePrompt').value = j.prompt;
-        else if (mode === 'edit' && $('customPrompt')) $('customPrompt').value = j.prompt;
-        else if ($('promptInput')) $('promptInput').value = j.prompt;
+    // Repopulate the prompt fields for the current surface — but ONLY when the
+    // history item's engine matches the surface it'd load into. SDXL and the
+    // Qwen/Create modes (camera/edit/generate) keep SEPARATE prompt + negative
+    // fields with different conventions (SDXL leans on Pony score_ tags, etc.),
+    // so cross-loading them would clobber the user's working prompt with text
+    // meant for the other engine. When the families don't match we still stage
+    // the image; we just leave the prompt fields untouched.
+    //   - SDXL item + SDXL view          → fill sdxlPrompt / sdxlNeg
+    //   - Qwen/Create item + those modes → fill the mode's prompt field
+    //   - any cross-family click         → stage only, no prompt change
+    const isSdxlItem = (j.mode === 'sdxl_studio') || !!j.sdxl_mode;
+    const inSdxlView = (window._stageView === 'sdxl');
+    if (isSdxlItem === inSdxlView) {
+        if (inSdxlView) {
+            // SDXL has its own prompt + negative-prompt fields. Fill both so the
+            // user can re-run or tweak the exact settings from that history image.
+            if ($('sdxlPrompt')) $('sdxlPrompt').value = j.prompt || '';
+            if ($('sdxlNeg')) $('sdxlNeg').value = j.negative_prompt || '';
+        } else if (j.prompt) {
+            if (mode === 'generate' && $('generatePrompt')) $('generatePrompt').value = j.prompt;
+            else if (mode === 'edit' && $('customPrompt')) $('customPrompt').value = j.prompt;
+            else if ($('promptInput')) $('promptInput').value = j.prompt;
+        }
     }
     if (!isCreate && j.seed && $('rngSeed')) { $('rngSeed').value = j.seed; $('vSeed').value = j.seed; }
     log(`Restored output from generation ${j.id}`);
