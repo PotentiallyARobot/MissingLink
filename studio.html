@@ -3866,7 +3866,8 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    Sits below the header (offset by --header-h) and uses
    backdrop-filter:blur to dim everything underneath so the eye is
    drawn to the centered feature card. */
-#batchLockOverlay{
+#batchLockOverlay,
+#sdxlLockOverlay{
     position:fixed;
     top:var(--header-h, 48px);
     left:0;right:0;bottom:0;
@@ -3877,7 +3878,12 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     backdrop-filter:blur(8px);
     -webkit-backdrop-filter:blur(8px);
 }
-#batchLockOverlay.open{display:flex}
+#batchLockOverlay.open,
+#sdxlLockOverlay.open{display:flex}
+/* Small padlock appended to the SDXL stage tab for non-subscribers so the
+   Pro gate is legible before they even click in. Toggled via .pro-locked by
+   syncSdxlSubscriptionLock(). */
+.stage-tab.pro-locked .stage-tab-label::after{content:" \1F512";font-size:10px;opacity:.85;margin-left:2px}
 .batch-lock-card{
     background:var(--surface);
     border:1px solid var(--gold);
@@ -4583,7 +4589,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <span class="stage-tab-icon">🎨</span>
             <span class="stage-tab-label">Studio</span>
         </button>
-        <button class="stage-tab" data-view="sdxl" onclick="setStageView('sdxl')" title="SDXL Studio (T4)">
+        <button class="stage-tab" id="stageTabSdxl" data-view="sdxl" onclick="setStageView('sdxl')" title="SDXL Studio (T4)">
             <span class="stage-tab-icon">🧪</span>
             <span class="stage-tab-label">SDXL</span>
         </button>
@@ -5123,14 +5129,18 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec batch-only" style="display:none">
-        <div class="sec-label"><span class="icon">🤖</span> AGENT EDIT MODEL
-            <span class="sec-label-count">which model the agent edits with</span>
+        <div class="sec-label"><span class="icon">🤖</span> IMAGE MODEL
+            <span class="sec-label-count">for batch Generate &amp; agent edits</span>
         </div>
         <div class="edit-model-seg" id="editModelSeg">
-            <button type="button" class="ems-btn active" data-pref="auto" onclick="setEditModelPref('auto')" title="Let the agent choose — defaults to Qwen (faster &amp; cheaper) and uses GPT when the request calls for it">Auto</button>
-            <button type="button" class="ems-btn" data-pref="qwen" onclick="setEditModelPref('qwen')" title="Force the in-house Qwen Image Edit pipeline for every agent edit">Qwen</button>
+            <button type="button" class="ems-btn active" data-pref="auto" onclick="setEditModelPref('auto')" title="Let the agent choose — defaults to Qwen (faster &amp; cheaper) and uses GPT when the request calls for it. The batch Generate button uses Qwen.">Auto</button>
             <button type="button" class="ems-btn" data-pref="gpt" onclick="setEditModelPref('gpt')" title="Force gpt-image-2 for every agent edit">GPT</button>
+            <button type="button" class="ems-btn" data-pref="qwen" onclick="setEditModelPref('qwen')" title="Force the in-house Qwen Image Edit pipeline">Qwen</button>
+            <button type="button" class="ems-btn" data-pref="sdxl" onclick="setEditModelPref('sdxl')" title="Batch Generate runs SDXL img2img on each selected image (Pony Realism v2.2) with Pony 2.2 quality tags added automatically">SDXL</button>
         </div>
+        <!-- Contextual hint, filled by setEditModelPref(). Explains the SDXL
+             batch behavior (and that the agent chat itself can't drive SDXL). -->
+        <div id="editModelHint" style="display:none;font-size:10px;line-height:1.4;color:var(--text-muted);margin-top:7px"></div>
     </div>
 
     <div class="sec batch-only" style="display:none">
@@ -6346,6 +6356,30 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
+<!-- ── SDXL SUBSCRIPTION LOCK ──────────────────────────────────────
+     Full-area lock shown when the SDXL Studio tab is active AND the
+     viewer isn't subscribed. Mirrors the batch lock: it reuses the
+     #batchLockOverlay chrome (see CSS) and the .batch-lock-* card
+     styling for a consistent look. Toggled by syncSdxlSubscriptionLock()
+     based on window._stageView + _user.subscription_status. The CTA
+     reuses agentLockClick() (sign-in modal for anonymous users, Stripe
+     checkout via doSubscribe for signed-in non-subscribers). -->
+<div id="sdxlLockOverlay" style="display:none">
+    <div class="batch-lock-card" onclick="event.stopPropagation()">
+        <div class="batch-lock-icon">🧪</div>
+        <div class="batch-lock-title" id="sdxlLockTitle">SDXL Studio is a Pro feature</div>
+        <div class="batch-lock-blurb" id="sdxlLockBlurb">Subscribe to unlock SDXL Studio — custom checkpoints, LoRAs, and full txt2img / img2img / inpaint control on a dedicated T4 GPU.</div>
+        <ul class="batch-lock-features">
+            <li><span class="bl-emoji">🧬</span><div><b>Custom checkpoints</b> — bring any SDXL / Pony model straight from Civitai</div></li>
+            <li><span class="bl-emoji">🎚️</span><div><b>Stack up to 6 LoRAs</b> — per-LoRA weights with live trigger-word chips</div></li>
+            <li><span class="bl-emoji">🖌️</span><div><b>img2img &amp; inpaint</b> — full denoise / strength control and region masking</div></li>
+            <li><span class="bl-emoji">⚙️</span><div><b>Full sampler controls</b> — steps, CFG, seed, size &amp; negative prompt</div></li>
+        </ul>
+        <button class="batch-lock-cta" id="sdxlLockCta" onclick="agentLockClick()">Subscribe to unlock</button>
+        <div class="batch-lock-foot">Camera, Edit, and Create still work without a subscription.</div>
+    </div>
+</div>
+
 </div>
 
 <!-- Three.js for viewport -->
@@ -6519,6 +6553,10 @@ const $=id=>document.getElementById(id);
 const API=''; // same origin
 
 let _user=null;
+// Flips true once the first checkAuth() resolves (logged-in OR anonymous), so
+// the SDXL Pro lock can avoid flashing at a subscriber who reloads straight
+// onto the SDXL tab before /auth/me has come back. See syncSdxlSubscriptionLock.
+let _authResolved=false;
 let imageId=null,imageUrl=null;
 let hwOpen=true;
 let currentMode='generate';
@@ -7002,6 +7040,11 @@ async function checkAuth(){
         log('Auth check failed: '+e.message,'error');
     }
     updateGenButton();
+    // First auth check has now resolved (either way) — let the SDXL Pro lock
+    // paint its real state (anonymous → sign-in veil, non-subscriber → upsell,
+    // subscriber → cleared) without the initial anti-flash suppression.
+    _authResolved = true;
+    if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
 
     const params=new URLSearchParams(window.location.search);
     if(params.get('login')==='ok'){
@@ -7365,6 +7408,11 @@ function updateUserMenuSubState(){
     if (typeof syncAgentSubscriptionLock === 'function') {
         syncAgentSubscriptionLock();
     }
+    // Same for the SDXL Pro lock — a just-activated (or lapsed)
+    // subscription should reveal / re-veil SDXL Studio right away.
+    if (typeof syncSdxlSubscriptionLock === 'function') {
+        syncSdxlSubscriptionLock();
+    }
     if (statusLine) {
         if (status === 'active') {
             statusLine.textContent = '👑 Pro · active';
@@ -7428,6 +7476,71 @@ function syncAgentSubscriptionLock(){
     if (cta) cta.textContent = 'Subscribe to unlock';
 }
 
+// True when the current viewer is on a live paid plan. Mirrors the backend
+// isSubscriber(): 'active' and 'past_due' both count (a transient billing
+// hiccup shouldn't instantly revoke Pro access mid-cycle); 'canceled' / null /
+// anonymous → false. Single source of truth for every client-side Pro gate.
+function isSubscriber(){
+    if (!_user) return false;
+    const s = _user.subscription_status;
+    return s === 'active' || s === 'past_due';
+}
+
+// Shows / hides the SDXL Pro lock. Mirrors syncAgentSubscriptionLock but keys
+// off the STAGE VIEW — SDXL lives in the stage + sidebar via
+// setStageView('sdxl'), not in currentMode. Called whenever:
+//   - auth / subscription state changes (updateUserMenuSubState, checkAuth, logout)
+//   - the stage view changes (setStageView)
+//   - first paint (the init setStageView + checkAuth both call it)
+//
+// Logic:
+//   - not on the SDXL tab / subscriber → hide the veil
+//   - anonymous                        → veil with a "Sign in" CTA
+//   - signed-in, no sub                → veil with the upsell card
+// Also disables the SDXL generate button while locked so no client path can
+// fire a generate the backend would reject anyway. The SDXL tab itself gets a
+// padlock (.pro-locked) for non-subscribers on ANY view so the gate reads
+// before they click in.
+function syncSdxlSubscriptionLock(){
+    const overlay = document.getElementById('sdxlLockOverlay');
+    if (!overlay) return;
+    const onSdxl = (window._stageView === 'sdxl');
+    const genBtn = document.getElementById('sdxlGenBtn');
+    const tab    = document.getElementById('stageTabSdxl');
+    const locked = !isSubscriber();
+
+    // Tab padlock — only once auth is known, so we don't briefly badge a
+    // subscriber whose /auth/me hasn't returned yet.
+    if (tab) tab.classList.toggle('pro-locked', _authResolved && locked);
+
+    if (!onSdxl || !locked){
+        overlay.style.display = 'none';
+        if (genBtn) genBtn.disabled = false;
+        return;
+    }
+    // On the SDXL tab and NOT a subscriber. Hold the veil until the first auth
+    // check resolves so a subscriber reloading straight onto this tab doesn't
+    // flash the lock. Once _user is known (either way) we paint immediately.
+    if (!_authResolved && !_user){
+        overlay.style.display = 'none';
+        return;
+    }
+    overlay.style.display = 'flex';
+    if (genBtn) genBtn.disabled = true;
+    const title = document.getElementById('sdxlLockTitle');
+    const blurb = document.getElementById('sdxlLockBlurb');
+    const cta   = document.getElementById('sdxlLockCta');
+    if (!_user){
+        if (title) title.textContent = 'Sign in to use SDXL Studio';
+        if (blurb) blurb.textContent = 'Sign in, then subscribe to unlock SDXL Studio — custom checkpoints, LoRAs, and full txt2img / img2img / inpaint control.';
+        if (cta)   cta.textContent = 'Sign in to continue';
+    } else {
+        if (title) title.textContent = 'SDXL Studio is a Pro feature';
+        if (blurb) blurb.textContent = 'Subscribe to unlock SDXL Studio — custom checkpoints, LoRAs, and full txt2img / img2img / inpaint control on a dedicated T4 GPU.';
+        if (cta)   cta.textContent = 'Subscribe to unlock';
+    }
+}
+
 // CTA click handler — anonymous → sign-in modal; signed-in
 // unsubscribed → Stripe checkout via doSubscribe.
 function agentLockClick(){
@@ -7457,6 +7570,9 @@ async function doLogout(){
     // Re-paint the agent lock veil — anonymous users see the sign-in
     // nudge variant rather than the subscribe variant.
     if (typeof syncAgentSubscriptionLock === 'function') syncAgentSubscriptionLock();
+    // Same for the SDXL Pro lock — signing out re-veils SDXL Studio with
+    // the "Sign in to continue" variant.
+    if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
     // Clear the per-session NSFW dismissal so the next user who signs
     // in on this tab gets a fresh screen.
     _nsfwAdvisoryDismissed = false;
@@ -9351,11 +9467,24 @@ let _generateModel = 'gpt-image-2';
 // directive in the agent's instructions. Persisted so it survives reloads.
 let _editModelPref = (function(){ try { return localStorage.getItem('ml_edit_model_pref') || 'auto'; } catch { return 'auto'; } })();
 function setEditModelPref(p){
-    if (p !== 'auto' && p !== 'qwen' && p !== 'gpt') p = 'auto';
+    if (p !== 'auto' && p !== 'qwen' && p !== 'gpt' && p !== 'sdxl') p = 'auto';
     _editModelPref = p;
     try { localStorage.setItem('ml_edit_model_pref', p); } catch {}
     const seg = document.getElementById('editModelSeg');
     if (seg) seg.querySelectorAll('.ems-btn').forEach(b => b.classList.toggle('active', b.dataset.pref === p));
+    // Contextual hint. SDXL is the only option that changes the batch Generate
+    // button (→ SDXL img2img on each selected image, with Pony 2.2 tags added
+    // automatically). The agent chat can't drive SDXL, so we note the fallback.
+    const hint = document.getElementById('editModelHint');
+    if (hint){
+        if (p === 'sdxl'){
+            hint.textContent = 'Batch Generate → SDXL img2img on each selected image (Pony Realism v2.2), Pony 2.2 quality tags added automatically. 50 tokens/image. Agent chat still uses Qwen/GPT.';
+            hint.style.display = '';
+        } else {
+            hint.style.display = 'none';
+            hint.textContent = '';
+        }
+    }
 }
 // Sync the active button to the persisted value on load (the script runs
 // after the markup, so the element already exists).
@@ -15284,15 +15413,28 @@ async function retryBatchSlot(slotIdx, refinedPrompt){
         return;
     }
     if (!_user) { $('loginModal').classList.add('open'); return; }
-    if (_user.tokens < 100) {
-        showNotif('Need 100 tokens to retry.', 'error');
+    // SDXL shots cost 50 tokens, Qwen edits cost 100 — key off the stored
+    // routing marker so a retry isn't wrongly blocked when the user has
+    // 50–99 tokens and the shot is SDXL.
+    const _retryCost = (shot.payload && shot.payload._engine === 'sdxl') ? 50 : 100;
+    if (_user.tokens < _retryCost) {
+        showNotif(`Need ${_retryCost} tokens to retry.`, 'error');
         showBuyModal();
         return;
     }
     // Patch the stashed payload with the new prompt before re-submission.
     // Also patch the snapshot if present — keeps history accurate so a
     // later "restore from history" gets the refined prompt, not the original.
-    shot.payload = { ...shot.payload, prompt: refinedPrompt };
+    // For SDXL shots, re-apply the Pony 2.2 positive prefix to the refined
+    // prompt (it's skipped automatically if the refinement already kept the
+    // score_ prefix); the negative already carries the Pony negatives so we
+    // leave it untouched to avoid duplicating them.
+    if (shot.payload && shot.payload._engine === 'sdxl') {
+        const aug = _batchPonyAugment(refinedPrompt, '');
+        shot.payload = { ...shot.payload, prompt: aug.prompt };
+    } else {
+        shot.payload = { ...shot.payload, prompt: refinedPrompt };
+    }
     if (shot.snapshot) shot.snapshot = { ...shot.snapshot, prompt: refinedPrompt };
     shot.prompt = refinedPrompt;
     // Clear any AI-critique state since the prompt has changed; a stale
@@ -15386,6 +15528,48 @@ async function maybeAutoQa(slotIdx){
 }
 // =====================================================================
 
+// ── Batch image-model routing ────────────────────────────────────────
+// The batch model selector (Auto/GPT/Qwen/SDXL, see setEditModelPref) lets a
+// batch generate via SDXL instead of Qwen. Qwen stays the default; SDXL runs
+// img2img on each selected input using the baked Pony Realism v2.2 checkpoint,
+// with the Pony 2.2 quality tags added automatically.
+
+// Pony Realism v2.2 quality tags — literals mirroring _SDXL_FAMILY_TAGS.pony so
+// this path seeds the exact same convention the SDXL Studio tab uses, even if
+// that tab was never opened this session.
+const _BATCH_PONY_POS = 'score_9, score_8_up, score_7_up, source_realistic, realistic, photorealistic';
+const _BATCH_PONY_NEG = 'score_6, score_5, score_4, source_cartoon, source_anime, anime, cartoon, 3d, render, worst quality, low quality, blurry, deformed, bad anatomy, watermark, signature, text';
+
+// Prepend the Pony positive tags to a prompt (skipped if the user already put
+// the score_ prefix in) and merge the Pony negatives ahead of any user
+// negative. Returns { prompt, negative }.
+function _batchPonyAugment(prompt, userNeg){
+    const p = (prompt || '').trim();
+    const hasPony = /score_9\b/i.test(p);
+    const outPrompt = hasPony ? p : (p ? (_BATCH_PONY_POS + ', ' + p) : _BATCH_PONY_POS);
+    const un = (userNeg || '').trim();
+    const outNeg = un ? (_BATCH_PONY_NEG + ', ' + un) : _BATCH_PONY_NEG;
+    return { prompt: outPrompt, negative: outNeg };
+}
+
+// Submit one batch shot to the correct backend based on a routing marker.
+// Absent / non-SDXL payloads hit /api/studio/generate exactly as before (so
+// camera-angle batches, which never set the marker, are byte-for-byte
+// unchanged). payload._engine === 'sdxl' routes to the SDXL Studio endpoint.
+// The internal _engine marker is stripped before the request is sent.
+function _batchSubmitShot(payload){
+    const isSdxl = !!(payload && payload._engine === 'sdxl');
+    const url = isSdxl ? (`${API}/api/sdxl-studio/generate`) : (`${API}/api/studio/generate`);
+    const body = Object.assign({}, payload);
+    delete body._engine;
+    return fetchT(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+    }, isSdxl ? 60000 : 30000);
+}
+
 async function generateBatchEdits(){
     if (!_user) { $('loginModal').classList.add('open'); return; }
     const selected = _batchInputs.filter(b => b.selected);
@@ -15396,9 +15580,15 @@ async function generateBatchEdits(){
     const prompt = $('batchPrompt').value.trim();
     if (!prompt) { showNotif('Enter an edit instruction first.', 'error'); return; }
 
-    const needed = selected.length * 100;
+    // Which engine this batch runs on (from the IMAGE MODEL selector). SDXL
+    // routes each shot through the SDXL Studio worker (img2img + Pony 2.2 tags)
+    // and costs 50 tokens/image; everything else stays on the Qwen edit path
+    // at 100 tokens/image.
+    const useSdxl = (typeof _editModelPref !== 'undefined' && _editModelPref === 'sdxl');
+    const perGen = useSdxl ? 50 : 100;
+    const needed = selected.length * perGen;
     if (_user.tokens < needed) {
-        showNotif(`Need ${needed} tokens for ${selected.length} edits. You have ${_user.tokens}.`, 'error');
+        showNotif(`Need ${needed} tokens for ${selected.length} ${useSdxl ? 'SDXL generations' : 'edits'}. You have ${_user.tokens}.`, 'error');
         showBuyModal();
         return;
     }
@@ -15417,9 +15607,9 @@ async function generateBatchEdits(){
     // the tile grid populating. No-op when already on Studio.
     _switchToStudioForOutput();
 
-    // GPU wake — same logic as doGenerate. Batch jobs all hit Qwen,
-    // so we want the container alive before they start dequeuing.
-    if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') {
+    // GPU wake. Qwen batches warm the Qwen container here; SDXL batches skip it
+    // (the SDXL endpoint wakes its own T4 on every enqueue, server-side).
+    if (!useSdxl && (_gpuState.state === 'sleeping' || _gpuState.state === 'cold')) {
         warmupGpu();
     }
 
@@ -15485,18 +15675,44 @@ async function generateBatchEdits(){
         if (_batchContext[1]) imageIds.push(_batchContext[1].id);
         if (_batchContext[2]) imageIds.push(_batchContext[2].id);
         const shotPrompt = (_batchPerImagePrompts && _batchPerImagePrompts[inp.id]) || prompt;
-        const payload = {
-            mode: 'edit',
-            image_ids: imageIds,
-            prompt: shotPrompt, negative_prompt: negative, seed,
-            guidance_scale: cfg, inference_steps: steps,
-            ...loraPayload('edit'),
-            // Preserve the input's own dimensions per-job so each output
-            // matches its source. If the inputs vary in aspect ratio, this
-            // avoids stretching them all into one fixed shape.
-            width: inp.w || 0, height: inp.h || 0,
-            batch_id: batchId,
-        };
+        let payload;
+        if (useSdxl) {
+            // SDXL img2img on this single input. Pony 2.2 quality tags are
+            // added automatically (positive prefix + merged negatives). Uses
+            // the baked default checkpoint (Pony Realism v2.2) via an empty
+            // model_url, and SDXL-appropriate sampler defaults rather than the
+            // Qwen lightning settings (which would badly under-step SDXL). The
+            // batch's shared context slots don't apply — SDXL img2img is a
+            // single-source transform. `_engine` is an internal routing marker
+            // stripped before the request is sent (see _batchSubmitShot).
+            const aug = _batchPonyAugment(shotPrompt, negative);
+            payload = {
+                _engine: 'sdxl',
+                mode: 'img2img',
+                image_id: inp.id,
+                prompt: aug.prompt,
+                negative_prompt: aug.negative,
+                model_url: '',
+                steps: 30, cfg: 7, strength: 0.7,
+                width: inp.w || 1024, height: inp.h || 1024,
+                seed, randomize_seed: false,
+                loras: [],
+                batch_id: batchId,
+            };
+        } else {
+            payload = {
+                mode: 'edit',
+                image_ids: imageIds,
+                prompt: shotPrompt, negative_prompt: negative, seed,
+                guidance_scale: cfg, inference_steps: steps,
+                ...loraPayload('edit'),
+                // Preserve the input's own dimensions per-job so each output
+                // matches its source. If the inputs vary in aspect ratio, this
+                // avoids stretching them all into one fixed shape.
+                width: inp.w || 0, height: inp.h || 0,
+                batch_id: batchId,
+            };
+        }
         // Stash retry info on the shot. If this submission fails (or the
         // job later errors during processing), the user can hit Retry on
         // the tile and we'll re-submit with these exact params, independent
@@ -15513,10 +15729,7 @@ async function generateBatchEdits(){
             continue;
         }
         try {
-            const r = await fetchT(`${API}/api/studio/generate`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload),
-            }, 30000);
+            const r = await _batchSubmitShot(payload);
             const d = await r.json();
             if (!d.ok) {
                 if (r.status === 401) { $('loginModal').classList.add('open'); break; }
@@ -15565,7 +15778,7 @@ async function generateBatchEdits(){
             myJobs.unshift({
                 id: d.job_id,
                 status: 'waiting',
-                mode: 'edit',
+                mode: useSdxl ? 'sdxl_studio' : 'edit',
                 thumb: inp.url,
                 result: null,
                 submittedAt: Date.now(),
@@ -16009,10 +16222,7 @@ async function submitNextPendingAngle(){
     // pending (e.g. user started a new batch), drop it on the floor.
     if (!_activeBatch.shots[shotIdx]) return false;
     try {
-        const r = await fetchT(`${API}/api/studio/generate`, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        }, 30000);
+        const r = await _batchSubmitShot(payload);
         const d = await r.json();
         if (!d.ok) {
             if (r.status === 429) {
@@ -16053,8 +16263,11 @@ async function submitNextPendingAngle(){
         // otherwise the queue-panel + history rendering for a retried
         // batch-edit shot would mislabel it as a 'camera' job and show
         // the wrong thumbnail. Read both off the payload (the source of
-        // truth that flows from the original submission).
-        const jobMode = (payload && payload.mode) || 'camera';
+        // truth that flows from the original submission). SDXL batch shots
+        // carry the _engine marker and render as 'sdxl_studio'.
+        const jobMode = (payload && payload._engine === 'sdxl')
+            ? 'sdxl_studio'
+            : ((payload && payload.mode) || 'camera');
         const shot = _activeBatch.shots[shotIdx];
         const jobThumb = (shot && shot.inputUrl) || imageUrl || null;
         myJobs.unshift({
@@ -19093,7 +19306,7 @@ async function _agentCallModel(){
     _agentAbort = new AbortController();
     const r = await fetchT(`${API}/api/studio/agent-chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: _agentMessages, edit_model_pref: (typeof _editModelPref !== 'undefined' ? _editModelPref : 'auto') }),
+        body: JSON.stringify({ messages: _agentMessages, edit_model_pref: (typeof _editModelPref !== 'undefined' ? ((_editModelPref === 'sdxl') ? 'auto' : _editModelPref) : 'auto') }),
     }, 100_000, _agentAbort.signal);
     const d = await r.json();
     if (!d.ok) {
@@ -22174,6 +22387,13 @@ function _sdxlCollectLoras(){
 
 async function sdxlGenerate(){
     if (!_user){ $('loginModal').classList.add('open'); return; }
+    // SDXL Studio is Pro-only. The backend is authoritative, but bail early
+    // (and keep the lock veil up) so a non-subscriber gets immediate feedback.
+    if (typeof isSubscriber === 'function' && !isSubscriber()){
+        showNotif('SDXL Studio is a Pro feature — subscribe to unlock it.', 'error');
+        if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
+        return;
+    }
     const prompt = $('sdxlPrompt').value.trim();
     if (!prompt){ showNotif('Enter a prompt first.', 'error'); return; }
     if ((_sdxlMode === 'img2img' || _sdxlMode === 'inpaint') && !_sdxlSrcDataUrl){
@@ -22236,6 +22456,10 @@ async function sdxlGenerate(){
             if (!d.ok){
                 if (r.status === 401){ $('loginModal').classList.add('open'); }
                 else if (r.status === 402){ showBuyModal(); }
+                else if (r.status === 403 && d.error === 'subscription_required'){
+                    showNotif('SDXL Studio is a Pro feature — subscribe to unlock it.', 'error');
+                    if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
+                }
                 else if (r.status === 429){ showNotif('Too many jobs queued. Wait for one to finish.', 'error'); }
                 else if (d.error === 'content_blocked'){ showNotif('Blocked: content involving minors is not allowed.', 'error'); }
                 else if (d.error === 'moderation_unavailable'){ showNotif('Safety check temporarily unavailable. Try again shortly.', 'error'); }
@@ -22680,6 +22904,8 @@ function setStageView(view){
     // Drive visibility. _syncStageGalleryVisibility reads window._stageView
     // and acts accordingly.
     _syncStageGalleryVisibility();
+    // SDXL Studio is Pro-only — paint / clear its lock veil for this view.
+    if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
 }
 
 // Called from every generate-submit code path right after preflight
