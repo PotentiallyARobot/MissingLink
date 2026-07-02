@@ -242,6 +242,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .mode-btn:hover{color:var(--text)}
 .mode-btn.active{background:var(--gold);color:var(--black)}
 
+/* Create engine sub-toggle (GPT / SDXL). Sits directly under the mode
+   toggle with a tighter top pad so it reads as a sub-menu of Create. The
+   SDXL button shows a padlock when SDXL Studio is subscriber-only and the
+   current user isn't a subscriber (driven by syncSdxlSubscriptionLock). */
+.create-engine-sec{padding:0 16px 10px}
+.create-engine-toggle .mode-btn.pro-locked::after{content:" \1F512";font-size:10px;opacity:.85;margin-left:2px}
+
 /* Generate-mode size selector — same visual language as the mode toggle
    so the user reads it as a single segmented control. Square / portrait
    / landscape are the only sizes gpt-image-2 supports for generations. */
@@ -4594,24 +4601,18 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <img src="https://www.missinglink.build/logo.png" alt="" onerror="this.style.display='none'">
     <h1>IMAGE <span>STUDIO</span></h1>
     <!-- ── STAGE VIEW TABS (in header) ───────────────────────────────
-         Two-button workspace switcher anchored in the top bar. Gallery
-         is the leftmost / primary entry; Studio sits next to it.
-         setStageView ('studio'|'gallery') toggles which view the
-         stage shows; the active tab gets the gold pill style. Sits
-         in the header rather than the stage itself so it stays
-         reachable when modals/overlays cover the stage. -->
+         Gallery is the only top-level stage tab now. The Studio tab was
+         removed — picking any sidebar mode (Camera/Edit/Batch/Create) or
+         the Create GPT/SDXL sub-toggle already returns to the workspace,
+         so a dedicated Studio button is redundant. SDXL likewise moved out
+         of the top tabs and is now a sub-menu of Create (see
+         #createEngineSec / createSetEngine). Sits in the header rather than
+         the stage itself so it stays reachable when overlays cover the
+         stage. -->
     <div class="stage-tabs hdr-stage-tabs" id="stageTabs">
         <button class="stage-tab active" data-view="gallery" onclick="setStageView('gallery')" title="Community Gallery">
             <span class="stage-tab-icon">🌐</span>
             <span class="stage-tab-label">Gallery</span>
-        </button>
-        <button class="stage-tab" data-view="studio" onclick="setStageView('studio')" title="Your workspace">
-            <span class="stage-tab-icon">🎨</span>
-            <span class="stage-tab-label">Studio</span>
-        </button>
-        <button class="stage-tab" id="stageTabSdxl" data-view="sdxl" onclick="setStageView('sdxl')" title="SDXL Studio (T4)">
-            <span class="stage-tab-icon">🧪</span>
-            <span class="stage-tab-label">SDXL</span>
         </button>
     </div>
     <!-- ── MOBILE MODE SWITCHER ───────────────────────────────────────
@@ -4772,6 +4773,21 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                  entry point (no upload needed) so we land first-time
                  visitors here. -->
             <button class="mode-btn active" id="btnModeGenerate" onclick="setMode('generate', {switchToStudio:true})">✨ Create</button>
+        </div>
+    </div>
+
+    <!-- ── CREATE ENGINE SUB-TOGGLE (GPT / SDXL) ──────────────────────
+         Sub-menu of Create that picks which engine generates the image:
+         GPT (gpt-image, the default — highlighted on load) or SDXL (the
+         SDXL Studio flow, which used to be a top-level stage tab). Picking
+         SDXL routes into the SDXL stage view; picking GPT returns to the
+         normal Create flow. Visibility + active state are driven by
+         _syncCreateEngineToggle(), which keeps it shown in both Create
+         (generate) mode and the SDXL sub-view so the user can flip back. -->
+    <div class="sec create-engine-sec" id="createEngineSec" style="display:none">
+        <div class="mode-toggle create-engine-toggle">
+            <button class="mode-btn active" id="createEngineGpt" onclick="createSetEngine('gpt')" title="Generate with GPT image">GPT</button>
+            <button class="mode-btn" id="createEngineSdxl" onclick="createSetEngine('sdxl')" title="SDXL Studio — custom checkpoints, LoRAs, txt2img / img2img / inpaint">SDXL</button>
         </div>
     </div>
 
@@ -7556,11 +7572,16 @@ function syncSdxlSubscriptionLock(){
     if (!overlay) return;
     const genBtn = document.getElementById('sdxlGenBtn');
     const tab    = document.getElementById('stageTabSdxl');
+    // SDXL moved from a top-level stage tab to the Create GPT/SDXL sub-toggle;
+    // the Pro padlock now rides that sub-button. (tab is kept for safety in
+    // case the old tab is ever restored — it's null after the tab removal.)
+    const subBtn = document.getElementById('createEngineSdxl');
     // Admin switch OFF → SDXL is open to everyone: never veil, never padlock.
     if (!_sdxlRequireSub){
         overlay.style.display = 'none';
         if (genBtn) genBtn.disabled = false;
         if (tab) tab.classList.remove('pro-locked');
+        if (subBtn) subBtn.classList.remove('pro-locked');
         return;
     }
     // Switch ON → SDXL is subscriber-only. Veil the tab for non-subscribers.
@@ -7569,6 +7590,7 @@ function syncSdxlSubscriptionLock(){
     // Tab padlock — only once auth is known, so we don't briefly badge a
     // subscriber whose /auth/me hasn't returned yet.
     if (tab) tab.classList.toggle('pro-locked', _authResolved && locked);
+    if (subBtn) subBtn.classList.toggle('pro-locked', _authResolved && locked);
     if (!onSdxl || !locked){
         overlay.style.display = 'none';
         if (genBtn) genBtn.disabled = false;
@@ -8484,6 +8506,9 @@ function setMode(mode, opts){
             })();
         }
     }
+    // Keep the Create GPT/SDXL sub-toggle in sync: show it in Create mode
+    // (GPT active), hide it in Camera/Edit/Batch.
+    if (typeof _syncCreateEngineToggle === 'function') _syncCreateEngineToggle();
 }
 
 function updateGenButton(){
@@ -23489,6 +23514,40 @@ function _restoreSidebarForMode(mode){
     document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
 }
 
+// GPT / SDXL engine sub-toggle for Create mode. GPT is the standard
+// gpt-image create flow; SDXL routes into the SDXL Studio view (which used
+// to be a top-level stage tab). Because SDXL now lives under Create, the
+// toggle has to stay visible both in Create (generate) mode and while the
+// SDXL sub-view is active, so the user can always flip back to GPT.
+function createSetEngine(engine){
+    if (engine === 'sdxl'){
+        // Enter the SDXL sub-view. setStageView('sdxl') swaps in the SDXL
+        // sidebar controls and (for non-subscribers) paints the Pro lock.
+        if (typeof setStageView === 'function') setStageView('sdxl');
+    } else {
+        // Back to the standard GPT Create flow. switchToStudio makes setMode
+        // leave the SDXL/Gallery stage view if we're on it.
+        if (typeof setMode === 'function') setMode('generate', { switchToStudio: true });
+    }
+    _syncCreateEngineToggle();
+}
+
+// Show the GPT/SDXL toggle whenever the user is in the Create context —
+// either normal Create (generate) mode or the SDXL sub-view — and paint the
+// active button. Called from setMode, setStageView and
+// _syncStageGalleryVisibility so it tracks every transition.
+function _syncCreateEngineToggle(){
+    const sec = document.getElementById('createEngineSec');
+    if (!sec) return;
+    const onSdxl   = (window._stageView === 'sdxl');
+    const inCreate = (typeof currentMode !== 'undefined' && currentMode === 'generate') || onSdxl;
+    sec.style.display = inCreate ? '' : 'none';
+    const gpt  = document.getElementById('createEngineGpt');
+    const sdxl = document.getElementById('createEngineSdxl');
+    if (gpt)  gpt.classList.toggle('active', inCreate && !onSdxl);
+    if (sdxl) sdxl.classList.toggle('active', onSdxl);
+}
+
 function setStageView(view){
     if (view !== 'studio' && view !== 'gallery' && view !== 'sdxl') view = 'studio';
     window._stageView = view;
@@ -23524,6 +23583,9 @@ function setStageView(view){
     // stack must appear on entering the SDXL tab (with an image staged) and
     // disappear on leaving it, even though the staged image itself is unchanged.
     if (typeof updateStageClearBtn === 'function') updateStageClearBtn();
+    // Keep the Create GPT/SDXL sub-toggle's visibility + active button in
+    // step with the stage view (entering/leaving the SDXL sub-view).
+    if (typeof _syncCreateEngineToggle === 'function') _syncCreateEngineToggle();
 }
 
 // Called from every generate-submit code path right after preflight
@@ -23550,9 +23612,10 @@ function _syncStageGalleryVisibility(){
     const ph = document.getElementById('outPh');
     const inSdxl = (window._stageView === 'sdxl');
     // SDXL controls live in the LEFT sidebar (like Camera/Edit/Create). When the
-    // SDXL tab is active we show the .sdxl-only section, hide the normal mode
-    // toggle + every other mode's sidebar sections, and leave the center as the
-    // output stage. Leaving SDXL restores the normal sidebar via setMode.
+    // SDXL sub-view is active we show the .sdxl-only section and hide the other
+    // modes' sidebar sections, but KEEP the Camera/Edit/Batch/Create row visible
+    // (SDXL is an engine of Create, reachable via the GPT/SDXL sub-toggle). The
+    // center stays the output stage. Leaving SDXL restores the sidebar via setMode.
     document.querySelectorAll('.sdxl-only').forEach(el => el.style.display = inSdxl ? '' : 'none');
     // SDXL header pills (base model + VRAM) only on the SDXL tab.
     document.querySelectorAll('.sdxl-hdr').forEach(el => el.style.display = inSdxl ? '' : 'none');
@@ -23566,7 +23629,11 @@ function _syncStageGalleryVisibility(){
     }
     const modeSec = document.querySelector('.mode-sec');
     if (inSdxl) {
-        if (modeSec) modeSec.style.display = 'none';
+        // Keep the Camera/Edit/Batch/Create row visible in the SDXL sub-view —
+        // SDXL is now an engine of Create, not a separate workspace, so the
+        // mode buttons stay put (clicking one leaves SDXL via setMode's
+        // switchToStudio). Only the per-mode sidebar sections are hidden.
+        if (modeSec) modeSec.style.display = '';
         // hide all the standard mode sections
         document.querySelectorAll('.camera-only,.edit-only,.batch-only,.generate-only,.not-generate')
             .forEach(el => el.style.display = 'none');
