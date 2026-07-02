@@ -1434,6 +1434,9 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .history-card:hover{border-color:var(--gold);transform:translateY(-3px);box-shadow:0 10px 28px -8px rgba(0,0,0,.65),0 0 0 1px rgba(232,169,23,.25)}
 .history-card-thumb{width:100%;aspect-ratio:1/1;background:var(--surface-3);overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
 .history-card-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+/* Video shares render a <video> in the same footprint as the thumb <img>. */
+.history-card-thumb video.gc-video{width:100%;height:100%;object-fit:cover;display:block;background:var(--surface-3)}
+.gc-video-badge{position:absolute;top:8px;left:8px;z-index:3;width:22px;height:22px;border-radius:50%;background:rgba(9,9,11,.62);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;pointer-events:none;backdrop-filter:blur(2px)}
 /* Gentle image zoom on gallery-card hover — image-first feel without
    moving any of the overlaid chrome (which lives in separate layers). */
 .gallery-card .history-card-thumb img{transition:transform .35s cubic-bezier(.2,.7,.3,1)}
@@ -1736,6 +1739,7 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    button that one-shots the blur off (the per-card escape hatch — the
    global preference change goes through user-menu). */
 .gallery-card.nsfw-blurred .history-card-thumb img,
+.gallery-card.nsfw-blurred .history-card-thumb video.gc-video,
 .gallery-card.nsfw-blurred .history-card-mosaic{
     filter:blur(22px) saturate(.85);
     transform:scale(1.05);  /* hide the blurred edge */
@@ -1767,6 +1771,7 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* Once revealed, the overlay's display is forced off via JS on click. */
 .gallery-card.nsfw-revealed .gc-reveal-overlay{display:none!important}
 .gallery-card.nsfw-revealed .history-card-thumb img,
+.gallery-card.nsfw-revealed .history-card-thumb video.gc-video,
 .gallery-card.nsfw-revealed .history-card-mosaic{filter:none;transform:none}
 
 /* Persistent NSFW badge — sits on the corner whether or not the image
@@ -6142,6 +6147,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <button class="modal-close" onclick="closeModal()">×</button>
     <div class="modal-stage" id="modalStage" onclick="event.stopPropagation()">
     <img id="modalImg" draggable="false">
+    <!-- Video shares (a shared last-frame row carrying an mp4) play here
+         instead of #modalImg. Toggled by openModal based on ctx.video_url. -->
+    <video id="modalVideo" controls loop playsinline style="display:none;max-width:100%;max-height:100%;object-fit:contain"></video>
     <!-- Zoom/pan is wired in JS (wheel, pinch, double-click/tap, drag). A plain
          tap at fit still closes (handled by the zoom controller's tap logic);
          the × button, backdrop click, and Escape close from any zoom level. -->
@@ -11261,6 +11269,10 @@ async function _pollVideoJob(jobKey, videoId){
                 duration: p.duration || null, created_at: now, finished_at: now,
             };
             if (typeof addVideoToHistory === 'function') addVideoToHistory(vitem);
+            // Capture the final frame and save it as an independent History
+            // image (also carries the mp4 URL so it can be shared as a clip).
+            // Fire-and-forget — never blocks delivering the result.
+            if (typeof _vmSaveLastFrame === 'function') _vmSaveLastFrame(d.video_url, videoId, p);
             _showVideoResult(d.video_url, d.seed, job._videoSourceUrl, elapsed, videoId);
             if (typeof showVideoInStage === 'function') showVideoInStage(vitem);
             showNotif('🎬 Video ready — added to History.', 'success');
@@ -11313,6 +11325,105 @@ function _showVideoResult(url, seed, sourceUrl, elapsed, videoId){
     const dl = $('vmDownload'); dl.href = url; dl.style.display = '';
     $('vmStatus').textContent = `Done${seed != null ? ` · seed ${seed}` : ''}${elapsed ? ` · ${elapsed}s` : ''}.`;
     const go = $('vmGenerate'); go.disabled = false; go.textContent = 'Generate again';
+}
+
+// ── Last-frame → History ────────────────────────────────────────────────
+// When a video finishes, grab its FINAL frame and save it as an independent
+// image in the user's History (a real studio_jobs row via /save-output). The
+// saved row also carries the mp4 URL, so sharing it publishes an autoplaying
+// clip to the Community Gallery. Best-effort: cross-origin frame capture taints
+// the canvas when the video CDN doesn't send CORS headers — on that (or any)
+// failure we skip quietly, since the video itself is already in History.
+const _vmSavedFrameFor = new Set();
+async function _vmSaveLastFrame(videoUrl, videoId, params){
+    if (!videoUrl || !_user || !videoId) return;
+    if (_vmSavedFrameFor.has(videoId)) return;   // one frame per video
+    _vmSavedFrameFor.add(videoId);
+    let cap = null;
+    try {
+        cap = await _captureVideoLastFrame(videoUrl);
+    } catch (e) {
+        _vmSavedFrameFor.delete(videoId);          // allow a retry on next done
+        return;                                    // capture unsupported here
+    }
+    if (!cap || !cap.dataUrl) { _vmSavedFrameFor.delete(videoId); return; }
+    try {
+        // data URL → File, uploaded through the normal (child-safety-screened)
+        // upload path so the frame is stored + served like any other image.
+        const blob = await (await fetch(cap.dataUrl)).blob();
+        const file = new File([blob], `frame_${videoId}.jpg`, { type: 'image/jpeg' });
+        const fd = new FormData(); fd.append('image', file);
+        if (typeof attachScreenCopy === 'function') await attachScreenCopy(fd, file);
+        const ur = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
+        const ud = await ur.json().catch(() => ({}));
+        if (!ud || !ud.id) return;                 // blocked or failed — leave it
+        const sr = await fetchT(`${API}/api/studio/save-output`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                upload_id: ud.id, mode: 'video', video_url: videoUrl,
+                prompt: (params && params.prompt) || '', w: cap.w, h: cap.h,
+            }),
+        }, 20000);
+        const sd = await sr.json().catch(() => ({}));
+        if (!sd || !sd.ok || !sd.id) return;
+        // Splice the new image into History right away (a /history sync will
+        // return the same row on reload). It's a normal image card that also
+        // carries video_url, so it's shareable as a gallery clip.
+        const now = Math.floor(Date.now() / 1000);
+        const imgItem = {
+            id: sd.id, mode: 'video', url: sd.url, upload_id: ud.id,
+            media_type: 'video', video_url: videoUrl, poster: sd.url,
+            prompt: (params && params.prompt) || '',
+            w: cap.w, h: cap.h, seed: 0, created_at: now, finished_at: now,
+            is_public: 0,
+        };
+        if (Array.isArray(_historyItems) && !_historyItems.some(x => x.id === imgItem.id)) {
+            _historyItems.unshift(imgItem);
+            _historyItems.sort((a,b) => (b.finished_at||b.created_at||0) - (a.finished_at||a.created_at||0));
+            try { renderHistorySidebar(); } catch(e){}
+            if ($('historyModal') && $('historyModal').style.display !== 'none') { try { renderHistoryModal(); } catch(e){} }
+        }
+        if (typeof showNotif === 'function') showNotif('🖼 Final frame saved to your History.', 'success');
+    } catch (e) { /* best-effort — never block the result flow */ }
+}
+
+// Load a video cross-origin, seek to its final frame, and resolve with a JPEG
+// data URL + dimensions. Rejects if the frame can't be read (tainted canvas,
+// load error, or timeout).
+function _captureVideoLastFrame(videoUrl){
+    return new Promise((resolve, reject) => {
+        const v = document.createElement('video');
+        v.crossOrigin = 'anonymous';
+        v.muted = true; v.playsInline = true; v.preload = 'auto';
+        v.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+        let done = false;
+        const cleanup = () => { try { v.removeAttribute('src'); v.load(); } catch(e){} try { v.remove(); } catch(e){} };
+        const fail = (e) => { if (done) return; done = true; clearTimeout(to); cleanup(); reject(e || new Error('capture_failed')); };
+        const grab = () => {
+            if (done) return;
+            try {
+                const w = v.videoWidth, h = v.videoHeight;
+                if (!w || !h) return fail(new Error('no_dims'));
+                const c = document.createElement('canvas'); c.width = w; c.height = h;
+                c.getContext('2d').drawImage(v, 0, 0, w, h);
+                const dataUrl = c.toDataURL('image/jpeg', 0.9);   // throws if tainted
+                done = true; clearTimeout(to); cleanup(); resolve({ dataUrl, w, h });
+            } catch (e) { fail(e); }
+        };
+        const to = setTimeout(() => fail(new Error('timeout')), 20000);
+        v.addEventListener('error', () => fail(new Error('load_error')));
+        v.addEventListener('loadeddata', () => {
+            const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 0;
+            // Back off a hair from the exact end — some encoders emit a black
+            // frame at duration. If we can't seek, grab the current frame.
+            const t = dur ? Math.max(0, dur - 0.05) : 0;
+            try { v.currentTime = t; } catch(e) { grab(); }
+        });
+        v.addEventListener('seeked', grab);
+        document.body.appendChild(v);
+        v.src = videoUrl;
+        try { v.load(); } catch(e){}
+    });
 }
 
 // Put a finished video onto the shared stage (the same surface images use).
@@ -12003,6 +12114,26 @@ async function _makeMarkupThumbDataUrl(slotIdx){
 function openModal(src, filename, ctx){
     if(!src) return;
     $('modalImg').src = src;
+    // Video items (shared last-frame rows) play the clip in the lightbox
+    // instead of showing the still. We keep #modalImg's src set (the poster)
+    // so any code that reads it still works, but hide it behind the <video>.
+    const _mv = $('modalVideo');
+    const _isVideoCtx = !!(ctx && ctx.video_url);
+    if (_mv) {
+        if (_isVideoCtx) {
+            _mv.src = ctx.video_url;
+            if (ctx.poster || src) _mv.poster = ctx.poster || src;
+            _mv.style.display = '';
+            $('modalImg').style.display = 'none';
+            try { _mv.load(); _mv.play().catch(()=>{}); } catch(e){}
+        } else {
+            try { _mv.pause(); } catch(e){}
+            _mv.removeAttribute('src'); _mv.removeAttribute('poster');
+            try { _mv.load(); } catch(e){}
+            _mv.style.display = 'none';
+            $('modalImg').style.display = '';
+        }
+    }
     // Wire the download anchor — browsers honor `download` on same-origin
     // OR cross-origin anchors as long as the response sends a permissive
     // CORS header (R2 + our worker do). We pass an explicit filename so
@@ -12010,8 +12141,11 @@ function openModal(src, filename, ctx){
     // would be an opaque uuid for R2-served outputs.
     const dl = $('modalDownload');
     if (dl) {
-        dl.href = src;
-        dl.setAttribute('download', filename || (src.split('/').pop().split('?')[0]) || 'image.png');
+        // For video items, download the mp4 rather than the poster still.
+        const dlHref = _isVideoCtx ? ctx.video_url : src;
+        dl.href = dlHref;
+        dl.setAttribute('download', filename || (dlHref.split('/').pop().split('?')[0]) || (_isVideoCtx ? 'video.mp4' : 'image.png'));
+        dl.setAttribute('title', _isVideoCtx ? 'Download video' : 'Download image');
     }
     // Action toolbar — shown whenever the modal was opened with a usable
     // context. Two paths:
@@ -13203,6 +13337,16 @@ async function confirmPublishFromDialog(){
 function closeModal(){
     $('imgModal').classList.remove('open');
     $('imgModal').classList.remove('with-comments');
+    // Stop + unload any lightbox video so audio doesn't keep playing after
+    // close and the next image open starts clean.
+    const _mv = $('modalVideo');
+    if (_mv) {
+        try { _mv.pause(); } catch(e){}
+        _mv.removeAttribute('src'); _mv.removeAttribute('poster');
+        try { _mv.load(); } catch(e){}
+        _mv.style.display = 'none';
+        const mi = $('modalImg'); if (mi) mi.style.display = '';
+    }
     // Hide the action toolbar so the next non-batch open doesn't flash it.
     const actionBar = $('modalActions');
     if (actionBar) {
@@ -21180,6 +21324,11 @@ function _buildGalleryCard(it, surface){
         viewer_liked: it.viewer_liked || 0,
         tips_total: it.tips_total || 0,
         url: it.url, w: it.w, h: it.h,
+        // Video shares carry the mp4 URL + a media_type flag so the lightbox
+        // can play the clip (and the card renders an autoplaying tile).
+        media_type: it.media_type || 'image',
+        video_url: it.video_url || '',
+        poster: it.poster || it.url,
         // Seed fields for the lightbox-comments creator block. The
         // discussion panel paints these immediately so the user sees
         // the prompt + author notes before /social returns. The server
@@ -21290,9 +21439,20 @@ function _buildGalleryCard(it, surface){
         ? `<div class="gc-rest-stats">${restStats.join('')}</div>`
         : '';
 
+    // Video shares autoplay muted+looping in the feed (the frame poster shows
+    // until the clip is buffered). A small ▶ badge marks them. Ordinary images
+    // stay a plain lazy <img>.
+    const isVideo = (it.media_type === 'video') && !!it.video_url;
+    const posterUrl = it.poster || it.url;
+    const mediaHtml = isVideo
+        ? `<video class="gc-video" autoplay muted loop playsinline preload="metadata"
+                  poster="${posterUrl}" src="${it.video_url}"></video>
+           <div class="gc-video-badge">▶</div>`
+        : `<img src="${it.url}" loading="lazy" alt="">`;
+
     card.innerHTML = `
         <div class="history-card-thumb">
-            <img src="${it.url}" loading="lazy" alt="">
+            ${mediaHtml}
             <div class="gc-scrim"></div>
             ${nsfwBadge}
             ${mineBadge}
