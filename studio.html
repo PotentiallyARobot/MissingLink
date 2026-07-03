@@ -1477,6 +1477,8 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    the absolutely-positioned grid version). Always visible, flex-sized, red. */
 .q-hist-delete{width:28px;height:28px;border-radius:50%;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.45);color:#ff6b6b;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;flex-shrink:0;margin-left:4px;transition:all .12s}
 .q-hist-delete:hover{background:var(--red);border-color:var(--red);color:var(--white);transform:scale(1.08)}
+.q-hist-edit{width:28px;height:28px;border-radius:50%;background:rgba(227,179,65,.14);border:1px solid rgba(227,179,65,.45);color:var(--gold,#e3b341);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;flex-shrink:0;margin-left:4px;transition:all .12s}
+.q-hist-edit:hover{background:var(--gold,#e3b341);border-color:var(--gold,#e3b341);color:var(--black,#111);transform:scale(1.08)}
 /* Sidebar history-tile remix icon — overlaid on the top-left of the thumb.
    Click = restore all settings + stage the image (remixFromHistory).
    Plain tile click stays image-only (restoreFromHistory). */
@@ -3770,6 +3772,18 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .vm-scene-move button:hover:not(:disabled){background:rgba(255,255,255,.14)}
 .vm-scene-move button:disabled{opacity:.3;cursor:not-allowed}
 .vm-seq-note{font-size:10.5px;color:var(--text-muted,#a0a0a8);min-height:0}
+.vm-scene-empty{font-size:10.5px;color:var(--text-muted,#a0a0a8);padding:6px 2px}
+/* History picker overlay (inside the sequencer panel) */
+.vm-history-picker{position:absolute;left:0;right:0;top:0;z-index:20;background:var(--surface,#18181b);border:1px solid var(--border,#2a2a2e);border-radius:10px;display:flex;flex-direction:column;gap:8px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,.5);max-height:320px}
+.vm-scenes{position:relative}
+.vmhp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;font-weight:600;color:var(--text,#e7e7ea)}
+.vmhp-head button{background:none;border:none;color:var(--text-muted,#a0a0a8);font-size:18px;line-height:1;cursor:pointer;padding:0 4px}
+.vmhp-head button:hover{color:var(--text,#e7e7ea)}
+.vmhp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;overflow-y:auto;max-height:220px;padding:2px}
+.vmhp-item{position:relative;padding:0;border:1px solid var(--border,#2a2a2e);border-radius:7px;overflow:hidden;background:#000;cursor:pointer;aspect-ratio:1/1;transition:border-color .15s}
+.vmhp-item:hover{border-color:var(--gold,#e3b341)}
+.vmhp-item img,.vmhp-item video{width:100%;height:100%;object-fit:cover;display:block}
+.vmhp-badge{position:absolute;bottom:3px;left:3px;background:rgba(9,9,11,.72);color:#fff;font-size:8px;font-weight:700;border-radius:4px;padding:1px 4px;letter-spacing:.2px}
 .vm-status{font-size:12.5px;color:var(--text-muted,#9a9aa2);min-height:18px;line-height:1.45}
 .vm-fields{display:flex;flex-direction:column;gap:11px}
 .vm-fields label{font-size:12px;font-weight:600;color:var(--text-muted,#9a9aa2);display:block;margin-bottom:4px}
@@ -11136,9 +11150,10 @@ async function openVideoModal(){
     go.disabled = false; go.textContent = 'Generate video';
     // Fresh sequencer for a new session (animating a new stage image).
     _vmScenes = []; _vmActiveSceneId = null; _vmSeqPlaying = false;
-    if (typeof _vmRenderScenes === 'function') _vmRenderScenes();
     const _sn = $('vmSeqNote'); if (_sn) _sn.textContent = '';
+    _vmCloseHistoryPicker();
     $('videoModal').classList.add('open');
+    if (typeof _vmRenderScenes === 'function') _vmRenderScenes();
     // Load the catalog, shape the fields to the (default) model, and price it.
     // _vmApplyModel → _vmUpdateCost also sets the affordability message.
     await _vmLoadModels();
@@ -11295,6 +11310,7 @@ async function _pollVideoJob(jobKey, videoId){
                 id: videoId, _isVideo: true, mode: 'video',
                 url: d.video_url, seed: (d.seed != null ? d.seed : null),
                 prompt: p.prompt || '', resolution: p.resolution || null,
+                model: p.model || null, model_label: p.model_label || null,
                 duration: p.duration || null, created_at: now, finished_at: now,
             };
             if (typeof addVideoToHistory === 'function') addVideoToHistory(vitem);
@@ -11506,10 +11522,16 @@ function _vmAddScene(opts){
 function _vmRenderScenes(){
     const wrap = $('vmScenes'), strip = $('vmSceneStrip'), count = $('vmSceneCount');
     if (!wrap || !strip) return;
-    if (!_vmScenes.length) { wrap.style.display = 'none'; return; }
-    wrap.style.display = '';
-    if (count) count.textContent = `· ${_vmScenes.length} clip${_vmScenes.length > 1 ? 's' : ''}`;
+    // Panel stays visible whenever the modal is open (it lives inside the
+    // modal, so it's hidden with it) — so "From history" is reachable even
+    // before the first clip exists.
+    const open = $('videoModal') && $('videoModal').classList.contains('open');
+    wrap.style.display = open ? '' : 'none';
+    if (count) count.textContent = _vmScenes.length ? `· ${_vmScenes.length} clip${_vmScenes.length > 1 ? 's' : ''}` : '';
     strip.innerHTML = '';
+    if (!_vmScenes.length) {
+        strip.innerHTML = `<div class="vm-scene-empty">No clips yet — generate one, or pull a start frame in from history.</div>`;
+    }
     _vmScenes.forEach((s, i) => {
         const el = document.createElement('div');
         el.className = 'vm-scene' + (s.id === _vmActiveSceneId ? ' active' : '');
@@ -11531,7 +11553,8 @@ function _vmRenderScenes(){
             </div>`;
         strip.appendChild(el);
     });
-    const playBtn = $('vmSeqPlay'), exportBtn = $('vmSeqExport');
+    const newBtn = $('vmSceneNew'), playBtn = $('vmSeqPlay'), exportBtn = $('vmSeqExport');
+    if (newBtn) newBtn.disabled = _vmScenes.length < 1;   // needs a clip to extend
     if (playBtn) playBtn.disabled = _vmScenes.length < 1;
     if (exportBtn) exportBtn.disabled = _vmScenes.length < 2;
 }
@@ -11662,6 +11685,131 @@ async function _vmExportSequence(){
     }
 }
 
+// Fetch a (same-origin / CORS-permitted) URL and return a data URI. Used to
+// turn a history image into a start frame the video job can consume inline.
+async function _vmUrlToDataUri(u){
+    if (!u) return null;
+    try {
+        const r = await fetchT(u, null, 15000);
+        const blob = await r.blob();
+        return await new Promise((res, rej) => {
+            const fr = new FileReader();
+            fr.onload = () => res(fr.result);
+            fr.onerror = rej;
+            fr.readAsDataURL(blob);
+        });
+    } catch (e) { return null; }
+}
+
+// ── Add from history ────────────────────────────────────────────────────
+// Opens a picker of the user's past outputs. Tapping an IMAGE seeds it as the
+// next clip's start frame; tapping a CLIP appends it to the sequence.
+function _vmOpenHistoryPicker(){
+    const pick = $('vmHistoryPicker'), grid = $('vmHistoryPickerGrid');
+    if (!pick || !grid) return;
+    const items = (Array.isArray(_historyItems) ? _historyItems : []).filter(it => it && (it.url || it.video_url));
+    if (!items.length) { showNotif('Nothing in your history yet.', 'info'); return; }
+    grid.innerHTML = items.map(it => {
+        const isVid = !!it._isVideo || (it.media_type === 'video');
+        const posterUrl = isVid ? (it.poster || '') : (it.url || '');
+        const vidSrc = isVid ? (it.video_url || it.url) : '';
+        const thumb = posterUrl
+            ? `<img src="${posterUrl}" loading="lazy" alt="">`
+            : (isVid ? `<video src="${vidSrc}#t=0.1" muted preload="metadata"></video>` : `<img src="${it.url}" loading="lazy" alt="">`);
+        const badge = isVid ? '▶ clip' : 'frame';
+        return `<button type="button" class="vmhp-item" onclick="_vmPickHistory('${String(it.id).replace(/'/g,"")}')" title="${escapeHtml(it.prompt || '')}">${thumb}<span class="vmhp-badge">${badge}</span></button>`;
+    }).join('');
+    pick.style.display = 'flex';
+}
+function _vmCloseHistoryPicker(){ const p = $('vmHistoryPicker'); if (p) p.style.display = 'none'; }
+
+function _vmPickHistory(id){
+    const it = (_historyItems || []).find(x => String(x.id) === String(id));
+    _vmCloseHistoryPicker();
+    if (!it) return;
+    const isVid = !!it._isVideo || (it.media_type === 'video');
+    if (isVid) {
+        _vmAddScene({
+            videoUrl: it.video_url || it.url, videoId: it.id,
+            params: { prompt: it.prompt || '', model: it.model || '', model_label: it.model_label || '', resolution: it.resolution || null, duration: it.duration || null },
+            seed: (it.seed != null ? it.seed : null),
+            sourceUrl: it.poster || '',
+        });
+        showNotif('Added that clip to the sequence.', 'success');
+    } else {
+        _vmUseHistoryFrame(it);
+    }
+}
+
+// Seed the next clip's start frame from a chosen history image.
+async function _vmUseHistoryFrame(it){
+    const url = it && it.url;
+    if (!url) { showNotif('That item has no image.', 'error'); return; }
+    const du = await _vmUrlToDataUri(url);
+    if (!du) { showNotif("Couldn't load that image (it may be hosted somewhere that blocks access).", 'error'); return; }
+    _vmSeqPlaying = false;
+    _videoState.sourceDataUri = du;
+    const img = $('vmSourceImg'); if (img) { img.src = du; img.style.display = ''; }
+    const v = $('vmResultVideo'); if (v) { try { v.pause(); } catch(e){} v.style.display = 'none'; v.removeAttribute('src'); try { v.load(); } catch(e){} }
+    const dl = $('vmDownload'); if (dl) dl.style.display = 'none';
+    if ($('vmPrompt')) { if (it.prompt) $('vmPrompt').value = it.prompt; try { $('vmPrompt').focus(); } catch(e){} }
+    _vmActiveSceneId = null;
+    if (typeof _vmSetProgress === 'function') _vmSetProgress(0, '', true);
+    const go = $('vmGenerate'); if (go) { go.disabled = false; go.textContent = _vmScenes.length ? 'Generate next clip' : 'Generate video'; }
+    const note = $('vmSeqNote'); if (note) note.textContent = 'Using a history frame as the next clip’s start — write the prompt and Generate.';
+    _vmRenderScenes();
+    showNotif('Loaded that frame as the next clip’s start image.', 'success');
+}
+
+// ── Edit an existing video in the editor ────────────────────────────────
+// Opens the video modal with a past video loaded as scene 1, so the user can
+// extend it (from last frame / from history), reorder, play, or export. Does
+// NOT require an image on the stage.
+async function _vmEditVideoFromHistory(item){
+    if (!item) return;
+    const videoUrl = item.url || item.video_url;
+    if (!videoUrl) { showNotif('That item has no video to edit.', 'error'); return; }
+    if (typeof closeHistoryModal === 'function') { try { closeHistoryModal(); } catch(e){} }
+    // Open the modal shell (no stage image needed).
+    _videoState.generating = false;
+    _videoState.polling = false;
+    if (_videoState.timer) { clearTimeout(_videoState.timer); _videoState.timer = null; }
+    $('vmStatus').textContent = '';
+    if (typeof _vmSetProgress === 'function') _vmSetProgress(0, '', true);
+    const img = $('vmSourceImg'); if (img) img.style.display = 'none';
+    const v = $('vmResultVideo'); if (v) { v.src = videoUrl; v.style.display = ''; v.controls = true; try { v.load(); } catch(e){} }
+    const dl = $('vmDownload'); if (dl) { dl.href = videoUrl; dl.style.display = ''; dl.textContent = '⬇ Download video'; }
+    const go = $('vmGenerate'); if (go) { go.disabled = false; go.textContent = 'Generate next clip'; }
+    _vmCloseHistoryPicker();
+    $('videoModal').classList.add('open');
+    await _vmLoadModels();
+    // Seed the sequence with this video as scene 1.
+    _vmScenes = []; _vmActiveSceneId = null; _vmSeqPlaying = false;
+    if (item.model && $('vmModel') && typeof _videoModelsById === 'object' && _videoModelsById[item.model]) $('vmModel').value = item.model;
+    _vmAddScene({
+        videoUrl, videoId: item.id,
+        params: { prompt: item.prompt || '', model: item.model || '', model_label: item.model_label || '', resolution: item.resolution || null, duration: item.duration || null },
+        seed: (item.seed != null ? item.seed : null),
+        sourceUrl: item.poster || '',
+    });
+    // Make the video immediately extendable: get a last-frame still so both
+    // "From last frame" and a direct "Generate next clip" continue from where
+    // this clip ends. Prefer a same-origin poster; else capture from the mp4.
+    let contDataUri = null;
+    if (item.poster) contDataUri = await _vmUrlToDataUri(item.poster);
+    if (!contDataUri) { try { const cap = await _captureVideoLastFrame(videoUrl); if (cap) contDataUri = cap.dataUrl; } catch(e){} }
+    if (contDataUri) {
+        const s = _vmScenes[_vmScenes.length - 1];
+        if (s) { s.lastFrameDataUri = contDataUri; if (!s.poster) s.poster = contDataUri; }
+        _videoState.sourceDataUri = contDataUri;
+    }
+    if (typeof _vmApplyModel === 'function') _vmApplyModel();
+    if ($('vmPrompt')) $('vmPrompt').value = item.prompt || '';
+    _vmRenderScenes();
+    if (typeof _vmUpdateCost === 'function') _vmUpdateCost();
+    const note = $('vmSeqNote'); if (note) note.textContent = 'Editing this video. Extend it from its last frame, add a history frame, reorder, or export.';
+}
+
 // Put a finished video onto the shared stage (the same surface images use).
 // Hides the image/placeholder/pano, shows #outVideo, and flips the result bar
 // to a video label. The 🗑 clear button then treats it like any stage element.
@@ -11731,6 +11879,8 @@ async function syncVideoHistory(){
                 url: it.video_url,
                 seed: (it.seed != null ? it.seed : (p.seed != null ? p.seed : null)),
                 prompt: p.prompt || '',
+                model: p.model || null,
+                model_label: p.model_label || null,
                 resolution: p.resolution || null,
                 duration: p.duration || null,
                 created_at: it.created_at || 0,
@@ -19601,6 +19751,7 @@ function renderHistorySidebar(){
                     <div class="job-status">🎬 Video</div>
                     <div class="job-mode">${j.resolution ? String(j.resolution).toUpperCase() : 'VIDEO'}</div>
                 </div>
+                <button class="q-hist-edit" title="Edit in the video editor — extend, reorder, or combine clips" onclick="event.stopPropagation(); _vmEditVideoFromHistory(_historyItems.find(x=>String(x.id)==='${j.id}'))">✂️</button>
                 <button class="q-hist-delete" title="Delete this video" onclick="event.stopPropagation(); deleteVideoHistoryItem('${j.id}')">🗑</button>
             `;
         } else if (g.kind === 'single') {
@@ -21089,6 +21240,7 @@ function renderHistoryModal(){
                     <div class="hc-prompt">${escapeHtml(j.prompt || '')}</div>
                 </div>
                 <div class="history-card-actions">
+                    <button class="history-card-remix" title="Edit in the video editor — extend, reorder, or combine clips" onclick="event.stopPropagation(); _vmEditVideoFromHistory(_historyItems.find(x=>String(x.id)==='${j.id}'))">✂️</button>
                     <button class="history-card-delete" title="Delete this video" onclick="event.stopPropagation(); deleteVideoHistoryItem('${j.id}')">🗑</button>
                 </div>
             `;
@@ -27053,19 +27205,30 @@ window.PanoViewer = (function(){
         <!-- ── Scene sequencer ─────────────────────────────────────────────
              Each finished clip becomes a "scene" here. "Scene from last frame"
              seeds the next clip's source with the current clip's final frame so
-             the sequence stays continuous across any model. Reorder, play all
-             back-to-back, or export/stitch into one longer clip. -->
+             the sequence stays continuous across any model. "From history" pulls
+             any past image in as a start frame, or any past clip in as a scene.
+             Reorder, play all back-to-back, or export/stitch into one clip. -->
         <div class="vm-scenes" id="vmScenes" style="display:none">
           <div class="vm-scenes-head">
             <span>🎞 Sequence <span class="vm-scene-count" id="vmSceneCount"></span></span>
             <div class="vm-scenes-actions">
-              <button type="button" id="vmSceneNew" onclick="_vmNewSceneFromLast()" title="Start the next clip from the LAST FRAME of the current one — keeps motion/lighting continuous">＋ Scene from last frame</button>
+              <button type="button" id="vmSceneNew" onclick="_vmNewSceneFromLast()" title="Start the next clip from the LAST FRAME of the current one — keeps motion/lighting continuous">＋ From last frame</button>
+              <button type="button" id="vmSceneHist" onclick="_vmOpenHistoryPicker()" title="Use a past image as the next clip's start frame, or pull a past clip into the sequence">＋ From history</button>
               <button type="button" id="vmSeqPlay" onclick="_vmPlaySequence()" title="Play every clip back-to-back">▶ Play all</button>
               <button type="button" id="vmSeqExport" onclick="_vmExportSequence()" title="Combine all clips into one longer video">⤓ Export</button>
             </div>
           </div>
           <div class="vm-scene-strip" id="vmSceneStrip"></div>
           <div class="vm-seq-note" id="vmSeqNote"></div>
+
+          <!-- History picker overlay (images → start frame, clips → scene). -->
+          <div class="vm-history-picker" id="vmHistoryPicker" style="display:none">
+            <div class="vmhp-head">
+              <span>Add from history — tap an image for a start frame, or a clip to add it</span>
+              <button type="button" onclick="_vmCloseHistoryPicker()" aria-label="Close">×</button>
+            </div>
+            <div class="vmhp-grid" id="vmHistoryPickerGrid"></div>
+          </div>
         </div>
       </div>
       <div class="vm-fields">
