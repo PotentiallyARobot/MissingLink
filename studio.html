@@ -5777,6 +5777,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              with a job id; the JS reads outImg.dataset.jobId to know
              which generation to act on. -->
         <button class="use-input-btn" id="btnShareResult" onclick="shareCurrentResult()" style="display:none" title="Share this image to the Community Gallery">🌐 Share to Gallery</button>
+        <!-- Video-only: reopens the staged clip in the video editor to extend,
+             reorder, or combine it. Shown by showVideoInStage, hidden by the
+             image showResult path. -->
+        <button class="use-input-btn" id="btnEditVideo" onclick="_vmEditStagedVideo()" style="display:none" title="Reopen this video in the editor — extend, reorder, or combine clips">✂️ Edit video</button>
     </div>
 
     <!-- MOBILE ACTION BAR — sticky at the bottom of the viewport on narrow
@@ -10926,6 +10930,10 @@ let _videoModels = [];
 let _videoModelsById = {};
 let _videoModelsLoaded = false;
 let _videoState = { id: null, polling: false, generating: false, sourceDataUri: null, t0: 0, timer: null, _cost: 0 };
+// The video currently staged on the canvas (set by showVideoInStage). Powers
+// the result-bar "✂️ Edit video" button so a staged clip can be reopened in
+// the editor without hunting through History.
+let _stagedVideoItem = null;
 
 // Minimal fallback so the modal still works if the catalog fetch fails.
 const _VIDEO_MODELS_FALLBACK = [{
@@ -11810,6 +11818,19 @@ async function _vmEditVideoFromHistory(item){
     const note = $('vmSeqNote'); if (note) note.textContent = 'Editing this video. Extend it from its last frame, add a history frame, reorder, or export.';
 }
 
+// Reopen the clip currently staged on the canvas in the video editor.
+function _vmEditStagedVideo(){
+    const item = _stagedVideoItem
+        || (function(){
+            // Fallback: reconstruct from the stage <video> if we lost the ref.
+            const v = $('outVideo');
+            if (v && v.src) return { id: v.dataset.videoId || null, url: v.src, _isVideo: true };
+            return null;
+        })();
+    if (!item) { showNotif('No video is staged to edit.', 'error'); return; }
+    _vmEditVideoFromHistory(item);
+}
+
 // Put a finished video onto the shared stage (the same surface images use).
 // Hides the image/placeholder/pano, shows #outVideo, and flips the result bar
 // to a video label. The 🗑 clear button then treats it like any stage element.
@@ -11837,6 +11858,10 @@ function showVideoInStage(item){
     $('resultBar').style.display = 'flex';
     // Hide the image-result action buttons — they don't apply to a video.
     ['btnUseAsInput','btnCreateAssign','btnCreateReverse'].forEach(id => { const b=$(id); if(b) b.style.display='none'; });
+    // Remember the staged clip and expose the "Edit video" action so the user
+    // can reopen it in the editor straight from the stage.
+    _stagedVideoItem = item;
+    const _ev = $('btnEditVideo'); if (_ev) _ev.style.display = '';
     lastResult = null;
     _lastResultForActions = null;
     lastOutputFilename = (item.url.split('/').pop() || null);
@@ -11925,6 +11950,8 @@ function clearStage(){
         vid.style.display = 'none';
         vid.removeAttribute('data-video-id');
     }
+    _stagedVideoItem = null;
+    const _evBtn = document.getElementById('btnEditVideo'); if (_evBtn) _evBtn.style.display = 'none';
     const bar = document.getElementById('resultBar');
     if (bar) bar.style.display = 'none';
     const ph = document.getElementById('outPh');
@@ -25884,6 +25911,10 @@ function showResult(d){
         _ov2.removeAttribute('src'); try { _ov2.load(); } catch(e){}
         _ov2.style.display = 'none'; _ov2.removeAttribute('data-video-id');
     }
+    // An image result replaces any staged clip — drop the video ref + its
+    // "Edit video" action so it can't linger onto this image.
+    _stagedVideoItem = null;
+    const _evBtn2 = $('btnEditVideo'); if (_evBtn2) _evBtn2.style.display = 'none';
     // Stash the underlying job id + share state on the element so the
     // image modal's Share button knows what to publish when the user
     // clicks the output. Cleared if d has no id (e.g. orphaned restore).
