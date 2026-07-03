@@ -3748,6 +3748,28 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 @media(max-width:640px){.vm-body{grid-template-columns:1fr}}
 .vm-media{display:flex;flex-direction:column;gap:10px}
 .vm-media img,.vm-media video{width:100%;border-radius:9px;background:#000;max-height:300px;object-fit:contain;border:1px solid var(--border,#2a2a2e)}
+/* ── Scene sequencer ─────────────────────────────────────────────────── */
+.vm-scenes{border:1px solid var(--border,#2a2a2e);border-radius:10px;padding:10px;background:rgba(255,255,255,.02);display:flex;flex-direction:column;gap:8px}
+.vm-scenes-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:600;color:var(--text,#e7e7ea)}
+.vm-scene-count{opacity:.6;font-weight:400}
+.vm-scenes-actions{display:flex;gap:6px;flex-wrap:wrap}
+.vm-scenes-actions button{font-family:inherit;font-size:10.5px;font-weight:600;color:var(--gold,#e3b341);background:rgba(227,179,65,.10);border:1px solid rgba(227,179,65,.35);border-radius:7px;padding:4px 8px;cursor:pointer;transition:background .15s,opacity .15s;white-space:nowrap}
+.vm-scenes-actions button:hover:not(:disabled){background:rgba(227,179,65,.20)}
+.vm-scenes-actions button:disabled{opacity:.4;cursor:not-allowed}
+.vm-scene-strip{display:flex;gap:8px;overflow-x:auto;padding:2px;scrollbar-width:thin}
+.vm-scene{flex:0 0 auto;width:92px;border:1px solid var(--border,#2a2a2e);border-radius:8px;overflow:hidden;background:#000;position:relative;cursor:pointer;transition:border-color .15s}
+.vm-scene:hover{border-color:var(--gold,#e3b341)}
+.vm-scene.active{border-color:var(--gold,#e3b341);box-shadow:0 0 0 1px var(--gold,#e3b341)}
+.vm-scene-thumb{width:100%;height:60px;object-fit:cover;display:block;background:#000}
+.vm-scene-idx{position:absolute;top:3px;left:3px;background:rgba(9,9,11,.7);color:#fff;font-size:9px;font-weight:700;border-radius:4px;padding:1px 5px}
+.vm-scene-del{position:absolute;top:3px;right:3px;background:rgba(9,9,11,.7);color:#fff;border:none;border-radius:50%;width:16px;height:16px;font-size:11px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.vm-scene-del:hover{background:rgba(220,60,60,.85)}
+.vm-scene-meta{font-size:8.5px;color:var(--text-muted,#a0a0a8);padding:3px 4px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vm-scene-move{display:flex;justify-content:space-between;padding:0 3px 3px}
+.vm-scene-move button{background:rgba(255,255,255,.06);color:var(--text,#e7e7ea);border:none;border-radius:4px;font-size:10px;width:20px;height:16px;cursor:pointer;line-height:1}
+.vm-scene-move button:hover:not(:disabled){background:rgba(255,255,255,.14)}
+.vm-scene-move button:disabled{opacity:.3;cursor:not-allowed}
+.vm-seq-note{font-size:10.5px;color:var(--text-muted,#a0a0a8);min-height:0}
 .vm-status{font-size:12.5px;color:var(--text-muted,#9a9aa2);min-height:18px;line-height:1.45}
 .vm-fields{display:flex;flex-direction:column;gap:11px}
 .vm-fields label{font-size:12px;font-weight:600;color:var(--text-muted,#9a9aa2);display:block;margin-bottom:4px}
@@ -11112,6 +11134,10 @@ async function openVideoModal(){
     _vmSetProgress(0, '', true);
     const go = $('vmGenerate');
     go.disabled = false; go.textContent = 'Generate video';
+    // Fresh sequencer for a new session (animating a new stage image).
+    _vmScenes = []; _vmActiveSceneId = null; _vmSeqPlaying = false;
+    if (typeof _vmRenderScenes === 'function') _vmRenderScenes();
+    const _sn = $('vmSeqNote'); if (_sn) _sn.textContent = '';
     $('videoModal').classList.add('open');
     // Load the catalog, shape the fields to the (default) model, and price it.
     // _vmApplyModel → _vmUpdateCost also sets the affordability message.
@@ -11125,6 +11151,9 @@ async function openVideoModal(){
 function closeVideoModal(){
     $('videoModal').classList.remove('open');
     _videoState.polling = false;
+    _vmSeqPlaying = false;
+    const _v = $('vmResultVideo');
+    if (_v) { try { _v.pause(); } catch(e){} if (_v._seqHandler) { _v.removeEventListener('ended', _v._seqHandler); _v._seqHandler = null; } }
     _vmSetProgress(0, '', true);
     if (_videoState.timer) { clearTimeout(_videoState.timer); _videoState.timer = null; }
 }
@@ -11269,11 +11298,16 @@ async function _pollVideoJob(jobKey, videoId){
                 duration: p.duration || null, created_at: now, finished_at: now,
             };
             if (typeof addVideoToHistory === 'function') addVideoToHistory(vitem);
-            // Capture the final frame and save it as an independent History
-            // image (also carries the mp4 URL so it can be shared as a clip).
-            // Fire-and-forget — never blocks delivering the result.
-            if (typeof _vmSaveLastFrame === 'function') _vmSaveLastFrame(d.video_url, videoId, p);
             _showVideoResult(d.video_url, d.seed, job._videoSourceUrl, elapsed, videoId);
+            // Capture the final frame ONCE, then reuse it for (a) the History
+            // image (task: last frame → history) and (b) the scene sequencer
+            // (continuity / chaining). Fire-and-forget — never blocks delivery.
+            (async () => {
+                let cap = null;
+                try { cap = await _captureVideoLastFrame(d.video_url); } catch(e){}
+                if (typeof _vmSaveLastFrame === 'function') _vmSaveLastFrame(d.video_url, videoId, p, cap);
+                if (typeof _vmAddScene === 'function') _vmAddScene({ videoUrl: d.video_url, videoId, params: p, seed: d.seed, sourceUrl: job._videoSourceUrl, cap });
+            })();
             if (typeof showVideoInStage === 'function') showVideoInStage(vitem);
             showNotif('🎬 Video ready — added to History.', 'success');
             return;
@@ -11335,16 +11369,18 @@ function _showVideoResult(url, seed, sourceUrl, elapsed, videoId){
 // the canvas when the video CDN doesn't send CORS headers — on that (or any)
 // failure we skip quietly, since the video itself is already in History.
 const _vmSavedFrameFor = new Set();
-async function _vmSaveLastFrame(videoUrl, videoId, params){
+async function _vmSaveLastFrame(videoUrl, videoId, params, preCap){
     if (!videoUrl || !_user || !videoId) return;
     if (_vmSavedFrameFor.has(videoId)) return;   // one frame per video
     _vmSavedFrameFor.add(videoId);
-    let cap = null;
-    try {
-        cap = await _captureVideoLastFrame(videoUrl);
-    } catch (e) {
-        _vmSavedFrameFor.delete(videoId);          // allow a retry on next done
-        return;                                    // capture unsupported here
+    let cap = (preCap && preCap.dataUrl) ? preCap : null;
+    if (!cap) {
+        try {
+            cap = await _captureVideoLastFrame(videoUrl);
+        } catch (e) {
+            _vmSavedFrameFor.delete(videoId);      // allow a retry on next done
+            return;                                // capture unsupported here
+        }
     }
     if (!cap || !cap.dataUrl) { _vmSavedFrameFor.delete(videoId); return; }
     try {
@@ -11424,6 +11460,206 @@ function _captureVideoLastFrame(videoUrl){
         v.src = videoUrl;
         try { v.load(); } catch(e){}
     });
+}
+
+// ══ SCENE SEQUENCER ═════════════════════════════════════════════════════
+// Each finished clip becomes a "scene". "Scene from last frame" seeds the next
+// clip's source with the current clip's FINAL frame — the continuity backbone
+// that works with every I2V model (they all take a start image). Scenes can be
+// reordered, played back-to-back, and exported/stitched into one longer clip.
+let _vmScenes = [];
+let _vmActiveSceneId = null;
+let _vmSeqPlaying = false;
+
+// Record a finished clip as a scene (or backfill its last-frame poster if the
+// scene already exists). De-dupes by videoId.
+function _vmAddScene(opts){
+    opts = opts || {};
+    if (!opts.videoUrl) return;
+    if (opts.videoId && _vmScenes.some(s => s.videoId === opts.videoId)) {
+        if (opts.cap && opts.cap.dataUrl) {
+            const s = _vmScenes.find(x => x.videoId === opts.videoId);
+            if (s && !s.lastFrameDataUri) { s.lastFrameDataUri = opts.cap.dataUrl; s.poster = opts.cap.dataUrl; _vmRenderScenes(); }
+        }
+        return;
+    }
+    const p = opts.params || {};
+    const m = (typeof _videoModelsById === 'object' && _videoModelsById[p.model]) || (typeof _vmSelectedModel === 'function' ? _vmSelectedModel() : null);
+    const scene = {
+        id: 'sc_' + Math.random().toString(36).slice(2, 9),
+        videoId: opts.videoId || null,
+        videoUrl: opts.videoUrl,
+        lastFrameDataUri: (opts.cap && opts.cap.dataUrl) || null,
+        poster: (opts.cap && opts.cap.dataUrl) || opts.sourceUrl || '',
+        prompt: p.prompt || '',
+        modelId: p.model || (m && m.id) || '',
+        modelLabel: p.model_label || (m && m.label) || p.model || 'clip',
+        duration: p.duration || null,
+        resolution: p.resolution || null,
+        seed: (opts.seed != null ? opts.seed : null),
+    };
+    _vmScenes.push(scene);
+    _vmActiveSceneId = scene.id;
+    _vmRenderScenes();
+}
+
+function _vmRenderScenes(){
+    const wrap = $('vmScenes'), strip = $('vmSceneStrip'), count = $('vmSceneCount');
+    if (!wrap || !strip) return;
+    if (!_vmScenes.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    if (count) count.textContent = `· ${_vmScenes.length} clip${_vmScenes.length > 1 ? 's' : ''}`;
+    strip.innerHTML = '';
+    _vmScenes.forEach((s, i) => {
+        const el = document.createElement('div');
+        el.className = 'vm-scene' + (s.id === _vmActiveSceneId ? ' active' : '');
+        el.onclick = (ev) => { if (ev.target.closest('.vm-scene-del,.vm-scene-move')) return; _vmLoadScene(s.id); };
+        const thumb = s.poster
+            ? `<img class="vm-scene-thumb" src="${s.poster}" alt="">`
+            : `<video class="vm-scene-thumb" src="${s.videoUrl}#t=0.1" muted preload="metadata"></video>`;
+        const metaBits = [];
+        if (s.modelLabel) metaBits.push(String(s.modelLabel).split('·')[0].trim());
+        if (s.duration && s.duration !== 'auto') metaBits.push(s.duration + 's');
+        el.innerHTML = `
+            ${thumb}
+            <div class="vm-scene-idx">${i + 1}</div>
+            <button class="vm-scene-del" title="Remove clip" onclick="event.stopPropagation(); _vmDeleteScene('${s.id}')">×</button>
+            <div class="vm-scene-meta" title="${escapeHtml(s.prompt || '')}">${escapeHtml(metaBits.join(' · ') || 'clip')}</div>
+            <div class="vm-scene-move">
+                <button title="Move earlier" onclick="event.stopPropagation(); _vmMoveScene('${s.id}',-1)" ${i === 0 ? 'disabled' : ''}>◀</button>
+                <button title="Move later" onclick="event.stopPropagation(); _vmMoveScene('${s.id}',1)" ${i === _vmScenes.length - 1 ? 'disabled' : ''}>▶</button>
+            </div>`;
+        strip.appendChild(el);
+    });
+    const playBtn = $('vmSeqPlay'), exportBtn = $('vmSeqExport');
+    if (playBtn) playBtn.disabled = _vmScenes.length < 1;
+    if (exportBtn) exportBtn.disabled = _vmScenes.length < 2;
+}
+
+function _vmMoveScene(id, dir){
+    const i = _vmScenes.findIndex(s => s.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= _vmScenes.length) return;
+    const tmp = _vmScenes[i]; _vmScenes[i] = _vmScenes[j]; _vmScenes[j] = tmp;
+    _vmRenderScenes();
+}
+
+function _vmDeleteScene(id){
+    _vmScenes = _vmScenes.filter(s => s.id !== id);
+    if (_vmActiveSceneId === id) _vmActiveSceneId = null;
+    _vmRenderScenes();
+}
+
+// Load a scene's clip into the preview + reflect its settings so the user can
+// tweak that beat and regenerate it.
+function _vmLoadScene(id){
+    _vmSeqPlaying = false;
+    const s = _vmScenes.find(x => x.id === id); if (!s) return;
+    _vmActiveSceneId = id;
+    const v = $('vmResultVideo');
+    if (v) { v.src = s.videoUrl; v.style.display = ''; v.controls = true; try { v.load(); } catch(e){} }
+    const img = $('vmSourceImg'); if (img) img.style.display = 'none';
+    const dl = $('vmDownload'); if (dl) { dl.href = s.videoUrl; dl.style.display = ''; }
+    if (s.modelId && $('vmModel') && typeof _videoModelsById === 'object' && _videoModelsById[s.modelId]) { $('vmModel').value = s.modelId; if (typeof _vmApplyModel === 'function') _vmApplyModel(); }
+    if ($('vmPrompt')) $('vmPrompt').value = s.prompt || '';
+    if (s.resolution && $('vmResolution')) $('vmResolution').value = s.resolution;
+    if (s.duration && $('vmDuration')) $('vmDuration').value = s.duration;
+    _vmRenderScenes();
+    if (typeof _vmUpdateCost === 'function') _vmUpdateCost();
+}
+
+// Seed the NEXT clip's source with the last scene's final frame — continuity.
+async function _vmNewSceneFromLast(){
+    _vmSeqPlaying = false;
+    const s = _vmScenes[_vmScenes.length - 1];
+    const btn = $('vmSceneNew');
+    if (!s) { showNotif('Generate a clip first, then you can extend it.', 'error'); return; }
+    let dataUri = s.lastFrameDataUri;
+    if (!dataUri && s.videoUrl) {
+        if (btn) { btn.disabled = true; btn.textContent = 'Reading frame…'; }
+        try { const cap = await _captureVideoLastFrame(s.videoUrl); if (cap) { dataUri = cap.dataUrl; s.lastFrameDataUri = dataUri; if (!s.poster) s.poster = dataUri; } } catch(e){}
+        if (btn) { btn.disabled = false; btn.textContent = '＋ Scene from last frame'; }
+    }
+    if (!dataUri) { showNotif("Couldn't read the last frame of that clip (the video host may block frame capture). Try a different model or upload a start frame.", 'error'); return; }
+    // Stage it as the source for the next generation (submitVideo reads this).
+    _videoState.sourceDataUri = dataUri;
+    const img = $('vmSourceImg'); if (img) { img.src = dataUri; img.style.display = ''; }
+    const v = $('vmResultVideo'); if (v) { try { v.pause(); } catch(e){} v.style.display = 'none'; v.removeAttribute('src'); try { v.load(); } catch(e){} }
+    const dl = $('vmDownload'); if (dl) dl.style.display = 'none';
+    if ($('vmPrompt')) { $('vmPrompt').value = ''; try { $('vmPrompt').focus(); } catch(e){} }
+    _vmActiveSceneId = null;
+    if (typeof _vmSetProgress === 'function') _vmSetProgress(0, '', true);
+    const go = $('vmGenerate'); if (go) { go.disabled = false; go.textContent = 'Generate next clip'; }
+    const note = $('vmSeqNote'); if (note) note.textContent = `Next clip continues from clip ${_vmScenes.length}'s final frame. Write the next beat and Generate.`;
+    _vmRenderScenes();
+    showNotif('Seeded the next clip from the last frame — write the next beat and Generate.', 'success');
+}
+
+// Play every clip back-to-back in the result video.
+function _vmPlaySequence(){
+    if (!_vmScenes.length) return;
+    const v = $('vmResultVideo'); if (!v) return;
+    const img = $('vmSourceImg'); if (img) img.style.display = 'none';
+    v.style.display = ''; v.controls = true;
+    const dl = $('vmDownload'); if (dl) dl.style.display = 'none';
+    let i = 0;
+    _vmSeqPlaying = true;
+    if (v._seqHandler) { v.removeEventListener('ended', v._seqHandler); v._seqHandler = null; }
+    const advance = () => {
+        if (!_vmSeqPlaying) return;
+        if (i >= _vmScenes.length) {
+            _vmSeqPlaying = false;
+            if (v._seqHandler) { v.removeEventListener('ended', v._seqHandler); v._seqHandler = null; }
+            const note = $('vmSeqNote'); if (note) note.textContent = 'Finished playing the sequence.';
+            return;
+        }
+        const s = _vmScenes[i]; _vmActiveSceneId = s.id; _vmRenderScenes();
+        v.src = s.videoUrl; try { v.load(); v.play().catch(()=>{}); } catch(e){}
+        const note = $('vmSeqNote'); if (note) note.textContent = `Playing clip ${i + 1} / ${_vmScenes.length}…`;
+        i++;
+    };
+    v._seqHandler = advance;
+    v.addEventListener('ended', v._seqHandler);
+    advance();
+}
+
+// Export/stitch every clip into one longer video. Single-file stitching needs
+// server-side ffmpeg (a Cloudflare Worker can't run it) — we POST the ordered
+// clip URLs to /video/stitch, which forwards to a Modal ffmpeg job when one is
+// configured. If it isn't, we fall back to sequential playback + a heads-up so
+// the feature still does something useful.
+async function _vmExportSequence(){
+    if (_vmScenes.length < 2) { showNotif('Add at least two clips to export a longer video.', 'error'); return; }
+    const btn = $('vmSeqExport');
+    const note = $('vmSeqNote');
+    if (btn) { btn.disabled = true; btn.textContent = 'Stitching…'; }
+    if (note) note.textContent = 'Combining clips into one video…';
+    try {
+        const r = await fetchT(`${API}/api/studio/video/stitch`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clips: _vmScenes.map(s => s.videoUrl) }),
+        }, 120000);
+        const d = await r.json().catch(() => ({}));
+        if (d && d.ok && d.url) {
+            const dl = $('vmDownload'); if (dl) { dl.href = d.url; dl.style.display = ''; dl.textContent = '⬇ Download stitched video'; }
+            const v = $('vmResultVideo'); if (v) { v.src = d.url; v.style.display = ''; v.controls = true; try { v.load(); } catch(e){} }
+            const img = $('vmSourceImg'); if (img) img.style.display = 'none';
+            if (note) note.textContent = 'Stitched video ready — use Download.';
+            showNotif('🎬 Clips stitched into one video.', 'success');
+        } else if (d && d.error === 'unavailable') {
+            if (note) note.textContent = 'Single-file export isn’t enabled on the server yet — playing the clips in order instead.';
+            showNotif('Single-file stitching isn’t configured on the server — playing the sequence instead.', 'info');
+            _vmPlaySequence();
+        } else {
+            if (note) note.textContent = 'Could not stitch the clips. Playing them in order instead.';
+            _vmPlaySequence();
+        }
+    } catch (e) {
+        if (note) note.textContent = 'Stitch request failed — playing the clips in order instead.';
+        _vmPlaySequence();
+    } finally {
+        if (btn) { btn.disabled = _vmScenes.length < 2; btn.textContent = '⤓ Export'; }
+    }
 }
 
 // Put a finished video onto the shared stage (the same surface images use).
@@ -26813,6 +27049,24 @@ window.PanoViewer = (function(){
         </div>
         <div class="vm-status" id="vmStatus"></div>
         <a class="vm-dl" id="vmDownload" download href="#" style="display:none">⬇ Download video</a>
+
+        <!-- ── Scene sequencer ─────────────────────────────────────────────
+             Each finished clip becomes a "scene" here. "Scene from last frame"
+             seeds the next clip's source with the current clip's final frame so
+             the sequence stays continuous across any model. Reorder, play all
+             back-to-back, or export/stitch into one longer clip. -->
+        <div class="vm-scenes" id="vmScenes" style="display:none">
+          <div class="vm-scenes-head">
+            <span>🎞 Sequence <span class="vm-scene-count" id="vmSceneCount"></span></span>
+            <div class="vm-scenes-actions">
+              <button type="button" id="vmSceneNew" onclick="_vmNewSceneFromLast()" title="Start the next clip from the LAST FRAME of the current one — keeps motion/lighting continuous">＋ Scene from last frame</button>
+              <button type="button" id="vmSeqPlay" onclick="_vmPlaySequence()" title="Play every clip back-to-back">▶ Play all</button>
+              <button type="button" id="vmSeqExport" onclick="_vmExportSequence()" title="Combine all clips into one longer video">⤓ Export</button>
+            </div>
+          </div>
+          <div class="vm-scene-strip" id="vmSceneStrip"></div>
+          <div class="vm-seq-note" id="vmSeqNote"></div>
+        </div>
       </div>
       <div class="vm-fields">
         <div>
