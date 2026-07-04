@@ -15711,7 +15711,7 @@ async function sendBatchInputToCreate(inp, opts){
     }
     setMode('generate');
 
-    // ── History-restored tiles: re-upload to get a real upload_id ─────
+    // ── Non-upload ids (history tiles, fresh job results): re-upload ──
     // Tiles loaded via restoreFromHistory have id = j.upload_id || j.id.
     // For agent-image-gen rows that's the studio_uploads id (good); for
     // anything else (Camera, Edit, All-Angles, or older agent_gen rows
@@ -15722,12 +15722,45 @@ async function sendBatchInputToCreate(inp, opts){
     // up 1 old reference from a previous session" toast 2 seconds
     // after assigning, and the generation runs without the ref.
     //
-    // Fix: when the tile came from history and we haven't already
-    // upgraded it, fetch the bytes and re-upload via /api/studio/upload
-    // to get a fresh studio_uploads row owned by this user. Cache the
-    // upgraded shape on the tile so repeated clicks don't create
-    // duplicate upload rows.
-    if (inp._fromHistory && !inp._reuploaded && inp.url) {
+    // Fix: when the tile's id is NOT an owned studio_uploads row and we
+    // haven't already upgraded it, fetch the bytes and re-upload via
+    // /api/studio/upload to get a fresh studio_uploads row owned by this
+    // user. Cache the upgraded shape on the tile so repeated clicks don't
+    // create duplicate upload rows.
+    //
+    // This is no longer gated on _fromHistory: freshly generated results
+    // routed through the queue poller carry a studio_jobs id too (showResult
+    // is called with id=jobId), so an "image I just generated" assigned to a
+    // Create slot was hitting the exact same scrub. Instead of trusting a
+    // flag, ask the server directly (one <100ms check-ownership round trip,
+    // only on assign) whether the id is a real owned upload — and re-upload
+    // the actual bytes when it isn't. That guarantees the image the user is
+    // looking at is what gets sent.
+    let _needsReupload = false;
+    if (!inp._reuploaded && inp.url) {
+        if (!inp.id) {
+            _needsReupload = true;
+        } else {
+            try {
+                const oR = await fetchT(`${API}/api/studio/uploads/check-ownership`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: [inp.id] }),
+                }, 5000);
+                const od = await oR.json();
+                if (od && od.ok && Array.isArray(od.missing) && od.missing.includes(inp.id)) {
+                    _needsReupload = true;
+                }
+            } catch (e) {
+                // Ownership check unreachable (network blip / 401). Fall back
+                // to the old heuristic: history tiles are KNOWN to carry job
+                // ids, so re-upload those; otherwise leave the id alone and
+                // let the generation-time preflight sort it out.
+                _needsReupload = !!inp._fromHistory;
+            }
+        }
+    }
+    if (_needsReupload) {
         try {
             const r = await fetchT(inp.url, null, 15000);
             const blob = await r.blob();
@@ -25950,7 +25983,14 @@ function showResult(d){
     // We stash the current result so those handlers can act on it without a
     // tile object.
     _lastResultForActions = {
-        id: d.id || (d.upload_id || null),
+        // Prefer the studio_uploads id over the job id. Queue-poller
+        // completions call showResult with id=jobId (a studio_jobs row like
+        // "agen_xxxxxxxx") and the REAL upload id in d.upload_id — stashing
+        // the job id here made "Assign to Input" hand Create a ref the
+        // ownership preflight rightly rejects, which auto-scrubbed the
+        // freshly generated image ("Cleaned up 1 old reference…") and ran
+        // the generation without it.
+        id: d.upload_id || d.id || null,
         url: d.url, w: d.w, h: d.h,
         fname: lastOutputFilename,
         _genPrompt: d.prompt || '',
