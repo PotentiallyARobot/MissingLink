@@ -5477,6 +5477,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" id="panoLoraRow" style="display:none" title="HunyuanWorld 2.0 / HY-Pano 2.0 strength — how strongly the panorama LoRA expands the scene into 360°. 1.0 is the trained default; lower it if the expansion drifts too far from the input."><span class="sl">Panorama LoRA</span><input type="range" id="rngLoraPano" min="0" max="1.5" value="1.0" step="0.05"><input type="number" class="sv" id="vLoraPano" value="1.0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row camera-only" id="anglesLoraRow"><span class="sl">Angles LoRA</span><input type="range" id="rngLoraAngles" min="0" max="1.5" value="0.9" step="0.05"><input type="number" class="sv" id="vLoraAngles" value="0.9" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowUpscale" title="Upscale / Enhance (vafipas663) — sharpens detail, fixes lighting and the 'Qwen smoothness' on edit outputs. Prompt with 'Enhance image quality' plus a scene description for best results. Keep at 0 to disable."><span class="sl">Upscale LoRA</span><input type="range" id="rngLoraUpscale" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUpscale" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowSkin" title="Skin Detail (tlennon-ie) — adds natural skin texture to smooth/plastic-looking subjects. Upstream recommends 1.0–1.5; try prompting 'make the subjects skin details more prominent and natural'. Keep at 0 to disable."><span class="sl">Skin Detail</span><input type="range" id="rngLoraSkin" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraSkin" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation, Edit mode only. Default 0 (off)."><span class="sl">Unchained (eval)</span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
@@ -8387,6 +8389,19 @@ function setMode(mode, opts){
         }
     }
     currentMode = mode;
+    // Camera↔Edit transition: reset all LoRA sliders to the new mode's
+    // defaults. The two Qwen modes want different adapter stacks (Angles is
+    // camera-only; Upscale/Skin/A2R are opt-in per session), and carrying a
+    // hand-tuned weight across the switch silently changes what the next
+    // Generate produces. Runs AFTER currentMode is assigned so the reset
+    // targets the mode being entered. Other transitions (Create/Batch/etc.)
+    // are untouched — they either don't use these sliders or share Edit's.
+    if (prevMode !== mode
+        && (mode === 'camera' || mode === 'edit')
+        && (prevMode === 'camera' || prevMode === 'edit')
+        && typeof _resetLoraSliders === 'function') {
+        _resetLoraSliders(mode);
+    }
     // EVAL-ONLY: refresh the Unchained slider's visibility for the new mode.
     if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
     // A panorama result lives only in Camera mode's stage; switching to any
@@ -14125,6 +14140,29 @@ function toggleLock(){
 // both camera reprojection and free-form edits), so we pass its slider
 // value verbatim regardless of mode — 0 means off, so inactive unless
 // the user explicitly raised it.
+
+// Reset every LoRA slider (range + number pair) to its per-mode default.
+// Called by setMode() on any Camera↔Edit transition so weights tuned for
+// one mode never silently leak into the other — e.g. an Angles weight
+// raised for camera reprojection, or an Upscale/Skin weight dialed in on
+// an edit, shouldn't apply to the next generation in the other mode.
+// Defaults mirror the slider markup: Lightning 1.0 (engaged, fast 4-step
+// distillation), Angles 0.9 (camera pose control; zeroed in the payload
+// for non-camera modes anyway), everything else 0 (opt-in).
+function _resetLoraSliders(mode){
+    const set = (rng, num, val) => {
+        const r = $(rng), n = $(num);
+        if (r) r.value = val;
+        if (n) n.value = val;
+    };
+    set('rngLoraLightning',     'vLoraLightning',     1.0);
+    set('rngLoraAngles',        'vLoraAngles',        (mode === 'camera') ? 0.9 : 0);
+    set('rngLoraAnything2Real', 'vLoraAnything2Real', 0);
+    set('rngLoraUpscale',       'vLoraUpscale',       0);
+    set('rngLoraSkin',          'vLoraSkin',          0);
+    set('rngLoraUnchained',     'vLoraUnchained',     0);
+}
+
 function loraPayload(mode){
     // Fail SAFE, not to zero. A NaN/empty slider read must fall back to the
     // working default (1.0 = Lightning engaged), never to 0 — `|| 0` would
@@ -14135,6 +14173,15 @@ function loraPayload(mode){
         ? (parseFloat($('rngLoraAngles').value) || 0)
         : 0;
     const anything2real = parseFloat($('rngLoraAnything2Real').value) || 0;
+    // Upscale/Enhance LoRA (vafipas663): mode-agnostic like Anything2Real —
+    // detail enhancement applies to both camera reprojection and free-form
+    // edits. 0 (the default) means off, so it's inactive unless the user
+    // explicitly raised the slider. Available to all accounts.
+    const upscale = parseFloat($('rngLoraUpscale').value) || 0;
+    // Skin Detail LoRA (tlennon-ie): mode-agnostic like Upscale — skin
+    // texture enhancement applies to both camera and edit outputs. 0 (the
+    // default) means off. Available to all accounts.
+    const skin = parseFloat($('rngLoraSkin').value) || 0;
     // EVAL-ONLY Unchained LoRA: only sent on EDIT jobs (the worker further
     // gates it to a single account, so it's 0 for everyone else regardless).
     const unchained = (mode === 'edit') ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
@@ -14142,6 +14189,8 @@ function loraPayload(mode){
         lora_lightning: lightning,
         lora_angles: angles,
         lora_anything2real: anything2real,
+        lora_upscale: upscale,
+        lora_skin: skin,
         lora_unchained: unchained,
     };
 }
@@ -14308,6 +14357,8 @@ async function doGenerate(){
         lora_lightning: payload.lora_lightning,
         lora_angles: payload.lora_angles,
         lora_anything2real: payload.lora_anything2real,
+        lora_upscale: payload.lora_upscale,
+        lora_skin: payload.lora_skin,
         lora_unchained: payload.lora_unchained,
         width: payload.width,
         height: payload.height,
@@ -25869,6 +25920,12 @@ function restoreJobState(jobId){
     $('rngLoraLightning').value = lightVal; $('vLoraLightning').value = lightVal;
     $('rngLoraAngles').value = anglesVal; $('vLoraAngles').value = anglesVal;
     $('rngLoraAnything2Real').value = a2rVal; $('vLoraAnything2Real').value = a2rVal;
+    // Upscale defaults to 0 on restore — older snapshots predate this field,
+    // and 0 (off) is the correct neutral for a user who never opted in.
+    const upVal = (s.lora_upscale != null) ? s.lora_upscale : 0;
+    if ($('rngLoraUpscale')) { $('rngLoraUpscale').value = upVal; $('vLoraUpscale').value = upVal; }
+    const skinVal = (s.lora_skin != null) ? s.lora_skin : 0;
+    if ($('rngLoraSkin')) { $('rngLoraSkin').value = skinVal; $('vLoraSkin').value = skinVal; }
     const unchVal = (s.lora_unchained != null) ? s.lora_unchained : 0;
     if ($('rngLoraUnchained')) { $('rngLoraUnchained').value = unchVal; $('vLoraUnchained').value = unchVal; }
     if(s.width) $('inpWidth').value=s.width;
@@ -26259,6 +26316,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraPano',       'vLoraPano');
     bindSliderPair('rngLoraAngles',     'vLoraAngles');
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
+    bindSliderPair('rngLoraUpscale', 'vLoraUpscale');
+    bindSliderPair('rngLoraSkin', 'vLoraSkin');
     bindSliderPair('rngLoraUnchained', 'vLoraUnchained');
     initOverlayDragging();
     initModalDragging();
