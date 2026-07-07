@@ -5479,6 +5479,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" title="Anything2Real (lrzjason) — converts non-photorealistic inputs (anime, cartoon, painting) to photograph-style output. Upstream recommends ~0.75–1.0; keep at 0 to disable."><span class="sl">Anything→Real</span><input type="range" id="rngLoraAnything2Real" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraAnything2Real" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowUpscale" title="Upscale / Enhance (vafipas663) — sharpens detail, fixes lighting and the 'Qwen smoothness' on edit outputs. Prompt with 'Enhance image quality' plus a scene description for best results. Keep at 0 to disable."><span class="sl">Upscale LoRA</span><input type="range" id="rngLoraUpscale" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUpscale" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowSkin" title="Skin Detail (tlennon-ie) — adds natural skin texture to smooth/plastic-looking subjects. Upstream recommends 1.0–1.5; try prompting 'make the subjects skin details more prominent and natural'. Keep at 0 to disable."><span class="sl">Skin Detail</span><input type="range" id="rngLoraSkin" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraSkin" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row edit-only" id="rowFaceSwap" style="display:none" title="Face/Head Swap (BFS Head V5, Alissonerdx) — transfers a face/head onto another photo with consistent lighting and skin tone. Needs TWO images: slot 1 = body/target scene, slot 2 = face source (order matters!). Start the prompt with 'head_swap: start with Picture 1 as the base image, keeping its lighting, environment, and background. remove the head from Picture 1 completely and replace it with the head from Picture 2, strictly preserving the hair, eye color, and nose structure of Picture 2. copy the eye direction, head rotation, and micro-expressions from Picture 1.' Try 1.0; keep at 0 to disable."><span class="sl">Face Swap</span><input type="range" id="rngLoraFaceSwap" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraFaceSwap" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation, Edit mode only. Default 0 (off)."><span class="sl">Unchained (eval)</span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
@@ -14169,6 +14170,7 @@ function _resetLoraSliders(mode){
     set('rngLoraAnything2Real', 'vLoraAnything2Real', 0);
     set('rngLoraUpscale',       'vLoraUpscale',       0);
     set('rngLoraSkin',          'vLoraSkin',          0);
+    set('rngLoraFaceSwap',      'vLoraFaceSwap',      0);
     set('rngLoraUnchained',     'vLoraUnchained',     0);
 }
 
@@ -14191,6 +14193,13 @@ function loraPayload(mode){
     // texture enhancement applies to both camera and edit outputs. 0 (the
     // default) means off. Available to all accounts.
     const skin = parseFloat($('rngLoraSkin').value) || 0;
+    // Face/Head Swap LoRA (BFS Head V5): only meaningful on EDIT jobs — it
+    // needs two input images (slot 1 = body/target, slot 2 = face source),
+    // so it's zeroed for every other mode. 0 (the default) means off.
+    // Available to all accounts.
+    const faceswap = (mode === 'edit')
+        ? (parseFloat($('rngLoraFaceSwap').value) || 0)
+        : 0;
     // EVAL-ONLY Unchained LoRA: only sent on EDIT jobs (the worker further
     // gates it to a single account, so it's 0 for everyone else regardless).
     const unchained = (mode === 'edit') ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
@@ -14200,6 +14209,7 @@ function loraPayload(mode){
         lora_anything2real: anything2real,
         lora_upscale: upscale,
         lora_skin: skin,
+        lora_faceswap: faceswap,
         lora_unchained: unchained,
     };
 }
@@ -14368,6 +14378,7 @@ async function doGenerate(){
         lora_anything2real: payload.lora_anything2real,
         lora_upscale: payload.lora_upscale,
         lora_skin: payload.lora_skin,
+        lora_faceswap: payload.lora_faceswap,
         lora_unchained: payload.lora_unchained,
         width: payload.width,
         height: payload.height,
@@ -25935,6 +25946,10 @@ function restoreJobState(jobId){
     if ($('rngLoraUpscale')) { $('rngLoraUpscale').value = upVal; $('vLoraUpscale').value = upVal; }
     const skinVal = (s.lora_skin != null) ? s.lora_skin : 0;
     if ($('rngLoraSkin')) { $('rngLoraSkin').value = skinVal; $('vLoraSkin').value = skinVal; }
+    // Face Swap defaults to 0 on restore — older snapshots predate this
+    // field, and 0 (off) is the correct neutral for a user who never opted in.
+    const fsVal = (s.lora_faceswap != null) ? s.lora_faceswap : 0;
+    if ($('rngLoraFaceSwap')) { $('rngLoraFaceSwap').value = fsVal; $('vLoraFaceSwap').value = fsVal; }
     const unchVal = (s.lora_unchained != null) ? s.lora_unchained : 0;
     if ($('rngLoraUnchained')) { $('rngLoraUnchained').value = unchVal; $('vLoraUnchained').value = unchVal; }
     if(s.width) $('inpWidth').value=s.width;
@@ -26327,6 +26342,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraAnything2Real', 'vLoraAnything2Real');
     bindSliderPair('rngLoraUpscale', 'vLoraUpscale');
     bindSliderPair('rngLoraSkin', 'vLoraSkin');
+    bindSliderPair('rngLoraFaceSwap', 'vLoraFaceSwap');
     bindSliderPair('rngLoraUnchained', 'vLoraUnchained');
     initOverlayDragging();
     initModalDragging();
