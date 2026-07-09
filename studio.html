@@ -778,6 +778,11 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 }
 .batch-input-tile .bit-reverse:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold);opacity:1;transform:scale(1.08)}
 .batch-input-tile .bit-reverse.busy{animation:pulse 1s infinite;background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+/* "Saved" state — a reverse prompt has been generated and persisted for
+   this image. Gold-tinted so the user can tell at a glance which tiles
+   already have a stored prompt they can pull back up. */
+.batch-input-tile .bit-reverse.has-prompt{background:rgba(212,175,55,.9);border-color:var(--gold);color:#0a0a0c;opacity:1}
+.batch-input-tile .bit-reverse.has-prompt::after{content:"";position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--gold);border:1.5px solid var(--surface-2,#16161a);box-shadow:0 0 0 1px rgba(0,0,0,.4)}
 
 /* Per-tile send-to-mode buttons — let the user push a batch image into
    Camera or Edit mode for single-image work without re-uploading. Sit
@@ -990,7 +995,11 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     background:var(--surface-2,#16161a);border:1px solid var(--border);
     border-radius:10px;max-width:560px;width:100%;max-height:80vh;
     overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.6);
+    /* No visible scrollbar in the modal (still scrolls via wheel/trackpad
+       if content ever exceeds max-height). */
+    scrollbar-width:none;-ms-overflow-style:none;
 }
+.ai-modal::-webkit-scrollbar{width:0;height:0;display:none}
 .ai-modal-header{
     padding:14px 18px;border-bottom:1px solid var(--border);
     display:flex;justify-content:space-between;align-items:center;
@@ -1018,7 +1027,13 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     background:var(--surface-3);border:1px solid var(--border);border-radius:4px;
     padding:8px 10px;font-family:inherit;font-size:11.5px;color:var(--text);
     width:100%;box-sizing:border-box;resize:vertical;min-height:60px;
+    /* No visible scrollbar. The read-only reverse-prompt textarea is
+       auto-sized to its content by JS so it never needs to scroll; the
+       editable critique textarea keeps functional (just invisible) scroll
+       so long text stays reachable. */
+    overflow:auto;scrollbar-width:none;-ms-overflow-style:none;
 }
+.ai-modal-body .ai-refined::-webkit-scrollbar{width:0;height:0;display:none}
 .ai-modal-footer{
     padding:12px 18px;border-top:1px solid var(--border);
     display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;
@@ -15657,6 +15672,15 @@ function renderBatchInputs(){
                     <div class="bip-bar"><div class="bip-bar-fill" style="width:${pct.toFixed(0)}%"></div></div>
                 </div>`;
         }
+        // Reverse-prompt button state: if a prompt has already been
+        // generated + saved for this image, mark the button so the user
+        // can see (and re-open) it. inp._reversePrompt is populated either
+        // right after generation or by hydrateReversePrompts() on load.
+        const hasRev = typeof inp._reversePrompt === 'string' && inp._reversePrompt.trim().length > 0;
+        const revBtnClass = hasRev ? ' has-prompt' : '';
+        const revBtnTitle = hasRev
+            ? 'Saved reverse prompt — click to view (Regenerate available inside)'
+            : 'Reverse-prompt this image (write a prompt that could have generated it)';
         const isCreateTile = (typeof currentMode !== 'undefined' && currentMode === 'generate');
         tile.innerHTML = `
             <img src="${inp.url}" alt="">
@@ -15664,7 +15688,7 @@ function renderBatchInputs(){
             ${progressOverlay}
             <div class="bit-check"></div>
             <button type="button" class="bit-find-issues${issueBtnClass}" title="${issueBtnTitle}">🔍</button>
-            <button type="button" class="bit-reverse" title="Reverse-prompt this image (write a prompt that could have generated it)">🔁</button>
+            <button type="button" class="bit-reverse${revBtnClass}" title="${revBtnTitle}">🔁</button>
             ${isCreateTile
                 ? `<button type="button" class="bit-assign-input" title="Assign this image to a reference input slot">↩ Assign to Input</button>`
                 : `<button type="button" class="bit-send bit-send-create" title="Use as input in Create mode">✨</button>`}
@@ -15759,6 +15783,10 @@ function renderBatchInputs(){
             }
         });
     }
+    // Pull any saved reverse prompts for the tiles now on screen so the
+    // 🔁 "saved" indicator lights up without the user re-running anything.
+    // Only unchecked ids are queried, so this is safe to call every render.
+    hydrateReversePrompts();
 }
 
 function batchSelectAll(state){
@@ -16916,49 +16944,139 @@ async function aiCaptionSelected(){
 
 // REVERSE PROMPT — given an input image, ask the LLM to produce a
 // prompt that could plausibly have generated it. Useful when a user
-// wants to replicate a style they have a sample of. Result is shown
-// in the AI modal with a "Use as edit instruction" action.
-async function aiReverseInputTile(inp, btnEl){
+// wants to replicate a style they have a sample of.
+//
+// The generated prompt is PERSISTED server-side (keyed by image id), so
+// it stays attached to the image across reloads/sessions. Re-opening the
+// reverse prompt on the same image returns the saved copy instantly and
+// for free (no token spend) with a "Regenerate" option. inp._reversePrompt
+// mirrors the saved value in-session so the tile can show its "saved"
+// indicator and open without a round-trip.
+//   opts.force  — regenerate even if a saved prompt exists (re-charges).
+async function aiReverseInputTile(inp, btnEl, opts){
+    opts = opts || {};
     if (!_user) { $('loginModal').classList.add('open'); return; }
+    // Cache-first: if we already have the saved prompt in this session,
+    // open the modal immediately with no network round-trip.
+    if (!opts.force && typeof inp._reversePrompt === 'string' && inp._reversePrompt.trim()) {
+        openReversePromptModal(inp, inp._reversePrompt, { cached: true });
+        return;
+    }
     if (btnEl) { btnEl.classList.add('busy'); btnEl.disabled = true; }
     try {
         const r = await fetchT(`${API}/api/studio/ai-reverse`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ image_id: inp.id }),
+            body: JSON.stringify({ image_id: inp.id, force: !!opts.force }),
         }, 30000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
         const d = await r.json();
         if (d.error) { showNotif(d.error, 'error'); return; }
-        showAiResultModal({
-            title: '🔁 Reverse prompt',
-            bodyHtml: `
-                <p style="color:var(--text-dim);margin-bottom:10px;font-size:11.5px">
-                    Prompt that could have generated this image:
-                </p>
-                <textarea class="ai-refined" id="aiReverseText" readonly>${(d.prompt || '').replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;')}</textarea>
-            `,
-            footerButtons: [
-                { label: 'Copy', primary: false, onClick: () => {
-                    const t = document.getElementById('aiReverseText');
-                    if (t) { t.select(); document.execCommand('copy'); showNotif('Copied to clipboard.'); }
-                }},
-                { label: 'Use as Edit Instruction', primary: true, onClick: () => {
-                    const t = document.getElementById('aiReverseText');
-                    if (t) {
-                        $('batchPrompt').value = t.value;
-                        _batchPerImagePrompts = null;
-                        updateGenButton();
-                        closeAiResultModal();
-                        showNotif('Loaded as edit instruction.');
-                    }
-                }},
-            ],
-        });
+        // Persist in-session so the tile lights up + future opens are instant.
+        inp._reversePrompt = d.prompt || '';
+        inp._reverseChecked = true;
+        // Keep the token counter in sync when a fresh generation was charged.
+        if (typeof d.tokens_remaining === 'number' && _user) {
+            _user.tokens = d.tokens_remaining;
+            const tc = document.getElementById('tokenCount');
+            if (tc) tc.textContent = d.tokens_remaining;
+        }
+        // Repaint tiles so the 🔁 button reflects its saved state.
+        try { renderBatchInputs(); } catch (e) {}
+        openReversePromptModal(inp, inp._reversePrompt, { cached: !!d.cached });
     } catch (e) {
         showNotif('Reverse prompt failed: ' + (e.message || e), 'error');
     } finally {
         if (btnEl) { btnEl.classList.remove('busy'); btnEl.disabled = false; }
+    }
+}
+
+// Renders the reverse-prompt result modal. Shared by the cache-hit path
+// (instant, free) and the fresh-generation path. When a saved prompt is
+// shown, a Regenerate action forces a new generation (which re-charges
+// tokens and overwrites the stored copy). The textarea is auto-sized to
+// its content so no inner scrollbar appears.
+function openReversePromptModal(inp, prompt, meta){
+    meta = meta || {};
+    const esc = (prompt || '').replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;');
+    const note = meta.cached
+        ? 'Saved prompt for this image (generated earlier):'
+        : 'Prompt that could have generated this image:';
+    showAiResultModal({
+        title: '🔁 Reverse prompt',
+        bodyHtml: `
+            <p style="color:var(--text-dim);margin-bottom:10px;font-size:11.5px">
+                ${note}
+            </p>
+            <textarea class="ai-refined" id="aiReverseText" readonly>${esc}</textarea>
+        `,
+        footerButtons: [
+            { label: 'Copy', primary: false, onClick: () => {
+                const t = document.getElementById('aiReverseText');
+                if (t) { t.select(); document.execCommand('copy'); showNotif('Copied to clipboard.'); }
+            }},
+            { label: 'Regenerate', primary: false, onClick: () => {
+                closeAiResultModal();
+                // Force a fresh generation; overwrites the saved copy.
+                aiReverseInputTile(inp, null, { force: true });
+            }},
+            { label: 'Use as Edit Instruction', primary: true, onClick: () => {
+                const t = document.getElementById('aiReverseText');
+                if (t) {
+                    $('batchPrompt').value = t.value;
+                    _batchPerImagePrompts = null;
+                    updateGenButton();
+                    closeAiResultModal();
+                    showNotif('Loaded as edit instruction.');
+                }
+            }},
+        ],
+    });
+    // Grow the textarea to fit its text so it never shows a scrollbar.
+    requestAnimationFrame(() => {
+        const t = document.getElementById('aiReverseText');
+        if (t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 460) + 'px'; }
+    });
+}
+
+// Batch-fetch saved reverse prompts for the tiles currently on screen and
+// attach them to their inp objects, so the 🔁 "saved" indicator shows up
+// on load without the user re-running anything. Only ids we haven't looked
+// up yet are queried; every id gets marked _reverseChecked afterward, so
+// this is safe to call on every render (it no-ops once everything's known).
+let _reverseHydrateInFlight = false;
+async function hydrateReversePrompts(){
+    if (!_user || _reverseHydrateInFlight) return;
+    if (typeof _batchInputs === 'undefined' || !Array.isArray(_batchInputs)) return;
+    const ids = _batchInputs
+        .filter(b => b && b.id && !b._placeholder && !b._reverseChecked
+                     && !String(b.id).startsWith('__pending_'))
+        .map(b => b.id);
+    if (!ids.length) return;
+    _reverseHydrateInFlight = true;
+    try {
+        const r = await fetchT(`${API}/api/studio/reverse-prompts-get`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ image_ids: ids.slice(0, 100) }),
+        }, 15000);
+        const d = await r.json().catch(() => ({}));
+        const map = (d && d.prompts) || {};
+        let changed = false;
+        for (const inp of _batchInputs) {
+            if (!inp || !inp.id || ids.indexOf(inp.id) === -1) continue;
+            inp._reverseChecked = true;
+            const p = map[inp.id];
+            if (typeof p === 'string' && p.trim()) { inp._reversePrompt = p; changed = true; }
+        }
+        if (changed) { try { renderBatchInputs(); } catch (e) {} }
+    } catch (e) {
+        // Non-fatal — mark checked so we don't retry on every single render.
+        for (const inp of _batchInputs) {
+            if (inp && inp.id && ids.indexOf(inp.id) !== -1) inp._reverseChecked = true;
+        }
+    } finally {
+        _reverseHydrateInFlight = false;
     }
 }
 
