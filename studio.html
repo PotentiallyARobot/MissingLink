@@ -3381,6 +3381,22 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .angle-views-note{font-size:10.5px;line-height:1.5;color:var(--text-muted);margin:0 0 10px}
 .angle-views-head{display:grid;grid-template-columns:26px 1fr 1fr 1fr;gap:6px;font-family:var(--font-mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);margin-bottom:6px}
 .angle-views-row{display:grid;grid-template-columns:26px 1fr 1fr 1fr;gap:6px;align-items:center;margin-bottom:6px}
+/* Per-view slot wrapper: selects row + its prompt input, visually grouped */
+.angle-views-slot{margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.angle-views-slot:last-child{border-bottom:none}
+.angle-views-slot .angle-views-row{margin-bottom:5px}
+.av-extra{width:100%;box-sizing:border-box;margin-left:0;padding:6px 8px;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--font-body);font-size:11px;outline:none;transition:border-color .12s}
+.av-extra:focus{border-color:var(--gold)}
+.av-extra::placeholder{color:var(--text-dim,#6a6a72)}
+/* Views / Agent tab bar */
+.av-tabs{display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px}
+.av-tab{background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;cursor:pointer;transition:all .12s}
+.av-tab:hover{border-color:var(--gold);color:var(--gold)}
+.av-tab.active{background:var(--gold);border-color:var(--gold);color:#0a0a0c}
+.av-agent-input{width:100%;box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:9px 10px;resize:vertical;outline:none;line-height:1.5}
+.av-agent-input:focus{border-color:var(--gold)}
+.av-agent-actions{display:flex;align-items:center;gap:10px;margin-top:10px}
+.av-agent-status{font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
 .angle-views-row .avr-n{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-align:right}
 .angle-views-row select{width:100%;background:var(--surface-3);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 6px;font-size:11px;outline:none;cursor:pointer}
 .angle-views-row select:focus{border-color:var(--gold)}
@@ -15279,17 +15295,34 @@ function getAngleBatchPreset(n){
         if (!raw) return defaults.slice();
         const arr = JSON.parse(raw);
         if (!Array.isArray(arr) || arr.length !== defaults.length) return defaults.slice();
-        return arr.map((p, i) =>
-            (p && ANGLES_AZ.includes(p.az) && ANGLES_EL.includes(p.el) && ANGLES_DIST.includes(p.dist))
+        // Clone each shot rather than returning the canonical ANGLES_LOOKUP
+        // objects — the per-view `extra` prompt is user data and must never
+        // be written onto the shared 96-pose source-of-truth objects.
+        return arr.map((p, i) => {
+            const base = (p && ANGLES_AZ.includes(p.az) && ANGLES_EL.includes(p.el) && ANGLES_DIST.includes(p.dist))
                 ? _shotFromParts(p.az, p.el, p.dist)
-                : defaults[i]);
+                : defaults[i];
+            const extra = (p && typeof p.extra === 'string') ? p.extra.slice(0, 600).trim() : '';
+            return { ...base, extra };
+        });
     } catch (e) { return defaults.slice(); }
 }
 function saveAngleBatchPreset(n, shots){
     try {
         localStorage.setItem(_angleViewsKey(n),
-            JSON.stringify(shots.map(s => ({ az: s.az, el: s.el, dist: s.dist }))));
+            JSON.stringify(shots.map(s => ({ az: s.az, el: s.el, dist: s.dist, extra: (s.extra || '').slice(0, 600) }))));
     } catch (e) {}
+}
+
+// Build the final prompt for one angle shot: the canonical LoRA pose
+// tokens, plus the per-view extra prompt (if any) appended after a comma
+// — the same pattern as manually typing extra description after the
+// tokens in Camera mode's prompt field. Pose tokens always come first so
+// the Angles LoRA sees exactly the trigger format it was trained on.
+function _anglePromptFor(s){
+    const base = `<sks> ${s.az} ${s.el} ${s.dist}`;
+    const extra = (s.extra || '').trim();
+    return extra ? `${base}, ${extra}` : base;
 }
 
 // ── View configuration dialog ──
@@ -15306,17 +15339,107 @@ function _angleViewsRenderRows(shots){
     const body = $('angleViewsBody');
     if (!body) return;
     body.innerHTML =
+        '<div class="av-tabs">' +
+            '<button type="button" class="av-tab active" data-tab="views" onclick="_avSwitchTab(\'views\')">Views</button>' +
+            '<button type="button" class="av-tab" data-tab="agent" onclick="_avSwitchTab(\'agent\')">✨ Agent</button>' +
+        '</div>' +
+        '<div id="avTabViews">' +
         '<div class="angle-views-note">These are the camera views the ' +
         _angleViewsEditing + '-view Multi batch renders — one row per panel, in ' +
-        'render order. Saved for your account on this device.</div>' +
+        'render order. Each view can carry its own prompt, appended after the ' +
+        'camera tokens (scene, action, lighting — whatever that view should show). ' +
+        'Leave a prompt empty for a plain pose change. Saved for your account on this device.</div>' +
         '<div class="angle-views-head"><span></span><span>Azimuth</span><span>Elevation</span><span>Distance</span></div>' +
         shots.map((s, i) =>
-            '<div class="angle-views-row">' +
-                '<span class="avr-n">' + (i + 1) + '</span>' +
-                _avSelect('av-az',   i, ANGLES_AZ,   _AZ_NICE,   s.az) +
-                _avSelect('av-el',   i, ANGLES_EL,   _EL_NICE,   s.el) +
-                _avSelect('av-dist', i, ANGLES_DIST, _DIST_NICE, s.dist) +
-            '</div>').join('');
+            '<div class="angle-views-slot">' +
+                '<div class="angle-views-row">' +
+                    '<span class="avr-n">' + (i + 1) + '</span>' +
+                    _avSelect('av-az',   i, ANGLES_AZ,   _AZ_NICE,   s.az) +
+                    _avSelect('av-el',   i, ANGLES_EL,   _EL_NICE,   s.el) +
+                    _avSelect('av-dist', i, ANGLES_DIST, _DIST_NICE, s.dist) +
+                '</div>' +
+                '<input type="text" class="av-extra" data-slot="' + i + '" maxlength="600" ' +
+                    'placeholder="Prompt for this view (optional) — appended after the camera tokens">' +
+            '</div>').join('') +
+        '</div>' +
+        '<div id="avTabAgent" style="display:none">' +
+            '<div class="angle-views-note">Describe the subject and what you want across the set — the AI ' +
+            'writes one tailored prompt per view (' + _angleViewsEditing + ' total), aware of each camera ' +
+            'position, and fills the prompt slots on the Views tab. Review and edit before saving.</div>' +
+            '<textarea id="avAgentInstructions" class="av-agent-input" rows="5" ' +
+                'placeholder="e.g. A plague doctor inquisitor collectible figure. Keep the character identical in every view; describe what is visible from each camera position — the lantern on the left hip, the grimoire on the right thigh, the hat brim from above…"></textarea>' +
+            '<div class="av-agent-actions">' +
+                '<button type="button" class="ems-btn active" id="avAgentGo" onclick="generateAnglePrompts()">Generate ' + _angleViewsEditing + ' prompts</button>' +
+                '<span class="av-agent-status" id="avAgentStatus"></span>' +
+            '</div>' +
+        '</div>';
+    // Pre-fill any saved per-view prompts
+    shots.forEach((s, i) => {
+        const inp = body.querySelector('.av-extra[data-slot="' + i + '"]');
+        if (inp && s.extra) inp.value = s.extra;
+    });
+}
+
+function _avSwitchTab(which){
+    const body = $('angleViewsBody');
+    if (!body) return;
+    body.querySelectorAll('.av-tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.tab === which));
+    const v = body.querySelector('#avTabViews');
+    const a = body.querySelector('#avTabAgent');
+    if (v) v.style.display = which === 'views' ? '' : 'none';
+    if (a) a.style.display = which === 'agent' ? '' : 'none';
+}
+
+// Agent tab → per-view prompt generation. Reads the CURRENT selects (so
+// the model targets whatever camera set the user has configured, not the
+// saved one), posts to the worker, and fills the .av-extra inputs in
+// order. Nothing is persisted until the user hits Save — the generated
+// prompts land in the form as editable text, same as typing them.
+async function generateAnglePrompts(){
+    const body = $('angleViewsBody');
+    if (!body) return;
+    const instructions = (body.querySelector('#avAgentInstructions')?.value || '').trim();
+    if (!instructions) {
+        showNotif('Describe the subject and what you want first.', 'error');
+        return;
+    }
+    // Snapshot the currently-selected view set from the form.
+    const rows = body.querySelectorAll('.angle-views-row');
+    const views = [];
+    rows.forEach(r => {
+        const az = r.querySelector('.av-az').value;
+        const el = r.querySelector('.av-el').value;
+        const dist = r.querySelector('.av-dist').value;
+        const s = _shotFromParts(az, el, dist);
+        views.push({ az, el, dist, label: s.label });
+    });
+    if (!views.length) return;
+    const go = body.querySelector('#avAgentGo');
+    const status = body.querySelector('#avAgentStatus');
+    if (go) { go.disabled = true; go.textContent = 'Generating…'; }
+    if (status) status.textContent = '';
+    try {
+        const r = await fetchT(`${API}/api/studio/angle-prompts`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instructions, views }),
+        }, 60000);
+        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
+        if (r.status === 402) { showNotif('Not enough tokens for AI prompt generation.', 'error'); return; }
+        const d = await r.json();
+        if (!d || !d.ok || !Array.isArray(d.prompts)) throw new Error((d && d.error) || 'generation_failed');
+        d.prompts.forEach((p, i) => {
+            const inp = body.querySelector('.av-extra[data-slot="' + i + '"]');
+            if (inp && typeof p === 'string') inp.value = p.slice(0, 600);
+        });
+        _avSwitchTab('views');
+        showNotif(`Filled ${Math.min(d.prompts.length, views.length)} view prompts — review, tweak, then Save.`, 'success');
+    } catch (e) {
+        if (status) status.textContent = 'Failed — try again.';
+        showNotif('Prompt generation failed: ' + (e && e.message ? e.message : e), 'error');
+    } finally {
+        if (go) { go.disabled = false; go.textContent = 'Generate ' + _angleViewsEditing + ' prompts'; }
+    }
 }
 
 function openAngleViewsConfig(){
@@ -15340,13 +15463,14 @@ function closeAngleViewsConfig(save){
     if (!m || m.style.display === 'none') return;
     if (save) {
         const body = $('angleViewsBody');
-        const rows = body ? body.querySelectorAll('.angle-views-row') : [];
+        const slots = body ? body.querySelectorAll('.angle-views-slot') : [];
         const shots = [];
-        rows.forEach(r => {
-            const az   = r.querySelector('.av-az').value;
-            const el   = r.querySelector('.av-el').value;
-            const dist = r.querySelector('.av-dist').value;
-            shots.push(_shotFromParts(az, el, dist));
+        slots.forEach(sl => {
+            const az   = sl.querySelector('.av-az').value;
+            const el   = sl.querySelector('.av-el').value;
+            const dist = sl.querySelector('.av-dist').value;
+            const extra = (sl.querySelector('.av-extra')?.value || '').slice(0, 600).trim();
+            shots.push({ ..._shotFromParts(az, el, dist), extra });
         });
         if (shots.length === _angleViewsDefaults(_angleViewsEditing).length) {
             saveAngleBatchPreset(_angleViewsEditing, shots);
@@ -17875,7 +17999,7 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
         inputUrl: imageUrl,
         shots: angles.map(s => ({
             label: s.label,
-            prompt: `<sks> ${s.az} ${s.el} ${s.dist}`,
+            prompt: _anglePromptFor(s),
             jobId: null,
             status: 'pending',
             url: null,
@@ -17901,7 +18025,7 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
 
     for (let i = 0; i < N; i++) {
         const shot = angles[i];
-        const prompt = `<sks> ${shot.az} ${shot.el} ${shot.dist}`;
+        const prompt = _anglePromptFor(shot);
         const payload = {
             mode: 'camera',
             image_ids: [imageId],
@@ -17962,7 +18086,7 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
                     _pendingAngleShots.push({ shotIdx: i, payload, snapshot, label: shot.label });
                     for (let j = i + 1; j < N; j++) {
                         const s2 = angles[j];
-                        const p2 = `<sks> ${s2.az} ${s2.el} ${s2.dist}`;
+                        const p2 = _anglePromptFor(s2);
                         _pendingAngleShots.push({
                             shotIdx: j,
                             payload: { ...payload, prompt: p2 },
