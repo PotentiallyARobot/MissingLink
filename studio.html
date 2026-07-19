@@ -343,16 +343,24 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
        run of 8 generations sprawls into 3 rows that scroll. At 220, 4-6
        fit per row depending on viewport, and the user can see the
        whole working set without scrolling. */
-    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(140px, 220px));
+    /* Mirror the 20-image survey grid (.batch-grid[data-kind="angles-many"]):
+       uniform 1fr tiles that stretch edge-to-edge across the stage and fill
+       row by row, left-to-right. The old minmax(140px,220px) cap made tiles
+       cluster to the left as small thumbnails with dead space on the right —
+       the opposite of the "standard grid" look the survey view has. With 1fr
+       columns + aspect-ratio:1/1 on the tiles, every tile is the same square
+       size, sized by the column track, so agent-generated images land in a
+       clean uniform contact-sheet layout identical to the 20-image view. */
+    grid-template-columns:repeat(var(--batch-cols, auto-fill), minmax(180px, 1fr));
     /* grid-auto-rows: max-content prevents row tracks from stretching to
        fill the container. Without this, a grid container with available
        vertical space sizes each row track to fit (any stretch behavior
        on grid items then bleeds through despite align-self overrides).
        Pinning to max-content means each row is exactly as tall as its
        tallest cell needs to be — which, with aspect-ratio:1/1 and the
-       column track sized 140-220px, is also 140-220px. Square tiles. */
+       1fr column tracks, matches the tile width. Square tiles. */
     grid-auto-rows:max-content;
-    justify-content:start;  /* tiles cluster left when there's leftover space */
+    justify-content:stretch;  /* fill the full stage width, like angles-many */
     gap:10px;
     padding:16px;
     overflow-y:auto;
@@ -15528,7 +15536,15 @@ function renderBatchInputs(){
     // is irrelevant there but we still set it to 1 for consistency
     // and so any external readers see the right column count.
     const isCreateMode = (typeof currentMode !== 'undefined' && currentMode === 'generate');
-    grid.style.setProperty('--batch-cols', String(isCreateMode ? 1 : bestBatchColumnCount(_batchInputs.length)));
+    // Floor the column count at 4 in Batch mode: with the grid now using
+    // full-width 1fr tracks (matching the angles-many survey layout), a
+    // small set (1-3 images) would otherwise get 1-3 columns of enormous
+    // tiles. Flooring at 4 keeps tile size consistent regardless of count
+    // — images fill the top row left-to-right at survey-grid scale, and
+    // the remaining cells just sit empty, exactly like a partially-filled
+    // 20-image view. bestBatchColumnCount still raises the count (up to 8)
+    // for larger sets.
+    grid.style.setProperty('--batch-cols', String(isCreateMode ? 1 : Math.max(4, bestBatchColumnCount(_batchInputs.length))));
 
     // Floating clear-toolbar — visible whenever the grid has multiple
     // tiles in Batch mode. Hidden in Create mode entirely: each new
@@ -18237,7 +18253,14 @@ function renderBatchGrid(){
     // explicitly clear it in that case.
     const kind = _activeBatch.kind || 'batch-edit';
     if (kind === 'batch-edit' || kind === 'angles-many') {
-        grid.style.setProperty('--batch-cols', String(bestBatchColumnCount(_activeBatch.shots.length)));
+        // batch-edit floors at 4 columns to stay 1-to-1 with the input
+        // grid's layout (see the matching comment in renderBatchInputs).
+        // angles-many keeps the raw heuristic — it only kicks in at 20+
+        // shots where bestBatchColumnCount already returns 5-8.
+        const _cols = kind === 'batch-edit'
+            ? Math.max(4, bestBatchColumnCount(_activeBatch.shots.length))
+            : bestBatchColumnCount(_activeBatch.shots.length);
+        grid.style.setProperty('--batch-cols', String(_cols));
     } else {
         grid.style.removeProperty('--batch-cols');
     }
@@ -26460,6 +26483,51 @@ setInterval(() => {
 
 function showResult(d){
     lastResult=d;
+    // ── BATCH-SURFACE GUARD ─────────────────────────────────────────
+    // If the user is currently in Batch mode and the input grid owns the
+    // stage, do NOT paint the single-image #outImg viewer: it lives in
+    // the same output area UNDERNEATH the grid (grid is z-index:1), so
+    // the result renders invisibly "behind" the tiles — the user sees a
+    // full-stage image peeking out around the grid. This hits when a
+    // Create/agent generation completes via the queue poller (or a
+    // history restore fires) while the user is looking at the batch view.
+    // Instead, route the result INTO the grid as a new tile — which is
+    // where a freshly generated image belongs in the batch view — and
+    // leave stage ownership untouched. The result is safe in history
+    // either way. An active batch-edit RESULT grid keeps the existing
+    // explicit-takeover behavior below (clearBatchGrid), which is a
+    // visible replacement, not the hidden-behind bug.
+    const _batchEditActive = (typeof _activeBatch !== 'undefined' && _activeBatch
+        && _activeBatch.kind !== 'angles' && _activeBatch.kind !== 'angles-many');
+    const _batchOwnsStage = (typeof currentMode !== 'undefined' && currentMode === 'batch')
+        && !_batchEditActive
+        && (typeof _batchInputs !== 'undefined' && (_batchInputs || []).length > 0);
+    if (_batchOwnsStage && d && d.url) {
+        const _bid = d.upload_id || d.id || ('res_' + Math.random().toString(36).slice(2, 10));
+        if (!(_batchInputs || []).some(b => b.id === _bid)) {
+            _batchInputs.push({
+                id: _bid, url: d.url, w: d.w || 0, h: d.h || 0,
+                fname: (typeof d.url === 'string' && d.url.split('/').pop()) || `${_bid}.png`,
+                selected: false,
+                _genPrompt: d.prompt || '',
+                _fromHistory: !!d._fromHistory,
+            });
+            // Mirror the prompt into the captions cache so the agent's
+            // next batch_state view is grounded in what this tile depicts
+            // (same treatment as the agent's own generate_new_images path).
+            if (d.prompt) {
+                if (typeof _aiSelectedCache === 'undefined' || !_aiSelectedCache) {
+                    window._aiSelectedCache = { captions: {} };
+                }
+                if (!_aiSelectedCache.captions) _aiSelectedCache.captions = {};
+                _aiSelectedCache.captions[_bid] = d.prompt;
+            }
+        }
+        if (typeof renderBatchInputs === 'function') renderBatchInputs();
+        if (typeof updateGenButton === 'function') updateGenButton();
+        if (typeof log === 'function') log('Result added to batch grid (batch view kept)', 'success');
+        return;
+    }
     // If a batch grid is currently displayed, tear it down. The 6 batch
     // jobs are safe in history (grouped by batch_id) so the user can
     // restore the full set by clicking the grouped history card.
