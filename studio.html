@@ -2995,12 +2995,39 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
     .hdr-stage-tabs{margin-left:8px}
 }
 
-/* ── Mobile mode switcher (top bar) ─────────────────────────────────
-   Three prominent buttons — Camera / Edit / Create — that surface
-   the primary mode picker on phones where the sidebar is a hidden
-   drawer. Hidden on desktop (sidebar already exposes the same
-   controls). Stretches to fill the available space so each button
-   has a generous tap target; Create is highlighted by default. */
+/* ── Header kebab (⋮) panels menu ───────────────────────────────────
+   Toggles the History / Community / Queue panels. Replaces the old
+   header mode switcher — modes now live only in the sidebar drawer. */
+.hdr-kebab-wrap{position:relative;flex:0 0 auto}
+.hdr-kebab{
+    width:32px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:6px;
+    color:var(--text-dim);font-size:16px;font-weight:700;line-height:1;
+    cursor:pointer;transition:all .15s;padding:0;
+}
+.hdr-kebab:hover,.hdr-kebab[aria-expanded="true"]{border-color:var(--gold);color:var(--gold);background:var(--surface-3)}
+.hdr-kebab-menu{
+    position:fixed;top:calc(var(--header-h) + 4px);right:8px;z-index:10050;
+    min-width:180px;background:var(--surface);border:1px solid var(--border);
+    border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.6);overflow:hidden;
+    padding:5px;animation:notif-in .14s ease-out;
+}
+.kebab-item{
+    display:flex;align-items:center;gap:9px;width:100%;
+    background:none;border:none;color:var(--text);cursor:pointer;
+    padding:11px 12px;border-radius:7px;text-align:left;
+    font-family:var(--font-mono);font-size:12px;font-weight:600;letter-spacing:.4px;
+    transition:background .12s;
+}
+.kebab-item:hover{background:var(--surface-3)}
+.kebab-item .kebab-icon{font-size:14px;line-height:1}
+.kebab-item .kebab-check{width:14px;color:var(--gold);font-weight:700;visibility:hidden}
+.kebab-item.on .kebab-check{visibility:visible}
+/* Panel-hide switches driven by the kebab menu */
+body.hide-history .history-overlay{display:none!important}
+body.hide-queue .queue-overlay{display:none!important}
+
+/* Legacy: old header mode switcher (removed from markup) */
 .hdr-mode-switcher{
     display:none;  /* desktop: hidden; mobile media query un-hides */
 }
@@ -4465,18 +4492,20 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
        switcher already implies Studio when picked, and the Gallery
        overlay is reachable from the buy/auth menu and gallery
        header chrome. */
-    .app-header h1 { display: none; }
+    /* Header title stays visible now that the mode switcher is gone —
+       modes are picked from the hamburger drawer, panels from the ⋮
+       menu. Stage tabs still drop (Community lives in the ⋮ menu). */
     .app-header .hdr-stage-tabs { display: none; }
-    /* Mobile mode switcher: visible, full-width filler between
-       hamburger and auth controls. Three buttons, equal width,
-       Create active by default. */
-    .hdr-mode-switcher {
-        display: flex;
-        flex: 1 1 auto;
-        min-width: 0;
-        gap: 4px;
-        margin: 0 6px;
-    }
+    /* Keep the header on one line — nothing may push it to wrap or
+       overflow off-screen. The title yields (ellipsis) before anything
+       on the right gets clipped. */
+    .app-header { flex-wrap: nowrap; overflow: hidden; }
+    .app-header h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hdr-right { gap: 6px; flex: 0 0 auto; }
+    /* Account trigger: avatar/initial only — email eats too much width */
+    .user-menu-trigger-email { display: none; }
+    /* Comfortable thumb targets for the ⋮ and hamburger */
+    .hdr-kebab { width: 36px; height: 32px; font-size: 18px; }
     /* Gallery header button: shrink to icon-only on phones to make room
        for the auth controls. The 🎨 emoji is the affordance; "Gallery"
        label drops on narrow widths. */
@@ -4707,27 +4736,28 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <span class="stage-tab-label">Gallery</span>
         </button>
     </div>
-    <!-- ── MOBILE MODE SWITCHER ───────────────────────────────────────
-         On phones the sidebar mode buttons are hidden behind the
-         drawer, so we surface a parallel control here that lets the
-         user flip between Camera / Edit / Create from the top bar
-         without opening the drawer. The same setMode + onMobileSetMode
-         pair runs so the sidebar buttons stay in sync if the user
-         opens the drawer afterwards. Defaults to Create (matches
-         currentMode='generate' at file top). Desktop hides this
-         block via the media query in CSS. -->
-    <div class="hdr-mode-switcher" id="hdrModeSwitcher">
-        <button class="hdr-mode-btn" data-mode="camera" onclick="onMobileSetMode('camera')" title="Camera mode">
-            <span class="hdr-mode-icon">🎥</span><span class="hdr-mode-label">Camera</span>
-        </button>
-        <button class="hdr-mode-btn" data-mode="edit" onclick="onMobileSetMode('edit')" title="Edit mode">
-            <span class="hdr-mode-icon">✏️</span><span class="hdr-mode-label">Edit</span>
-        </button>
-        <button class="hdr-mode-btn active" data-mode="generate" onclick="onMobileSetMode('generate')" title="Create mode">
-            <span class="hdr-mode-icon">✨</span><span class="hdr-mode-label">Create</span>
-        </button>
-    </div>
+    <!-- Mode switching (Camera / Edit / Create) was removed from the
+         header — modes are picked from the sidebar drawer (hamburger)
+         to keep the top bar slim on phones. -->
     <div class="hdr-right">
+        <!-- ── PANELS MENU (⋮) ────────────────────────────────────────
+             Kebab menu that toggles the floating panels: History,
+             Community (Gallery view), and Queue. Hiding History/Queue
+             persists in localStorage so the choice survives refresh. -->
+        <div class="hdr-kebab-wrap">
+            <button class="hdr-kebab" id="hdrKebabBtn" onclick="toggleKebabMenu(event)" aria-haspopup="true" aria-expanded="false" title="Panels" aria-label="Show or hide panels">⋮</button>
+            <div class="hdr-kebab-menu" id="hdrKebabMenu" style="display:none" role="menu">
+                <button class="kebab-item" id="kebabHistory" onclick="togglePanelVisibility('history')" role="menuitemcheckbox">
+                    <span class="kebab-check" aria-hidden="true">✓</span><span class="kebab-icon">🕐</span><span>History</span>
+                </button>
+                <button class="kebab-item" id="kebabCommunity" onclick="togglePanelVisibility('community')" role="menuitemcheckbox">
+                    <span class="kebab-check" aria-hidden="true">✓</span><span class="kebab-icon">🌐</span><span>Community</span>
+                </button>
+                <button class="kebab-item" id="kebabQueue" onclick="togglePanelVisibility('queue')" role="menuitemcheckbox">
+                    <span class="kebab-check" aria-hidden="true">✓</span><span class="kebab-icon">📋</span><span>Queue</span>
+                </button>
+            </div>
+        </div>
         <div id="authOut">
             <button class="hdr-btn auth-btn" onclick="loginGoogle()">🔑 SIGN IN</button>
         </div>
@@ -6908,6 +6938,67 @@ function closeMobileSidebar(){
     if (sb) sb.classList.remove('open');
     if (sc) sc.classList.remove('open');
 }
+
+// ── Header ⋮ panels menu ──────────────────────────────────────────
+// Toggles the floating History / Queue panels and the Community
+// (Gallery) stage view. History/Queue hidden-state persists via
+// localStorage; checkmarks in the menu reflect current visibility.
+(function initPanelPrefs(){
+    try {
+        if (localStorage.getItem('studio_hide_history') === '1') document.body.classList.add('hide-history');
+        if (localStorage.getItem('studio_hide_queue')   === '1') document.body.classList.add('hide-queue');
+    } catch (e) {}
+})();
+function syncKebabChecks(){
+    const h = document.getElementById('kebabHistory');
+    const q = document.getElementById('kebabQueue');
+    const c = document.getElementById('kebabCommunity');
+    if (h) h.classList.toggle('on', !document.body.classList.contains('hide-history'));
+    if (q) q.classList.toggle('on', !document.body.classList.contains('hide-queue'));
+    if (c) c.classList.toggle('on', window._stageView === 'gallery');
+}
+function toggleKebabMenu(e){
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('hdrKebabMenu');
+    const btn  = document.getElementById('hdrKebabBtn');
+    if (!menu) return;
+    const open = menu.style.display !== 'none';
+    menu.style.display = open ? 'none' : 'block';
+    if (btn) btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+    if (!open) syncKebabChecks();
+}
+function closeKebabMenu(){
+    const menu = document.getElementById('hdrKebabMenu');
+    const btn  = document.getElementById('hdrKebabBtn');
+    if (menu) menu.style.display = 'none';
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function togglePanelVisibility(kind){
+    if (kind === 'history' || kind === 'queue') {
+        const cls = 'hide-' + kind;
+        const nowHidden = document.body.classList.toggle(cls);
+        try { localStorage.setItem('studio_hide_' + kind, nowHidden ? '1' : '0'); } catch (e) {}
+    } else if (kind === 'community') {
+        // Flip between the Community Gallery and the Studio workspace.
+        if (typeof setStageView === 'function') {
+            setStageView(window._stageView === 'gallery' ? 'studio' : 'gallery');
+        }
+        closeKebabMenu();          // stage change = user is done with the menu
+        closeMobileSidebar();
+        syncKebabChecks();
+        return;
+    }
+    syncKebabChecks();             // keep menu open so several can be toggled
+}
+// Dismiss on outside tap / Escape.
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('hdrKebabMenu');
+    if (!menu || menu.style.display === 'none') return;
+    if (!e.target.closest('.hdr-kebab-wrap')) closeKebabMenu();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeKebabMenu();
+});
 // Close drawer when user taps a mode button or any generate button —
 // interactions that imply they want to see the output, not keep the
 // menu in their face. The selector includes:
