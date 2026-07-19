@@ -18000,6 +18000,10 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
         shots: angles.map(s => ({
             label: s.label,
             prompt: _anglePromptFor(s),
+            // Pose metadata rides along so downstream consumers (the → 3D
+            // orthogonal-view picker) can identify cardinal views without
+            // parsing prompts.
+            az: s.az, el: s.el, dist: s.dist,
             jobId: null,
             status: 'pending',
             url: null,
@@ -18686,6 +18690,9 @@ function renderBatchGrid(){
                 </button>
                 <button class="batch-action-btn" id="btnShareSheet" onclick="shareCharacterSheet()" title="Publish a public character-sheet page anyone can view and remix">
                     ✨ <span>Publish</span>
+                </button>
+                <button class="batch-action-btn" id="btnTo3D" onclick="batchTo3D()" title="Build a 3D model from this batch — the four orthogonal views (front/right/back/left) are sent as multi-view input so the model's back and sides match your actual images">
+                    🧊 <span>3D</span>
                 </button>
                 <button class="batch-action-btn" id="btnEmbedLink" onclick="createBatchEmbed()" title="Quick shareable gallery — pick a layout, get a link">
                     🔗 <span>Share</span>
@@ -19389,6 +19396,126 @@ async function maybeStartRemixImport(){
     } else {
         showNotif('Could not import the views. Check your connection and try again.', 'error');
     }
+}
+
+// ── Batch → 3D model ───────────────────────────────────────────────
+// Sends the batch's orthogonal views to the Trellis2 image-to-3D worker
+// as MULTI-VIEW conditioning — the single-image 3D failure mode is the
+// back/sides being hallucinated, and feeding real front/right/back/left
+// views fixes exactly that. View picking is heuristic: prefer the four
+// cardinal azimuths at matching elevation+distance; degrade gracefully
+// to whatever distinct azimuths the batch actually contains (min 2,
+// max 4). Angle batches carry {az,el,dist} per shot via the preset;
+// batch-edit results don't, so those fall back to the first finished
+// image as single-view input.
+function _pick3DViews(shots){
+    const done = shots.filter(s => s.url);
+    if (!done.length) return [];
+    const withAz = done.filter(s => s.az);
+    if (!withAz.length) return [done[0]];          // no pose metadata → single view
+    // Group candidates per cardinal azimuth, preferring eye-level medium
+    // (the LoRA's cleanest, least-cropped renders) then any elevation.
+    const CARDINALS = ['front view', 'right side view', 'back view', 'left side view'];
+    const score = s =>
+        (s.el === 'eye-level shot' ? 0 : 1) * 10 +
+        (s.dist === 'medium shot' ? 0 : (s.dist === 'wide shot' ? 1 : 2));
+    const picked = [];
+    for (const az of CARDINALS) {
+        const cands = withAz.filter(s => s.az === az).sort((a, b) => score(a) - score(b));
+        if (cands.length) picked.push(cands[0]);
+    }
+    if (picked.length >= 2) return picked.slice(0, 4);
+    // Fewer than 2 cardinals — take up to 4 distinct azimuths, quarters included.
+    const seen = new Set(); const out = [];
+    for (const s of withAz.sort((a, b) => score(a) - score(b))) {
+        if (!seen.has(s.az)) { seen.add(s.az); out.push(s); }
+        if (out.length === 4) break;
+    }
+    return out.length ? out : [done[0]];
+}
+
+async function _urlToB64(url){
+    const r = await fetchT(url, null, 20000);
+    const blob = await r.blob();
+    return await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).split(',')[1]);
+        fr.onerror = () => rej(new Error('read_failed'));
+        fr.readAsDataURL(blob);
+    });
+}
+
+async function batchTo3D(){
+    if (!_activeBatch) return;
+    const views = _pick3DViews(_activeBatch.shots);
+    if (!views.length) { showNotif('No finished views to build from yet.', 'error'); return; }
+    const labels = views.map(v => v.label || 'view').join(', ');
+    const ok = await showConfirm(
+        views.length > 1
+            ? `Build a 3D model from ${views.length} views (${labels})? The views are sent as multi-view input so the model's back and sides match your images. Costs 300 tokens; refunded if it fails.`
+            : `Build a 3D model from "${labels}"? Only one posed view is available, so the back will be AI-estimated — run a multi-angle batch first for better results. Costs 300 tokens; refunded if it fails.`,
+        { confirmLabel: 'Build 3D', cancelLabel: 'Cancel' }
+    );
+    if (!ok) return;
+    const btn = $('btnTo3D');
+    if (btn) btn.classList.add('busy');
+    try {
+        const imagesB64 = [];
+        for (const v of views) imagesB64.push(await _urlToB64(v.url));
+        const r = await fetchT(`${API}/api/trellis/generate`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+                imagesB64.length > 1
+                    ? { images_b64: imagesB64, params: {} }
+                    : { image_b64: imagesB64[0], params: {} }
+            ),
+        }, 60000);
+        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
+        if (r.status === 402) { showNotif('Not enough tokens (3D build costs 300).', 'error'); return; }
+        const d = await r.json();
+        if (!d || !d.ok || !d.job_id) throw new Error((d && d.error) || 'submit_failed');
+        showNotif(`3D build queued (${views.length} view${views.length === 1 ? '' : 's'}) — this takes a few minutes. You'll be notified when the preview is ready.`, 'success');
+        _pollTrellisJob(d.job_id);
+    } catch (e) {
+        showNotif('3D build failed to submit: ' + (e && e.message ? e.message : e), 'error');
+    } finally {
+        if (btn) btn.classList.remove('busy');
+    }
+}
+
+// Lightweight poller for a submitted 3D job. Polls every 10s for up to
+// 20 minutes; on preview/GLB availability, offers to open it. Kept
+// deliberately simple — the full Trellis frontend owns rich progress UI;
+// this is just the studio-side hand-back.
+function _pollTrellisJob(jobId){
+    const started = Date.now();
+    let notifiedPreview = false;
+    const t = setInterval(async () => {
+        if (Date.now() - started > 20 * 60 * 1000) { clearInterval(t); return; }
+        let d = null;
+        try {
+            const r = await fetchT(`${API}/api/trellis/job/${jobId}`, null, 10000);
+            d = await r.json();
+        } catch { return; }   // transient — keep polling
+        if (!d || !d.ok) return;
+        if (d.status === 'failed') {
+            clearInterval(t);
+            showNotif('3D build failed: ' + (d.error || 'unknown error') + ' — tokens refunded.', 'error');
+            return;
+        }
+        if (d.status === 'discarded') { clearInterval(t); return; }
+        const link = d.glb_url || d.preview_url;
+        if (d.status === 'done' && link) {
+            clearInterval(t);
+            const open = await showConfirm('Your 3D model is ready.', { confirmLabel: 'Open it', cancelLabel: 'Later' });
+            if (open) window.open(`${API}${link}`, '_blank');
+            return;
+        }
+        if (!notifiedPreview && d.status === 'preview_ready' && d.preview_url) {
+            notifiedPreview = true;
+            showNotif('3D preview rendered — finalizing the mesh…', 'info');
+        }
+    }, 10000);
 }
 
 // ── Embed link ─────────────────────────────────────────
