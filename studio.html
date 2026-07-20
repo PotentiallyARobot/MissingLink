@@ -3393,6 +3393,10 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .av-tab{background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;cursor:pointer;transition:all .12s}
 .av-tab:hover{border-color:var(--gold);color:var(--gold)}
 .av-tab.active{background:var(--gold);border-color:var(--gold);color:#0a0a0c}
+.av-howto{margin:0 0 12px;padding-left:20px;font-size:11px;line-height:1.6;color:var(--text-muted)}
+.av-howto li{margin-bottom:3px}
+.av-howto b{color:var(--text)}
+.angle-views-note b{color:var(--text)}
 .av-agent-input{width:100%;box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:9px 10px;resize:vertical;outline:none;line-height:1.5}
 .av-agent-input:focus{border-color:var(--gold)}
 .av-agent-actions{display:flex;align-items:center;gap:10px;margin-top:10px}
@@ -4161,13 +4165,27 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 /* Agent edit-model selector (Auto / Qwen / GPT) — a small segmented control
    in the batch tools column. Active option gets the gold treatment. */
 .edit-model-seg{display:flex;gap:6px;margin-top:2px}
-.edit-model-seg .ems-btn{
-    flex:1;background:var(--surface-2);border:1px solid var(--border);
+/* Base .ems-btn is un-scoped so the same chrome works both in the segmented
+   controls AND standalone (angle-views modal footer, agent "Generate" button).
+   Only the flex sizing stays scoped to the segmented control. */
+.ems-btn{
+    background:var(--surface-2);border:1px solid var(--border);
     color:var(--text-muted);font-family:var(--font-mono);font-size:11px;
     padding:6px 8px;border-radius:6px;cursor:pointer;transition:all .15s;
 }
-.edit-model-seg .ems-btn:hover{border-color:var(--gold);color:var(--gold)}
-.edit-model-seg .ems-btn.active{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.ems-btn:hover{border-color:var(--gold);color:var(--gold)}
+.ems-btn.active{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.ems-btn:disabled{opacity:.55;cursor:default;border-color:var(--border);color:var(--text-muted)}
+.edit-model-seg .ems-btn{flex:1}
+/* Standalone primary actions (modal Save, agent Generate) read as solid gold
+   rather than the segmented control's "selected" tint. */
+.angle-views-foot .ems-btn{padding:7px 14px}
+.angle-views-foot .ems-btn.active,
+.av-agent-actions .ems-btn.active{background:var(--gold);border-color:var(--gold);color:#0a0a0c;font-weight:600}
+.angle-views-foot .ems-btn.active:hover,
+.av-agent-actions .ems-btn.active:hover{background:var(--gold-light);color:#0a0a0c}
+.av-agent-actions .ems-btn{padding:7px 14px}
+.av-agent-actions .ems-btn:disabled{background:var(--gold-dim);border-color:var(--border);color:var(--text-muted);font-weight:600}
 /* Agent Stop button — replaces the send arrow while a turn is running. */
 .agent-send.agent-stop{background:rgba(239,68,68,.12);border-color:var(--red);color:var(--red)}
 .agent-send.agent-stop:hover{background:var(--red);color:#fff}
@@ -6008,6 +6026,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="angle-views-body" id="angleViewsBody"></div>
         <div class="angle-views-foot">
             <button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the built-in default views (not saved until you hit Save)">Reset to defaults</button>
+            <button type="button" class="ems-btn" id="avAgentUndoBtn" style="display:none" onclick="restoreAnglePromptsUndo()" title="Restore the prompts and camera settings from before the last AI apply">↩ Undo AI changes</button>
             <span style="flex:1"></span>
             <button type="button" class="ems-btn" onclick="closeAngleViewsConfig(false)">Cancel</button>
             <button type="button" class="ems-btn active" onclick="closeAngleViewsConfig(true)">Save</button>
@@ -15338,6 +15357,10 @@ function _avSelect(cls, i, list, nice, selected){
 function _angleViewsRenderRows(shots){
     const body = $('angleViewsBody');
     if (!body) return;
+    // Re-rendering (e.g. Reset to defaults, Undo) must not eat the user's
+    // typed agent instruction or bounce them off their current tab.
+    const keepInstr = body.querySelector('#avAgentInstructions')?.value || '';
+    const keepTab = body.querySelector('.av-tab.active')?.dataset.tab || 'views';
     body.innerHTML =
         '<div class="av-tabs">' +
             '<button type="button" class="av-tab active" data-tab="views" onclick="_avSwitchTab(\'views\')">Views</button>' +
@@ -15363,21 +15386,35 @@ function _angleViewsRenderRows(shots){
             '</div>').join('') +
         '</div>' +
         '<div id="avTabAgent" style="display:none">' +
-            '<div class="angle-views-note">Describe the subject and what you want across the set — the AI ' +
-            'writes one tailored prompt per view (' + _angleViewsEditing + ' total), aware of each camera ' +
-            'position, and fills the prompt slots on the Views tab. Review and edit before saving.</div>' +
+            '<div class="angle-views-note">Tell the AI how to change this ' + _angleViewsEditing + '-view batch. ' +
+            'It looks at your <b>input image</b> and each view\u2019s <b>current prompt</b>, and treats your ' +
+            '<b>instruction as the top priority</b> \u2014 rewriting or extending every view\u2019s prompt to follow it. ' +
+            'If the instruction changes what the views mean (say, \u201c' + _angleViewsEditing + ' different characters\u201d ' +
+            'instead of one subject from ' + _angleViewsEditing + ' angles), it also re-picks each view\u2019s ' +
+            'camera dropdowns to match.</div>' +
+            '<ol class="av-howto">' +
+                '<li>Write an instruction \u2014 an edit for the whole set, or a description of what each view should become.</li>' +
+                '<li>Apply it \u2014 every view\u2019s prompt (and camera boxes, when needed) is filled in on the Views tab.</li>' +
+                '<li>Review and tweak any view by hand, then hit <b>Save</b>. Nothing renders until you save and generate.</li>' +
+            '</ol>' +
             '<textarea id="avAgentInstructions" class="av-agent-input" rows="5" ' +
-                'placeholder="e.g. A plague doctor inquisitor collectible figure. Keep the character identical in every view; describe what is visible from each camera position — the lantern on the left hip, the grimoire on the right thigh, the hat brim from above…"></textarea>' +
+                'placeholder="e.g. Give him a battle-worn look \u2014 scratched armor, torn cloak, dust and dried mud\u2026&#10;or: Make each view a completely different RPG party member from the same game"></textarea>' +
             '<div class="av-agent-actions">' +
-                '<button type="button" class="ems-btn active" id="avAgentGo" onclick="generateAnglePrompts()">Generate ' + _angleViewsEditing + ' prompts</button>' +
+                '<button type="button" class="ems-btn active" id="avAgentGo" onclick="generateAnglePrompts()">\u2728 Apply to all ' + _angleViewsEditing + ' views</button>' +
+                '<button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the factory default views and empty prompts (not saved until you hit Save)">Reset to defaults</button>' +
                 '<span class="av-agent-status" id="avAgentStatus"></span>' +
             '</div>' +
+            '<div class="angle-views-note" style="margin:8px 0 0">Changed your mind? <b>Undo AI changes</b> (bottom bar) ' +
+            'restores the prompts and cameras from before the last apply; <b>Reset to defaults</b> returns the factory views.</div>' +
         '</div>';
     // Pre-fill any saved per-view prompts
     shots.forEach((s, i) => {
         const inp = body.querySelector('.av-extra[data-slot="' + i + '"]');
         if (inp && s.extra) inp.value = s.extra;
     });
+    // Restore preserved agent state
+    if (keepInstr) { const t = body.querySelector('#avAgentInstructions'); if (t) t.value = keepInstr; }
+    if (keepTab !== 'views') _avSwitchTab(keepTab);
 }
 
 function _avSwitchTab(which){
@@ -15391,54 +15428,115 @@ function _avSwitchTab(which){
     if (a) a.style.display = which === 'agent' ? '' : 'none';
 }
 
-// Agent tab → per-view prompt generation. Reads the CURRENT selects (so
-// the model targets whatever camera set the user has configured, not the
-// saved one), posts to the worker, and fills the .av-extra inputs in
-// order. Nothing is persisted until the user hits Save — the generated
-// prompts land in the form as editable text, same as typing them.
+// Agent tab → per-view prompt revision. Reads the CURRENT form (selects
+// AND each view's existing prompt — so the model modifies what's there,
+// with the user's instruction as top priority), sends the camera input
+// image when one is loaded, and applies the result back into the form:
+// prompts into the .av-extra inputs, and — when the model decided the
+// instruction changed what a view means — updated az/el/dist selects.
+// The pre-apply state is snapshotted so "Undo AI changes" can restore
+// it. Nothing is persisted until the user hits Save.
+let _avAgentUndo = null;   // [{az,el,dist,extra}] captured before the last apply
+
+function _avReadForm(body){
+    const out = [];
+    body.querySelectorAll('.angle-views-slot').forEach(sl => {
+        out.push({
+            az:   sl.querySelector('.av-az').value,
+            el:   sl.querySelector('.av-el').value,
+            dist: sl.querySelector('.av-dist').value,
+            extra:(sl.querySelector('.av-extra')?.value || '').slice(0, 600),
+        });
+    });
+    return out;
+}
+function _avWriteForm(body, views){
+    views.forEach((v, i) => {
+        const sl = body.querySelectorAll('.angle-views-slot')[i];
+        if (!sl) return;
+        const az = sl.querySelector('.av-az'), el = sl.querySelector('.av-el'),
+              di = sl.querySelector('.av-dist'), ex = sl.querySelector('.av-extra');
+        if (az && ANGLES_AZ.includes(v.az))     az.value = v.az;
+        if (el && ANGLES_EL.includes(v.el))     el.value = v.el;
+        if (di && ANGLES_DIST.includes(v.dist)) di.value = v.dist;
+        if (ex && typeof v.extra === 'string')  ex.value = v.extra.slice(0, 600);
+    });
+}
+function _avSetUndoVisible(on){
+    const b = $('avAgentUndoBtn');
+    if (b) b.style.display = on ? '' : 'none';
+}
+function restoreAnglePromptsUndo(){
+    const body = $('angleViewsBody');
+    if (!body || !_avAgentUndo) return;
+    _avWriteForm(body, _avAgentUndo);
+    _avAgentUndo = null;
+    _avSetUndoVisible(false);
+    showNotif('Restored the prompts and cameras from before the AI edit.', 'info');
+}
+
 async function generateAnglePrompts(){
     const body = $('angleViewsBody');
     if (!body) return;
     const instructions = (body.querySelector('#avAgentInstructions')?.value || '').trim();
     if (!instructions) {
-        showNotif('Describe the subject and what you want first.', 'error');
+        showNotif('Write an instruction first — what should change across the views?', 'error');
         return;
     }
-    // Snapshot the currently-selected view set from the form.
-    const rows = body.querySelectorAll('.angle-views-row');
-    const views = [];
-    rows.forEach(r => {
-        const az = r.querySelector('.av-az').value;
-        const el = r.querySelector('.av-el').value;
-        const dist = r.querySelector('.av-dist').value;
-        const s = _shotFromParts(az, el, dist);
-        views.push({ az, el, dist, label: s.label });
+    // Read the whole current form: camera settings AND existing prompts.
+    const form = _avReadForm(body);
+    const views = form.map(v => {
+        const s = _shotFromParts(v.az, v.el, v.dist);
+        return { az: v.az, el: v.el, dist: v.dist, label: s.label, extra: v.extra.trim() };
     });
     if (!views.length) return;
     const go = body.querySelector('#avAgentGo');
     const status = body.querySelector('#avAgentStatus');
-    if (go) { go.disabled = true; go.textContent = 'Generating…'; }
-    if (status) status.textContent = '';
+    if (go) { go.disabled = true; go.textContent = 'Working…'; }
+    if (status) status.textContent = 'Reading image + prompts…';
     try {
         const r = await fetchT(`${API}/api/studio/angle-prompts`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instructions, views }),
+            // image_id: the camera input image, so the model can ground
+            // prompts in what the subject actually looks like. Optional —
+            // the endpoint degrades to text-only when absent.
+            body: JSON.stringify({ instructions, views, image_id: imageId || undefined }),
         }, 60000);
         if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
         if (r.status === 402) { showNotif('Not enough tokens for AI prompt generation.', 'error'); return; }
         const d = await r.json();
-        if (!d || !d.ok || !Array.isArray(d.prompts)) throw new Error((d && d.error) || 'generation_failed');
-        d.prompts.forEach((p, i) => {
-            const inp = body.querySelector('.av-extra[data-slot="' + i + '"]');
-            if (inp && typeof p === 'string') inp.value = p.slice(0, 600);
-        });
+        if (!d || !d.ok) throw new Error((d && d.error) || 'generation_failed');
+        // Preferred shape: views[{prompt,az,el,dist}]. Legacy fallback:
+        // prompts[string] (camera settings untouched).
+        let applied;
+        if (Array.isArray(d.views)) {
+            applied = d.views.map((v, i) => ({
+                az: v.az, el: v.el, dist: v.dist,
+                extra: typeof v.prompt === 'string' ? v.prompt : (form[i] ? form[i].extra : ''),
+            }));
+        } else if (Array.isArray(d.prompts)) {
+            applied = d.prompts.slice(0, form.length).map((p, i) => ({
+                az: form[i].az, el: form[i].el, dist: form[i].dist,
+                extra: typeof p === 'string' ? p : form[i].extra,
+            }));
+        } else throw new Error('generation_failed');
+        // Snapshot for Undo, then write results into the form.
+        _avAgentUndo = form;
+        _avWriteForm(body, applied);
+        _avSetUndoVisible(true);
+        const camChanged = applied.some((v, i) =>
+            form[i] && (v.az !== form[i].az || v.el !== form[i].el || v.dist !== form[i].dist));
         _avSwitchTab('views');
-        showNotif(`Filled ${Math.min(d.prompts.length, views.length)} view prompts — review, tweak, then Save.`, 'success');
+        showNotif(
+            `Updated ${Math.min(applied.length, views.length)} view prompts` +
+            (camChanged ? ' (and adjusted some camera settings to fit)' : '') +
+            ' — review, tweak, then Save. Undo AI changes is in the bottom bar.', 'success');
     } catch (e) {
         if (status) status.textContent = 'Failed — try again.';
         showNotif('Prompt generation failed: ' + (e && e.message ? e.message : e), 'error');
     } finally {
-        if (go) { go.disabled = false; go.textContent = 'Generate ' + _angleViewsEditing + ' prompts'; }
+        if (go) { go.disabled = false; go.textContent = '\u2728 Apply to all ' + _angleViewsEditing + ' views'; }
+        if (status && status.textContent === 'Reading image + prompts…') status.textContent = '';
     }
 }
 
@@ -15446,6 +15544,8 @@ function openAngleViewsConfig(){
     _angleViewsEditing = (typeof _camMultiCount !== 'undefined' && _camMultiCount === 20) ? 20 : 6;
     const t = $('angleViewsTitle');
     if (t) t.textContent = 'Configure ' + _angleViewsEditing + '-View Batch';
+    // Fresh session: any undo snapshot from a previous open is stale.
+    _avAgentUndo = null; _avSetUndoVisible(false);
     _angleViewsRenderRows(getAngleBatchPreset(_angleViewsEditing));
     const m = $('angleViewsModal');
     if (m) { m.style.display = 'flex'; const b = $('angleViewsBody'); if (b) b.scrollTop = 0; }
