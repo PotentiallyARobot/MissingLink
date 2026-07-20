@@ -7042,9 +7042,11 @@ function notifyUploadError(code, data){
 function friendlyGenError(code){
     const c = (code || '').toString();
     const map = {
-        // GPU queue: no Modal consumer claimed a queued job in time.
+        // GPU queue: no Modal consumer claimed a queued job in time —
+        // even after the server's one silent automatic retry, so this is
+        // a genuine outage rather than a cold start.
         timeout_no_gpu_response:
-            'The image GPU didn\u2019t respond in time. It may have been cold-starting or briefly overloaded \u2014 your tokens were refunded. Please try again.',
+            'The image GPU didn\u2019t respond in time. It may have been cold-starting or briefly overloaded \u2014 we retried automatically, and your tokens were refunded. Please try again in a minute.',
         // OpenAI-backed Create job that never completed (worker evicted
         // mid-flight, or OpenAI stalled past our ceiling).
         timeout_no_openai_response:
@@ -17462,18 +17464,39 @@ async function retryBatchSlot(slotIdx, refinedPrompt){
     // Patch the stashed payload with the new prompt before re-submission.
     // Also patch the snapshot if present — keeps history accurate so a
     // later "restore from history" gets the refined prompt, not the original.
+    //
+    // ANGLE SHOTS (camera mode with pose metadata): the submitted prompt
+    // MUST keep the '<sks> az el dist' LoRA trigger prefix — the critique's
+    // refined_prompt is a free rewording and routinely drops or mangles it,
+    // which made retries silently ignore the pose AND the user's custom
+    // per-view prompt. So instead of swapping the whole prompt, we strip
+    // any pose tokens the critique echoed back and rebuild:
+    //   <sks> {az} {el} {dist}, {refined text}
+    // exactly like _anglePromptFor does at original submit.
+    let finalPrompt = refinedPrompt;
+    if (shot.payload.mode === 'camera' && shot.az && shot.el && shot.dist) {
+        let cleaned = String(refinedPrompt || '').replace(/<sks>/gi, ' ');
+        for (const tok of [...ANGLES_AZ, ...ANGLES_EL, ...ANGLES_DIST]) {
+            cleaned = cleaned.split(tok).join(' ');
+        }
+        cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/^[\s,]+|[\s,]+$/g, '');
+        const base = `<sks> ${shot.az} ${shot.el} ${shot.dist}`;
+        finalPrompt = cleaned ? `${base}, ${cleaned}` : base;
+        // Keep the tile's "Custom" label + tooltip in sync with the new text.
+        shot.extra = cleaned;
+    }
     // For SDXL shots, re-apply the Pony 2.2 positive prefix to the refined
     // prompt (it's skipped automatically if the refinement already kept the
     // score_ prefix); the negative already carries the Pony negatives so we
     // leave it untouched to avoid duplicating them.
     if (shot.payload && shot.payload._engine === 'sdxl') {
-        const aug = _batchPonyAugment(refinedPrompt, '');
+        const aug = _batchPonyAugment(finalPrompt, '');
         shot.payload = { ...shot.payload, prompt: aug.prompt };
     } else {
-        shot.payload = { ...shot.payload, prompt: refinedPrompt };
+        shot.payload = { ...shot.payload, prompt: finalPrompt };
     }
-    if (shot.snapshot) shot.snapshot = { ...shot.snapshot, prompt: refinedPrompt };
-    shot.prompt = refinedPrompt;
+    if (shot.snapshot) shot.snapshot = { ...shot.snapshot, prompt: finalPrompt };
+    shot.prompt = finalPrompt;
     // Clear any AI-critique state since the prompt has changed; a stale
     // 'flagged' badge would mislead the user about a fresh tile.
     shot.aiFlagged = false;
@@ -18100,6 +18123,11 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
         shots: angles.map(s => ({
             label: s.label,
             prompt: _anglePromptFor(s),
+            // The user's custom per-view prompt (from the Configure Views
+            // dialog / agent). Carried onto the shot so tile labels can
+            // show "Custom" and so critique-retries can rebuild the full
+            // prompt without losing it.
+            extra: (s.extra || '').trim(),
             // Pose metadata rides along so downstream consumers (the → 3D
             // orthogonal-view picker) can identify cardinal views without
             // parsing prompts.
@@ -18632,7 +18660,18 @@ function renderBatchGrid(){
         const toCameraBtn = tile.querySelector('.batch-tile-to-camera');
         const toCreateBtn = tile.querySelector('.batch-tile-to-create');
         const retryBtn = tile.querySelector('.batch-tile-retry');
-        label.textContent = shot.label;
+        // When the view carries a custom prompt, the camera shorthand is
+        // misleading (the view may not even be about the camera anymore —
+        // e.g. agent-generated "6 different characters" sets). Show
+        // "Custom" instead, with the pose + full prompt on hover so
+        // nothing is lost.
+        if (shot.extra) {
+            label.textContent = 'Custom';
+            label.title = shot.label + ' — ' + shot.extra;
+        } else {
+            label.textContent = shot.label;
+            label.title = shot.label;
+        }
         // Populate the input preview immediately — so the tile shows the
         // source image the whole time the job is pending/queued/running.
         // Only set once (don't re-swap on re-renders).
@@ -26681,9 +26720,19 @@ function restoreBatchFromHistory(items){
     // canonical 96-pose lookup. Falls back to the heuristic for any
     // legacy stored prompts that don't match exactly.
     const shots = sorted.map((it, idx) => {
-        const label = _deriveShotLabel(it.prompt) || `View ${idx + 1}`;
+        // Recover the pose + custom tail. The shot's `label` stays the
+        // camera shorthand (used in tooltips / contact sheets); the tile
+        // renderer shows "Custom" whenever `extra` is present, same as a
+        // live batch.
+        const split = _splitAnglePrompt(it.prompt);
+        const label = (split.pose && split.pose.label)
+            || _deriveShotLabel(it.prompt) || `View ${idx + 1}`;
         return {
             label,
+            extra: split.extra || '',
+            az: split.pose ? split.pose.az : undefined,
+            el: split.pose ? split.pose.el : undefined,
+            dist: split.pose ? split.pose.dist : undefined,
             prompt: it.prompt || '',
             jobId: it.id,              // real job ID in case we need to re-open
             status: 'done',
@@ -26734,17 +26783,34 @@ function restoreBatchFromHistory(items){
     log(`Restored ${sorted.length}-shot batch from history (${kind})`);
 }
 
+// Split a stored angle prompt into its canonical pose and the user's
+// custom tail. "<sks> right side view low-angle shot medium shot, a viking
+// berserker…" → { pose: {az,el,dist,label}, extra: "a viking berserker…" }.
+// Returns pose=null when the prompt doesn't start with a canonical pose.
+function _splitAnglePrompt(prompt){
+    const trimmed = (prompt || '').trim();
+    if (!trimmed) return { pose: null, extra: '' };
+    const exact = ANGLES_LOOKUP[trimmed];
+    if (exact) return { pose: exact, extra: '' };
+    for (const key in ANGLES_LOOKUP) {
+        if (trimmed.startsWith(key)) {
+            return { pose: ANGLES_LOOKUP[key], extra: trimmed.slice(key.length).replace(/^[\s,]+/, '') };
+        }
+    }
+    return { pose: null, extra: '' };
+}
+
 // Try to map a stored prompt like "<sks> front-right quarter view eye-level shot close-up"
-// back to a human label like "Front-R · Eye · Close". First try the exact
-// canonical 96-pose lookup (covers every prompt the LoRA was trained on);
-// fall back to a substring heuristic for legacy stored prompts that may
-// not match a canonical pose verbatim (older 6-angle entries used slightly
-// different label text in the grid but the prompt token order is stable).
+// back to a human label like "Front-R · Eye · Close". A prompt that carries
+// a custom tail after the pose tokens labels as "Custom" — the camera
+// shorthand would be misleading for those (the view may not be about the
+// camera at all). Falls back to a substring heuristic for legacy stored
+// prompts that don't match a canonical pose verbatim.
 function _deriveShotLabel(prompt){
     if (!prompt) return null;
-    // Fast path: exact match against any of the 96 canonical prompts.
-    const exact = ANGLES_LOOKUP[prompt.trim()];
-    if (exact) return exact.label;
+    // Fast path: canonical pose, with or without a custom tail.
+    const split = _splitAnglePrompt(prompt);
+    if (split.pose) return split.extra ? 'Custom' : split.pose.label;
     // Fallback: heuristic substring scan. Used for older history entries
     // where the prompt may have had a stray newline / extra spacing /
     // legacy phrasing that doesn't match the canonical lookup byte-for-byte.
