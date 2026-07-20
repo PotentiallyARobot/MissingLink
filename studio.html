@@ -3723,8 +3723,30 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .batch-action-btn:disabled{opacity:.35;cursor:not-allowed}
 .batch-action-btn.batch-action-min{padding:7px 9px;font-size:14px;color:var(--text-muted);line-height:.6}
 .batch-action-btn.batch-action-min:hover{background:var(--gold-dim);color:var(--gold)}
-.batch-action-btn.batch-action-close{padding:7px 9px;font-size:14px;color:var(--text-muted);opacity:.6}
-.batch-action-btn.batch-action-close:hover{background:rgba(239,68,68,.15);color:var(--red);opacity:1}
+/* Overflow "More" dropdown — the toolbar keeps only the everyday actions
+   (Download, 3D, Retry) visible; everything else stacks in here so the
+   bar stays short. The menu is anchored to the wrap, opens downward, and
+   flips upward (.up) when the draggable toolbar sits near the bottom. */
+.batch-more-wrap{position:relative;display:flex}
+.batch-footer.minimized .batch-more-wrap{display:none}
+.batch-more-menu{
+    position:absolute;top:calc(100% + 8px);right:0;min-width:250px;
+    display:flex;flex-direction:column;gap:2px;
+    background:rgba(17,17,20,.97);border:1px solid var(--border);
+    border-radius:10px;padding:6px;box-shadow:0 8px 28px rgba(0,0,0,.5);
+    z-index:6;
+}
+.batch-more-menu.up{top:auto;bottom:calc(100% + 8px)}
+.batch-more-item{
+    display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+    background:none;border:none;color:var(--text);
+    font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:.3px;
+    padding:8px 10px;border-radius:6px;cursor:pointer;transition:all .12s;
+    -webkit-tap-highlight-color:transparent;
+}
+.batch-more-item:hover:not(:disabled){background:var(--gold-dim);color:var(--gold)}
+.batch-more-item:disabled{opacity:.35;cursor:not-allowed}
+.batch-more-item .bmi-hint{margin-left:auto;color:var(--text-dim);font-weight:400;font-size:10px;letter-spacing:0}
 /* The pill shown when the toolbar is minimized — a single button that
    restores the bar to its full state. Always rendered but only visible
    when .minimized is set (display rule above hides everything else). */
@@ -5741,7 +5763,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
              stay in History). -->
         <div class="batch-grid-toolbar" id="batchGridToolbar" style="display:none">
             <span class="bgt-count" id="bgtCount"></span>
-            <button type="button" class="bgt-btn" onclick="batchClearWithConfirm()" title="Wipe the current grid. Images stay in your History so you can edit them later.">✕ Clear Stage</button>
+            <button type="button" class="bgt-btn" onclick="stageClearCurrent()" title="Clear whatever is on the stage — batch results or working images. Everything stays in your History.">✕ Clear Stage</button>
         </div>
 
         <!-- Batch-mode input grid — user's uploaded images shown as
@@ -8682,6 +8704,10 @@ function setMode(mode, opts){
     // Show the batch inputs grid in the output area when we enter batch
     // mode; hide it otherwise so Camera/Edit aren't polluted by it.
     if (typeof renderBatchInputs === 'function') renderBatchInputs();
+    // If a batch RESULTS grid lives in this mode (e.g. returning to Camera
+    // with an angle batch up), re-surface the standard Clear Stage pill —
+    // renderBatchInputs above only manages it for the input grid.
+    if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
 
     // Camera → Edit: auto-populate slot 0 with the ORIGINAL camera input
     // (what the user uploaded), NOT the generated output. The "Use as Input"
@@ -16356,6 +16382,50 @@ async function batchClearWithConfirm(){
     }
 }
 
+// ── Unified Clear Stage ──────────────────────────────────────────
+// One control, one place: the top-left "✕ Clear Stage" pill clears
+// whatever currently owns the stage. When a batch RESULTS grid is on
+// stage (angle batches in Camera mode, batch-edit results in Batch
+// mode) it discards that batch — replacing the old '×' that hid in the
+// floating tools bar. Otherwise it falls through to the Batch-mode
+// input-grid clear it has always done.
+function _batchHomeMode(){
+    const kind = _activeBatch ? _activeBatch.kind : null;
+    return (kind === 'angles' || kind === 'angles-many') ? 'camera' : 'batch';
+}
+function _batchOnStage(){
+    return !!_activeBatch && typeof currentMode !== 'undefined' && currentMode === _batchHomeMode();
+}
+async function stageClearCurrent(){
+    if (_batchOnStage()) {
+        const n = _activeBatch.shots.length;
+        const ok = await showConfirm(
+            `Clear this ${n}-tile batch from the stage? Finished images stay in your History.`,
+            { confirmLabel: 'Clear stage', cancelLabel: 'Keep', danger: true });
+        if (ok) clearBatchGrid();
+        return;
+    }
+    return batchClearWithConfirm();
+}
+// Show the standard Clear Stage pill whenever a batch results grid owns
+// the stage. Called from renderBatchGrid (every batch render) and from
+// setMode (so switching back to the batch's home mode restores it).
+// When no batch is on stage, the pill is left to renderBatchInputs,
+// which manages it for the batch-input grid.
+function updateBatchClearToolbar(){
+    const tb = $('batchGridToolbar');
+    if (!tb || !_batchOnStage()) return;
+    tb.style.display = '';
+    const cnt = $('bgtCount');
+    if (cnt) {
+        const n = _activeBatch.shots.length;
+        const kind = _activeBatch.kind || '';
+        const noun = kind.startsWith('angles') ? 'view' : 'tile';
+        cnt.textContent = `${n} ${noun}${n === 1 ? '' : 's'}`;
+    }
+    document.body.classList.add('has-clear-toolbar');
+}
+
 // ─── Send a batch tile into single-image modes ──────────────────
 // Lets the user pull one image out of the batch into Camera or Edit
 // mode without re-uploading. Reuses the existing upload id (R2-backed)
@@ -18521,6 +18591,14 @@ function renderBatchGrid(){
         if (prog) prog.remove();
         const footer = $('batchFooter');
         if (footer) footer.remove();
+        // Outside Batch mode the Clear Stage pill belonged to the batch we
+        // just cleared — hide it. (In Batch mode renderBatchInputs, called
+        // above, already set it correctly for the input grid.)
+        if (typeof currentMode === 'undefined' || currentMode !== 'batch') {
+            const tb = $('batchGridToolbar');
+            if (tb) tb.style.display = 'none';
+            document.body.classList.remove('has-clear-toolbar');
+        }
         $('outPh').style.display = $('outImg').src ? 'none' : '';
         $('outImg').style.display = $('outImg').src ? '' : 'none';
         return;
@@ -18534,6 +18612,10 @@ function renderBatchGrid(){
     if (_atHome) {
         $('outPh').style.display = 'none';
         $('outImg').style.display = 'none';
+        // The batch owns the stage → surface the standard top-left
+        // "✕ Clear Stage" pill (same control users know from the input
+        // grid) so discarding the batch happens in the expected place.
+        if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
     }
 
     let grid = $('batchGrid');
@@ -18821,49 +18903,62 @@ function renderBatchGrid(){
                 <button class="batch-action-btn" id="btnDownloadAll" onclick="downloadBatchAll()" title="Download all images">
                     ⬇ <span>Download</span>
                 </button>
-                <button class="batch-action-btn" id="btnMakeGif" onclick="makeBatchGif()" title="Generate an animated GIF of the views">
-                    🎞 <span>GIF</span>
-                </button>
-                <button class="batch-action-btn" id="btnCharSheet" onclick="downloadCharacterSheet()" title="Compose all views into a single labeled character-sheet PNG">
-                    🗂 <span>Sheet</span>
-                </button>
-                <button class="batch-action-btn" id="btnShareSheet" onclick="shareCharacterSheet()" title="Publish a public character-sheet page anyone can view and remix">
-                    ✨ <span>Publish</span>
-                </button>
                 <button class="batch-action-btn" id="btnTo3D" onclick="batchTo3D()" title="Build a 3D model from this batch — the four orthogonal views (front/right/back/left) are sent as multi-view input so the model's back and sides match your actual images">
                     🧊 <span>3D</span>
                 </button>
-                <button class="batch-action-btn" id="btnEmbedLink" onclick="createBatchEmbed()" title="Quick shareable gallery — pick a layout, get a link">
-                    🔗 <span>Share</span>
-                </button>
-                <button class="batch-action-btn" id="btnProductize" onclick="productizeBatch()" title="Turn this into a product page with price, reviews, and a Buy Now button">
-                    🏷 <span>Productize</span>
-                </button>
+                <div class="batch-more-wrap">
+                    <button class="batch-action-btn" id="btnBatchMore" title="More batch tools">⋯ <span>More</span></button>
+                    <div class="batch-more-menu" id="batchMoreMenu" style="display:none">
+                        <button class="batch-more-item" id="btnMakeGif" onclick="makeBatchGif()" title="Generate an animated GIF of the views">🎞 <span>GIF</span><span class="bmi-hint">animated turntable</span></button>
+                        <button class="batch-more-item" id="btnCharSheet" onclick="downloadCharacterSheet()" title="Compose all views into a single labeled character-sheet PNG">🗂 <span>Sheet</span><span class="bmi-hint">one labeled PNG</span></button>
+                        <button class="batch-more-item" id="btnShareSheet" onclick="shareCharacterSheet()" title="Publish a public character-sheet page anyone can view and remix">✨ <span>Publish</span><span class="bmi-hint">public sheet page</span></button>
+                        <button class="batch-more-item" id="btnEmbedLink" onclick="createBatchEmbed()" title="Quick shareable gallery — pick a layout, get a link">🔗 <span>Share</span><span class="bmi-hint">gallery link</span></button>
+                        <button class="batch-more-item" id="btnProductize" onclick="productizeBatch()" title="Turn this into a product page with price, reviews, and a Buy Now button">🏷 <span>Productize</span><span class="bmi-hint">product page</span></button>
+                    </div>
+                </div>
                 <button class="batch-action-btn batch-action-min" id="btnMinBatch" title="Minimize toolbar">−</button>
-                <button class="batch-action-btn batch-action-close" id="btnCloseBatch" title="Discard batch (clears all results)">
-                    ×
-                </button>
             `;
             area.appendChild(footer);
-            // Wire up the new draggable + minimize behaviors. Close is
-            // wired here too (instead of inline onclick) so we can ask
-            // for confirmation before doing the destructive clear.
+            // Wire up draggable + minimize + the More dropdown. The old '×'
+            // (discard batch) is GONE from this toolbar — it duplicated the
+            // standard top-left "✕ Clear Stage" control in a corner nobody
+            // associates with clearing, and sat one slip away from Minimize.
+            // Clearing now lives ONLY in the standard Clear Stage pill.
             initBatchFooterDrag(footer);
             const restoreBtn = footer.querySelector('.batch-action-restore');
             const minBtn = footer.querySelector('#btnMinBatch');
-            const closeBtn = footer.querySelector('#btnCloseBatch');
             if (restoreBtn) restoreBtn.onclick = () => setBatchFooterMinimized(false);
             if (minBtn) minBtn.onclick = () => setBatchFooterMinimized(true);
-            if (closeBtn) closeBtn.onclick = async () => {
-                // Confirm before throwing away the user's results — this
-                // is a one-way operation and was previously labelled "Close"
-                // which made it look like a minimize. Use the styled modal
-                // (matches the studio dark theme) instead of native confirm().
-                const ok = await showConfirm('Discard this batch and clear all results?', { confirmLabel: 'Discard', cancelLabel: 'Keep', danger: true });
-                if (ok) {
-                    clearBatchGrid();
-                }
-            };
+            const moreBtn = footer.querySelector('#btnBatchMore');
+            const moreMenu = footer.querySelector('#batchMoreMenu');
+            if (moreBtn && moreMenu) {
+                moreBtn.onclick = (ev) => {
+                    ev.stopPropagation();
+                    if (moreMenu.style.display !== 'none') { moreMenu.style.display = 'none'; return; }
+                    moreMenu.style.display = 'flex';
+                    // The toolbar is draggable — if it sits low, open upward.
+                    moreMenu.classList.remove('up');
+                    const r = moreMenu.getBoundingClientRect();
+                    if (r.bottom > window.innerHeight - 8) moreMenu.classList.add('up');
+                };
+                // Any item click closes the menu (the item's own onclick
+                // has already fired by the time this bubbles).
+                moreMenu.addEventListener('click', (ev) => {
+                    if (ev.target.closest('.batch-more-item')) moreMenu.style.display = 'none';
+                });
+            }
+            // One document-level closer for clicks outside the toolbar.
+            // Bound once globally — the footer is recreated per batch and
+            // per-instance listeners would pile up.
+            if (!window._batchMoreCloserBound) {
+                window._batchMoreCloserBound = true;
+                document.addEventListener('click', (ev) => {
+                    const m = document.getElementById('batchMoreMenu');
+                    if (m && m.style.display !== 'none' && !ev.target.closest('#batchFooter')) {
+                        m.style.display = 'none';
+                    }
+                });
+            }
             // Restore minimized state on first creation. Position is
             // restored inside initBatchFooterDrag.
             if (localStorage.getItem('batchFooterMin') === '1') {
@@ -20324,6 +20419,14 @@ function clearBatchGrid(){
     // Progress pill ('Rendering 5/20', etc) — was previously left orphaned
     // in the work area when a batch was cleared via doGenerate's takeover.
     const prog = $('batchProgress'); if (prog) prog.remove();
+    // Hide the Clear Stage pill we surfaced for this batch. In Batch mode,
+    // renderBatchInputs re-shows it if the input grid still has tiles.
+    const tb = $('batchGridToolbar'); if (tb) tb.style.display = 'none';
+    document.body.classList.remove('has-clear-toolbar');
+    if (typeof currentMode !== 'undefined' && currentMode === 'batch'
+        && typeof renderBatchInputs === 'function') {
+        renderBatchInputs();
+    }
     $('outPh').style.display = $('outImg').src ? 'none' : '';
     $('outImg').style.display = $('outImg').src ? '' : 'none';
 }
