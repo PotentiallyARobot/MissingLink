@@ -3397,6 +3397,15 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .av-howto li{margin-bottom:3px}
 .av-howto b{color:var(--text)}
 .angle-views-note b{color:var(--text)}
+/* Bulk edit (no AI) — divider section under the agent controls. */
+.av-bulk{margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.av-bulk-title{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim)}
+.av-bulk-row{display:flex;gap:8px}
+.av-bulk-row .av-bulk-input:first-child{flex:1}
+.av-bulk-flags{width:52px;text-align:center;flex:none}
+.av-bulk-input{box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;padding:8px 10px;outline:none}
+.av-bulk-input:focus{border-color:var(--gold)}
+.av-bulk .av-agent-actions{margin-top:2px}
 .av-agent-input{width:100%;box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:9px 10px;resize:vertical;outline:none;line-height:1.5}
 .av-agent-input:focus{border-color:var(--gold)}
 .av-agent-actions{display:flex;align-items:center;gap:10px;margin-top:10px}
@@ -6048,7 +6057,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="angle-views-body" id="angleViewsBody"></div>
         <div class="angle-views-foot">
             <button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the built-in default views (not saved until you hit Save)">Reset to defaults</button>
-            <button type="button" class="ems-btn" id="avAgentUndoBtn" style="display:none" onclick="restoreAnglePromptsUndo()" title="Restore the prompts and camera settings from before the last AI apply">↩ Undo AI changes</button>
+            <button type="button" class="ems-btn" id="avAgentUndoBtn" style="display:none" onclick="restoreAnglePromptsUndo()" title="Restore the prompts and camera settings from before the last apply (AI agent or bulk edit)">↩ Undo changes</button>
             <span style="flex:1"></span>
             <button type="button" class="ems-btn" onclick="closeAngleViewsConfig(false)">Cancel</button>
             <button type="button" class="ems-btn active" onclick="closeAngleViewsConfig(true)">Save</button>
@@ -15386,8 +15395,13 @@ function _angleViewsRenderRows(shots){
     const body = $('angleViewsBody');
     if (!body) return;
     // Re-rendering (e.g. Reset to defaults, Undo) must not eat the user's
-    // typed agent instruction or bounce them off their current tab.
+    // typed agent instruction or bulk-edit fields, or bounce them off
+    // their current tab.
     const keepInstr = body.querySelector('#avAgentInstructions')?.value || '';
+    const keepBulkPat   = body.querySelector('#avBulkPattern')?.value || '';
+    const _flagsEl = body.querySelector('#avBulkFlags');
+    const keepBulkFlags = _flagsEl ? _flagsEl.value : null;   // null = no prior render
+    const keepBulkText  = body.querySelector('#avBulkText')?.value || '';
     const keepTab = body.querySelector('.av-tab.active')?.dataset.tab || 'views';
     body.innerHTML =
         '<div class="av-tabs">' +
@@ -15432,8 +15446,25 @@ function _angleViewsRenderRows(shots){
                 '<button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the factory default views and empty prompts (not saved until you hit Save)">Reset to defaults</button>' +
                 '<span class="av-agent-status" id="avAgentStatus"></span>' +
             '</div>' +
-            '<div class="angle-views-note" style="margin:8px 0 0">Changed your mind? <b>Undo AI changes</b> (bottom bar) ' +
-            'restores the prompts and cameras from before the last apply; <b>Reset to defaults</b> returns the factory views.</div>' +
+            '<div class="angle-views-note" style="margin:8px 0 0">Changed your mind? <b>Undo changes</b> (bottom bar) ' +
+            'restores the prompts and cameras from before the last apply (AI or bulk edit); <b>Reset to defaults</b> returns the factory views.</div>' +
+            '<div class="av-bulk">' +
+                '<div class="av-bulk-title">Bulk edit \u00b7 no AI</div>' +
+                '<div class="angle-views-note">Instant text edit across all ' + _angleViewsEditing + ' prompts. ' +
+                'Leave <b>Find</b> empty to <b>append</b> the text to the end of every prompt; fill it with a ' +
+                'regular expression to <b>find &amp; replace</b> instead ($1, $2 backrefs work). Cameras are untouched.</div>' +
+                '<div class="av-bulk-row">' +
+                    '<input type="text" id="avBulkPattern" class="av-bulk-input" spellcheck="false" ' +
+                        'placeholder="Find (regex, optional) \u2014 e.g. sword|axe">' +
+                    '<input type="text" id="avBulkFlags" class="av-bulk-input av-bulk-flags" spellcheck="false" ' +
+                        'value="gi" title="Regex flags (g = all matches, i = ignore case)">' +
+                '</div>' +
+                '<input type="text" id="avBulkText" class="av-bulk-input" spellcheck="false" ' +
+                    'placeholder="Text to append / replacement \u2014 e.g. dramatic rim lighting, volumetric fog">' +
+                '<div class="av-agent-actions">' +
+                    '<button type="button" class="ems-btn active" onclick="applyAngleBulkEdit()">Apply to all ' + _angleViewsEditing + ' prompts</button>' +
+                '</div>' +
+            '</div>' +
         '</div>';
     // Pre-fill any saved per-view prompts
     shots.forEach((s, i) => {
@@ -15442,6 +15473,9 @@ function _angleViewsRenderRows(shots){
     });
     // Restore preserved agent state
     if (keepInstr) { const t = body.querySelector('#avAgentInstructions'); if (t) t.value = keepInstr; }
+    { const p = body.querySelector('#avBulkPattern'); if (p && keepBulkPat) p.value = keepBulkPat; }
+    { const f = body.querySelector('#avBulkFlags');   if (f && keepBulkFlags !== null) f.value = keepBulkFlags; }
+    { const x = body.querySelector('#avBulkText');    if (x && keepBulkText) x.value = keepBulkText; }
     if (keepTab !== 'views') _avSwitchTab(keepTab);
 }
 
@@ -15462,7 +15496,7 @@ function _avSwitchTab(which){
 // image when one is loaded, and applies the result back into the form:
 // prompts into the .av-extra inputs, and — when the model decided the
 // instruction changed what a view means — updated az/el/dist selects.
-// The pre-apply state is snapshotted so "Undo AI changes" can restore
+// The pre-apply state is snapshotted so "Undo changes" can restore
 // it. Nothing is persisted until the user hits Save.
 let _avAgentUndo = null;   // [{az,el,dist,extra}] captured before the last apply
 
@@ -15500,7 +15534,54 @@ function restoreAnglePromptsUndo(){
     _avWriteForm(body, _avAgentUndo);
     _avAgentUndo = null;
     _avSetUndoVisible(false);
-    showNotif('Restored the prompts and cameras from before the AI edit.', 'info');
+    showNotif('Restored the prompts and cameras from before the last apply.', 'info');
+}
+
+// Bulk edit (no AI): instant local transform across all view prompts.
+// Empty pattern → APPEND the text to the end of every prompt (comma-
+// joined; empty prompts just become the text). Pattern given → regex
+// find & replace on every prompt, with the replacement supporting $1/$2
+// backrefs. Cameras are never touched. Shares the same undo snapshot as
+// the AI agent, so "Undo changes" reverts this too.
+function applyAngleBulkEdit(){
+    const body = $('angleViewsBody');
+    if (!body) return;
+    const pat   = body.querySelector('#avBulkPattern')?.value ?? '';
+    const flags = (body.querySelector('#avBulkFlags')?.value ?? 'g').trim();
+    const text  = body.querySelector('#avBulkText')?.value ?? '';
+    if (!pat && !text.trim()) {
+        showNotif('Enter text to append, or a Find pattern with a replacement.', 'error');
+        return;
+    }
+    let re = null;
+    if (pat) {
+        try { re = new RegExp(pat, flags); }
+        catch (e) { showNotif('Invalid regex: ' + (e && e.message ? e.message : e), 'error'); return; }
+    }
+    const form = _avReadForm(body);
+    let changed = 0;
+    const applied = form.map(v => {
+        const cur = v.extra;
+        let next;
+        if (re) {
+            next = cur.replace(re, text);
+        } else {
+            const t = text.trim();
+            next = cur.trim() ? (cur.replace(/[\s,]+$/, '') + ', ' + t) : t;
+        }
+        next = next.slice(0, 600);
+        if (next !== cur) changed++;
+        return { az: v.az, el: v.el, dist: v.dist, extra: next };
+    });
+    if (!changed) {
+        showNotif(re ? 'No prompts changed — the pattern didn\u2019t match anything.' : 'No prompts changed.', 'info');
+        return;
+    }
+    _avAgentUndo = form;
+    _avWriteForm(body, applied);
+    _avSetUndoVisible(true);
+    _avSwitchTab('views');
+    showNotif(`Updated ${changed} of ${form.length} prompts — review, then Save. Undo is in the bottom bar.`, 'success');
 }
 
 async function generateAnglePrompts(){
@@ -15558,7 +15639,7 @@ async function generateAnglePrompts(){
         showNotif(
             `Updated ${Math.min(applied.length, views.length)} view prompts` +
             (camChanged ? ' (and adjusted some camera settings to fit)' : '') +
-            ' — review, tweak, then Save. Undo AI changes is in the bottom bar.', 'success');
+            ' — review, tweak, then Save. Undo changes is in the bottom bar.', 'success');
     } catch (e) {
         if (status) status.textContent = 'Failed — try again.';
         showNotif('Prompt generation failed: ' + (e && e.message ? e.message : e), 'error');
