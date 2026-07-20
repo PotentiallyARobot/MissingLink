@@ -5606,7 +5606,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" id="rowUpscale" title="Upscale / Enhance (vafipas663) — sharpens detail, fixes lighting and the 'Qwen smoothness' on edit outputs. Prompt with 'Enhance image quality' plus a scene description for best results. Keep at 0 to disable."><span class="sl">Upscale LoRA <button type="button" class="lora-info-btn" onclick="openLoraInfo('upscale')" title="How to use this LoRA" aria-label="How to use the Upscale LoRA LoRA">i</button></span><input type="range" id="rngLoraUpscale" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUpscale" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowSkin" title="Skin Detail (tlennon-ie) — adds natural skin texture to smooth/plastic-looking subjects. Upstream recommends 1.0–1.5; try prompting 'make the subjects skin details more prominent and natural'. Keep at 0 to disable."><span class="sl">Skin Detail <button type="button" class="lora-info-btn" onclick="openLoraInfo('skin')" title="How to use this LoRA" aria-label="How to use the Skin Detail LoRA">i</button></span><input type="range" id="rngLoraSkin" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraSkin" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row edit-only" id="rowFaceSwap" style="display:none" title="Face/Head Swap (BFS Head V5, Alissonerdx) — transfers a face/head onto another photo with consistent lighting and skin tone. Needs TWO images: slot 1 = body/target scene, slot 2 = face source (order matters!). Start the prompt with 'head_swap: start with Picture 1 as the base image, keeping its lighting, environment, and background. remove the head from Picture 1 completely and replace it with the head from Picture 2, strictly preserving the hair, eye color, and nose structure of Picture 2. copy the eye direction, head rotation, and micro-expressions from Picture 1.' Try 1.0; keep at 0 to disable."><span class="sl">Face Swap <button type="button" class="lora-info-btn" onclick="openLoraInfo('faceswap')" title="How to use this LoRA" aria-label="How to use the Face Swap LoRA">i</button></span><input type="range" id="rngLoraFaceSwap" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraFaceSwap" value="0" min="0" max="1.5" step="0.05"></div>
-        <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation, Edit mode only. Default 0 (off)."><span class="sl">Unchained (eval) <button type="button" class="lora-info-btn" onclick="openLoraInfo('unchained')" title="How to use this LoRA" aria-label="How to use the Unchained (eval) LoRA">i</button></span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation. Available in Edit, Camera & Batch. Default 0 (off)."><span class="sl">Unchained (eval) <button type="button" class="lora-info-btn" onclick="openLoraInfo('unchained')" title="How to use this LoRA" aria-label="How to use the Unchained (eval) LoRA">i</button></span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
     <div class="sec not-generate">
@@ -14443,9 +14443,9 @@ const LORA_INFO = {
     unchained: {
         name: 'Unchained (eval)',
         author: 'CivitAI — under evaluation',
-        what: 'A CivitAI LoRA currently under evaluation, gated to a single account. Edit mode only.',
+        what: 'A CivitAI LoRA currently under evaluation, gated to a single account. Available in Edit, Camera, and Batch.',
         how: [
-            'Default 0 (off). Raise to engage on Edit jobs.',
+            'Default 0 (off). Raise to engage on Edit, Camera, or Batch jobs.',
         ],
         weight: '0 (off) unless evaluating',
         url: 'https://civitai.com/model-versions/2435942',
@@ -14526,9 +14526,12 @@ function loraPayload(mode){
     const faceswap = (mode === 'edit')
         ? (parseFloat($('rngLoraFaceSwap').value) || 0)
         : 0;
-    // EVAL-ONLY Unchained LoRA: only sent on EDIT jobs (the worker further
-    // gates it to a single account, so it's 0 for everyone else regardless).
-    const unchained = (mode === 'edit') ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
+    // EVAL-ONLY Unchained LoRA: sent on EDIT and CAMERA jobs (Batch edits
+    // call loraPayload('edit'), so they're covered by the same branch).
+    // The worker further gates it to a single account, so it's 0 for
+    // everyone else regardless.
+    const unchained = (mode === 'edit' || mode === 'camera')
+        ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
     return {
         lora_lightning: lightning,
         lora_angles: angles,
@@ -14540,15 +14543,17 @@ function loraPayload(mode){
     };
 }
 
-// EVAL-ONLY: the Unchained slider is visible to a single account, and only in
-// Edit mode (where we're evaluating it). The worker enforces the same email
-// gate server-side, so this is purely about not showing the control to anyone
-// else; it isn't a security boundary on its own.
+// EVAL-ONLY: the Unchained slider is visible to a single account, in Edit,
+// Camera, and Batch modes (the eval now covers all three edit-family
+// surfaces). The worker enforces the same email gate server-side, so this
+// is purely about not showing the control to anyone else; it isn't a
+// security boundary on its own.
 function _applyUnchainedGate(){
     const row = document.getElementById('rowUnchained');
     if (!row) return;
     const okEmail = !!(_user && (_user.email || '').toLowerCase() === 'ace0278@gmail.com');
-    const show = okEmail && (typeof currentMode === 'string') && currentMode === 'edit';
+    const show = okEmail && (typeof currentMode === 'string')
+        && (currentMode === 'edit' || currentMode === 'camera' || currentMode === 'batch');
     row.style.display = show ? '' : 'none';
 }
 
@@ -16465,17 +16470,16 @@ async function batchClearWithConfirm(){
 
 // ── Unified Clear Stage ──────────────────────────────────────────
 // One control, one place: the top-left "✕ Clear Stage" pill clears
-// whatever currently owns the stage. When a batch RESULTS grid is on
-// stage (angle batches in Camera mode, batch-edit results in Batch
-// mode) it discards that batch — replacing the old '×' that hid in the
-// floating tools bar. Otherwise it falls through to the Batch-mode
-// input-grid clear it has always done.
-function _batchHomeMode(){
-    const kind = _activeBatch ? _activeBatch.kind : null;
-    return (kind === 'angles' || kind === 'angles-many') ? 'camera' : 'batch';
-}
+// whatever currently owns the stage. "On stage" is judged by what's
+// actually on screen — the batch grid element being present and
+// visible — NOT by which mode we're in: a batch restored from History
+// while in Edit view mounts the grid right there in Edit, and it still
+// needs a clear control. Otherwise the pill falls through to the
+// Batch-mode input-grid clear it has always done.
 function _batchOnStage(){
-    return !!_activeBatch && typeof currentMode !== 'undefined' && currentMode === _batchHomeMode();
+    if (typeof _activeBatch === 'undefined' || !_activeBatch) return false;
+    const g = $('batchGrid');
+    return !!(g && g.style.display !== 'none');
 }
 async function stageClearCurrent(){
     if (_batchOnStage()) {
@@ -16488,23 +16492,29 @@ async function stageClearCurrent(){
     }
     return batchClearWithConfirm();
 }
-// Show the standard Clear Stage pill whenever a batch results grid owns
-// the stage. Called from renderBatchGrid (every batch render) and from
-// setMode (so switching back to the batch's home mode restores it).
-// When no batch is on stage, the pill is left to renderBatchInputs,
-// which manages it for the batch-input grid.
+// Sync the Clear Stage pill with reality. Shows it (with a live count)
+// whenever the batch grid is on screen — any mode; hides it when the
+// grid isn't, except in Batch mode where renderBatchInputs owns the
+// pill for the input grid. Called from renderBatchGrid and setMode.
 function updateBatchClearToolbar(){
     const tb = $('batchGridToolbar');
-    if (!tb || !_batchOnStage()) return;
-    tb.style.display = '';
-    const cnt = $('bgtCount');
-    if (cnt) {
-        const n = _activeBatch.shots.length;
-        const kind = _activeBatch.kind || '';
-        const noun = kind.startsWith('angles') ? 'view' : 'tile';
-        cnt.textContent = `${n} ${noun}${n === 1 ? '' : 's'}`;
+    if (!tb) return;
+    if (_batchOnStage()) {
+        tb.style.display = '';
+        const cnt = $('bgtCount');
+        if (cnt) {
+            const n = _activeBatch.shots.length;
+            const kind = _activeBatch.kind || '';
+            const noun = kind.indexOf('angles') === 0 ? 'view' : 'tile';
+            cnt.textContent = `${n} ${noun}${n === 1 ? '' : 's'}`;
+        }
+        document.body.classList.add('has-clear-toolbar');
+        return;
     }
-    document.body.classList.add('has-clear-toolbar');
+    if (typeof currentMode === 'undefined' || currentMode !== 'batch') {
+        tb.style.display = 'none';
+        document.body.classList.remove('has-clear-toolbar');
+    }
 }
 
 // ─── Send a batch tile into single-image modes ──────────────────
@@ -18693,11 +18703,11 @@ function renderBatchGrid(){
     if (_atHome) {
         $('outPh').style.display = 'none';
         $('outImg').style.display = 'none';
-        // The batch owns the stage → surface the standard top-left
-        // "✕ Clear Stage" pill (same control users know from the input
-        // grid) so discarding the batch happens in the expected place.
-        if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
     }
+    // Sync the standard top-left "✕ Clear Stage" pill with the grid —
+    // every render, regardless of mode: a batch restored from History in
+    // Edit view is on stage there and needs its clear control too.
+    if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
 
     let grid = $('batchGrid');
     if (!grid) {
@@ -21288,6 +21298,14 @@ function renderHistorySidebar(){
             const batchId = leader.batch_id;
             tile.onclick = (ev) => {
                 if (ev.target.closest('.q-hist-delete')) return;
+                // In Batch mode, clicking a camera multi-view batch loads
+                // its images as batch-edit INPUTS (each selected) instead of
+                // restoring the results grid — see loadBatchToInputs.
+                if (typeof currentMode !== 'undefined' && currentMode === 'batch'
+                    && (leader.mode || '') === 'camera') {
+                    loadBatchToInputs(items);
+                    return;
+                }
                 restoreBatchFromHistory(items);
             };
             tile.innerHTML = `
@@ -22819,6 +22837,15 @@ function renderHistoryModal(){
             card.onclick = (ev) => {
                 if (ev.target.closest('.history-card-delete')) return;
                 if (ev.target.closest('.history-card-share')) return;
+                // Same Batch-mode routing as the queue panel: a camera
+                // multi-view batch clicked from Batch mode becomes editable
+                // inputs rather than a restored results grid.
+                if (typeof currentMode !== 'undefined' && currentMode === 'batch'
+                    && ((items[0] && items[0].mode) || '') === 'camera') {
+                    loadBatchToInputs(items);
+                    closeHistoryModal();
+                    return;
+                }
                 restoreBatchFromHistory(items);
                 closeHistoryModal();
             };
@@ -26896,6 +26923,59 @@ async function _sdxlBackfillLoraMeta(){
 // This is the bug fix for restored 20- and 96-angle batches: previously
 // they all came back as 'angles', which only renders 6 tiles (slot 0 is
 // a 2×2 hero), causing 11 or 87 of the tiles to overflow off-grid.
+// ── Load a finished batch's images as Batch-mode INPUTS ──────────
+// Clicking a camera multi-view batch in History while IN BATCH MODE
+// means "I want to edit these", not "show me the results again" — so
+// instead of restoring the results grid, this clears the stage and
+// loads every image of the batch into the Batch input grid, each one
+// selected and ready for editing. The server's /output-to-input
+// endpoint mints real studio_uploads ids for the outputs (zero-copy),
+// so the edit pipeline's ownership checks pass without re-uploading
+// bytes through the browser.
+async function loadBatchToInputs(items){
+    const done = (items || []).filter(it => it && it.url);
+    if (!done.length) { showNotif('No finished images in this batch yet.', 'error'); return; }
+    showNotif(`Preparing ${done.length} image${done.length === 1 ? '' : 's'} for batch editing…`, 'info');
+    let inputs = null;
+    try {
+        const r = await fetchT(`${API}/api/studio/output-to-input`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_ids: done.map(it => it.id) }),
+        }, 30000);
+        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
+        const d = await r.json();
+        if (d && d.ok && Array.isArray(d.inputs) && d.inputs.length) inputs = d.inputs;
+    } catch (e) { /* handled below */ }
+    if (!inputs) {
+        showNotif('Couldn\u2019t prepare these images for editing — restoring the batch view instead.', 'error');
+        restoreBatchFromHistory(items);
+        return;
+    }
+    // Success — NOW clear the stage (results grid + current inputs) and
+    // load the converted images, all selected for edit.
+    if (typeof _activeBatch !== 'undefined' && _activeBatch) clearBatchGrid();
+    const byJob = {};
+    done.forEach(it => { byJob[it.id] = it; });
+    _batchInputs = inputs.map(inp => {
+        const src = byJob[inp.job_id] || {};
+        return {
+            id: inp.id, url: inp.url,
+            w: inp.w || src.w || 0, h: inp.h || src.h || 0,
+            fname: inp.filename || `${inp.id}.png`,
+            selected: true,          // "enable each of the images for edit"
+            _genPrompt: src.prompt || '',
+        };
+    });
+    _batchFocusedId = null;
+    renderBatchInputs();
+    if (typeof updateGenButton === 'function') updateGenButton();
+    if (inputs.length < done.length) {
+        showNotif(`Loaded ${inputs.length} of ${done.length} images (the rest were missing) — all selected. Write an edit instruction and generate.`, 'info');
+    } else {
+        showNotif(`Loaded ${inputs.length} images into Batch — all selected. Write an edit instruction and generate.`, 'success');
+    }
+}
+
 function restoreBatchFromHistory(items){
     if (!items || !items.length) return;
     // Sort by created_at so shot 1 (earliest submit) is first
@@ -28506,8 +28586,34 @@ window.PanoViewer = (function(){
   let fovSlider=null;   // toolbar FOV control (kept in sync with wheel zoom)
   let curUrl=null, built=false;
   let texLoader=null;
+  // Projection mapping: 360 = full equirectangular sphere; 180 = the image
+  // covers only the front hemisphere (VR180-style half-panorama). A sticky
+  // per-session viewer setting toggled from the toolbar — generation is
+  // always 360, but user-uploaded 180 panos need the half mapping or they
+  // wrap twice around the sphere.
+  let projMode=360;
+  let panoDir=1;        // 180-mode auto-rotate ping-pong direction
 
   function host(){ return document.getElementById('outputArea'); }
+
+  // (Re)build the projection surface for the current projMode, keeping the
+  // material (and thus the loaded texture) across rebuilds.
+  // Hemisphere math for r128 SphereGeometry (x=-r·cosφ·sinθ) after the
+  // scale(-1,1,1) inside-out flip: φ∈[-π/2,+π/2] centers the surface on
+  // +X — exactly where the camera looks at lon=0 — with the texture
+  // upright and un-mirrored, left edge at screen left.
+  function makeSphere(){
+    if(!scene) return;
+    const old=sphere;
+    const geo = (projMode===180)
+      ? new THREE.SphereGeometry(500, 64, 40, -Math.PI/2, Math.PI)
+      : new THREE.SphereGeometry(500, 64, 40);
+    geo.scale(-1, 1, 1); // flip so we view the texture from the inside
+    const mat = old ? old.material : new THREE.MeshBasicMaterial({ color:0x222222 });
+    sphere=new THREE.Mesh(geo, mat);
+    if(old){ scene.remove(old); if(old.geometry) old.geometry.dispose(); }
+    scene.add(sphere);
+  }
 
   function build(){
     if(built) return;
@@ -28538,10 +28644,7 @@ window.PanoViewer = (function(){
     camera=new THREE.PerspectiveCamera(fov, 1, 0.1, 1100);
     camera.position.set(0,0,0.01);
 
-    const geo=new THREE.SphereGeometry(500, 64, 40);
-    geo.scale(-1, 1, 1); // flip so we view the texture from the inside
-    sphere=new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color:0x222222 }));
-    scene.add(sphere);
+    makeSphere();
 
     texLoader=new THREE.TextureLoader();
     texLoader.setCrossOrigin('anonymous'); // keep the canvas capture-able
@@ -28598,6 +28701,23 @@ window.PanoViewer = (function(){
       btnRotate.textContent = autoRotate ? '⏸ Auto-rotate' : '▶ Auto-rotate';
     };
 
+    // Projection toggle: full 360° sphere vs 180° half-panorama mapping.
+    const btnProj=mkBtn('🌐 360°','Projection: full 360° sphere. Click if this image is a 180° half-panorama — it will be mapped onto the front hemisphere only.');
+    btnProj.onclick=()=>{
+      projMode = (projMode===360) ? 180 : 360;
+      if(projMode===180){
+        btnProj.textContent='◐ 180°';
+        btnProj.title='Projection: 180° half-panorama (front hemisphere). Click to map as a full 360° sphere.';
+        // Face the content and keep the look direction inside it.
+        lon=Math.max(-90, Math.min(90, lon));
+        panoDir = lon >= 0 ? -1 : 1;
+      } else {
+        btnProj.textContent='🌐 360°';
+        btnProj.title='Projection: full 360° sphere. Click if this image is a 180° half-panorama — it will be mapped onto the front hemisphere only.';
+      }
+      makeSphere();
+    };
+
     const btnUse=mkBtn('📌 Use view as input','Capture the current framing as a new Camera input');
     btnUse.onclick=()=>captureViewAsInput(btnUse);
 
@@ -28634,6 +28754,7 @@ window.PanoViewer = (function(){
     fovWrap.appendChild(fovLabel); fovWrap.appendChild(fovSlider); fovWrap.appendChild(fovVal);
 
     bar.appendChild(btnToggle);
+    bar.appendChild(btnProj);
     bar.appendChild(btnRotate);
     bar.appendChild(fovWrap);
     bar.appendChild(btnUse);
@@ -28658,7 +28779,8 @@ window.PanoViewer = (function(){
     const onMove=(x,y)=>{ if(!isDown) return;
       lon = downLon - (x-downX)*0.16;
       lat = downLat + (y-downY)*0.16;
-      lat = Math.max(-85, Math.min(85, lat)); };
+      lat = Math.max(-85, Math.min(85, lat));
+      if(projMode===180) lon = Math.max(-90, Math.min(90, lon)); };
     const onUp=()=>{ isDown=false; el.style.cursor='grab'; };
 
     el.addEventListener('mousedown', e=>onDown(e.clientX,e.clientY));
@@ -28689,7 +28811,17 @@ window.PanoViewer = (function(){
 
   function frame(){
     raf=requestAnimationFrame(frame);
-    if(autoRotate && !isDown) lon += 0.04;
+    if(autoRotate && !isDown){
+      if(projMode===180){
+        // Nothing to see behind a half-panorama — sweep gently back and
+        // forth across the hemisphere instead of spinning through the void.
+        lon += panoDir*0.03;
+        if(lon >= 55){ lon=55; panoDir=-1; }
+        else if(lon <= -55){ lon=-55; panoDir=1; }
+      } else {
+        lon += 0.04;
+      }
+    }
     const phi = THREE.MathUtils.degToRad(90 - lat);
     const theta = THREE.MathUtils.degToRad(lon);
     const tx = 500 * Math.sin(phi) * Math.cos(theta);
