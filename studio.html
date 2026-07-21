@@ -1247,17 +1247,27 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 
 .img-modal{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;cursor:zoom-out}
 .img-modal.open{display:flex}
-/* Stage = image + action bar stacked vertically and centered as one
-   unit. This is the key fix: the action bar is now IN FLOW beneath the
-   image instead of floating absolutely over it, so the two never
-   overlap regardless of image size. */
+/* Stage = just the image, centered. The action bar is NOT in flow —
+   it floats as a vertical column on the LEFT edge of the lightbox
+   (absolute, like close/download top-right), so it never subtracts
+   from the image's available height/width. The user may zoom; the
+   image gets the full stage. */
 .modal-stage{
     display:flex;flex-direction:column;align-items:center;
-    gap:14px;cursor:default;
-    max-width:92vw;max-height:94vh;
+    gap:0;cursor:default;
+    max-width:92vw;max-height:96vh;
     transition:max-width .2s ease;
+    position:relative;
 }
-.img-modal img{max-width:100%;max-height:84vh;min-height:0;object-fit:contain;border-radius:6px;box-shadow:0 0 60px rgba(0,0,0,.5);cursor:zoom-in;transform-origin:center center;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+.img-modal img{max-width:100%;max-height:92vh;min-height:0;object-fit:contain;border-radius:6px;box-shadow:0 0 60px rgba(0,0,0,.5);cursor:zoom-in;transform-origin:center center;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+/* Inline load-failure notice — shown by openModal when #modalImg errors
+   (e.g. a stale/cleared stage src). Without it a broken src rendered a
+   completely empty lightbox with only the floating buttons visible. */
+.modal-img-error{
+    display:none;padding:18px 26px;border:1px dashed var(--border);
+    border-radius:10px;color:var(--text-muted);
+    font-family:var(--font-mono);font-size:12px;letter-spacing:.3px;
+}
 .modal-close{position:absolute;top:16px;right:20px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:18px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10}
 .modal-close:hover{background:rgba(255,255,255,.2)}
 /* Download button in the image modal — sits to the LEFT of the close
@@ -1267,38 +1277,57 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    `download` attribute — no JS blob conversion needed. */
 .modal-download{position:absolute;top:16px;right:64px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);color:var(--white);font-size:16px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:10;text-decoration:none}
 .modal-download:hover{background:var(--gold);color:#0a0a0c}
-/* Action toolbar inside the image modal — surfaced when the modal was
-   opened from a batch grid cell. Anchored bottom-center so it sits
-   below the image without overlapping the close/download buttons in
-   the top-right. Slightly larger touch targets than the per-tile
-   versions since there's room here. */
+/* Action toolbar inside the image modal — floats as a vertical column
+   anchored to the LEFT edge of the lightbox, vertically centered.
+   Absolute positioning (resolves to the fixed .img-modal) means it has
+   ZERO effect on image scaling; it overlays the backdrop, translucent
+   over the image edge on very wide images. */
 .modal-actions{
-    position:relative;z-index:11;
-    display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;
-    max-width:min(720px,92vw);
+    position:absolute;left:16px;top:50%;transform:translateY(-50%);
+    z-index:11;
+    display:flex;flex-direction:column;gap:4px;align-items:stretch;
+    max-width:180px;max-height:92vh;overflow-y:auto;
     background:rgba(17,17,20,.96);backdrop-filter:blur(8px);
     border:1px solid var(--border);border-radius:12px;
-    padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.5);
+    padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);
+    scrollbar-width:none;
 }
+.modal-actions::-webkit-scrollbar{display:none}
 .modal-action-btn{
     background:transparent;color:var(--text);
     border:1px solid transparent;border-radius:6px;
     padding:8px 12px;display:flex;align-items:center;gap:6px;
+    justify-content:flex-start;text-align:left;
     font-family:var(--font-mono);font-size:11px;font-weight:600;
     letter-spacing:.5px;text-transform:uppercase;
     cursor:pointer;transition:all .15s;
 }
 .modal-action-btn span{display:inline-block}
 .modal-action-btn:hover{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
-/* Thin vertical separator before a button — used to visually group the
-   action bar into react / use-in-mode / social clusters so the long
-   row reads as three intentional groups rather than one jumble. */
+/* Group separator — in the vertical column this is a thin horizontal
+   rule above the first button of a group (the desktop bar is a column
+   now; the mobile bottom-row layout restores the vertical divider). */
 .modal-action-btn.group-start{
-    margin-left:6px;padding-left:14px;position:relative;
+    margin-left:0;padding-left:12px;margin-top:6px;padding-top:12px;position:relative;
 }
 .modal-action-btn.group-start::before{
-    content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
-    width:1px;height:18px;background:var(--border-light);
+    content:"";position:absolute;left:8px;right:8px;top:0;transform:none;
+    width:auto;height:1px;background:var(--border-light);
+}
+/* Mobile: a left column would crowd a portrait screen — fall back to a
+   horizontal bar pinned to the bottom, with the original vertical
+   group separators. */
+@media (max-width:700px){
+    .modal-actions{
+        left:50%;right:auto;top:auto;bottom:12px;transform:translateX(-50%);
+        flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:center;
+        max-width:94vw;max-height:none;overflow:visible;padding:8px 10px;
+    }
+    .modal-action-btn.group-start{margin-left:6px;padding-left:14px;margin-top:0;padding-top:8px}
+    .modal-action-btn.group-start::before{
+        left:0;right:auto;top:50%;transform:translateY(-50%);
+        width:1px;height:18px;background:var(--border-light);
+    }
 }
 .modal-action-btn.busy{
     opacity:.7;cursor:wait;animation:pulse 1s infinite;pointer-events:none;
@@ -6362,6 +6391,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <button class="modal-close" onclick="closeModal()">×</button>
     <div class="modal-stage" id="modalStage" onclick="event.stopPropagation()">
     <img id="modalImg" draggable="false">
+    <div class="modal-img-error" id="modalImgError">⚠ Couldn't load this image — it may have been cleared or deleted.</div>
     <!-- Video shares (a shared last-frame row carrying an mp4) play here
          instead of #modalImg. Toggled by openModal based on ctx.video_url. -->
     <video id="modalVideo" controls loop playsinline style="display:none;max-width:100%;max-height:100%;object-fit:contain"></video>
@@ -12748,6 +12778,24 @@ async function _makeMarkupThumbDataUrl(slotIdx){
 // ── Modal ─────────────────────────────────────────
 function openModal(src, filename, ctx){
     if(!src) return;
+    // '#' is the stage's "cleared" sentinel (clearStage/showVideoInStage set
+    // outImg.src='#'); resolved it's a page URL, which is truthy but not an
+    // image — opening it produced a completely empty lightbox.
+    if (typeof src === 'string' && src.endsWith('#')) return;
+    const _mi = $('modalImg');
+    const _me = $('modalImgError');
+    // Load/error wiring: a src that fails (deleted output, stale blob URL)
+    // swaps in an inline notice instead of an invisible zero-size <img>.
+    if (_mi) {
+        if (_me) _me.style.display = 'none';
+        _mi.onerror = () => {
+            _mi.style.display = 'none';
+            if (_me) _me.style.display = 'block';
+        };
+        _mi.onload = () => {
+            if (_me) _me.style.display = 'none';
+        };
+    }
     $('modalImg').src = src;
     // Video items (shared last-frame rows) play the clip in the lightbox
     // instead of showing the still. We keep #modalImg's src set (the poster)
@@ -13058,11 +13106,19 @@ function openModalOverflow(){
     pop.style.display = 'flex';
     const r = moreBtn.getBoundingClientRect();
     const w = pop.offsetWidth || 200;
-    let left = Math.min(r.left, window.innerWidth - w - 10);
-    left = Math.max(10, left);
-    pop.style.left = `${left}px`;
-    // Sits ABOVE the button (the bar is at the bottom of the stage).
-    pop.style.top = `${Math.max(10, r.top - pop.offsetHeight - 8)}px`;
+    const h = pop.offsetHeight || 120;
+    if (window.innerWidth <= 700) {
+        // Mobile: the action bar is a bottom row — popover opens ABOVE.
+        let left = Math.min(r.left, window.innerWidth - w - 10);
+        left = Math.max(10, left);
+        pop.style.left = `${left}px`;
+        pop.style.top = `${Math.max(10, r.top - h - 8)}px`;
+    } else {
+        // Desktop: the action bar is a left column — popover opens to the
+        // RIGHT of the button, top-aligned with it (clamped on-screen).
+        pop.style.left = `${Math.min(r.right + 8, window.innerWidth - w - 10)}px`;
+        pop.style.top = `${Math.max(10, Math.min(r.top, window.innerHeight - h - 10))}px`;
+    }
     moreBtn.classList.add('active');
     setTimeout(() => document.addEventListener('click', _overflowOutside), 0);
 }
@@ -18701,8 +18757,9 @@ function renderBatchGrid(){
             if (tb) tb.style.display = 'none';
             document.body.classList.remove('has-clear-toolbar');
         }
-        $('outPh').style.display = $('outImg').src ? 'none' : '';
-        $('outImg').style.display = $('outImg').src ? '' : 'none';
+        const _hasStageImg2 = !!($('outImg').src && !$('outImg').src.endsWith('#'));
+        $('outPh').style.display = _hasStageImg2 ? 'none' : '';
+        $('outImg').style.display = _hasStageImg2 ? '' : 'none';
         return;
     }
     // Stage takeover (hide outPh + outImg) ONLY when the user is currently
@@ -20529,8 +20586,9 @@ function clearBatchGrid(){
         && typeof renderBatchInputs === 'function') {
         renderBatchInputs();
     }
-    $('outPh').style.display = $('outImg').src ? 'none' : '';
-    $('outImg').style.display = $('outImg').src ? '' : 'none';
+    const _hasStageImg = !!($('outImg').src && !$('outImg').src.endsWith('#'));
+    $('outPh').style.display = _hasStageImg ? 'none' : '';
+    $('outImg').style.display = _hasStageImg ? '' : 'none';
 }
 
 function startJobPoll(jobId){
@@ -27767,7 +27825,8 @@ async function shareCurrentResult(){
 // just without share affordances — same as for input images.
 function openOutImgModal(){
     const outImg = $('outImg');
-    if (!outImg || !outImg.src) return;
+    // '#' = cleared-stage sentinel; resolved it's truthy but not an image.
+    if (!outImg || !outImg.src || outImg.src.endsWith('#')) return;
     const jobId = outImg.dataset.jobId || null;
     const isPublic = outImg.dataset.isPublic === '1';
     const ctx = jobId ? { type: 'output', jobId, is_public: isPublic } : null;
