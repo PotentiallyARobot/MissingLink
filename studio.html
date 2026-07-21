@@ -1329,6 +1329,20 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
         width:1px;height:18px;background:var(--border-light);
     }
 }
+/* When the action column is visible (.with-actions, toggled by
+   openModal), pad the lightbox so the image is centered in — and
+   scaled to — the space NEXT TO the column: controls and image never
+   overlap. Column footprint: 16px inset + 180px max width + breathing
+   room. Contexts without actions keep the full viewport. */
+.img-modal.with-actions{padding-left:216px}
+.img-modal.with-actions .modal-stage{max-width:calc(100vw - 248px)}
+.img-modal.with-actions.with-comments .modal-stage{max-width:calc(100vw - 248px - 380px - 24px)}
+@media (max-width:700px){
+    /* Mobile bar sits at the bottom — reserve height there instead. */
+    .img-modal.with-actions{padding-left:0;padding-bottom:70px}
+    .img-modal.with-actions .modal-stage{max-width:94vw}
+    .img-modal.with-actions #modalImg{max-height:calc(92vh - 70px)}
+}
 .modal-action-btn.busy{
     opacity:.7;cursor:wait;animation:pulse 1s infinite;pointer-events:none;
 }
@@ -3031,8 +3045,21 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
    controls). Stretches to fill the available space so each button
    has a generous tap target; Create is highlighted by default. */
 .hdr-mode-switcher{
-    display:none;  /* desktop: hidden; mobile media query un-hides */
+    display:none;  /* retired: the sidebar drawer owns mode switching on mobile */
 }
+/* "⋯" floating-panels toggle — mobile-only (media query un-hides).
+   Gold when panels are hidden so the state is legible at a glance. */
+.hdr-overlays-toggle{
+    display:none;
+    align-items:center;justify-content:center;
+    width:34px;height:30px;flex:0 0 auto;
+    background:var(--surface-2);border:1px solid var(--border);
+    color:var(--text-muted);border-radius:7px;cursor:pointer;
+    font-size:16px;line-height:1;font-weight:700;
+    transition:all .15s;
+}
+.hdr-overlays-toggle:hover{color:var(--text);border-color:var(--gold-dim)}
+.hdr-overlays-toggle.active{background:var(--gold);border-color:var(--gold);color:var(--black)}
 .hdr-mode-btn{
     flex:1 1 0;
     display:inline-flex;align-items:center;justify-content:center;gap:5px;
@@ -4563,23 +4590,25 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     .hdr-right #userEmail { display: none; }
     .hdr-right .user-avatar { display: none; }
     #btnGpu { display: none; }
-    /* Hide the title text entirely on mobile — the mode switcher
-       takes its slot. Logo image stays for branding. The stage tabs
-       (Gallery/Studio) are also dropped here since the new mode
-       switcher already implies Studio when picked, and the Gallery
-       overlay is reachable from the buy/auth menu and gallery
-       header chrome. */
-    .app-header h1 { display: none; }
+    /* Hide the title text entirely on mobile — keep space tight. Logo
+       image stays for branding. The stage tabs (Gallery/Studio) are
+       dropped; the Gallery overlay is reachable from the buy/auth menu
+       and gallery header chrome. */
     .app-header .hdr-stage-tabs { display: none; }
-    /* Mobile mode switcher: visible, full-width filler between
-       hamburger and auth controls. Three buttons, equal width,
-       Create active by default. */
-    .hdr-mode-switcher {
-        display: flex;
-        flex: 1 1 auto;
-        min-width: 0;
-        gap: 4px;
-        margin: 0 6px;
+    /* Mobile mode switcher: REMOVED from the header. It duplicated the
+       sidebar drawer's mode buttons (one hamburger tap away) while
+       eating most of the header. Stays display:none from the base rule. */
+    /* "⋯" overlay toggle — mobile-only header button that hides/shows
+       the floating panels (queue, history, agent chips, and the
+       multi-view batch toolbar + progress pill) so they can be cleared
+       off a small screen while generations run. */
+    .hdr-overlays-toggle { display: inline-flex; }
+    body.overlays-hidden .queue-overlay,
+    body.overlays-hidden .history-overlay,
+    body.overlays-hidden .agent-overlay,
+    body.overlays-hidden .batch-footer,
+    body.overlays-hidden #batchProgress {
+        display: none !important;
     }
     /* Gallery header button: shrink to icon-only on phones to make room
        for the auth controls. The 🎨 emoji is the affordance; "Gallery"
@@ -4832,6 +4861,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </button>
     </div>
     <div class="hdr-right">
+        <button class="hdr-overlays-toggle" id="btnOverlaysToggle" onclick="toggleMobileOverlays()" title="Hide / show floating panels (queue, history, batch tools)" aria-label="Hide or show floating panels">⋯</button>
         <div id="authOut">
             <button class="hdr-btn auth-btn" onclick="loginGoogle()">🔑 SIGN IN</button>
         </div>
@@ -7930,6 +7960,24 @@ async function doLogout(){
 // Called from DOMContentLoaded so it fires once per page-load, not
 // after auth completes — that way a signed-out viewer hitting the
 // landing page sees it just like a signed-in user does.
+// ── Mobile "⋯" floating-panels toggle ─────────────────────────────
+// One tap clears the floating chrome (queue chip, history chip, agent
+// chip, and the multi-view batch toolbar + progress pill) off a small
+// screen; a second tap brings it all back. Pure CSS visibility via
+// body.overlays-hidden — the panels keep updating underneath, so
+// nothing is missed while hidden. Scoped to the mobile media query;
+// on desktop the class has no effect and the button isn't shown.
+function toggleMobileOverlays(){
+    const hidden = document.body.classList.toggle('overlays-hidden');
+    const btn = document.getElementById('btnOverlaysToggle');
+    if (btn) {
+        btn.classList.toggle('active', hidden);
+        btn.title = hidden
+            ? 'Floating panels hidden — tap to show them again'
+            : 'Hide / show floating panels (queue, history, batch tools)';
+    }
+}
+
 function maybeShowWorkflowPrimer(){
     const m = document.getElementById('workflowModal');
     if (!m) return;
@@ -13018,6 +13066,12 @@ function openModal(src, filename, ctx){
         actionBar.dataset.jobId = ctx.jobId;
         renderModalShareButton(ctx.jobId, !!ctx.is_public, wireBtn);
     }
+    // Reserve layout space for the action column ONLY when it's visible —
+    // .with-actions pads the lightbox so the image scales into the space
+    // NEXT TO the controls instead of underneath them (no overlap).
+    // Without the class (plain expands, no context) the image gets the
+    // full viewport width.
+    $('imgModal').classList.toggle('with-actions', !!(actionBar && actionBar.style.display !== 'none'));
     $('imgModal').classList.add('open');
     // Zoom/pan: attach the gesture listeners (idempotent — first open only)
     // and reset to fit-to-screen for the incoming image. This was the missing
@@ -14037,6 +14091,7 @@ async function confirmPublishFromDialog(){
 function closeModal(){
     $('imgModal').classList.remove('open');
     $('imgModal').classList.remove('with-comments');
+    $('imgModal').classList.remove('with-actions');
     // Stop + unload any lightbox video so audio doesn't keep playing after
     // close and the next image open starts clean.
     const _mv = $('modalVideo');
@@ -27885,16 +27940,11 @@ document.addEventListener('DOMContentLoaded',()=>{
         if (sb) sb.classList.add('open');
         if (sc) sc.classList.add('open');
     }
-    // Show the workflow-recommendation primer modal on every page
-    // load. Fires for anonymous AND signed-in users — no auth check,
-    // no localStorage gate. The modal teaches the basic Create →
-    // Edit → Camera flow and is single-click to dismiss, so showing
-    // it every visit costs the user almost nothing while keeping the
-    // guidance in view for landing-page visitors who haven't signed
-    // in yet.
-    if (typeof maybeShowWorkflowPrimer === 'function') {
-        maybeShowWorkflowPrimer();
-    }
+    // Workflow-recommendation primer: auto-show DISABLED. It fired on
+    // every page load for every visitor, which added friction ahead of
+    // the first generation (a likely bounce contributor) and repeated
+    // itself for returning users. The modal + maybeShowWorkflowPrimer()
+    // are kept so a help/"?" entry point can reopen it on demand.
     // Remix landing — if the URL carries ?remix=<sheet id> (or a pending
     // remix survives in localStorage from a login round-trip), import the
     // shared character sheet's views into this user's batch workspace.
