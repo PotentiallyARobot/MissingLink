@@ -1430,6 +1430,13 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .history-modal-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(1200px,95vw);height:min(85vh,800px);display:flex;flex-direction:column;overflow:hidden;position:relative}
 .history-modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
 .history-modal-title{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px;flex:1}
+/* "↩ prompt" restore toggle — lives in the history overlay + modal
+   headers. Controls whether clicking a history image also restores its
+   prompt/negative/seed (checked, the long-standing behavior) or stages
+   the image only. */
+.q-restore-toggle{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);letter-spacing:.5px;text-transform:uppercase;cursor:pointer;user-select:none;white-space:nowrap}
+.q-restore-toggle:hover{color:var(--text)}
+.q-restore-toggle input{accent-color:var(--gold);width:12px;height:12px;cursor:pointer;margin:0}
 .history-modal-head .modal-close{position:relative;top:0;right:0;width:28px;height:28px;font-size:14px}
 /* Modal drag handle — the .history-modal-head wears this class. Same
    grab-cursor + hover affordance as the overlay drag handles. The
@@ -3456,9 +3463,9 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* Bulk edit (no AI) — divider section under the agent controls. */
 .av-bulk{margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
 .av-bulk-title{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim)}
-.av-bulk-row{display:flex;gap:8px}
-.av-bulk-row .av-bulk-input:first-child{flex:1}
-.av-bulk-flags{width:52px;text-align:center;flex:none}
+.av-bulk-row{display:flex;gap:8px;align-items:stretch}
+.av-bulk-row input.av-bulk-input{flex:1;min-width:0}
+.av-bulk-mode{flex:0 0 auto;width:auto;cursor:pointer;appearance:auto;-webkit-appearance:auto}
 .av-bulk-input{box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;padding:8px 10px;outline:none}
 .av-bulk-input:focus{border-color:var(--gold)}
 .av-bulk .av-agent-actions{margin-top:2px}
@@ -5913,6 +5920,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <span class="q-grip" aria-hidden="true">⋮⋮</span>
                     <span>HISTORY <span id="historySidebarCount" class="q-count"></span></span>
                     <span style="margin-left:auto;display:flex;gap:5px">
+                        <label class="q-restore-toggle" title="When checked, clicking a history image also restores its prompt, negative prompt, and seed. Uncheck to load only the image and keep your current prompt.">
+                            <input type="checkbox" id="chkRestorePromptsOverlay" checked onchange="toggleRestorePrompts(this.checked)">↩ prompt
+                        </label>
                         <button onclick="openHistoryModal()" class="q-clear" title="Open full history">⛶ Expand</button>
                         <button id="historyMinBtn" onclick="toggleHistoryMinimized()" class="q-clear" title="Minimize">▼ Hide</button>
                     </span>
@@ -6141,6 +6151,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="history-modal-head modal-drag-handle" data-modal="history" title="Drag to move · double-click to reset">
             <span class="modal-grip" aria-hidden="true">⋮⋮</span>
             <div class="history-modal-title">Your Generations <span id="historyModalCount" class="q-count">—</span></div>
+            <label class="q-restore-toggle" style="margin-right:12px" title="When checked, clicking a history image also restores its prompt, negative prompt, and seed. Uncheck to load only the image and keep your current prompt." onclick="event.stopPropagation()">
+                <input type="checkbox" id="chkRestorePromptsModal" checked onchange="toggleRestorePrompts(this.checked)">↩ restore prompt
+            </label>
             <button class="modal-close" onclick="closeHistoryModal()">×</button>
         </div>
         <!-- Scrollable body: the grid scrolls INSIDE this div so the modal
@@ -9802,19 +9815,31 @@ function readImageDimensions(file){
 // and stored untouched. Returns a Blob, or null if downscaling isn't needed
 // (small images) or fails (caller falls back to sending only the original).
 const SCREEN_MAX_EDGE = 1024;
-const SCREEN_DOWNSCALE_THRESHOLD_BYTES = 3 * 1024 * 1024; // only bother for >3MB
+// Attach a screening copy whenever the image's longest edge exceeds
+// SCREEN_MAX_EDGE — regardless of file size. The old 3MB byte gate let
+// mid-size images (e.g. a dense 1190×890 PNG) through to the server,
+// which then base64-inlined the FULL original into the moderation
+// request; big inline bodies are what fail that call ("Safety check
+// unavailable"). Dimension-driven downscaling makes the moderation
+// payload small and deterministic for ANY input resolution, so high-res
+// uploads screen as reliably as small ones. Byte check kept only as a
+// fallback for images whose dimensions can't be read.
+const SCREEN_DOWNSCALE_THRESHOLD_BYTES = 1024 * 1024; // 1MB fallback trigger
 function makeScreeningCopy(file){
     return new Promise((resolve) => {
         try {
-            if (!file || file.size <= SCREEN_DOWNSCALE_THRESHOLD_BYTES) { resolve(null); return; }
+            if (!file) { resolve(null); return; }
             const url = URL.createObjectURL(file);
             const im = new Image();
             im.onload = () => {
                 try {
                     const w = im.naturalWidth, h = im.naturalHeight;
                     const longest = Math.max(w, h);
-                    if (longest <= SCREEN_MAX_EDGE) { URL.revokeObjectURL(url); resolve(null); return; }
-                    const scale = SCREEN_MAX_EDGE / longest;
+                    // Small in BOTH dimensions and bytes → original is fine.
+                    if (longest <= SCREEN_MAX_EDGE && file.size <= SCREEN_DOWNSCALE_THRESHOLD_BYTES) {
+                        URL.revokeObjectURL(url); resolve(null); return;
+                    }
+                    const scale = Math.min(1, SCREEN_MAX_EDGE / longest);
                     const cw = Math.max(1, Math.round(w * scale));
                     const ch = Math.max(1, Math.round(h * scale));
                     const canvas = document.createElement('canvas');
@@ -15525,10 +15550,8 @@ function _angleViewsRenderRows(shots){
     // typed agent instruction or bulk-edit fields, or bounce them off
     // their current tab.
     const keepInstr = body.querySelector('#avAgentInstructions')?.value || '';
-    const keepBulkPat   = body.querySelector('#avBulkPattern')?.value || '';
-    const _flagsEl = body.querySelector('#avBulkFlags');
-    const keepBulkFlags = _flagsEl ? _flagsEl.value : null;   // null = no prior render
-    const keepBulkText  = body.querySelector('#avBulkText')?.value || '';
+    const keepBulkMode = body.querySelector('#avBulkMode')?.value || '';
+    const keepBulkText = body.querySelector('#avBulkText')?.value || '';
     const keepTab = body.querySelector('.av-tab.active')?.dataset.tab || 'views';
     body.innerHTML =
         '<div class="av-tabs">' +
@@ -15555,41 +15578,24 @@ function _angleViewsRenderRows(shots){
             '</div>').join('') +
         '</div>' +
         '<div id="avTabAgent" style="display:none">' +
-            '<div class="angle-views-note">Tell the AI how to change this ' + _angleViewsEditing + '-view batch. ' +
-            'It looks at your <b>input image</b> and each view\u2019s <b>current prompt</b>, and treats your ' +
-            '<b>instruction as the top priority</b> \u2014 rewriting or extending every view\u2019s prompt to follow it. ' +
-            'If the instruction changes what the views mean (say, \u201c' + _angleViewsEditing + ' different characters\u201d ' +
-            'instead of one subject from ' + _angleViewsEditing + ' angles), it also re-picks each view\u2019s ' +
-            'camera dropdowns to match.</div>' +
-            '<ol class="av-howto">' +
-                '<li>Write an instruction \u2014 an edit for the whole set, or a description of what each view should become.</li>' +
-                '<li>Apply it \u2014 every view\u2019s prompt (and camera boxes, when needed) is filled in on the Views tab.</li>' +
-                '<li>Review and tweak any view by hand, then hit <b>Save</b>. Nothing renders until you save and generate.</li>' +
-            '</ol>' +
-            '<textarea id="avAgentInstructions" class="av-agent-input" rows="5" ' +
-                'placeholder="e.g. Give him a battle-worn look \u2014 scratched armor, torn cloak, dust and dried mud\u2026&#10;or: Make each view a completely different RPG party member from the same game"></textarea>' +
+            '<div class="angle-views-note">Describe a change \u2014 the AI rewrites every view\u2019s prompt (and cameras when needed). Review on Views, then Save.</div>' +
+            '<textarea id="avAgentInstructions" class="av-agent-input" rows="4" ' +
+                'placeholder="e.g. battle-worn armor, torn cloak \u2014 or: make each view a different party member"></textarea>' +
             '<div class="av-agent-actions">' +
-                '<button type="button" class="ems-btn active" id="avAgentGo" onclick="generateAnglePrompts()">\u2728 Apply to all ' + _angleViewsEditing + ' views</button>' +
-                '<button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the factory default views and empty prompts (not saved until you hit Save)">Reset to defaults</button>' +
+                '<button type="button" class="ems-btn active" id="avAgentGo" onclick="generateAnglePrompts()">\u2728 Apply</button>' +
+                '<button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Restore the factory default views and empty prompts">Reset to defaults</button>' +
                 '<span class="av-agent-status" id="avAgentStatus"></span>' +
             '</div>' +
-            '<div class="angle-views-note" style="margin:8px 0 0">Changed your mind? <b>Undo changes</b> (bottom bar) ' +
-            'restores the prompts and cameras from before the last apply (AI or bulk edit); <b>Reset to defaults</b> returns the factory views.</div>' +
             '<div class="av-bulk">' +
-                '<div class="av-bulk-title">Bulk edit \u00b7 no AI</div>' +
-                '<div class="angle-views-note">Instant text edit across all ' + _angleViewsEditing + ' prompts. ' +
-                'Leave <b>Find</b> empty to <b>append</b> the text to the end of every prompt; fill it with a ' +
-                'regular expression to <b>find &amp; replace</b> instead ($1, $2 backrefs work). Cameras are untouched.</div>' +
+                '<div class="av-bulk-title">Quick edit \u00b7 no AI</div>' +
                 '<div class="av-bulk-row">' +
-                    '<input type="text" id="avBulkPattern" class="av-bulk-input" spellcheck="false" ' +
-                        'placeholder="Find (regex, optional) \u2014 e.g. sword|axe">' +
-                    '<input type="text" id="avBulkFlags" class="av-bulk-input av-bulk-flags" spellcheck="false" ' +
-                        'value="gi" title="Regex flags (g = all matches, i = ignore case)">' +
-                '</div>' +
-                '<input type="text" id="avBulkText" class="av-bulk-input" spellcheck="false" ' +
-                    'placeholder="Text to append / replacement \u2014 e.g. dramatic rim lighting, volumetric fog">' +
-                '<div class="av-agent-actions">' +
-                    '<button type="button" class="ems-btn active" onclick="applyAngleBulkEdit()">Apply to all ' + _angleViewsEditing + ' prompts</button>' +
+                    '<select id="avBulkMode" class="av-bulk-input av-bulk-mode" title="Append adds your text to the end of every prompt; Replace overwrites every prompt with it">' +
+                        '<option value="append">Append</option>' +
+                        '<option value="replace">Replace</option>' +
+                    '</select>' +
+                    '<input type="text" id="avBulkText" class="av-bulk-input" spellcheck="false" ' +
+                        'placeholder="Text for all ' + _angleViewsEditing + ' prompts">' +
+                    '<button type="button" class="ems-btn active" onclick="applyAngleBulkEdit()">Apply</button>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -15600,9 +15606,8 @@ function _angleViewsRenderRows(shots){
     });
     // Restore preserved agent state
     if (keepInstr) { const t = body.querySelector('#avAgentInstructions'); if (t) t.value = keepInstr; }
-    { const p = body.querySelector('#avBulkPattern'); if (p && keepBulkPat) p.value = keepBulkPat; }
-    { const f = body.querySelector('#avBulkFlags');   if (f && keepBulkFlags !== null) f.value = keepBulkFlags; }
-    { const x = body.querySelector('#avBulkText');    if (x && keepBulkText) x.value = keepBulkText; }
+    { const m = body.querySelector('#avBulkMode'); if (m && keepBulkMode) m.value = keepBulkMode; }
+    { const x = body.querySelector('#avBulkText'); if (x && keepBulkText) x.value = keepBulkText; }
     if (keepTab !== 'views') _avSwitchTab(keepTab);
 }
 
@@ -15664,51 +15669,33 @@ function restoreAnglePromptsUndo(){
     showNotif('Restored the prompts and cameras from before the last apply.', 'info');
 }
 
-// Bulk edit (no AI): instant local transform across all view prompts.
-// Empty pattern → APPEND the text to the end of every prompt (comma-
-// joined; empty prompts just become the text). Pattern given → regex
-// find & replace on every prompt, with the replacement supporting $1/$2
-// backrefs. Cameras are never touched. Shares the same undo snapshot as
-// the AI agent, so "Undo changes" reverts this too.
+// Quick edit (no AI): append the text to every view's prompt, or
+// replace every prompt with it — picked from the dropdown. Cameras are
+// never touched. Shares the footer Undo with the AI agent. Success is
+// silent: the tab switches to Views and the filled prompts ARE the
+// feedback (a toast per apply was noise, especially at 20 views).
 function applyAngleBulkEdit(){
     const body = $('angleViewsBody');
     if (!body) return;
-    const pat   = body.querySelector('#avBulkPattern')?.value ?? '';
-    const flags = (body.querySelector('#avBulkFlags')?.value ?? 'g').trim();
-    const text  = body.querySelector('#avBulkText')?.value ?? '';
-    if (!pat && !text.trim()) {
-        showNotif('Enter text to append, or a Find pattern with a replacement.', 'error');
-        return;
-    }
-    let re = null;
-    if (pat) {
-        try { re = new RegExp(pat, flags); }
-        catch (e) { showNotif('Invalid regex: ' + (e && e.message ? e.message : e), 'error'); return; }
-    }
+    const bulkMode = body.querySelector('#avBulkMode')?.value || 'append';
+    const text = (body.querySelector('#avBulkText')?.value ?? '').trim();
+    if (!text) { showNotif('Type the text first.', 'error'); return; }
     const form = _avReadForm(body);
     let changed = 0;
     const applied = form.map(v => {
         const cur = v.extra;
-        let next;
-        if (re) {
-            next = cur.replace(re, text);
-        } else {
-            const t = text.trim();
-            next = cur.trim() ? (cur.replace(/[\s,]+$/, '') + ', ' + t) : t;
-        }
-        next = next.slice(0, 600);
+        const next = (bulkMode === 'replace'
+            ? text
+            : (cur.trim() ? cur.replace(/[\s,]+$/, '') + ', ' + text : text)
+        ).slice(0, 600);
         if (next !== cur) changed++;
         return { az: v.az, el: v.el, dist: v.dist, extra: next };
     });
-    if (!changed) {
-        showNotif(re ? 'No prompts changed — the pattern didn\u2019t match anything.' : 'No prompts changed.', 'info');
-        return;
-    }
+    if (!changed) return;
     _avAgentUndo = form;
     _avWriteForm(body, applied);
     _avSetUndoVisible(true);
     _avSwitchTab('views');
-    showNotif(`Updated ${changed} of ${form.length} prompts — review, then Save. Undo is in the bottom bar.`, 'success');
 }
 
 async function generateAnglePrompts(){
@@ -15716,7 +15703,7 @@ async function generateAnglePrompts(){
     if (!body) return;
     const instructions = (body.querySelector('#avAgentInstructions')?.value || '').trim();
     if (!instructions) {
-        showNotif('Write an instruction first — what should change across the views?', 'error');
+        showNotif('Write an instruction first.', 'error');
         return;
     }
     // Read the whole current form: camera settings AND existing prompts.
@@ -15760,13 +15747,8 @@ async function generateAnglePrompts(){
         _avAgentUndo = form;
         _avWriteForm(body, applied);
         _avSetUndoVisible(true);
-        const camChanged = applied.some((v, i) =>
-            form[i] && (v.az !== form[i].az || v.el !== form[i].el || v.dist !== form[i].dist));
         _avSwitchTab('views');
-        showNotif(
-            `Updated ${Math.min(applied.length, views.length)} view prompts` +
-            (camChanged ? ' (and adjusted some camera settings to fit)' : '') +
-            ' — review, tweak, then Save. Undo changes is in the bottom bar.', 'success');
+        showNotif('Done — review, then Save.', 'success');
     } catch (e) {
         if (status) status.textContent = 'Failed — try again.';
         showNotif('Prompt generation failed: ' + (e && e.message ? e.message : e), 'error');
@@ -26764,6 +26746,22 @@ function renderEarnings(d){
 
 // Restore UI state from a server-side history item (completed job).
 // Different from restoreJobState which uses the client-side job.snapshot.
+// Persistent preference: does clicking a history image also restore its
+// prompt / negative prompt / seed into the current surface? Default ON
+// (the long-standing behavior). OFF = stage the image only, leave the
+// user's working prompt untouched. Both header checkboxes drive this.
+let _restorePromptsOnStage = (function(){
+    try { return localStorage.getItem('ml_restorePrompts') !== '0'; } catch(e){ return true; }
+})();
+function toggleRestorePrompts(on){
+    _restorePromptsOnStage = !!on;
+    try { localStorage.setItem('ml_restorePrompts', on ? '1' : '0'); } catch(e){}
+    const a = $('chkRestorePromptsOverlay'); if (a) a.checked = _restorePromptsOnStage;
+    const b = $('chkRestorePromptsModal');   if (b) b.checked = _restorePromptsOnStage;
+}
+// Sync checkbox DOM to the persisted value on load (markup defaults to checked).
+document.addEventListener('DOMContentLoaded', () => toggleRestorePrompts(_restorePromptsOnStage));
+
 function restoreFromHistory(j){
     if (!j) return;
     // Clicking a history image loads it onto the stage in WHATEVER mode the
@@ -26823,6 +26821,12 @@ function restoreFromHistory(j){
     //   - any cross-family click         → stage only, no prompt change
     const isSdxlItem = (j.mode === 'sdxl_studio') || !!j.sdxl_mode;
     const inSdxlView = (window._stageView === 'sdxl');
+    // "↩ prompt" header toggle OFF → stage the image only; leave the
+    // user's working prompt, negative, and seed untouched.
+    if (!_restorePromptsOnStage) {
+        log(`Restored output from generation ${j.id} (image only)`);
+        return;
+    }
     if (isSdxlItem === inSdxlView) {
         if (inSdxlView) {
             // SDXL has its own prompt + negative-prompt fields. Fill both so the
