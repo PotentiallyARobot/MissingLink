@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thank you — MissingLink</title>
+<meta name="robots" content="noindex">
+<!-- ============================================================
+     GOOGLE ADS CONVERSION TRACKING
+     This page exists so ad platforms have ONE stable URL that is
+     only ever reached after a successful Stripe purchase:
+         https://missinglink.build/thanks.html
+     Use that URL in the Google Ads "purchase page" / conversion
+     settings. Paste your Google tag (gtag.js) snippet below —
+     Google Ads shows it under Tools → Conversions → your
+     conversion → "Tag setup". It looks like:
+
+     <script async src="https://www.googletagmanager.com/gtag/js?id=AW-XXXXXXXXX"></script>
+     <script>
+       window.dataLayer = window.dataLayer || [];
+       function gtag(){dataLayer.push(arguments);}
+       gtag('js', new Date());
+       gtag('config', 'AW-XXXXXXXXX');
+       gtag('event', 'conversion', {'send_to': 'AW-XXXXXXXXX/XXXXXXXXXXX'});
+     </script>
+     ============================================================ -->
+
+<style>
+  :root{ --gold:#E8A917; --gold-light:#F5C842; --bg:#0d0d10; --surface:#16161a;
+         --border:rgba(232,169,23,.25); --text:#e8e6e1; --muted:#8a8578; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{max-width:460px;width:100%;background:var(--surface);border:1px solid var(--border);
+        border-radius:18px;padding:40px 36px;text-align:center;
+        box-shadow:0 16px 60px rgba(0,0,0,.55)}
+  .mark{font-family:'Courier New',monospace;font-size:12px;font-weight:700;letter-spacing:3px;
+        color:var(--muted);margin-bottom:22px}
+  .mark b{color:var(--gold)}
+  .check{width:64px;height:64px;border-radius:50%;background:rgba(232,169,23,.12);
+         border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;
+         margin:0 auto 20px;font-size:28px;color:var(--gold-light)}
+  h1{font-size:22px;margin-bottom:10px}
+  h1 span{color:var(--gold)}
+  p{font-size:13.5px;line-height:1.6;color:var(--muted);margin-bottom:8px}
+  .cta{display:inline-block;margin-top:18px;background:var(--gold);color:#111;text-decoration:none;
+       font-family:'Courier New',monospace;font-weight:700;font-size:13px;letter-spacing:.5px;
+       padding:12px 26px;border-radius:9px}
+  .cta:hover{background:var(--gold-light)}
+  .count{font-family:'Courier New',monospace;font-size:11px;color:var(--muted);margin-top:14px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">MISSING <b>LINK</b></div>
+    <div class="check">✓</div>
+    <h1 id="headline">Payment <span>successful</span></h1>
+    <p id="detail">Setting up your account…</p>
+    <p id="subnote" style="display:none">Your tokens are being added by Stripe's confirmation — they'll appear in your balance within a few seconds of landing in the Studio.</p>
+
+    <!-- API key / library token — fetched from /session-token using the
+         Stripe session_id in the URL. Shown ONLY when the webhook stamped
+         a token onto this checkout (subscriptions & library purchases);
+         plain token-pack buys have no key and this stays hidden. -->
+    <div id="keyBox" style="display:none;margin-top:18px;text-align:left">
+      <div style="font-family:'Courier New',monospace;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px">Your API key</div>
+      <div style="display:flex;gap:8px;align-items:stretch">
+        <code id="keyVal" style="flex:1;min-width:0;background:#0a0a0c;border:1px solid var(--border);border-radius:8px;padding:11px 12px;font-family:'Courier New',monospace;font-size:12px;color:var(--gold-light);word-break:break-all;user-select:all"></code>
+        <button id="keyCopy" style="flex:0 0 auto;background:var(--gold);border:none;border-radius:8px;color:#111;font-family:'Courier New',monospace;font-weight:700;font-size:11px;padding:0 14px;cursor:pointer">COPY</button>
+      </div>
+      <p style="font-size:11.5px;margin-top:8px">Save it now — for security we only store a hash, so it can't be shown again (it's also in your email; you can rotate it any time at <a href="/resend.html" style="color:var(--gold)">missinglink.build/resend.html</a>).</p>
+      <p id="keyPip" style="font-family:'Courier New',monospace;font-size:10.5px;color:var(--muted);margin-top:4px;word-break:break-all"></p>
+    </div>
+    <div id="keyWait" style="display:none;font-family:'Courier New',monospace;font-size:11px;color:var(--muted);margin-top:14px">⏳ Fetching your API key…</div>
+
+    <a class="cta" id="goBtn" href="/studio.html">Open Image Studio →</a>
+    <div class="count" id="count"></div>
+  </div>
+
+<script>
+// This page is a conversion beacon + a polite hand-off. It preserves
+// every query param Stripe appended (subscription=success / payment=success
+// / session_id) and forwards them to studio.html, where the existing
+// success handlers show the welcome notification and re-poll the balance.
+// Forward uses location.replace so Back doesn't bounce through here again.
+(function(){
+  var qs = window.location.search || '';
+  var params = new URLSearchParams(qs);
+  var dest = '/studio.html' + qs;
+  var isSub = params.get('subscription') === 'success';
+  var isPay = params.get('payment') === 'success';
+
+  var h = document.getElementById('headline');
+  var d = document.getElementById('detail');
+  if (isSub) {
+    h.innerHTML = 'Subscription <span>active</span>';
+    d.textContent = 'Welcome to Studio Monthly — 50,000 tokens are being added to your balance.';
+    document.getElementById('subnote').style.display = '';
+  } else if (isPay) {
+    h.innerHTML = 'Payment <span>successful</span>';
+    d.textContent = 'Your tokens are being added to your balance.';
+  } else {
+    // Direct visit with no purchase params (bookmark, curiosity, bot):
+    // don't claim a purchase happened — just offer the door.
+    h.innerHTML = 'Thank <span>you</span>';
+    d.textContent = 'Head into the Studio to start creating.';
+  }
+  document.getElementById('goBtn').setAttribute('href', dest);
+
+  // ── API key retrieval ─────────────────────────────────────────
+  // The purchase webhook stamps the plaintext library/API token onto the
+  // Stripe checkout session's metadata; /session-token?session_id=…
+  // returns it (rate-limited server-side). The webhook races this page
+  // load, so we retry with backoff on the "still processing" 404.
+  // IMPORTANT: while a key is displayed we DO NOT auto-forward — the
+  // user needs time to copy it, and it cannot be shown again.
+  var sessionId = params.get('session_id') || '';
+  var keyShown = false;
+
+  function showKey(token, sku){
+    keyShown = true;
+    document.getElementById('keyWait').style.display = 'none';
+    var box = document.getElementById('keyBox');
+    var val = document.getElementById('keyVal');
+    val.textContent = token;
+    if (sku && /bundle|wheel|colab|survival/i.test(sku)) {
+      document.getElementById('keyPip').textContent =
+        'pip install -r "https://' + token + '@missinglink.build/l4.txt"  (a100.txt / t4.txt for other GPUs)';
+    }
+    box.style.display = '';
+    var btn = document.getElementById('keyCopy');
+    btn.onclick = function(){
+      (navigator.clipboard ? navigator.clipboard.writeText(token) : Promise.reject())
+        .then(function(){ btn.textContent = 'COPIED ✓'; })
+        .catch(function(){ try { val.focus(); document.getSelection().selectAllChildren(val); } catch(e){} });
+      setTimeout(function(){ btn.textContent = 'COPY'; }, 2000);
+    };
+    // Freeze the countdown; leave the button as the exit.
+    document.getElementById('count').textContent = 'Copy your key, then head to the Studio when ready.';
+  }
+
+  function fetchKey(attempt){
+    if (attempt > 5) { document.getElementById('keyWait').style.display = 'none'; startCountdown(); return; }
+    fetch('/session-token?session_id=' + encodeURIComponent(sessionId))
+      .then(function(r){ return r.json().then(function(d){ return { s: r.status, d: d }; }); })
+      .then(function(x){
+        if (x.d && x.d.ok && x.d.token) { showKey(x.d.token, x.d.sku); return; }
+        // 404 "webhook may still be processing" → retry with backoff.
+        // 404 "Token not available" (e.g. plain token-pack buy) → no key
+        // exists for this purchase; fall through to the normal countdown.
+        var msg = (x.d && x.d.message) || '';
+        if (x.s === 404 && /processing/i.test(msg)) {
+          setTimeout(function(){ fetchKey(attempt + 1); }, 1500 * attempt);
+        } else {
+          document.getElementById('keyWait').style.display = 'none';
+          startCountdown();
+        }
+      })
+      .catch(function(){ setTimeout(function(){ fetchKey(attempt + 1); }, 1500 * attempt); });
+  }
+
+  // Auto-forward after a short beat — long enough for the conversion tag
+  // above to fire and for the human to read the confirmation. Suppressed
+  // entirely once an API key is on screen.
+  var secs = 4;
+  var el = document.getElementById('count');
+  var countdownStarted = false;
+  function startCountdown(){
+    if (countdownStarted || keyShown) return;
+    countdownStarted = true;
+    (function tick(){
+      if (keyShown) { el.textContent = 'Copy your key, then head to the Studio when ready.'; return; }
+      el.textContent = 'Taking you to the Studio in ' + secs + '…';
+      if (secs-- <= 0) { window.location.replace(dest); return; }
+      setTimeout(tick, 1000);
+    })();
+  }
+
+  if (sessionId && (isSub || isPay)) {
+    document.getElementById('keyWait').style.display = '';
+    fetchKey(1);
+  } else {
+    startCountdown();
+  }
+})();
+</script>
+</body>
+</html>
