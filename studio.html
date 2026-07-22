@@ -17895,11 +17895,21 @@ function _batchSubmitShot(payload){
     }, isSdxl ? 60000 : 30000);
 }
 
+// Hard product limit: a single batch pass may generate at most this many
+// images, enforced client-side at every batch entry point AND server-side
+// per batch_id (the server is authoritative; this constant mirrors it).
+const MAX_BATCH_IMAGES = 20;
+
 async function generateBatchEdits(){
     if (!_user) { $('loginModal').classList.add('open'); return; }
     const selected = _batchInputs.filter(b => b.selected);
     if (selected.length === 0) {
         showNotif('Select at least one image to edit.', 'error');
+        return;
+    }
+    // Hard cap: one batch pass never generates more than MAX_BATCH_IMAGES.
+    if (selected.length > MAX_BATCH_IMAGES) {
+        showNotif(`Batch limit is ${MAX_BATCH_IMAGES} images per pass — deselect ${selected.length - MAX_BATCH_IMAGES} and run the rest as a second pass.`, 'error');
         return;
     }
     const prompt = $('batchPrompt').value.trim();
@@ -18329,6 +18339,12 @@ async function generateAllAngles96(){
 async function generateAngleBatch(angles, btnDefaultText, btn){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     if(currentMode !== 'camera' || !imageId){ return; }
+    // Hard cap: never more than MAX_BATCH_IMAGES views in one pass,
+    // whatever the caller or a tampered preset hands us.
+    if (Array.isArray(angles) && angles.length > MAX_BATCH_IMAGES) {
+        angles = angles.slice(0, MAX_BATCH_IMAGES);
+        showNotif(`Batch limit is ${MAX_BATCH_IMAGES} images per pass — running the first ${MAX_BATCH_IMAGES} views.`, 'info');
+    }
 
     const N = angles.length;
     const tokensNeeded = N * 100;  // 100 tokens / shot, matches single generation cost
@@ -20769,12 +20785,33 @@ async function cancelJob(jobId){
 // of $('tokenCount').textContent.
 async function cancelAllCancellableJobs(){
     const targets = myJobs.filter(canCancelJob);
-    if (!targets.length) return;
+    // Not-yet-queued batch shots waiting in the client-side drain
+    // (_pendingAngleShots auto-submits them as running jobs complete).
+    // Cancelling the queue without flushing these meant the batch
+    // "resurrected" — each completion re-filled the queue from pending.
+    const pendingCount = _pendingAngleShots.length;
+    if (!targets.length && !pendingCount) return;
+    const parts = [];
+    if (targets.length) parts.push(`${targets.length} queued ${targets.length === 1 ? 'job' : 'jobs'}`);
+    if (pendingCount) parts.push(`${pendingCount} waiting batch ${pendingCount === 1 ? 'shot' : 'shots'}`);
     const ok = await showConfirm(
-        `Cancel ${targets.length} pending ${targets.length === 1 ? 'job' : 'jobs'} and refund tokens?`,
+        `Cancel ${parts.join(' and ')}? Tokens for queued jobs are refunded; waiting shots were never charged.`,
         { confirmLabel: 'Cancel all', cancelLabel: 'Keep them', danger: true }
     );
     if (!ok) return;
+    // Flush pending FIRST — otherwise completions arriving during the
+    // cancel loop below would auto-submit replacements from the drain.
+    if (pendingCount) {
+        const dropped = _pendingAngleShots.splice(0, _pendingAngleShots.length);
+        if (typeof _activeBatch !== 'undefined' && _activeBatch) {
+            let touched = false;
+            dropped.forEach(p => {
+                const shot = _activeBatch.shots[p.shotIdx];
+                if (shot && shot.status !== 'done') { shot.status = 'cancelled'; touched = true; }
+            });
+            if (touched && typeof renderBatchGrid === 'function') renderBatchGrid();
+        }
+    }
     // Snapshot ids — cancelJob removes entries from myJobs as it goes,
     // and we don't want to skip later ones because the array shifts.
     const ids = targets.map(j => j.id);
@@ -20787,7 +20824,7 @@ async function cancelAllCancellableJobs(){
         if (btn) btn.textContent = `✕ Cancelling ${ids.length - done}…`;
     }
     if (btn) { btn.disabled = false; btn.textContent = '✕ Clear all'; }
-    log(`Cleared ${done} job${done === 1 ? '' : 's'} from queue`, 'success');
+    log(`Cleared ${done} queued job${done === 1 ? '' : 's'}${pendingCount ? ` and ${pendingCount} waiting batch shot${pendingCount === 1 ? '' : 's'}` : ''}`, 'success');
 }
 
 // Map the GPU's global startup stage (from _gpuState, set by the worker's
@@ -20993,7 +21030,10 @@ function renderQueue(){
         // visible button that does nothing.
         const clearBtn = $('queueClearAllBtn');
         if (clearBtn) {
-            const cancellableCount = activeJobs.filter(canCancelJob).length;
+            // Visible when anything is cancellable — queued jobs OR shots
+            // still waiting in the client-side auto-submit drain.
+            const cancellableCount = activeJobs.filter(canCancelJob).length
+                + ((typeof _pendingAngleShots !== 'undefined') ? _pendingAngleShots.length : 0);
             clearBtn.style.display = cancellableCount > 0 ? '' : 'none';
         }
         activeList.innerHTML = '';
