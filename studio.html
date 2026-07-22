@@ -4946,6 +4946,13 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                         <span class="user-menu-sub">One-time purchase, never expire</span>
                     </span>
                 </button>
+                <button class="user-menu-item" onclick="closeUserMenu();openApiKeyModal()" role="menuitem">
+                    <span class="user-menu-icon">🔑</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">API key</span>
+                        <span class="user-menu-sub">Generate the key for API &amp; pip access</span>
+                    </span>
+                </button>
             </div>
             <!-- Preferences section — viewer toggles that don't require
                  leaving the page. NSFW gate is the only one for now; new
@@ -6642,6 +6649,46 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
      dialog auto-closes after a short delay).
      User can dismiss via the X, clicking the dim backdrop, or
      pressing Escape. -->
+<style>
+/* Gold action button for the API key modal (no shared gold-button class
+   existed at popup scope; scoped here to avoid collisions). */
+#apiKeyModal .btn-gold{background:var(--gold);border:1px solid var(--gold);color:#0a0a0c;font-family:var(--font-mono);font-size:12px;font-weight:700;letter-spacing:.5px;border-radius:8px;padding:11px 16px;cursor:pointer;transition:all .15s}
+#apiKeyModal .btn-gold:hover:not(:disabled){background:var(--gold-light)}
+#apiKeyModal .btn-gold:disabled{opacity:.55;cursor:default}
+</style>
+<!-- ── API key modal ─────────────────────────────────────────────
+     Opened from the account menu. Keys are hash-at-rest server-side, so
+     "view" is really "rotate & show once": generating invalidates the
+     previous key immediately. The plaintext lands in #apiKeyValue with a
+     copy button and is never persisted client-side. -->
+<div class="popup-modal" id="apiKeyModal" onclick="if(event.target===this) closeApiKeyModal()">
+    <div class="popup-card" style="max-width:480px" role="dialog" aria-modal="true" aria-labelledby="apiKeyTitle">
+        <button class="modal-close" onclick="closeApiKeyModal()" style="top:12px;right:14px">×</button>
+        <h2 id="apiKeyTitle" style="font-family:var(--font-mono);font-size:15px;letter-spacing:1px;margin-bottom:10px">🔑 API KEY</h2>
+        <div id="apiKeyIntro">
+            <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:8px">
+                One key covers the HTTP API and pip access to the wheel library.
+                For security we store only a hash, so the key is shown <b style="color:var(--text)">once</b> when generated —
+                and generating a new one <b style="color:var(--gold)">invalidates your previous key immediately</b>
+                (update any scripts or notebooks using it).
+            </p>
+            <button class="btn-gold" id="apiKeyGenBtn" onclick="rotateApiKey()" style="width:100%;margin-top:6px">Generate new API key</button>
+        </div>
+        <div id="apiKeyResult" style="display:none">
+            <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:2px;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px">Your new key — copy it now</div>
+            <div style="display:flex;gap:8px;align-items:stretch">
+                <code id="apiKeyValue" style="flex:1;min-width:0;background:var(--surface-3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:var(--font-mono);font-size:12px;color:var(--gold-light);word-break:break-all;user-select:all"></code>
+                <button class="btn-gold" id="apiKeyCopyBtn" style="flex:0 0 auto;padding:0 14px">COPY</button>
+            </div>
+            <p style="font-size:11px;color:var(--text-muted);line-height:1.6;margin-top:10px">
+                It can't be shown again after this dialog closes. A backup copy was emailed to you.
+            </p>
+            <p style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);margin-top:4px;word-break:break-all" id="apiKeyPipHint"></p>
+        </div>
+        <div id="apiKeyError" style="display:none;font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:8px"></div>
+    </div>
+</div>
+
 <div class="popup-modal" id="workflowModal" onclick="if(event.target===this) closeWorkflowModal()">
     <div class="workflow-card" onclick="event.stopPropagation()">
         <button class="workflow-close" onclick="closeWorkflowModal()" aria-label="Close" title="Close">×</button>
@@ -7988,6 +8035,68 @@ function toggleMobileOverlays(){
         btn.title = hidden
             ? 'Floating panels hidden — tap to show them again'
             : 'Hide / show floating panels (queue, history, batch tools)';
+    }
+}
+
+// ── API key modal ─────────────────────────────────────────────────
+// Keys are hash-at-rest server-side (customers.token_hash), so this is a
+// rotate-and-show-once flow: /api/studio/api-key/rotate mints a fresh
+// key, kills the old one, and returns the plaintext a single time. The
+// modal resets to the intro state on every open so a stale key is never
+// left sitting on screen from a previous session of the dialog.
+function openApiKeyModal(){
+    const m = $('apiKeyModal');
+    if (!m) return;
+    $('apiKeyIntro').style.display = '';
+    $('apiKeyResult').style.display = 'none';
+    $('apiKeyError').style.display = 'none';
+    const btn = $('apiKeyGenBtn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate new API key'; }
+    m.classList.add('open');
+}
+function closeApiKeyModal(){
+    const m = $('apiKeyModal');
+    if (m) m.classList.remove('open');
+    // Scrub the plaintext from the DOM on close.
+    const v = $('apiKeyValue'); if (v) v.textContent = '';
+}
+async function rotateApiKey(){
+    if (!_user) { closeApiKeyModal(); $('loginModal').classList.add('open'); return; }
+    const btn = $('apiKeyGenBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+        const r = await fetchT(`${API}/api/studio/api-key/rotate`, { method: 'POST' }, 20000);
+        const d = await r.json();
+        if (d && d.ok && d.token) {
+            $('apiKeyIntro').style.display = 'none';
+            const v = $('apiKeyValue');
+            v.textContent = d.token;
+            $('apiKeyPipHint').textContent =
+                'pip install -r "https://' + d.token + '@missinglink.build/l4.txt"  (a100.txt / t4.txt for other GPUs)';
+            $('apiKeyResult').style.display = '';
+            const cb = $('apiKeyCopyBtn');
+            cb.onclick = () => {
+                (navigator.clipboard ? navigator.clipboard.writeText(d.token) : Promise.reject())
+                    .then(() => { cb.textContent = 'COPIED ✓'; })
+                    .catch(() => { try { document.getSelection().selectAllChildren(v); } catch(e){} });
+                setTimeout(() => { cb.textContent = 'COPY'; }, 2000);
+            };
+            return;
+        }
+        const err = $('apiKeyError');
+        if (d && d.error === 'no_subscription') {
+            err.innerHTML = 'API keys come with the <b style="color:var(--gold)">Pro subscription</b> or a library purchase. ' +
+                '<a href="#" onclick="event.preventDefault();closeApiKeyModal();doSubscribe()" style="color:var(--gold);text-decoration:underline">Subscribe →</a>';
+        } else {
+            err.textContent = 'Could not generate a key: ' + ((d && (d.message || d.error)) || 'unknown error') + ' — try again.';
+        }
+        err.style.display = '';
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate new API key'; }
+    } catch (e) {
+        const err = $('apiKeyError');
+        err.textContent = 'Network error — try again.';
+        err.style.display = '';
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate new API key'; }
     }
 }
 
