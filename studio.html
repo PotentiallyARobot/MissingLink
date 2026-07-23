@@ -18958,11 +18958,6 @@ function renderBatchGrid(){
         $('outPh').style.display = 'none';
         $('outImg').style.display = 'none';
     }
-    // Sync the standard top-left "✕ Clear Stage" pill with the grid —
-    // every render, regardless of mode: a batch restored from History in
-    // Edit view is on stage there and needs its clear control too.
-    if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
-
     let grid = $('batchGrid');
     if (!grid) {
         grid = document.createElement('div');
@@ -18974,6 +18969,13 @@ function renderBatchGrid(){
     // sure it's visible. renderBatchInputs may have hidden it while clearing a
     // stale/off-mode grid off the stage, so un-hide it on every real render.
     grid.style.display = '';
+    // Sync the standard top-left "✕ Clear Stage" pill — AFTER the grid
+    // exists and is visible, because _batchOnStage() tests exactly that.
+    // (This used to run before grid creation; on a history restore —
+    // which wipes the old grid DOM then renders ONCE — the grid was null
+    // at sync time, so restored batches never got their clear control.
+    // Live batches masked it by re-rendering on every shot completion.)
+    if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
     // Apply layout based on batch kind (angles = 3x3 hero, batch-edit = uniform
     // auto-fill grid). Set on every render in case a new batch replaced an old
     // one with a different kind.
@@ -19169,15 +19171,26 @@ function renderBatchGrid(){
                 if (img.complete && img.naturalWidth > 0) {
                     revealWhenLoaded();
                 }
-                // Click to expand in the existing image modal. Pass a
-                // filename derived from the job/shot id so the modal's
-                // download button saves with a useful name instead of
-                // an opaque R2 path segment.
-                tile.onclick = () => openModal(
-                    shot.url,
-                    (shot.id || shot.job_id || 'image') + '.png',
-                    { type: 'batchShot', slotIdx: i },
-                );
+                // Click to expand in the existing image modal. Build a
+                // unique, descriptive download filename per tile:
+                //   missinglink-{batch}-{NN}-{view-slug}.png
+                // e.g. missinglink-4f2a91c3-07-right-low-medium.png. The
+                // old code read shot.id/shot.job_id — but live shots store
+                // their id as shot.jobId (camelCase), so BOTH lookups
+                // missed and every tile downloaded as "image.png".
+                tile.onclick = () => {
+                    const slotNo = String(i + 1).padStart(2, '0');
+                    const slug = ((shot.extra ? 'custom' : (shot.label || 'view'))
+                        .toLowerCase().replace(/[^a-z0-9]+/g, '-')
+                        .replace(/^-+|-+$/g, '').slice(0, 28)) || 'view';
+                    const shortBatch = String((_activeBatch && _activeBatch.id) || 'batch')
+                        .split('_').pop().slice(0, 10);
+                    openModal(
+                        shot.url,
+                        `missinglink-${shortBatch}-${slotNo}-${slug}.png`,
+                        { type: 'batchShot', slotIdx: i },
+                    );
+                };
             }
         } else if (shot.status === 'error') {
             placeholder.textContent = 'Failed';
