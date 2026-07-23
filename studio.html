@@ -3420,6 +3420,9 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .field select,.field input[type=text]{width:100%;background:var(--surface-3);border:1px solid var(--border);border-radius:5px;padding:7px 10px;color:var(--text);font-family:var(--font-body);font-size:12px;outline:none;transition:border-color .15s}
 .field select:focus,.field input:focus{border-color:var(--gold)}
 .slider-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+/* Engine-not-applicable: the selected batch engine (GPT/SDXL) ignores
+   the Qwen LoRA stack — sliders gray out and stop accepting input. */
+.slider-row.engine-na{opacity:.35;pointer-events:none;filter:grayscale(1)}
 .slider-row .sl{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.3px;min-width:65px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .slider-row input[type=range]{flex:1;height:4px;accent-color:var(--gold);cursor:pointer;-webkit-appearance:none;background:var(--surface-3);border-radius:2px}
 .slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--gold);cursor:pointer}
@@ -4581,6 +4584,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
    — queue/history float at bottom instead of right-side overlays
    ═══════════════════════════════════════════════════════════════════════ */
 @media (max-width: 900px) {
+    /* Configure-Views modal footer: allow wrapping. When the "↩ Undo
+       changes" button appears after an agent/bulk Apply, the fixed row
+       (Reset · Undo · spacer · Cancel · Save) exceeds a phone-width
+       modal and Save was clipped off the right edge. Wrapped, buttons
+       share rows evenly and Save is always on screen; the flex spacer
+       is neutralized since wrapping replaces its job. */
+    .angle-views-foot { flex-wrap: wrap; }
+    .angle-views-foot .ems-btn { flex: 1 1 auto; text-align: center; }
+    .angle-views-foot > span[style] { display: none; }
+
     :root { --sidebar-w: 0px; --mobile-action-h: 110px; }
     .app { grid-template-columns: 1fr; grid-template-areas:"header""main""console"; }
     .hdr-hamburger { display: inline-flex; }
@@ -10159,11 +10172,36 @@ function setEditModelPref(p){
         if (p === 'sdxl'){
             hint.textContent = 'Batch Generate → SDXL img2img on each selected image (Pony Realism v2.2), Pony 2.2 quality tags added automatically. 50 tokens/image. Agent chat still uses Qwen/GPT.';
             hint.style.display = '';
+        } else if (p === 'gpt'){
+            hint.textContent = 'Batch Generate → gpt-image-2 on each selected image (no GPU queue). Priced per image by size. Qwen LoRA sliders, CFG/steps, and the negative prompt don’t apply to GPT and are disabled below.';
+            hint.style.display = '';
         } else {
             hint.style.display = 'none';
             hint.textContent = '';
         }
     }
+    if (typeof _applyGptLoraGate === 'function') _applyGptLoraGate();
+}
+
+// Gray out the Qwen LoRA sliders when the selected batch engine can't
+// use them (GPT and SDXL both ignore the Qwen LoRA stack). Batch mode
+// only — Edit/Camera always run the Qwen pipeline, where they apply.
+function _applyGptLoraGate(){
+    const na = (typeof currentMode !== 'undefined' && currentMode === 'batch')
+        && (typeof _editModelPref !== 'undefined')
+        && (_editModelPref === 'gpt' || _editModelPref === 'sdxl');
+    document.querySelectorAll('input[id^="rngLora"]').forEach(inp => {
+        const row = inp.closest('.slider-row');
+        if (!row) return;
+        row.classList.toggle('engine-na', na);
+        if (na) {
+            if (!row.dataset.naTitle) row.dataset.naTitle = row.title || '';
+            row.title = 'Not used by the ' + _editModelPref.toUpperCase() + ' engine — switch to Auto/Qwen to apply LoRAs.';
+        } else if (row.dataset.naTitle !== undefined) {
+            row.title = row.dataset.naTitle;
+            delete row.dataset.naTitle;
+        }
+    });
 }
 // Sync the active button to the persisted value on load (the script runs
 // after the markup, so the element already exists).
@@ -17850,6 +17888,15 @@ async function retryBatchSlot(slotIdx, refinedPrompt){
         return;
     }
     if (!_user) { $('loginModal').classList.add('open'); return; }
+    // GPT-engine shots: apply the refined prompt to the stored payload
+    // and re-run the direct gpt-image-2 call — the queue path below
+    // doesn't apply (and the <sks> pose rebuild is Qwen-only).
+    if (shot.payload._gptEdit) {
+        shot.payload = { ...shot.payload, prompt: refinedPrompt };
+        shot.prompt = refinedPrompt;
+        _runGptEditShot(slotIdx);
+        return;
+    }
     // SDXL shots cost 50 tokens, Qwen edits cost 100 — key off the stored
     // routing marker so a retry isn't wrongly blocked when the user has
     // 50–99 tokens and the shot is SDXL.
@@ -18033,6 +18080,73 @@ function _batchSubmitShot(payload){
 // per batch_id (the server is authoritative; this constant mirrors it).
 const MAX_BATCH_IMAGES = 20;
 
+// ── GPT batch shot runner ─────────────────────────────────────────
+// One gpt-image-2 edit per shot via /api/studio/agent-image-edit —
+// submission and completion in a single call (no queue, no polling).
+// A small semaphore keeps at most 3 requests in flight so a 20-image
+// batch doesn't fire 20 concurrent OpenAI calls. Used for the initial
+// pass AND per-tile retries (retryFailedShot routes _gptEdit payloads
+// here).
+let _gptEditInFlight = 0;
+const _GPT_EDIT_CONCURRENCY = 3;
+const _gptEditWaiters = [];
+async function _gptEditSlot(){
+    if (_gptEditInFlight < _GPT_EDIT_CONCURRENCY) { _gptEditInFlight++; return; }
+    await new Promise(res => _gptEditWaiters.push(res));
+    _gptEditInFlight++;
+}
+function _gptEditRelease(){
+    _gptEditInFlight = Math.max(0, _gptEditInFlight - 1);
+    const next = _gptEditWaiters.shift();
+    if (next) next();
+}
+async function _runGptEditShot(slotIdx){
+    const batch = _activeBatch;
+    if (!batch || !batch.shots[slotIdx] || !batch.shots[slotIdx].payload) return;
+    const shot = batch.shots[slotIdx];
+    shot.status = 'running';
+    renderBatchGrid();
+    await _gptEditSlot();
+    try {
+        // The batch may have been cleared while we waited on the semaphore.
+        if (_activeBatch !== batch) return;
+        const p = shot.payload;
+        const r = await fetchT(`${API}/api/studio/agent-image-edit`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt: p.prompt,
+                image_ids: p.image_ids,
+                batch_id: p.batch_id,
+                source: 'create',
+            }),
+        }, 120000);
+        const d = await r.json().catch(() => null);
+        if (_activeBatch !== batch) return;
+        if (d && d.ok && Array.isArray(d.images) && d.images[0] && d.images[0].url) {
+            shot.url = d.images[0].url;
+            shot.status = 'done';
+            if (d.tokens_remaining !== undefined && _user) {
+                _user.tokens = d.tokens_remaining;
+                $('tokenCount').textContent = d.tokens_remaining;
+                $('tokenBadge').classList.toggle('low', d.tokens_remaining < 200);
+            }
+        } else {
+            shot.status = 'error';
+            const err = (d && (d.error || d.detail)) || `HTTP ${r.status}`;
+            if (r.status === 402) showNotif('Not enough tokens for a GPT edit — top up and retry the tile.', 'error');
+            log(`GPT batch edit ${slotIdx + 1} failed: ${err}`, 'error');
+        }
+    } catch (e) {
+        if (_activeBatch === batch) {
+            shot.status = 'error';
+            log(`GPT batch edit ${slotIdx + 1} failed: ${e && e.message ? e.message : e}`, 'error');
+        }
+    } finally {
+        _gptEditRelease();
+        if (_activeBatch === batch) renderBatchGrid();
+    }
+}
+
 async function generateBatchEdits(){
     if (!_user) { $('loginModal').classList.add('open'); return; }
     const selected = _batchInputs.filter(b => b.selected);
@@ -18053,9 +18167,15 @@ async function generateBatchEdits(){
     // and costs 50 tokens/image; everything else stays on the Qwen edit path
     // at 100 tokens/image.
     const useSdxl = (typeof _editModelPref !== 'undefined' && _editModelPref === 'sdxl');
+    // GPT batches route each shot through /api/studio/agent-image-edit
+    // (gpt-image-2) — no GPU queue involved. Pricing is per-image and
+    // size-dependent, charged per call server-side, so there's no flat
+    // client precheck; an insufficient balance fails the shot with a
+    // clear message instead.
+    const useGpt = (typeof _editModelPref !== 'undefined' && _editModelPref === 'gpt');
     const perGen = useSdxl ? 50 : 100;
     const needed = selected.length * perGen;
-    if (_user.tokens < needed) {
+    if (!useGpt && _user.tokens < needed) {
         showNotif(`Need ${needed} tokens for ${selected.length} ${useSdxl ? 'SDXL generations' : 'edits'}. You have ${_user.tokens}.`, 'error');
         showBuyModal();
         return;
@@ -18077,7 +18197,7 @@ async function generateBatchEdits(){
 
     // GPU wake. Qwen batches warm the Qwen container here; SDXL batches skip it
     // (the SDXL endpoint wakes its own T4 on every enqueue, server-side).
-    if (!useSdxl && (_gpuState.state === 'sleeping' || _gpuState.state === 'cold')) {
+    if (!useSdxl && !useGpt && (_gpuState.state === 'sleeping' || _gpuState.state === 'cold')) {
         warmupGpu();
     }
 
@@ -18144,7 +18264,19 @@ async function generateBatchEdits(){
         if (_batchContext[2]) imageIds.push(_batchContext[2].id);
         const shotPrompt = (_batchPerImagePrompts && _batchPerImagePrompts[inp.id]) || prompt;
         let payload;
-        if (useSdxl) {
+        if (useGpt) {
+            // gpt-image-2 edit. The endpoint accepts image_ids (primary +
+            // up to 3 context refs) and returns the finished image in the
+            // response — submission and completion are one call, handled
+            // by _runGptEditShot below (no queue, no polling). _gptEdit
+            // marks the payload so retryFailedShot re-runs the same call.
+            payload = {
+                _engine: 'gpt', _gptEdit: true,
+                prompt: shotPrompt,
+                image_ids: imageIds,
+                batch_id: batchId,
+            };
+        } else if (useSdxl) {
             // SDXL img2img on this single input. Pony 2.2 quality tags are
             // added automatically (positive prefix + merged negatives). Uses
             // the baked default checkpoint (Pony Realism v2.2) via an empty
@@ -18188,6 +18320,14 @@ async function generateBatchEdits(){
         _activeBatch.shots[i].payload = payload;
         _activeBatch.shots[i].inputId = inp.id;
 
+        // GPT shots don't go through the GPU queue at all — kick the
+        // direct-call runner (concurrency-limited) and move on.
+        if (useGpt) {
+            _runGptEditShot(i);
+            submitted++;
+            btn.textContent = `⏳ SUBMITTING ${submitted}/${selected.length}`;
+            continue;
+        }
         // No server headroom left → stash for the auto-drain instead of
         // submitting now. submitNextPendingAngle() consumes this exact shape
         // and fires from the job-completion handler as slots free up.
@@ -18800,6 +18940,12 @@ async function retryFailedShot(slotIdx, btnEl){
         return;
     }
     if (!_user) { $('loginModal').classList.add('open'); return; }
+    // GPT-engine shots don't use the GPU queue — re-run the direct
+    // gpt-image-2 call with the stored params instead.
+    if (shot.payload._gptEdit) {
+        _runGptEditShot(slotIdx);
+        return;
+    }
     // Generation cost is 100 tokens regardless of mode. Without this
     // check the API call would 402 and show the buy modal anyway, but
     // the tile would visually flicker through 'pending' first which is
