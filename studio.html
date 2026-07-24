@@ -8265,6 +8265,24 @@ async function acknowledgeAgeGate(){
         _user.age_ack_at = d.age_ack_at;
         try { if (d.age_ack_at) localStorage.setItem('studio_age_ack_' + _user.id, String(d.age_ack_at)); } catch (e) {}
         closeAgeGate();
+        // Resume any batch shots that were stashed when the gate fired
+        // mid-submission (see generateAngleBatch / submitNextPendingAngle):
+        // pump the pending drain up to the free queue headroom. Without
+        // this, a batch paused by the gate would only resume when some
+        // OTHER job completed — which never happens if the gate blocked
+        // the very first submissions.
+        if (typeof _pendingAngleShots !== 'undefined' && _pendingAngleShots.length
+            && typeof submitNextPendingAngle === 'function') {
+            (async () => {
+                const active = () => myJobs.filter(j =>
+                    j.status === 'queued' || j.status === 'waiting' || j.status === 'running').length;
+                let guard = 0;
+                while (_pendingAngleShots.length && active() < 12 && guard++ < 24) {
+                    const ok = await submitNextPendingAngle();
+                    if (!ok) break;  // queue full again or a real failure — completion drain takes over
+                }
+            })();
+        }
         // If we arrived at the age gate via the NSFW classifier, the
         // user's intent was to do something NSFW-flavored. Continue
         // the flow by surfacing the NSFW advisory (which routes them
@@ -18544,6 +18562,7 @@ async function generateBatchEdits(){
                 }
                 log(`Batch edit '${inp.fname}' failed: ${d.error || 'unknown'}`, 'error');
                 _activeBatch.shots[i].status = 'error';
+                _activeBatch.shots[i].errorCode = (d && d.error) || `http_${r.status}`;
                 renderBatchGrid();
                 continue;
             }
@@ -18954,16 +18973,38 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
                     showNotif(`Queue filled — ${_pendingAngleShots.length} shots will auto-submit as slots free up.`, 'info');
                     break;
                 }
+                // 18+ re-arm: this error applies to the WHOLE batch, not
+                // one shot — erroring all 20 tiles one by one (the old
+                // behavior) turned a single expired acknowledgement into a
+                // wall of RETRY buttons. Instead: stash this shot and every
+                // remaining one exactly like the queue-full path, open the
+                // gate once, and stop. acknowledgeAgeGate() pumps the
+                // pending drain after a successful ack, so the batch
+                // resumes by itself — no manual retries.
+                if (d.error === 'age_ack_required') {
+                    _pendingAngleShots.push({ shotIdx: i, payload, snapshot, label: shot.label });
+                    for (let j = i + 1; j < N; j++) {
+                        const s2 = angles[j];
+                        const p2 = _anglePromptFor(s2);
+                        _pendingAngleShots.push({
+                            shotIdx: j,
+                            payload: { ...payload, prompt: p2 },
+                            snapshot: { ...snapshot, prompt: p2 },
+                            label: s2.label,
+                        });
+                    }
+                    showNotif('Confirm you are 18+ to run this batch — it will resume automatically after you acknowledge.', 'error');
+                    openAgeGate();
+                    break;
+                }
                 log(`Shot '${shot.label}' failed: ${d.error || 'unknown'}`, 'error');
                 if (d.error === 'content_blocked') {
                     showNotif('This request was blocked: content involving minors is not allowed.', 'error');
                 } else if (d.error === 'moderation_unavailable') {
                     showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
-                } else if (d.error === 'age_ack_required') {
-                    showNotif('Adult content requires confirming you are 18+. Please acknowledge, then run again.', 'error');
-                    openAgeGate();
                 }
                 _activeBatch.shots[i].status = 'error';
+                _activeBatch.shots[i].errorCode = (d && d.error) || `http_${r.status}`;
                 renderBatchGrid();
                 continue;
             }
@@ -19035,16 +19076,21 @@ async function submitNextPendingAngle(){
                 showBuyModal();
                 return false;
             }
+            // Whole-batch gate, not a per-shot failure: put the shot back
+            // and wait for the ack (acknowledgeAgeGate pumps the drain).
+            if (d.error === 'age_ack_required') {
+                _pendingAngleShots.unshift(next);
+                openAgeGate();
+                return false;
+            }
             log(`Shot '${label}' failed: ${d.error || 'unknown'}`, 'error');
             if (d.error === 'content_blocked') {
                 showNotif('This request was blocked: content involving minors is not allowed.', 'error');
             } else if (d.error === 'moderation_unavailable') {
                 showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
-            } else if (d.error === 'age_ack_required') {
-                showNotif('Adult content requires confirming you are 18+. Please acknowledge, then run again.', 'error');
-                openAgeGate();
             }
             _activeBatch.shots[shotIdx].status = 'error';
+            _activeBatch.shots[shotIdx].errorCode = (d && d.error) || `http_${r.status}`;
             renderBatchGrid();
             return false;
         }
@@ -19442,6 +19488,26 @@ function renderBatchGrid(){
         if (retryBtn) {
             const canRetry = (shot.status === 'error' || shot.status === 'cancelled') && !!shot.payload;
             retryBtn.style.display = canRetry ? '' : 'none';
+            // Surface WHY it failed right on the tile — failures were
+            // previously logged to the browser console only, leaving the
+            // user staring at an unexplained wall of RETRY buttons.
+            if (canRetry && shot.errorCode) {
+                const msg = (typeof friendlyGenError === 'function')
+                    ? friendlyGenError(shot.errorCode) : shot.errorCode;
+                retryBtn.title = msg;
+                let reasonEl = tile.querySelector('.tile-fail-reason');
+                if (!reasonEl) {
+                    reasonEl = document.createElement('div');
+                    reasonEl.className = 'tile-fail-reason';
+                    reasonEl.style.cssText = 'position:absolute;left:8px;right:8px;bottom:34px;z-index:3;font-size:9.5px;line-height:1.35;color:#e88;text-align:center;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.8)';
+                    tile.appendChild(reasonEl);
+                }
+                reasonEl.textContent = msg.length > 90 ? msg.slice(0, 88) + '…' : msg;
+                reasonEl.style.display = '';
+            } else {
+                const reasonEl = tile.querySelector('.tile-fail-reason');
+                if (reasonEl) reasonEl.style.display = 'none';
+            }
         }
 
         if (shot.url) {
