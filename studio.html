@@ -5684,6 +5684,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
         <label class="check-row batch-only" style="display:none" title="After each batch tile completes, run the LLM to score the result. Tiles the LLM judges as failed are flagged with a red 🔬 badge so you can review.">
             <input type="checkbox" id="chkAutoQa"> Auto-QA finished tiles
+            <button type="button" class="autoqa-gear" onclick="event.preventDefault();event.stopPropagation();openAutoQaModal()" title="Auto-QA settings — criteria, auto-retry, iterations">⚙</button>
         </label>
         <div class="dim-row">
             <div class="dim-field"><label>Width</label><input type="number" id="inpWidth" min="8" max="2048" step="8" placeholder="auto"></div>
@@ -6669,6 +6670,67 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
      dialog auto-closes after a short delay).
      User can dismiss via the X, clicking the dim backdrop, or
      pressing Escape. -->
+<style>
+.autoqa-gear{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 4px;margin-left:2px;line-height:1;vertical-align:middle;transition:color .15s}
+.autoqa-gear:hover{color:var(--gold)}
+#autoQaModal .aq-row{margin-bottom:14px}
+#autoQaModal .aq-label{font-family:var(--font-mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+#autoQaModal textarea{width:100%;box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:9px 10px;resize:vertical;outline:none;line-height:1.5}
+#autoQaModal textarea:focus{border-color:var(--gold)}
+#autoQaModal input[type=range]{width:100%;accent-color:var(--gold)}
+#autoQaModal select{background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:12px;padding:6px 8px}
+#autoQaModal .aq-check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text);cursor:pointer;line-height:1.5}
+#autoQaModal .aq-check input{accent-color:var(--gold);margin-top:2px}
+#autoQaModal .aq-note{font-size:10.5px;color:var(--text-muted);line-height:1.5;margin-top:4px}
+#autoQaModal .btn-gold{background:var(--gold);border:1px solid var(--gold);color:#0a0a0c;font-family:var(--font-mono);font-size:12px;font-weight:700;letter-spacing:.5px;border-radius:8px;padding:10px 18px;cursor:pointer}
+#autoQaModal .btn-plain{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:12px;border-radius:8px;padding:10px 16px;cursor:pointer}
+</style>
+<!-- ── Auto-QA settings modal ─────────────────────────────────────
+     Configures how finished batch tiles are evaluated: custom criteria
+     (folded into the critique model's instructions), the failing score
+     threshold, and optional bounded auto-retry using the critique's own
+     corrected prompt. Persisted in localStorage (_autoQaCfg). -->
+<div class="popup-modal" id="autoQaModal" onclick="if(event.target===this) closeAutoQaModal()">
+    <div class="popup-card" style="max-width:500px;text-align:left" role="dialog" aria-modal="true" aria-labelledby="autoQaTitle">
+        <button class="modal-close" onclick="closeAutoQaModal()" style="top:12px;right:14px">×</button>
+        <h2 id="autoQaTitle" style="font-family:var(--font-mono);font-size:15px;letter-spacing:1px;margin-bottom:14px">🔬 AUTO-QA SETTINGS</h2>
+
+        <div class="aq-row">
+            <div class="aq-label">What should the AI look for?</div>
+            <textarea id="aqCriteria" rows="3" placeholder="Optional — beyond the default prompt-match check. e.g. character identity must stay consistent with the input · check hands and eyes for artifacts · text in the image must be legible · no extra limbs"></textarea>
+            <div class="aq-note">Added to the evaluator's instructions on every check. Leave empty for the standard "did it execute the prompt" review.</div>
+        </div>
+
+        <div class="aq-row">
+            <div class="aq-label"><span>Fail threshold</span><span style="color:var(--gold);font-weight:700" id="aqThreshV">50</span></div>
+            <input type="range" id="aqThresh" min="10" max="90" step="5" value="50" oninput="$('aqThreshV').textContent=this.value">
+            <div class="aq-note">Tiles scoring below this (out of 100) get the red 🔬 flag — and auto-retry, if enabled below. Higher = stricter.</div>
+        </div>
+
+        <div class="aq-row">
+            <label class="aq-check">
+                <input type="checkbox" id="aqAutoRetry">
+                <span><b>Auto-retry failed tiles</b> with the AI's corrected prompt — the critique rewrites the prompt to fix what it found, and the tile regenerates automatically.</span>
+            </label>
+            <div class="aq-note">⚠ Spends tokens: each auto-retry costs the tile's normal generation price. Retries are re-evaluated, bounded by the attempt limit.</div>
+        </div>
+
+        <div class="aq-row">
+            <div class="aq-label">Max auto-retry attempts per tile</div>
+            <select id="aqMaxAttempts">
+                <option value="1">1 attempt</option>
+                <option value="2">2 attempts</option>
+                <option value="3">3 attempts</option>
+            </select>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+            <button class="btn-plain" onclick="closeAutoQaModal()">Cancel</button>
+            <button class="btn-gold" onclick="saveAutoQaCfg()">Save</button>
+        </div>
+    </div>
+</div>
+
 <style>
 /* Gold action button for the API key modal (no shared gold-button class
    existed at popup scope; scoped here to avoid collisions). */
@@ -8956,6 +9018,10 @@ function setMode(mode, opts){
     // with an angle batch up), re-surface the standard Clear Stage pill —
     // renderBatchInputs above only manages it for the input grid.
     if (typeof updateBatchClearToolbar === 'function') updateBatchClearToolbar();
+    // Engine-relevant sidebar controls (SDXL sections in Batch+SDXL,
+    // grayed Qwen LoRAs for GPT/SDXL) follow mode changes too.
+    if (typeof _applyGptLoraGate === 'function') _applyGptLoraGate();
+    if (typeof _applyBatchSdxlControls === 'function') _applyBatchSdxlControls();
 
     // Camera → Edit: auto-populate slot 0 with the ORIGINAL camera input
     // (what the user uploaded), NOT the generated output. The "Use as Input"
@@ -10170,7 +10236,7 @@ function setEditModelPref(p){
     const hint = document.getElementById('editModelHint');
     if (hint){
         if (p === 'sdxl'){
-            hint.textContent = 'Batch Generate → SDXL img2img on each selected image (Pony Realism v2.2), Pony 2.2 quality tags added automatically. 50 tokens/image. Agent chat still uses Qwen/GPT.';
+            hint.textContent = 'Batch Generate → SDXL img2img on each selected image using YOUR SDXL setup below (base checkpoint, LoRA stack, sampler, steps/CFG, strength). Pony 2.2 quality tags auto-added on the default checkpoint only. 50 tokens/image.';
             hint.style.display = '';
         } else if (p === 'gpt'){
             hint.textContent = 'Batch Generate → gpt-image-2 on each selected image (no GPU queue). Priced per image by size. Qwen LoRA sliders, CFG/steps, and the negative prompt don’t apply to GPT and are disabled below.';
@@ -10181,11 +10247,30 @@ function setEditModelPref(p){
         }
     }
     if (typeof _applyGptLoraGate === 'function') _applyGptLoraGate();
+    if (typeof _applyBatchSdxlControls === 'function') _applyBatchSdxlControls();
 }
 
 // Gray out the Qwen LoRA sliders when the selected batch engine can't
 // use them (GPT and SDXL both ignore the Qwen LoRA stack). Batch mode
 // only — Edit/Camera always run the Qwen pipeline, where they apply.
+// Show the SDXL control sections (base checkpoint, LoRA stack, sampler/
+// steps/cfg, img2img strength) in the sidebar while Batch mode has the
+// SDXL engine selected — so batch runs are configurable with the exact
+// same controls the SDXL stage uses. Hidden again when the engine or
+// mode changes, EXCEPT when the SDXL stage view itself is active (its
+// own visibility logic owns them there).
+const _BATCH_SDXL_SECS = ['sdxlSecBase', 'sdxlSecLora', 'sdxlSecAdv', 'sdxlStrengthSec'];
+function _applyBatchSdxlControls(){
+    const inSdxlStage = (typeof window._stageView !== 'undefined' && window._stageView === 'sdxl');
+    if (inSdxlStage) return; // the stage view manages these sections itself
+    const show = (typeof currentMode !== 'undefined' && currentMode === 'batch')
+        && (typeof _editModelPref !== 'undefined' && _editModelPref === 'sdxl');
+    _BATCH_SDXL_SECS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = show ? '' : 'none';
+    });
+}
+
 function _applyGptLoraGate(){
     const na = (typeof currentMode !== 'undefined' && currentMode === 'batch')
         && (typeof _editModelPref !== 'undefined')
@@ -17827,6 +17912,7 @@ async function aiCritiqueOutputTile(slotIdx, btnEl){
                 input_url: shot.inputUrl,
                 output_url: shot.url,
                 prompt: shot.prompt,
+                criteria: (typeof _autoQaCfg !== 'undefined' && _autoQaCfg.criteria) || undefined,
             }),
         }, 60000);
         if (r.status === 401) { $('loginModal').classList.add('open'); return; }
@@ -17990,16 +18076,69 @@ function closeAiResultModal(){
     if (modal) modal.classList.remove('open');
 }
 
+// ── Auto-QA configuration ────────────────────────────────────────
+// Persisted settings for the auto-evaluator: custom criteria text
+// (folded into the critique instructions), the failing score
+// threshold, and bounded auto-retry with the critique's corrected
+// prompt. Defaults preserve the pre-settings behavior exactly
+// (threshold 50, flag-only, no auto-retry).
+let _autoQaCfg = (function(){
+    const d = { criteria: '', threshold: 50, autoRetry: false, maxAttempts: 1 };
+    try {
+        const s2 = JSON.parse(localStorage.getItem('ml_autoqa_v1') || 'null');
+        if (s2 && typeof s2 === 'object') {
+            return {
+                criteria: typeof s2.criteria === 'string' ? s2.criteria.slice(0, 500) : '',
+                threshold: Math.min(90, Math.max(10, parseInt(s2.threshold) || 50)),
+                autoRetry: !!s2.autoRetry,
+                maxAttempts: Math.min(3, Math.max(1, parseInt(s2.maxAttempts) || 1)),
+            };
+        }
+    } catch (e) {}
+    return d;
+})();
+function openAutoQaModal(){
+    const m = $('autoQaModal'); if (!m) return;
+    $('aqCriteria').value = _autoQaCfg.criteria;
+    $('aqThresh').value = _autoQaCfg.threshold;
+    $('aqThreshV').textContent = _autoQaCfg.threshold;
+    $('aqAutoRetry').checked = _autoQaCfg.autoRetry;
+    $('aqMaxAttempts').value = String(_autoQaCfg.maxAttempts);
+    m.classList.add('open');
+}
+function closeAutoQaModal(){
+    const m = $('autoQaModal'); if (m) m.classList.remove('open');
+}
+function saveAutoQaCfg(){
+    _autoQaCfg = {
+        criteria: ($('aqCriteria').value || '').slice(0, 500).trim(),
+        threshold: Math.min(90, Math.max(10, parseInt($('aqThresh').value) || 50)),
+        autoRetry: $('aqAutoRetry').checked,
+        maxAttempts: Math.min(3, Math.max(1, parseInt($('aqMaxAttempts').value) || 1)),
+    };
+    try { localStorage.setItem('ml_autoqa_v1', JSON.stringify(_autoQaCfg)); } catch (e) {}
+    // Turning on auto-retry implies wanting QA at all — flip the toggle
+    // on for them so Save doesn't silently do nothing.
+    if (_autoQaCfg.autoRetry) { const t = $('chkAutoQa'); if (t) t.checked = true; }
+    closeAutoQaModal();
+    showNotif('Auto-QA settings saved.', 'success');
+}
+
 // Auto-QA hook — called from the job-completion path. Only fires when
-// the user has the toggle on. Runs critique silently and flags failed
-// tiles with the red 🔬 badge so the user can review without the
-// LLM being in the critical path of the generate flow.
+// the user has the toggle on. Runs critique silently (with the user's
+// custom criteria), flags tiles scoring below the configured threshold
+// with the red 🔬 badge, and — when enabled — auto-retries them with
+// the critique's corrected prompt, bounded by the attempt limit.
 async function maybeAutoQa(slotIdx){
     const toggle = $('chkAutoQa');
     if (!toggle || !toggle.checked) return;
     if (!_activeBatch || !_activeBatch.shots[slotIdx]) return;
     const shot = _activeBatch.shots[slotIdx];
-    if (!shot.url || shot.aiCritique) return;  // already done
+    if (!shot.url) return;
+    // Re-evaluate retried tiles (their aiCritique is cleared on retry by
+    // the attempt bookkeeping below); an unretried, already-critiqued
+    // tile is skipped as before.
+    if (shot.aiCritique) return;
     // Snapshot the batch id at fetch time so we can detect if the user
     // cleared the batch (or started a new one) while our request was
     // in flight. Without this guard we'd mutate stale shot state on a
@@ -18013,6 +18152,7 @@ async function maybeAutoQa(slotIdx){
                 input_url: shot.inputUrl,
                 output_url: shot.url,
                 prompt: shot.prompt,
+                criteria: (typeof _autoQaCfg !== 'undefined' && _autoQaCfg.criteria) || undefined,
             }),
         }, 60000);
         if (!r.ok) return;
@@ -18025,10 +18165,27 @@ async function maybeAutoQa(slotIdx){
         if (!_activeBatch || _activeBatch.id !== batchIdAtStart) return;
         if (!_activeBatch.shots[slotIdx]) return;
         const liveShot = _activeBatch.shots[slotIdx];
-        const bucket = d.bucket || (d.score >= 80 ? 'good' : d.score >= 50 ? 'ok' : 'bad');
+        const score = (typeof d.score === 'number') ? d.score : 0;
+        const failed = score < _autoQaCfg.threshold;
         liveShot.aiCritique = d;
-        liveShot.aiFlagged = bucket === 'bad';
+        liveShot.aiFlagged = failed;
         renderBatchGrid();
+        // ── Bounded auto-retry ──
+        // Failed + enabled + a corrected prompt available + attempts
+        // left → regenerate with the critique's rewrite. The retry
+        // clears aiCritique so the NEXT completion re-evaluates it,
+        // and _qaAttempts caps the loop so a stubborn tile can't burn
+        // tokens forever.
+        if (failed && _autoQaCfg.autoRetry
+            && typeof d.refined_prompt === 'string' && d.refined_prompt.trim()
+            && (liveShot._qaAttempts || 0) < _autoQaCfg.maxAttempts
+            && typeof retryBatchSlot === 'function') {
+            liveShot._qaAttempts = (liveShot._qaAttempts || 0) + 1;
+            liveShot.aiCritique = null;   // re-evaluate the retry's result
+            liveShot.aiFlagged = false;
+            log(`Auto-QA: tile ${slotIdx + 1} scored ${score} < ${_autoQaCfg.threshold} — auto-retry ${liveShot._qaAttempts}/${_autoQaCfg.maxAttempts} with corrected prompt`, 'info');
+            retryBatchSlot(slotIdx, d.refined_prompt.trim());
+        }
     } catch (e) { /* silent — auto-QA is best-effort */ }
 }
 // =====================================================================
@@ -18285,18 +18442,32 @@ async function generateBatchEdits(){
             // batch's shared context slots don't apply — SDXL img2img is a
             // single-source transform. `_engine` is an internal routing marker
             // stripped before the request is sent (see _batchSubmitShot).
-            const aug = _batchPonyAugment(shotPrompt, negative);
+            // Read the LIVE SDXL controls (base checkpoint, LoRA stack,
+            // sampler, steps/cfg, img2img strength, VAE) — the same state
+            // the SDXL Studio stage uses — instead of the old hardcoded
+            // defaults, so batch runs honor whatever the user configured.
+            // Pony 2.2 quality tags are only auto-added on the DEFAULT
+            // checkpoint (empty model_url); a custom base model gets the
+            // prompt verbatim, since Pony tags are wrong for non-Pony
+            // checkpoints.
+            const _bmUrl = (typeof _sdxlSelectedBaseUrl !== 'undefined' && _sdxlSelectedBaseUrl) || '';
+            const _aug = _bmUrl ? { prompt: shotPrompt, negative: negative } : _batchPonyAugment(shotPrompt, negative);
             payload = {
                 _engine: 'sdxl',
                 mode: 'img2img',
                 image_id: inp.id,
-                prompt: aug.prompt,
-                negative_prompt: aug.negative,
-                model_url: '',
-                steps: 30, cfg: 7, strength: 0.7,
+                prompt: _aug.prompt,
+                negative_prompt: _aug.negative,
+                model_url: _bmUrl,
+                steps: parseInt($('sdxlSteps') ? $('sdxlSteps').value : 30) || 30,
+                cfg: parseFloat($('sdxlCfg') ? $('sdxlCfg').value : 7) || 7,
+                strength: parseFloat($('sdxlStrengthImg') ? $('sdxlStrengthImg').value : 0.7) || 0.7,
+                sampler: ($('sdxlSampler') ? $('sdxlSampler').value : ''),
+                vae: (typeof _sdxlVaeMode !== 'undefined' ? _sdxlVaeMode : 'own'),
+                vae_url: (typeof _sdxlVaeMode !== 'undefined' && _sdxlVaeMode === 'custom' && $('sdxlVaeUrl')) ? ($('sdxlVaeUrl').value || '').trim() : '',
                 width: inp.w || 1024, height: inp.h || 1024,
                 seed, randomize_seed: false,
-                loras: [],
+                loras: (typeof _sdxlCollectLoras === 'function') ? _sdxlCollectLoras() : [],
                 batch_id: batchId,
             };
         } else {
