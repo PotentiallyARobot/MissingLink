@@ -8220,11 +8220,20 @@ function closeWorkflowModal(){
 // Gate is NOT shown on login anymore — it only fires when the NSFW
 // classifier detects NSFW intent (prompt or uploaded ref) and the
 // user hasn't yet ack'd. Most users never trigger it.
-function openAgeGate(){
+function openAgeGate(force){
     if (!_user) return;
-    // Already acknowledged → no-op. Server is the source of truth;
-    // we read the value off the in-memory _user that /auth/me hydrates.
-    if (_user.age_ack_at) return;
+    // Already acknowledged → no-op... UNLESS the caller passes force=true,
+    // which error handlers do when the SERVER just rejected with
+    // age_ack_required. The server re-arms the requirement after a few
+    // hours, so the client's in-memory/localStorage ack can be stale —
+    // and without force, this early-return made the gate silently refuse
+    // to open while every submission bounced: an invisible failure loop
+    // (wall of RETRY tiles, empty queue, no modal, nothing in the UI).
+    if (_user.age_ack_at && !force) return;
+    if (force) {
+        _user.age_ack_at = null;
+        try { localStorage.removeItem('studio_age_ack_' + _user.id); } catch (e) {}
+    }
     const m = document.getElementById('ageGateModal');
     if (!m) return;
     m.classList.add('open');
@@ -15163,7 +15172,7 @@ async function doGenerate(){
                 // this mode. Open the age gate; once acknowledged, replay the
                 // generation automatically.
                 _ageGateThenRetry = doGenerate;
-                openAgeGate();
+                openAgeGate(true);
             }
             else { log('Error: ' + (d.error || 'Failed'), 'error'); }
             return;
@@ -15535,7 +15544,7 @@ async function generatePanorama(){
                 // content (same gate as Camera/Edit). Open the age gate; once
                 // acknowledged, replay this panorama generation automatically.
                 _ageGateThenRetry = generatePanorama;
-                openAgeGate();
+                openAgeGate(true);
             }
             else if (d.error === 'moderation_unavailable') {
                 showNotif('Safety check is temporarily unavailable, so this panorama was not run. Please try again in a moment.', 'error');
@@ -17325,7 +17334,7 @@ async function loadMoreImageSearch(){
             // once acknowledged, re-run this same search automatically.
             if (d.error === 'age_ack_required') {
                 _ageGateThenRetry = () => { _imgSearchPage = nextPage - 1; _imgSearchHasMore = true; loadMoreImageSearch(); };
-                openAgeGate();
+                openAgeGate(true);
                 return;
             }
             const grid = $('imageSearchGrid');
@@ -18555,7 +18564,7 @@ async function generateBatchEdits(){
                     // NSFW content in this batch needs an 18+ acknowledgement.
                     // Open the gate; the user can re-run the batch after acking.
                     showNotif('Adult content requires confirming you are 18+. Please acknowledge, then run again.', 'error');
-                    openAgeGate();
+                    openAgeGate(true);
                     _activeBatch.shots[i].status = 'error';
                     renderBatchGrid();
                     break;
@@ -18994,7 +19003,7 @@ async function generateAngleBatch(angles, btnDefaultText, btn){
                         });
                     }
                     showNotif('Confirm you are 18+ to run this batch — it will resume automatically after you acknowledge.', 'error');
-                    openAgeGate();
+                    openAgeGate(true);
                     break;
                 }
                 log(`Shot '${shot.label}' failed: ${d.error || 'unknown'}`, 'error');
@@ -19080,7 +19089,7 @@ async function submitNextPendingAngle(){
             // and wait for the ack (acknowledgeAgeGate pumps the drain).
             if (d.error === 'age_ack_required') {
                 _pendingAngleShots.unshift(next);
-                openAgeGate();
+                openAgeGate(true);
                 return false;
             }
             log(`Shot '${label}' failed: ${d.error || 'unknown'}`, 'error');
