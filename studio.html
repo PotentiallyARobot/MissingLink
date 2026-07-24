@@ -5427,7 +5427,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="ai-audit-panel" id="aiAuditPanel" style="display:none"></div>
     </div>
 
-    <div class="sec batch-only" style="display:none">
+    <div class="sec batch-only" id="secBatchImageModel" style="display:none">
         <div class="sec-label"><span class="icon">🤖</span> IMAGE MODEL
             <span class="sec-label-count">for batch Generate &amp; agent edits</span>
         </div>
@@ -10292,16 +10292,54 @@ function _applyBatchSdxlControls(){
     if (inSdxlStage) return; // the stage view manages these sections itself
     const show = (typeof currentMode !== 'undefined' && currentMode === 'batch')
         && (typeof _editModelPref !== 'undefined' && _editModelPref === 'sdxl');
+    // RELOCATE the SDXL sections to sit immediately AFTER the engine
+    // selector, replacing the Qwen controls in that spot — rather than
+    // showing them wherever they happen to live in the sidebar DOM
+    // (which put them above the selector: confusing). Original DOM
+    // positions are remembered on first move and restored on hide, so
+    // the SDXL stage view finds everything where it expects it.
+    const anchor = document.getElementById('secBatchImageModel');
+    let after = anchor;
     _BATCH_SDXL_SECS.forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.style.display = show ? '' : 'none';
+        if (!el) return;
+        if (show) {
+            if (!el._origParent) { el._origParent = el.parentNode; el._origNext = el.nextSibling; }
+            if (anchor && el.previousElementSibling !== after) {
+                anchor.parentNode.insertBefore(el, after.nextSibling);
+            }
+            after = el;
+            el.style.display = '';
+        } else {
+            if (el._origParent) {
+                el._origParent.insertBefore(el, el._origNext);
+                el._origParent = null; el._origNext = null;
+            }
+            el.style.display = 'none';
+        }
+    });
+    // SDXL replaces the Qwen pipeline entirely — its own steps/CFG live
+    // in the relocated sections, so HIDE the Qwen CFG/Steps and LoRA
+    // sliders instead of graying them (grayed-out stays for GPT, where
+    // the point is "these exist but this engine can't use them").
+    const qwenRows = ['rowCfg', 'rowSteps'];
+    document.querySelectorAll('input[id^="rngLora"]').forEach(inp => {
+        const row = inp.closest('.slider-row');
+        if (row && row.id) qwenRows.push(row.id);
+        else if (row) { row.id = 'rowLora_' + inp.id; qwenRows.push(row.id); }
+    });
+    qwenRows.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = show ? 'none' : '';
     });
 }
 
 function _applyGptLoraGate(){
+    // GPT only: SDXL now HIDES the Qwen rows (replaced by its own
+    // controls via _applyBatchSdxlControls) rather than graying them.
     const na = (typeof currentMode !== 'undefined' && currentMode === 'batch')
         && (typeof _editModelPref !== 'undefined')
-        && (_editModelPref === 'gpt' || _editModelPref === 'sdxl');
+        && (_editModelPref === 'gpt');
     document.querySelectorAll('input[id^="rngLora"]').forEach(inp => {
         const row = inp.closest('.slider-row');
         if (!row) return;
