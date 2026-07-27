@@ -18458,7 +18458,22 @@ async function _runGptEditShot(slotIdx){
     }
 }
 
+// Re-entrancy guard for batch submission. The GPT engine branch returns
+// almost immediately (its per-shot runners are fire-and-forget), so
+// before this guard a double-click — or click + Enter — invoked the
+// whole routine twice and minted TWO batch groups, each firing its full
+// set of GPT requests ("more than one group of requests sent through").
+// The queue path masked the hole only because its submission loop
+// awaited for seconds. Per the button's design ("never disabled"), a
+// second click during the window gets a notif instead of a dead button.
+let _batchSubmitInFlight = false;
 async function generateBatchEdits(){
+    if (_batchSubmitInFlight) { showNotif('Batch is already submitting \u2014 one moment.', 'info'); return; }
+    _batchSubmitInFlight = true;
+    try { return await _generateBatchEditsInner(); }
+    finally { _batchSubmitInFlight = false; }
+}
+async function _generateBatchEditsInner(){
     if (!_user) { $('loginModal').classList.add('open'); return; }
     const selected = _batchInputs.filter(b => b.selected);
     if (selected.length === 0) {
@@ -18941,7 +18956,14 @@ async function generateAllAngles96(){
 //   4. Stashes any remaining shots in _pendingAngleShots — the poll
 //      completion handler picks them up and submits one each time a
 //      previous job finishes, so we never exceed the server's cap.
+let _angleSubmitInFlight = false;
 async function generateAngleBatch(angles, btnDefaultText, btn){
+    if (_angleSubmitInFlight) { showNotif('Batch is already submitting \u2014 one moment.', 'info'); return; }
+    _angleSubmitInFlight = true;
+    try { return await _generateAngleBatchInner(angles, btnDefaultText, btn); }
+    finally { _angleSubmitInFlight = false; }
+}
+async function _generateAngleBatchInner(angles, btnDefaultText, btn){
     if(!_user){ $('loginModal').classList.add('open'); return; }
     if(currentMode !== 'camera' || !imageId){ return; }
     // Hard cap: never more than MAX_BATCH_IMAGES views in one pass,
