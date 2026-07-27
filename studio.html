@@ -5116,6 +5116,27 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
       <div class="hintline">How much to change the source. Low = keep it; high = reinvent it.</div>
     </div>
 
+    <!-- Pony quality-tag augmentation — BATCH mode only (shown/relocated by
+         _applyBatchSdxlControls; not part of the SDXL stage, where the user
+         writes tags directly in the prompt). Mode select + directly editable
+         tag strings; persisted in localStorage (ml_ponytags_v1). -->
+    <div class="sec" id="sdxlSecPony" style="display:none">
+      <div class="sec-label"><span class="icon">&#127991;</span> Pony quality tags
+        <select id="ponyTagMode" class="model-select" style="width:auto;margin-left:auto;font-size:11px;padding:3px 6px" onchange="_ponyTagSave()">
+          <option value="auto">Auto</option>
+          <option value="on">Always on</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <div id="ponyTagBody">
+        <div class="hintline" style="margin-bottom:4px">Added to the positive prompt:</div>
+        <textarea id="ponyTagPos" rows="2" class="lora-url" style="width:100%;resize:vertical;font-size:10.5px" oninput="_ponyTagSave()"></textarea>
+        <div class="hintline" style="margin:6px 0 4px">Added to the negative prompt:</div>
+        <textarea id="ponyTagNeg" rows="3" class="lora-url" style="width:100%;resize:vertical;font-size:10.5px" oninput="_ponyTagSave()"></textarea>
+      </div>
+      <div class="hintline" id="ponyTagHint" style="margin-top:6px">Auto = added only on the default checkpoint (Pony Realism). Off = your prompt goes through exactly as written.</div>
+    </div>
+
     <!-- SIZE -->
     <div class="sec sdxl-only" id="sdxlSecSize" style="display:none">
       <div class="sec-label"><span class="icon">&#9638;</span> Size</div>
@@ -10263,7 +10284,7 @@ function setEditModelPref(p){
     const hint = document.getElementById('editModelHint');
     if (hint){
         if (p === 'sdxl'){
-            hint.textContent = 'Batch Generate → SDXL img2img on each selected image using YOUR SDXL setup below (base checkpoint, LoRA stack, sampler, steps/CFG, strength). Pony 2.2 quality tags auto-added on the default checkpoint only. 50 tokens/image.';
+            hint.textContent = 'Batch Generate → SDXL img2img on each selected image using YOUR SDXL setup below (base checkpoint, LoRA stack, sampler, steps/CFG, strength). Pony quality tags: controllable below (Auto / Always / Off, tags editable). 50 tokens/image.';
             hint.style.display = '';
         } else if (p === 'gpt'){
             hint.textContent = 'Batch Generate → gpt-image-2 on each selected image (no GPU queue). Priced per image by size. Qwen LoRA sliders, CFG/steps, and the negative prompt don’t apply to GPT and are disabled below.';
@@ -10286,7 +10307,7 @@ function setEditModelPref(p){
 // same controls the SDXL stage uses. Hidden again when the engine or
 // mode changes, EXCEPT when the SDXL stage view itself is active (its
 // own visibility logic owns them there).
-const _BATCH_SDXL_SECS = ['sdxlSecBase', 'sdxlSecLora', 'sdxlSecAdv', 'sdxlStrengthSec'];
+const _BATCH_SDXL_SECS = ['sdxlSecBase', 'sdxlSecLora', 'sdxlSecAdv', 'sdxlStrengthSec', 'sdxlSecPony'];
 function _applyBatchSdxlControls(){
     const inSdxlStage = (typeof window._stageView !== 'undefined' && window._stageView === 'sdxl');
     if (inSdxlStage) return; // the stage view manages these sections itself
@@ -10310,6 +10331,7 @@ function _applyBatchSdxlControls(){
             }
             after = el;
             el.style.display = '';
+            if (id === 'sdxlSecPony') _ponyTagInitUi();
         } else {
             if (el._origParent) {
                 el._origParent.insertBefore(el, el._origNext);
@@ -18264,18 +18286,52 @@ async function maybeAutoQa(slotIdx){
 // Pony Realism v2.2 quality tags — literals mirroring _SDXL_FAMILY_TAGS.pony so
 // this path seeds the exact same convention the SDXL Studio tab uses, even if
 // that tab was never opened this session.
+// User-controllable Pony tag config: mode auto|on|off + directly
+// editable tag strings, persisted. 'auto' preserves the original
+// behavior (tags only on the default checkpoint); 'on' forces them on
+// any checkpoint; 'off' sends prompts verbatim.
+let _ponyTagCfg = (function(){
+    try {
+        const c = JSON.parse(localStorage.getItem('ml_ponytags_v1') || 'null');
+        if (c && typeof c === 'object' && ['auto','on','off'].includes(c.mode)) {
+            return { mode: c.mode, pos: String(c.pos || ''), neg: String(c.neg || '') };
+        }
+    } catch (e) {}
+    return null;   // null → seeded from defaults after the consts below
+})();
+function _ponyTagSave(){
+    _ponyTagCfg = {
+        mode: ($('ponyTagMode') && $('ponyTagMode').value) || 'auto',
+        pos: ($('ponyTagPos') && $('ponyTagPos').value.trim()) || '',
+        neg: ($('ponyTagNeg') && $('ponyTagNeg').value.trim()) || '',
+    };
+    try { localStorage.setItem('ml_ponytags_v1', JSON.stringify(_ponyTagCfg)); } catch (e) {}
+    const body = $('ponyTagBody');
+    if (body) body.style.display = (_ponyTagCfg.mode === 'off') ? 'none' : '';
+}
+function _ponyTagInitUi(){
+    if ($('ponyTagMode')) $('ponyTagMode').value = _ponyTagCfg.mode;
+    if ($('ponyTagPos')) $('ponyTagPos').value = _ponyTagCfg.pos;
+    if ($('ponyTagNeg')) $('ponyTagNeg').value = _ponyTagCfg.neg;
+    const body = $('ponyTagBody');
+    if (body) body.style.display = (_ponyTagCfg.mode === 'off') ? 'none' : '';
+}
+
 const _BATCH_PONY_POS = 'score_9, score_8_up, score_7_up, source_realistic, realistic, photorealistic';
 const _BATCH_PONY_NEG = 'score_6, score_5, score_4, source_cartoon, source_anime, anime, cartoon, 3d, render, worst quality, low quality, blurry, deformed, bad anatomy, watermark, signature, text';
+if (!_ponyTagCfg) _ponyTagCfg = { mode: 'auto', pos: _BATCH_PONY_POS, neg: _BATCH_PONY_NEG };
 
 // Prepend the Pony positive tags to a prompt (skipped if the user already put
 // the score_ prefix in) and merge the Pony negatives ahead of any user
 // negative. Returns { prompt, negative }.
 function _batchPonyAugment(prompt, userNeg){
+    const pos = (_ponyTagCfg && _ponyTagCfg.pos) || _BATCH_PONY_POS;
+    const neg = (_ponyTagCfg && _ponyTagCfg.neg) || _BATCH_PONY_NEG;
     const p = (prompt || '').trim();
     const hasPony = /score_9\b/i.test(p);
-    const outPrompt = hasPony ? p : (p ? (_BATCH_PONY_POS + ', ' + p) : _BATCH_PONY_POS);
+    const outPrompt = (hasPony || !pos) ? p : (p ? (pos + ', ' + p) : pos);
     const un = (userNeg || '').trim();
-    const outNeg = un ? (_BATCH_PONY_NEG + ', ' + un) : _BATCH_PONY_NEG;
+    const outNeg = neg ? (un ? (neg + ', ' + un) : neg) : un;
     return { prompt: outPrompt, negative: outNeg };
 }
 
@@ -18516,7 +18572,13 @@ async function generateBatchEdits(){
             // prompt verbatim, since Pony tags are wrong for non-Pony
             // checkpoints.
             const _bmUrl = (typeof _sdxlSelectedBaseUrl !== 'undefined' && _sdxlSelectedBaseUrl) || '';
-            const _aug = _bmUrl ? { prompt: shotPrompt, negative: negative } : _batchPonyAugment(shotPrompt, negative);
+            // Tag mode: 'auto' = tags on the default checkpoint only (the
+            // original behavior), 'on' = always, 'off' = prompt verbatim.
+            // The tag strings themselves are user-editable in the Pony
+            // quality tags section.
+            const _tagMode = (typeof _ponyTagCfg !== 'undefined' && _ponyTagCfg.mode) || 'auto';
+            const _doAug = _tagMode === 'on' || (_tagMode === 'auto' && !_bmUrl);
+            const _aug = _doAug ? _batchPonyAugment(shotPrompt, negative) : { prompt: shotPrompt, negative: negative };
             payload = {
                 _engine: 'sdxl',
                 mode: 'img2img',
