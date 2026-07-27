@@ -18368,6 +18368,31 @@ const MAX_BATCH_IMAGES = 20;
 let _gptEditInFlight = 0;
 const _GPT_EDIT_CONCURRENCY = 3;
 const _gptEditWaiters = [];
+// Abort epoch: bumped by Cancel-all (and stage clears). Every runner
+// captures the epoch when it starts and re-checks after each await —
+// a bump means "stand down": the shot is marked cancelled instead of
+// submitted. This is what lets Cancel-all actually stop a GPT batch;
+// GPT shots live in neither the server queue nor the pending drain, so
+// before this they simply kept firing after every cancel ("stuck in a
+// loop re-creating batch jobs").
+let _gptEditAbortEpoch = 0;
+function abortGptEditShots(){
+    _gptEditAbortEpoch++;
+    // Release every semaphore waiter so parked shots wake, see the new
+    // epoch, and cancel themselves instead of waiting forever.
+    while (_gptEditWaiters.length) { const w = _gptEditWaiters.shift(); try { w(); } catch (e) {} }
+    // Mark not-yet-finished GPT shots cancelled in the grid.
+    if (typeof _activeBatch !== 'undefined' && _activeBatch && Array.isArray(_activeBatch.shots)) {
+        let touched = false;
+        _activeBatch.shots.forEach(sh => {
+            if (sh && sh.payload && sh.payload._gptEdit
+                && (sh.status === 'running' || sh.status === 'pending' || sh.status === 'waiting')) {
+                sh.status = 'cancelled'; touched = true;
+            }
+        });
+        if (touched && typeof renderBatchGrid === 'function') renderBatchGrid();
+    }
+}
 async function _gptEditSlot(){
     if (_gptEditInFlight < _GPT_EDIT_CONCURRENCY) { _gptEditInFlight++; return; }
     await new Promise(res => _gptEditWaiters.push(res));
@@ -18382,12 +18407,15 @@ async function _runGptEditShot(slotIdx){
     const batch = _activeBatch;
     if (!batch || !batch.shots[slotIdx] || !batch.shots[slotIdx].payload) return;
     const shot = batch.shots[slotIdx];
+    const epoch = _gptEditAbortEpoch;
     shot.status = 'running';
     renderBatchGrid();
     await _gptEditSlot();
     try {
-        // The batch may have been cleared while we waited on the semaphore.
+        // The batch may have been cleared — or Cancel-all pressed — while
+        // we waited on the semaphore.
         if (_activeBatch !== batch) return;
+        if (epoch !== _gptEditAbortEpoch) { shot.status = 'cancelled'; return; }
         const p = shot.payload;
         const r = await fetchT(`${API}/api/studio/agent-image-edit`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -18400,6 +18428,11 @@ async function _runGptEditShot(slotIdx){
         }, 120000);
         const d = await r.json().catch(() => null);
         if (_activeBatch !== batch) return;
+        // Cancelled while the request was in flight: the server call
+        // completed (and charged), but don't overwrite the cancelled
+        // status or keep the loop alive. The finished image is still in
+        // History — nothing is lost, the batch just stops.
+        if (epoch !== _gptEditAbortEpoch) { return; }
         if (d && d.ok && Array.isArray(d.images) && d.images[0] && d.images[0].url) {
             shot.url = d.images[0].url;
             shot.status = 'done';
@@ -21138,6 +21171,9 @@ function setBatchFooterMinimized(min){
 }
 
 function clearBatchGrid(){
+    // Stop any in-flight/parked GPT batch shots — clearing the stage is
+    // the strongest possible "stop" signal.
+    if (typeof abortGptEditShots === 'function') abortGptEditShots();
     _activeBatch = null;
     // Drop any pending angle shots that were waiting for slots to free
     // up — without this they'd silently submit against the next batch.
@@ -21314,15 +21350,25 @@ async function cancelAllCancellableJobs(){
     // Cancelling the queue without flushing these meant the batch
     // "resurrected" — each completion re-filled the queue from pending.
     const pendingCount = _pendingAngleShots.length;
-    if (!targets.length && !pendingCount) return;
+    // GPT batch shots: direct API calls outside the queue AND the drain —
+    // count the ones still live so Cancel-all can stop them too.
+    const gptCount = (typeof _activeBatch !== 'undefined' && _activeBatch && Array.isArray(_activeBatch.shots))
+        ? _activeBatch.shots.filter(sh => sh && sh.payload && sh.payload._gptEdit
+            && (sh.status === 'running' || sh.status === 'pending' || sh.status === 'waiting')).length
+        : 0;
+    if (!targets.length && !pendingCount && !gptCount) return;
     const parts = [];
     if (targets.length) parts.push(`${targets.length} queued ${targets.length === 1 ? 'job' : 'jobs'}`);
     if (pendingCount) parts.push(`${pendingCount} waiting batch ${pendingCount === 1 ? 'shot' : 'shots'}`);
+    if (gptCount) parts.push(`${gptCount} GPT edit${gptCount === 1 ? '' : 's'} (in-flight ones finish & charge; the rest stop)`);
     const ok = await showConfirm(
         `Cancel ${parts.join(' and ')}? Tokens for queued jobs are refunded; waiting shots were never charged.`,
         { confirmLabel: 'Cancel all', cancelLabel: 'Keep them', danger: true }
     );
     if (!ok) return;
+    // Stop the GPT runner FIRST — it has no queue to drain; the epoch
+    // bump cancels parked and future shots immediately.
+    if (gptCount && typeof abortGptEditShots === 'function') abortGptEditShots();
     // Flush pending FIRST — otherwise completions arriving during the
     // cancel loop below would auto-submit replacements from the drain.
     if (pendingCount) {
@@ -27441,8 +27487,57 @@ function toggleRestorePrompts(on){
 // Sync checkbox DOM to the persisted value on load (markup defaults to checked).
 document.addEventListener('DOMContentLoaded', () => toggleRestorePrompts(_restorePromptsOnStage));
 
+// Batch mode: clicking a single history image ADDS it to the batch
+// inputs (the batch "stage") instead of loading the shared #outImg
+// stage, which isn't what batch works from. Converts the job output to
+// a real upload via the same endpoint batch-restore uses, then APPENDS
+// (never replaces) — deduped, selected, ready to edit.
+async function addHistoryImageToBatch(j){
+    if (!j || !j.id) return;
+    // Already in the batch (converted before)? Select it and say so.
+    const existing = (_batchInputs || []).find(b => b._srcJobId === j.id);
+    if (existing) {
+        existing.selected = true;
+        renderBatchInputs();
+        showNotif('Already in the batch — selected it.', 'info');
+        return;
+    }
+    showNotif('Adding image to batch…', 'info');
+    try {
+        const r = await fetchT(`${API}/api/studio/output-to-input`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_ids: [j.id] }),
+        }, 20000);
+        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
+        const d = await r.json().catch(() => null);
+        const inp = d && d.ok && Array.isArray(d.inputs) && d.inputs[0];
+        if (!inp) { showNotif('Couldn\u2019t add this image to the batch.', 'error'); return; }
+        _batchInputs.push({
+            id: inp.id, url: inp.url,
+            w: inp.w || j.w || 0, h: inp.h || j.h || 0,
+            fname: inp.filename || `${inp.id}.png`,
+            selected: true,
+            _genPrompt: j.prompt || '',
+            _srcJobId: j.id,
+        });
+        renderBatchInputs();
+        if (typeof updateGenButton === 'function') updateGenButton();
+        showNotif('Added to batch (selected).', 'success');
+    } catch (e) {
+        showNotif('Couldn\u2019t add this image to the batch.', 'error');
+    }
+}
+
 function restoreFromHistory(j){
     if (!j) return;
+    // BATCH MODE: route single-image clicks into the batch inputs — the
+    // batch has no use for the shared #outImg stage. (Batch GROUP entries
+    // don't come through here; their click handlers offer restore-grid /
+    // load-to-inputs directly.)
+    if (typeof currentMode === 'string' && currentMode === 'batch') {
+        addHistoryImageToBatch(j);
+        return;
+    }
     // Clicking a history image loads it onto the stage in WHATEVER mode the
     // user is currently in — it never switches modes. The stage (#outImg) is
     // shared across Camera / Edit / Create, so we just present the image
