@@ -21155,6 +21155,9 @@ function startJobPoll(jobId){
 // Matches the server-side DELETE /api/studio/job/:id guard.
 function canCancelJob(j){
     if(!j) return false;
+    // Web-search pseudo-jobs are client-side only (no server row) —
+    // nothing to cancel/refund; they resolve or fail within seconds.
+    if(j.kind === 'websearch') return false;
     // Video (fal) jobs don't use the image job DELETE/refund path — hide cancel
     // (the poller resolves + refunds on failure server-side).
     if(j.mode === 'video') return false;
@@ -21544,7 +21547,15 @@ function renderQueue(){
             const step = j.step || 0;
             const total = j.totalSteps || 0;
 
-            if (j.status === 'queued') {
+            if (j.kind === 'websearch') {
+                // Client-side web image search pseudo-job: spinner-esque
+                // climbing bar + elapsed seconds; resolves in seconds and
+                // removes itself. No cancel (nothing server-side to stop).
+                const secs = Math.floor((now - j.submittedAt) / 1000);
+                statusIcon = '🔍'; statusText = 'Searching web';
+                subtext = `${j.query ? '“' + j.query.slice(0, 26) + '”' : 'images'} · ${secs}s`;
+                pct = Math.min(90, 10 + secs * 7);
+            } else if (j.status === 'queued') {
                 // DB is 'queued' — row created but worker hasn't dispatched
                 // to Modal yet. If the GPU is mid-boot, surface the real boot
                 // stage so this doesn't sit at a frozen "Queued".
@@ -22060,7 +22071,115 @@ function _agentRemoveThinking(){
 // back to the model as the function_call_output content. Errors are
 // caught here and routed to both places with kind='error' so neither
 // the model nor the user is left guessing what happened.
+// ── Web image search job ─────────────────────────────────────────
+// One search → up to `count` (≤10) images imported into the batch
+// working set, shown in the queue as a pseudo-job with elapsed time.
+// Flat 100-token charge, taken only AFTER the search returns results
+// (a no-hit search costs nothing). Imports ride /upload-from-url, so
+// every image passes the same safety screen as a manual add; failed
+// imports are skipped silently and don't count toward `count`.
+// Used by the agent's web_image_search tool; the manual path is the
+// existing "🔍 Search the web for images" button, which stays free
+// because the user hand-picks each image there.
+async function runWebImageSearchJob(query, count){
+    query = String(query || '').trim().slice(0, 200);
+    count = Math.min(10, Math.max(1, parseInt(count) || 10));
+    if (!query) return { ok: false, error: 'empty_query' };
+    if (!_user) { $('loginModal').classList.add('open'); return { ok: false, error: 'not_logged_in' }; }
+    const jobId = 'wsearch_' + Date.now();
+    myJobs.unshift({ id: jobId, kind: 'websearch', status: 'running', mode: 'search', query, submittedAt: Date.now() });
+    renderQueue();
+    const tick = setInterval(renderQueue, 1000);   // keep the elapsed counter moving
+    const finish = () => {
+        clearInterval(tick);
+        const ix = myJobs.findIndex(j => j.id === jobId);
+        if (ix >= 0) myJobs.splice(ix, 1);
+        renderQueue();
+    };
+    try {
+        const r = await fetchT(`${API}/api/studio/image-search?q=${encodeURIComponent(query)}&page=1&size=any`, null, 30000);
+        const d = await r.json().catch(() => null);
+        if (r.status === 401) { $('loginModal').classList.add('open'); finish(); return { ok: false, error: 'not_logged_in' }; }
+        if (d && d.error === 'age_ack_required') {
+            openAgeGate(true); finish();
+            return { ok: false, error: 'age_ack_required', message: '18+ acknowledgement required — gate opened; acknowledge and ask again.' };
+        }
+        const results = (d && d.ok && Array.isArray(d.results)) ? d.results : [];
+        if (!results.length) {
+            finish();
+            showNotif('Web search found no usable images — not charged.', 'error');
+            return { ok: true, imported: 0, image_ids: [], message: 'no_results_not_charged' };
+        }
+        // Charge the flat 100 now that there's something to import.
+        const cr = await fetchT(`${API}/api/studio/agent-search-charge`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query }),
+        }, 15000);
+        const cd = await cr.json().catch(() => null);
+        if (!cd || !cd.ok) {
+            finish();
+            if (cr.status === 402) {
+                showNotif('Not enough tokens for a web image search (100 needed).', 'error');
+                if (typeof openBuyTokens === 'function') openBuyTokens();
+            }
+            return { ok: false, error: (cd && cd.error) || 'charge_failed' };
+        }
+        if (typeof cd.tokens_remaining === 'number') {
+            _user.tokens = cd.tokens_remaining;
+            const tc = $('tokenCount'); if (tc) tc.textContent = cd.tokens_remaining;
+        }
+        const importedIds = [];
+        for (const res of results) {
+            if (importedIds.length >= count) break;
+            try {
+                const ur = await fetchT(`${API}/api/studio/upload-from-url`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: res.full }),
+                }, 30000);
+                const ud = await ur.json().catch(() => null);
+                if (!ud || !ud.ok) continue;   // blocked / dead link — skip, try next result
+                _batchInputs.push({
+                    id: ud.id, url: ud.url,
+                    w: res.w || 0, h: res.h || 0,
+                    fname: ud.filename || `${ud.id}.png`,
+                    selected: true,
+                    _safety: (typeof extractSafetyResult === 'function') ? extractSafetyResult(ud) : undefined,
+                });
+                importedIds.push(ud.id);
+                renderBatchInputs();   // progressive fill — images appear as they land
+            } catch (e) { /* per-image best effort */ }
+        }
+        if (typeof updateGenButton === 'function') updateGenButton();
+        finish();
+        showNotif(
+            importedIds.length
+                ? `Imported ${importedIds.length} web image${importedIds.length === 1 ? '' : 's'} for “${query}” (100 tokens).`
+                : 'Search results couldn\u2019t be imported (all blocked or unreachable). 100 tokens were charged for the search.',
+            importedIds.length ? 'success' : 'error'
+        );
+        return { ok: true, imported: importedIds.length, image_ids: importedIds, tokens_remaining: cd.tokens_remaining };
+    } catch (e) {
+        finish();
+        return { ok: false, error: String((e && e.message) || e) };
+    }
+}
+
 const AGENT_TOOL_HANDLERS = {
+    async web_image_search(args){
+        const q = String((args && args.query) || '').trim();
+        const n = Math.min(10, Math.max(1, parseInt(args && args.count) || 10));
+        const res = await runWebImageSearchJob(q, n);
+        if (!res || !res.ok) {
+            return {
+                summary: `Web search failed${res && res.error ? ': ' + res.error : ''}`,
+                result: { ok: false, error: (res && res.error) || 'failed', message: (res && res.message) || undefined },
+            };
+        }
+        return {
+            summary: `Imported ${res.imported} web image${res.imported === 1 ? '' : 's'} for “${q}”${res.imported ? ' (100 tokens)' : ''}`,
+            result: { ok: true, imported_count: res.imported, image_ids: res.image_ids || [], tokens_remaining: res.tokens_remaining, batch_state: _agentBatchState() },
+        };
+    },
     async set_selection(args){
         const wantedIds = new Set(Array.isArray(args.image_ids) ? args.image_ids : []);
         let changed = 0;
