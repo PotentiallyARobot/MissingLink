@@ -6175,6 +6175,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="angle-views-body" id="angleViewsBody"></div>
         <div class="angle-views-foot">
             <button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the built-in default views (not saved until you hit Save)">Reset to defaults</button>
+            <button type="button" class="ems-btn" onclick="exportAngleViewsJson()" title="Download the current views (cameras + prompts) as a JSON file">&#11015; JSON</button>
+            <button type="button" class="ems-btn" onclick="$('avJsonFile').click()" title="Upload a JSON file to override the per-view prompts (and cameras, if included). Undoable before Save.">&#11014; JSON</button>
+            <input type="file" id="avJsonFile" accept=".json,application/json" style="display:none" onchange="importAngleViewsJson(event)">
             <button type="button" class="ems-btn" id="avAgentUndoBtn" style="display:none" onclick="restoreAnglePromptsUndo()" title="Restore the prompts and camera settings from before the last apply (AI agent or bulk edit)">↩ Undo changes</button>
             <span style="flex:1"></span>
             <button type="button" class="ems-btn" onclick="closeAngleViewsConfig(false)">Cancel</button>
@@ -15973,6 +15976,85 @@ function _avSwitchTab(which){
 // instruction changed what a view means — updated az/el/dist selects.
 // The pre-apply state is snapshotted so "Undo changes" can restore
 // it. Nothing is persisted until the user hits Save.
+// ── Views JSON export / import ───────────────────────────────────
+// Round-trippable config for the multi-camera batch: download the
+// current dialog state (cameras + per-view prompts) as JSON, or upload
+// a JSON file to override the prompts (and cameras, when provided and
+// valid). Import applies to the FORM only — nothing persists until
+// Save — and snapshots the prior state into the same Undo used by the
+// agent/bulk apply, so one click reverses a bad file.
+function exportAngleViewsJson(){
+    const body = $('angleViewsBody');
+    if (!body) return;
+    const views = _avReadForm(body);
+    const data = {
+        app: 'missinglink-studio',
+        type: 'multi-camera-views',
+        version: 1,
+        count: views.length,
+        views: views.map((v, i) => ({
+            index: i + 1,
+            az: v.az, el: v.el, dist: v.dist,
+            prompt: v.extra || '',
+            // Informational: the exact final prompt the batch would send
+            // (pose tokens + extra). Ignored on import — pose tokens are
+            // rebuilt from az/el/dist so they can't be corrupted by hand.
+            full_prompt: _anglePromptFor({ az: v.az, el: v.el, dist: v.dist, extra: v.extra }),
+        })),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `missinglink-views-${views.length}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function importAngleViewsJson(ev){
+    const file = ev && ev.target && ev.target.files && ev.target.files[0];
+    if (ev && ev.target) ev.target.value = '';   // same file can be re-imported
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        let data;
+        try { data = JSON.parse(String(reader.result)); }
+        catch (e) { showNotif('That file isn\u2019t valid JSON.', 'error'); return; }
+        const entries = Array.isArray(data) ? data
+            : (data && Array.isArray(data.views)) ? data.views : null;
+        if (!entries || !entries.length) {
+            showNotif('No views found in the JSON \u2014 expected { views: [\u2026] } or a bare array.', 'error');
+            return;
+        }
+        const body = $('angleViewsBody');
+        if (!body) return;
+        const current = _avReadForm(body);
+        // Snapshot for Undo BEFORE mutating — same mechanism as the
+        // agent/bulk apply, so ↩ Undo reverses the import.
+        _avAgentUndo = current.map(v => ({ ...v }));
+        let applied = 0, cams = 0;
+        entries.forEach((e2, pos) => {
+            if (!e2 || typeof e2 !== 'object') return;
+            const idx = (Number.isInteger(e2.index) && e2.index >= 1) ? e2.index - 1 : pos;
+            if (idx < 0 || idx >= current.length) return;   // extra rows ignored
+            const p = (typeof e2.prompt === 'string') ? e2.prompt
+                    : (typeof e2.extra === 'string') ? e2.extra : null;
+            if (p !== null) { current[idx].extra = p.slice(0, 600).trim(); applied++; }
+            if (ANGLES_AZ.includes(e2.az) && ANGLES_EL.includes(e2.el) && ANGLES_DIST.includes(e2.dist)) {
+                current[idx].az = e2.az; current[idx].el = e2.el; current[idx].dist = e2.dist; cams++;
+            }
+        });
+        if (!applied && !cams) {
+            _avAgentUndo = null;
+            showNotif('Nothing usable in that JSON \u2014 no prompts or valid cameras matched the rows.', 'error');
+            return;
+        }
+        _avWriteForm(body, current);
+        _avSetUndoVisible(true);
+        showNotif(`Applied ${applied} prompt${applied === 1 ? '' : 's'}${cams ? ` + ${cams} camera${cams === 1 ? '' : 's'}` : ''} from JSON \u2014 review, then Save.`, 'success');
+    };
+    reader.onerror = () => showNotif('Couldn\u2019t read that file.', 'error');
+    reader.readAsText(file);
+}
+
 let _avAgentUndo = null;   // [{az,el,dist,extra}] captured before the last apply
 
 function _avReadForm(body){
