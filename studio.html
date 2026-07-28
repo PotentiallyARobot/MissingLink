@@ -22369,7 +22369,18 @@ const AGENT_TOOL_HANDLERS = {
         // synthetic placeholder id so we can locate and replace it
         // even if other batch operations mutate _batchInputs while
         // this fetch is in flight (parallel generations are common).
-        const refIds = Array.isArray(args.reference_image_ids) ? args.reference_image_ids : [];
+        // Shared-context images are ALWAYS attached, regardless of what
+        // the model passed — that's the contract of the context slots:
+        // "accompany every job". The model's own picks fill the remaining
+        // reference budget (4 total; context first, dedupe, model can't
+        // displace context). Without this, "make 4 new images" often went
+        // out with zero references because the model didn't think to pass
+        // them unless the user explicitly said "use the reference".
+        const ctxIds = (typeof _batchContext !== 'undefined' && _batchContext)
+            ? [_batchContext[1], _batchContext[2]].filter(x => x && x.id).map(x => x.id)
+            : [];
+        const modelIds = Array.isArray(args.reference_image_ids) ? args.reference_image_ids : [];
+        const refIds = [...new Set([...ctxIds, ...modelIds])].slice(0, 4);
         const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
         // Estimated time-to-completion. Plain text-to-image is ~30-60s on
         // gpt-image-2; ref-image edits are slower (60-120s with 1 ref).
