@@ -3423,6 +3423,16 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* Engine-not-applicable: the selected batch engine (GPT/SDXL) ignores
    the Qwen LoRA stack — sliders gray out and stop accepting input. */
 .slider-row.engine-na{opacity:.35;pointer-events:none;filter:grayscale(1)}
+/* Pony quality-tag editors: match the app's dark inputs, hide the
+   scrollbar chrome (content still scrolls), kill spell-check noise via
+   the spellcheck attribute on the elements. */
+.pony-tag-box{width:100%;box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:10.5px;line-height:1.5;padding:7px 9px;resize:vertical;outline:none;overflow-y:auto;scrollbar-width:none}
+.pony-tag-box::-webkit-scrollbar{display:none}
+.pony-tag-box:focus{border-color:var(--gold)}
+/* While Batch mode runs the SDXL engine, every Qwen-pipeline control
+   disappears — regardless of what inline display other systems set
+   (entitlement reveals, mode toggles). */
+body.batch-sdxl-engine .qwen-pipeline-ctl{display:none !important}
 .slider-row .sl{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.3px;min-width:65px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .slider-row input[type=range]{flex:1;height:4px;accent-color:var(--gold);cursor:pointer;-webkit-appearance:none;background:var(--surface-3);border-radius:2px}
 .slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--gold);cursor:pointer}
@@ -5129,12 +5139,12 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </select>
       </div>
       <div id="ponyTagBody">
-        <div class="hintline" style="margin-bottom:4px">Added to the positive prompt:</div>
-        <textarea id="ponyTagPos" rows="2" class="lora-url" style="width:100%;resize:vertical;font-size:10.5px" oninput="_ponyTagSave()"></textarea>
-        <div class="hintline" style="margin:6px 0 4px">Added to the negative prompt:</div>
-        <textarea id="ponyTagNeg" rows="3" class="lora-url" style="width:100%;resize:vertical;font-size:10.5px" oninput="_ponyTagSave()"></textarea>
+        <div class="hintline" style="margin-bottom:4px">Positive (prefixes the instruction; used alone if no instruction):</div>
+        <textarea id="ponyTagPos" rows="3" class="pony-tag-box" spellcheck="false" oninput="_ponyTagSave()"></textarea>
+        <div class="hintline" style="margin:6px 0 4px">Negative (prefixes your negative prompt):</div>
+        <textarea id="ponyTagNeg" rows="3" class="pony-tag-box" spellcheck="false" oninput="_ponyTagSave()"></textarea>
       </div>
-      <div class="hintline" id="ponyTagHint" style="margin-top:6px">Auto = added only on the default checkpoint (Pony Realism). Off = your prompt goes through exactly as written.</div>
+      <div class="hintline" id="ponyTagHint" style="margin-top:6px">Auto = applied on the default checkpoint (Pony Realism); Always = any checkpoint; Off = instruction only. With no edit instruction, these run standalone as the full prompt for every image.</div>
     </div>
 
     <!-- SIZE -->
@@ -10335,6 +10345,17 @@ function _applyBatchSdxlControls(){
             after = el;
             el.style.display = '';
             if (id === 'sdxlSecPony') _ponyTagInitUi();
+            // The Advanced section (sampler / steps / CFG) is collapsed by
+            // default in the SDXL stage; in Batch it IS the engine's main
+            // parameter panel — open it so cfg/steps are actually visible.
+            if (id === 'sdxlSecAdv') {
+                const b = $('sdxlAdvBody');
+                if (b && !b.classList.contains('open')) {
+                    b.classList.add('open');
+                    const c = $('sdxlAdvCaret');
+                    if (c) c.innerHTML = '\u25BE';
+                }
+            }
         } else {
             if (el._origParent) {
                 el._origParent.insertBefore(el, el._origNext);
@@ -10345,18 +10366,24 @@ function _applyBatchSdxlControls(){
     });
     // SDXL replaces the Qwen pipeline entirely — its own steps/CFG live
     // in the relocated sections, so HIDE the Qwen CFG/Steps and LoRA
-    // sliders instead of graying them (grayed-out stays for GPT, where
-    // the point is "these exist but this engine can't use them").
-    const qwenRows = ['rowCfg', 'rowSteps'];
+    // sliders (grayed-out stays for GPT, where the point is "these exist
+    // but this engine can't use them"). HIDING IS CLASS-BASED, not inline:
+    // several of these rows have OTHER owners writing inline display —
+    // the async entitlement check revealing Unchained, mode logic for
+    // camera/edit-only rows — and an inline hide both loses races against
+    // them (Unchained popping back up in SDXL batch) and, on restore,
+    // force-revealed rows that were supposed to stay hidden. A body class
+    // + !important rule wins over inline writes in both directions and
+    // restores by simply ceasing to exist.
     document.querySelectorAll('input[id^="rngLora"]').forEach(inp => {
         const row = inp.closest('.slider-row');
-        if (row && row.id) qwenRows.push(row.id);
-        else if (row) { row.id = 'rowLora_' + inp.id; qwenRows.push(row.id); }
+        if (row) row.classList.add('qwen-pipeline-ctl');
     });
-    qwenRows.forEach(id => {
+    ['rowCfg', 'rowSteps'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.style.display = show ? 'none' : '';
+        if (el) el.classList.add('qwen-pipeline-ctl');
     });
+    document.body.classList.toggle('batch-sdxl-engine', show);
 }
 
 function _applyGptLoraGate(){
@@ -18568,13 +18595,36 @@ async function _generateBatchEditsInner(){
         return;
     }
     const prompt = $('batchPrompt').value.trim();
-    if (!prompt) { showNotif('Enter an edit instruction first.', 'error'); return; }
-
     // Which engine this batch runs on (from the IMAGE MODEL selector). SDXL
     // routes each shot through the SDXL Studio worker (img2img + Pony 2.2 tags)
     // and costs 50 tokens/image; everything else stays on the Qwen edit path
-    // at 100 tokens/image.
+    // at 100 tokens/image. (Computed before instruction validation because
+    // SDXL can legitimately run WITHOUT an instruction — see below.)
     const useSdxl = (typeof _editModelPref !== 'undefined' && _editModelPref === 'sdxl');
+    // BATCH+SDXL: the quality-tag boxes double as a standalone base
+    // prompt. No edit instruction + applicable tags = the positive and
+    // negative tag boxes ARE the prompt for every image (pure img2img
+    // re-render through the tags). With an instruction, tags prefix it
+    // as before. Every other engine still requires an instruction.
+    const _sdxlTagMode = (typeof _ponyTagCfg !== 'undefined' && _ponyTagCfg.mode) || 'auto';
+    const _sdxlBaseUrlNow = (typeof _sdxlSelectedBaseUrl !== 'undefined' && _sdxlSelectedBaseUrl) || '';
+    const _sdxlTagsApply = useSdxl && (_sdxlTagMode === 'on' || (_sdxlTagMode === 'auto' && !_sdxlBaseUrlNow));
+    // Standalone mode needs the POSITIVE box specifically — it becomes
+    // the entire prompt; a negative-only config would send the worker an
+    // empty prompt.
+    const _sdxlTagsHaveContent = (typeof _ponyTagCfg !== 'undefined')
+        && !!((_ponyTagCfg.pos || '').trim());
+    if (!prompt) {
+        if (_sdxlTagsApply && _sdxlTagsHaveContent) {
+            showNotif('No instruction — applying your quality tags as the prompt for every image.', 'info');
+        } else if (useSdxl) {
+            showNotif('Enter an edit instruction, or set the quality tags (they run standalone when the instruction is empty).', 'error');
+            return;
+        } else {
+            showNotif('Enter an edit instruction first.', 'error');
+            return;
+        }
+    }
     // GPT batches route each shot through /api/studio/agent-image-edit
     // (gpt-image-2) — no GPU queue involved. Pricing is per-image and
     // size-dependent, charged per call server-side, so there's no flat
