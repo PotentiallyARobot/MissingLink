@@ -28729,8 +28729,26 @@ function assignResultToInput(){
         return;
     }
     if (mode === 'camera') {
-        if (typeof setInputImage === 'function') setInputImage(inp.id, inp.url, inp.w, inp.h);
-        log(`Assigned "${inp.fname || inp.id}" to Camera input`);
+        // inp.id may be a JOB id (history tiles), not a studio_uploads id —
+        // and generate resolves image_ids against uploads, so assigning a
+        // history item directly produced no_valid_images on every shot.
+        // Convert via output-to-input first; real upload ids skip this
+        // (server rejects the conversion, we use the id as-is), so the
+        // round-trip is only paid when conversion is actually needed.
+        (async () => {
+            let use = inp;
+            try {
+                const r = await fetchT(`${API}/api/studio/output-to-input`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ job_ids: [inp._srcJobId || inp.id] }),
+                }, 15000);
+                const d = await r.json().catch(() => null);
+                const c = d && d.ok && Array.isArray(d.inputs) && d.inputs[0];
+                if (c) use = { id: c.id, url: c.url, w: c.w || inp.w, h: c.h || inp.h, fname: c.filename || inp.fname };
+            } catch (e) { /* fall through with the original id */ }
+            if (typeof setInputImage === 'function') setInputImage(use.id, use.url, use.w, use.h);
+            log(`Assigned "${use.fname || use.id}" to Camera input`);
+        })();
         return;
     }
     if (mode === 'edit') {
