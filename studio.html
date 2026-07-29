@@ -5451,6 +5451,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <button class="ai-btn" id="btnAiCaption" onclick="aiCaptionSelected()" title="Write a caption for each selected image and download as a zip of .txt files (LoRA-training format)">
                 📝 Caption for LoRA
             </button>
+            <button class="ai-btn" id="btnAiUpscale" onclick="batchUpscaleSelected()" title="Run a Qwen Image Edit upscale/enhance pass (Upscale LoRA @ 1.0) on every selected image">
+                🔍 Upscale
+            </button>
         </div>
         <div style="display:flex;align-items:center;margin-top:6px">
             <span id="aiPlanStatus" class="ai-status"></span>
@@ -22430,6 +22433,29 @@ async function runWebImageSearchJob(query, count){
     } catch (e) {
         finish();
         return { ok: false, error: String((e && e.message) || e) };
+    }
+}
+
+// Batch tool: upscale/enhance every SELECTED image — one Qwen edit per
+// image with the Upscale LoRA at 1.0 and its documented prompt. Rides
+// the normal batch submission path (queue caps, drain, retry, tiles).
+async function batchUpscaleSelected(){
+    const sel = (_batchInputs || []).filter(b => b.selected && !b._placeholder);
+    if (!sel.length) { showNotif('Select at least one image to upscale.', 'error'); return; }
+    const bp = $('batchPrompt');
+    const prev = bp ? bp.value : '';
+    const prevPref = (typeof _editModelPref !== 'undefined') ? _editModelPref : 'auto';
+    const rng = $('rngLoraUpscale'), v = $('vLoraUpscale');
+    const prevUp = rng ? rng.value : null;
+    try {
+        if (bp) bp.value = 'Enhance image quality, sharpen fine detail, fix lighting; keep content and composition identical.';
+        if (typeof _editModelPref !== 'undefined') _editModelPref = 'auto';   // force the Qwen path
+        if (rng) rng.value = '1'; if (v) v.value = '1';
+        await generateBatchEdits();
+    } finally {
+        if (bp) bp.value = prev;
+        if (typeof _editModelPref !== 'undefined') _editModelPref = prevPref;
+        if (rng && prevUp !== null) { rng.value = prevUp; if (v) v.value = prevUp; }
     }
 }
 
