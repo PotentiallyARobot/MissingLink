@@ -8932,9 +8932,21 @@ function setMode(mode, opts){
     // from the visible stage.
     if (prevMode !== mode && (mode === 'generate' || prevMode === 'generate')) {
         if (_batchInputs.length > 0) {
+            // Leaving BATCH via a generate-transition: STASH instead of
+            // destroy, so returning to Batch restores the stage exactly.
+            // (This wipe predates Create's own slot system; Create no
+            // longer reads the grid, but other code may still clear.)
+            if (prevMode === 'batch') window._batchStash = _batchInputs.slice();
             _batchInputs = [];
             _batchFocusedId = null;
         }
+    }
+    // Entering BATCH with an empty stage but a stash: restore it.
+    if (mode === 'batch' && _batchInputs.length === 0
+        && Array.isArray(window._batchStash) && window._batchStash.length) {
+        _batchInputs = window._batchStash;
+        window._batchStash = null;
+        if (typeof renderBatchInputs === 'function') setTimeout(renderBatchInputs, 0);
     }
     currentMode = mode;
     // Camera↔Edit transition: reset all LoRA sliders to the new mode's
@@ -22665,7 +22677,16 @@ const AGENT_TOOL_HANDLERS = {
                     // so the admin view can tell it apart from Create.
                     source: 'agent',
                     n: 1,
-                    size: args.size || '1024x1024',
+                    // UI size override: when the user has W/H set in the
+                    // sidebar, that intent WINS over the model's size pick —
+                    // mapped to the nearest gpt-image-2 size class by
+                    // orientation (landscape/portrait/square).
+                    size: (function(){
+                        const w = parseInt(($('inpWidth') || {}).value) || 0;
+                        const h = parseInt(($('inpHeight') || {}).value) || 0;
+                        if (w && h) return w > h ? '1536x1024' : (h > w ? '1024x1536' : '1024x1024');
+                        return args.size || '1024x1024';
+                    })(),
                     reference_image_ids: refIds,
                 }),
                 // Frontend timeout must EXCEED the worker's own generation
