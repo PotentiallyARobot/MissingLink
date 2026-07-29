@@ -6190,7 +6190,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="angle-views-body" id="angleViewsBody"></div>
         <div class="angle-views-foot">
             <label class="check-row" style="margin:0;font-size:11px" title="Sequential mode: view 1 edits the input image with the Next Scene LoRA; each later view uses the PREVIOUS view's output as its input — a chained cinematic sequence. Views run one at a time. Each view's prompt is auto-prefixed with 'Next Scene:'.">
-                <input type="checkbox" id="avChainNextScene" onchange="try{localStorage.setItem('ml_ns_chain', this.checked?'1':'')}catch(e){}"> 🎬 Next Scene chain
+                <input type="checkbox" id="avChainNextScene" onchange="try{localStorage.setItem('ml_ns_chain', this.checked?'1':'')}catch(e){}; _avApplyNsPrefix(this.checked)"> 🎬 Next Scene chain
             </label>
             <button type="button" class="ems-btn" onclick="resetAngleViewsConfig()" title="Fill the form with the built-in default views (not saved until you hit Save)">Reset to defaults</button>
             <button type="button" class="ems-btn" onclick="exportAngleViewsJson()" title="Download the current views (cameras + prompts) as a JSON file">&#11015; JSON</button>
@@ -16142,6 +16142,23 @@ function importAngleViewsJson(ev){
 
 let _avAgentUndo = null;   // [{az,el,dist,extra}] captured before the last apply
 
+// Toggle handler for the Next Scene chain: make the mode VISIBLE in the
+// prompt fields themselves — prepend "Next Scene: " to every view prompt
+// when enabled (editable like any text), strip that exact prefix when
+// disabled. Users edit what they see; submit-time adds the prefix only
+// if it's missing, so hand-edits never get double-prefixed.
+function _avApplyNsPrefix(on){
+    const body = document.getElementById('angleViewsBody');
+    if (!body) return;
+    body.querySelectorAll('.angle-views-slot .av-extra').forEach(t => {
+        const v = t.value || '';
+        if (on && !/^\s*next scene:/i.test(v)) t.value = 'Next Scene: ' + v;
+        else if (!on) t.value = v.replace(/^\s*Next Scene:\s*/i, '');
+    });
+    if (typeof showNotif === 'function') showNotif(on
+        ? 'Next Scene chain ON \u2014 prompts prefixed; describe each scene\u2019s camera move and reveal.'
+        : 'Next Scene chain OFF \u2014 prefixes removed.', 'info');
+}
 function _avReadForm(body){
     const out = [];
     body.querySelectorAll('.angle-views-slot').forEach(sl => {
