@@ -19188,7 +19188,13 @@ async function _runNextSceneChain(angles){
     const N = angles.length;
     const batchId = 'nsc_' + Date.now().toString(36);
     _activeBatch = { id: batchId, shots: angles.map((a, i) => ({
-        label: a.label || ('Scene ' + (i + 1)), status: 'waiting', payload: null })) };
+        // Chain tiles label as "Scene N"; carry the custom prompt so the
+        // grid shows "Custom" + full text on hover (this omission left
+        // chain tiles wearing misleading camera-pose labels).
+        label: 'Scene ' + (i + 1),
+        extra: (a.extra || '').trim(),
+        az: a.az, el: a.el, dist: a.dist,
+        status: 'waiting', payload: null })) };
     renderBatchGrid();
     const nsW = (function(){ const v = parseFloat(($('rngLoraNextScene')||{}).value); return (Number.isFinite(v) && v > 0) ? v : 1.0; })();
     let curInput = imageId;
@@ -19346,7 +19352,12 @@ async function _generateAngleBatchInner(angles, btnDefaultText, btn){
 
     for (let i = 0; i < N; i++) {
         const shot = angles[i];
-        const prompt = _anglePromptFor(shot);
+        // PARALLEL multiview = Next Scene OFF, unconditionally: strip any
+        // "Next Scene:" prefix left in saved view prompts from a previous
+        // chain session, and force the chain LoRA to 0 regardless of the
+        // slider. The 🎬 toggle is the single source of truth here; the
+        // slider governs single Camera/Edit generates only.
+        const prompt = String(_anglePromptFor(shot) || '').replace(/^\s*Next Scene:\s*/i, '');
         const payload = {
             mode: 'camera',
             image_ids: [imageId],
@@ -19357,6 +19368,7 @@ async function _generateAngleBatchInner(angles, btnDefaultText, btn){
             guidance_scale: cfg,
             inference_steps: steps,
             ...loraPayload('camera'),
+            lora_next_scene: 0,
             width,
             height,
             batch_id: batchId,
@@ -27863,7 +27875,7 @@ async function addHistoryImageToBatch(j){
             w: inp.w || j.w || 0, h: inp.h || j.h || 0,
             fname: inp.filename || `${inp.id}.png`,
             selected: true,
-            _genPrompt: j.prompt || '',
+            _histPrompt: j.prompt || '',
             _srcJobId: j.id,
         });
         renderBatchInputs();
