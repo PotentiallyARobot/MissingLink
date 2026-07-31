@@ -333,7 +333,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12 L11 15 L16 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     <h1>MISSINGLINK <span>MODELGEN</span></h1>
     <div class="spacer"></div>
-    <a href="/studio.html" class="hdr-link">← Studio</a>
+    <a href="https://missinglink.build/studio" class="hdr-link">← Studio</a>
     <button id="historyBtn" class="hdr-link" onclick="toggleHistory()" style="cursor:pointer;background:none">📂 History</button>
     <div id="tokenBadge" class="token-badge" style="display:none" title="Click to buy more tokens">— tokens</div>
     <div id="connBadge" class="hdr-badge" title="NVIDIA L4 · 24 GB · Modal"><span class="dot cold"></span><span>GPU cold</span></div>
@@ -611,6 +611,8 @@ async function loadMe(){
     if (data.ok) {
       STATE.user = data.user;
       renderAuth(data.user);
+      // Pick up anything the user was mid-way through before the OAuth hop.
+      resumePendingGen();
       // Deliberately NOT waking the GPU here. Boot is triggered by the
       // Generate click instead — see submitGen(). Waking on sign-in spins
       // up an L4 for anyone who merely opens the page, which is billable
@@ -668,22 +670,113 @@ function renderAuth(u){
 
 // Disable Generate when the user can't afford it. Distinct messages for
 // not-signed-in vs signed-in-but-broke so the user knows what to do.
+// The Google redirect tears down the page, taking the uploaded image and
+// any tweaked sliders with it. Without stashing, a signed-out user who
+// clicks Generate comes back to an empty form and has to redo everything —
+// which reads as the click having done nothing.
+//
+// sessionStorage (not localStorage): this is one-shot handoff state that
+// should not outlive the tab.
+const PENDING_KEY = 'modelgen:pendingGen';
+function stashPendingGen(){
+  try {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({
+      at: Date.now(),
+      imageDataUrl: STATE.imageDataUrl,
+      fileName: STATE.imageFile ? STATE.imageFile.name : 'upload.png',
+      params: collectParamIds(),
+    }));
+  } catch (e) {
+    // Quota is the realistic failure — a big PNG data URL can blow past
+    // the ~5 MB budget. Sign-in still proceeds; only the restore is lost.
+    console.warn('[modelgen] could not stash pending gen', e);
+  }
+}
+
+// Snapshot every control by id so the restore is exact.
+function collectParamIds(){
+  const ids = ['ssSteps','ssCfg','shapeSteps','shapeCfg','texSteps','texCfg',
+               'textureSize','decimate','pipelineType','remesh','remeshBand','seedInput'];
+  const out = {};
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    out[id] = (el.type === 'checkbox') ? el.checked : el.value;
+  }
+  return out;
+}
+
+// Called after loadMe() resolves with a signed-in user.
+async function resumePendingGen(){
+  let pending;
+  try {
+    const raw = sessionStorage.getItem(PENDING_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(PENDING_KEY);   // one shot, whatever happens
+    pending = JSON.parse(raw);
+  } catch (e) { return; }
+  if (!pending || !pending.imageDataUrl) return;
+  // Ignore anything stale enough to be from a different intent.
+  if (Date.now() - (pending.at || 0) > 30 * 60 * 1000) return;
+
+  // Rebuild a File from the stashed data URL so submitGen's existing
+  // imageFile checks behave identically to a fresh upload.
+  try {
+    const blob = await (await fetch(pending.imageDataUrl)).blob();
+    STATE.imageFile = new File([blob], pending.fileName || 'upload.png',
+                               { type: blob.type || 'image/png' });
+    STATE.imageDataUrl = pending.imageDataUrl;
+    document.getElementById('uploadPreview').src = pending.imageDataUrl;
+    document.getElementById('uploadPreview').style.display = '';
+    document.getElementById('uploadPlaceholder').style.display = 'none';
+    uploadZone.classList.add('has-image');
+  } catch (e) {
+    console.warn('[modelgen] could not restore stashed image', e);
+    return;
+  }
+
+  for (const [id, val] of Object.entries(pending.params || {})) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = val; else el.value = val;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (el.tagName === 'SELECT') el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  updateGenButton();
+
+  if (STATE.user && STATE.user.tokens >= COSTS.gen) {
+    toast('Signed in — resuming your generation', 'success');
+    submitGen();
+  } else {
+    toast('Signed in — your image and settings are restored', 'success');
+  }
+}
+
 function updateGenButton(){
   const btn = document.getElementById('genBtn');
   if (!btn) return;
   const u = STATE.user;
-  if (!u) {
+
+  // The button gates on having an image, not on being signed in. A signed-
+  // out visitor with an image gets an ENABLED Generate — clicking it starts
+  // the Google flow (see submitGen). Showing "Sign in to generate" made auth
+  // look like a prerequisite to even trying, which buries the actual product
+  // behind an account wall before anyone has seen it work.
+  if (!STATE.imageFile) {
     btn.disabled = true;
-    btn.innerHTML = `Sign in to generate`;
+    btn.innerHTML = `Generate <span class="cost">${COSTS.gen} tokens</span>`;
+    btn.title = 'Upload an image first';
     return;
   }
-  if (u.tokens < COSTS.gen) {
+  if (u && u.tokens < COSTS.gen) {
     btn.disabled = true;
     btn.innerHTML = `Insufficient tokens <span class="cost">(need ${COSTS.gen}, have ${u.tokens.toLocaleString()})</span>`;
+    btn.title = '';
     return;
   }
   btn.disabled = false;
   btn.innerHTML = `Generate <span class="cost">${COSTS.gen} tokens</span>`;
+  btn.title = u ? '' : 'You will be asked to sign in';
 }
 function signIn(){ window.location.href = '/auth/google?return=' + encodeURIComponent(location.pathname); }
 function signOut(){
@@ -718,6 +811,7 @@ function loadImage(file){
     document.getElementById('uploadPreview').style.display = '';
     document.getElementById('uploadPlaceholder').style.display = 'none';
     uploadZone.classList.add('has-image');
+    updateGenButton();
   };
   reader.readAsDataURL(file);
 }
@@ -730,6 +824,7 @@ function clearImage(){
   uploadZone.classList.remove('has-image');
   // Reset the file input so picking the same file again still fires change.
   document.getElementById('fileInput').value = '';
+  updateGenButton();
 }
 // The clear-btn lives inside the <label> upload zone, which means clicking it
 // would also fire the label's "open file picker" behavior. stopPropagation
@@ -853,8 +948,18 @@ document.getElementById('seedInput').addEventListener('input', (e) => {
 // Submit gen
 // ────────────────────────────────────────────────────────────
 async function submitGen(){
-  if (!STATE.user) { toast('Sign in to generate', 'error'); return; }
   if (!STATE.imageFile) { toast('Upload an image first', 'error'); return; }
+
+  // Not signed in: stash the work, then hand off to Google. The account is
+  // created or matched by email server-side on the callback, so there's no
+  // separate signup path to handle here.
+  if (!STATE.user) {
+    stashPendingGen();
+    toast('Signing you in…');
+    signIn();
+    return;
+  }
+
   if (STATE.user.tokens < COSTS.gen) { toast(`Insufficient tokens (need ${COSTS.gen})`, 'error'); return; }
 
   const seedVal = document.getElementById('seedInput').value.trim();
@@ -2694,7 +2799,7 @@ Object.defineProperty(window, '_glbViewer', {
 // ────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────
-updateGenButton();    // start in "Sign in to generate" state until loadMe() resolves
+updateGenButton();    // starts disabled until an image is picked
 loadMe();
 pollGpuStatus();
 pollQueue();
