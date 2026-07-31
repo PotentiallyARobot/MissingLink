@@ -261,6 +261,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .queue-item{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:6px}
 .queue-item.new{animation:slideIn .25s ease}
 .queue-item.current{border-color:var(--gold)}
+.queue-item.gpu-boot{border-style:dashed;opacity:.95}
+.queue-item.gpu-boot.failed{border-color:var(--red)}
+.queue-item.gpu-boot.failed .stage{color:var(--red)}
+.queue-item.gpu-boot.failed .bar-fill{background:var(--red)}
 @keyframes slideIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
 .queue-item .top{display:flex;align-items:center;gap:8px}
 .queue-item .qthumb{width:36px;height:36px;border-radius:4px;object-fit:cover;background:var(--surface-3);border:1px solid var(--border);flex:none}
@@ -497,21 +501,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   </div>
 </div>
 
-<div class="startup-overlay" id="startupOverlay">
-  <div class="startup-card">
-    <div class="startup-spinner"></div>
-    <h3>Starting GPU</h3>
-    <p id="startupMsg">Spinning up the model engine on an L4. This takes ~3-4 minutes on cold start.</p>
-    <div class="startup-bar"><div class="startup-bar-fill" id="startupFill"></div></div>
-    <div class="startup-meta">
-      <span class="startup-stage" id="startupStage">CONNECTING…</span>
-      <span id="startupTime">0s</span>
-    </div>
-    <div class="startup-chips" id="startupChips"></div>
-    <button id="startupRetryBtn" class="mini-btn" style="display:none;margin-top:14px"
-            onclick="retryGpuWake()">Retry GPU start</button>
-  </div>
-</div>
+<!-- startup overlay retired: GPU boot now renders as a row in the queue panel -->
 
 <div class="toast-stack" id="toastStack"></div>
 
@@ -597,30 +587,26 @@ async function loadMe(){
     if (data.ok) {
       STATE.user = data.user;
       renderAuth(data.user);
-      // Wake the GPU on sign-in so the ~150s cold start overlaps with the
-      // user's setting-config time, not added to their wait after Generate.
-      // Skipped if GPU is already warming or ready — wake is idempotent
-      // server-side but skipping the call avoids an unnecessary round-trip.
-      maybeWakeGpu();
+      // Deliberately NOT waking the GPU here. Boot is triggered by the
+      // Generate click instead — see submitGen(). Waking on sign-in spins
+      // up an L4 for anyone who merely opens the page, which is billable
+      // idle time whether or not they ever generate anything.
     }
   } catch(e) { console.error('loadMe', e); }
 }
 
-// Idempotent on the client too — only fires once per page load. The server
-// is also idempotent (Modal coalesces concurrent wakes to one container).
-let _gpuWakeFired = false;
+// Fires on Generate when the GPU isn't already warm. Not idempotent-once
+// per page load any more (the old _gpuWakeFired latch) — the container can
+// scale down between generations now, so a later Generate must be able to
+// wake it again. The server side is still idempotent.
 function maybeWakeGpu(){
-  if (_gpuWakeFired) return;
-  if (STATE.gpuState && STATE.gpuState.stage === 'ready') return;  // already warm
-  _gpuWakeFired = true;
-  // Track when we kicked the wake so the overlay can show during the gap
-  // between firing the wake and Modal's first heartbeat (~5-15s). Without
-  // this, the overlay only opens once Modal sends 'booting', and the user
-  // sees a blank "GPU cold" badge during the silent ramp-up.
+  const stage = STATE.gpuState && STATE.gpuState.stage;
+  if (stage === 'ready') return;                 // already warm
+  // Don't re-nudge while a boot we already kicked is in flight.
+  if (STATE.wakeFiredAt && (Date.now() - STATE.wakeFiredAt) < 30000) return;
   STATE.wakeFiredAt = Date.now();
-  // Force-update the overlay/badge with our optimistic "starting" state.
-  updateStartupOverlay(STATE.gpuState);
   updateBadge(STATE.gpuState);
+  pollQueue();   // surface the boot row immediately rather than up to 2s later
   fetch('/api/trellis/wake', { method: 'POST', credentials: 'include' })
     .then(r => r.json())
     .then(d => {
@@ -860,6 +846,11 @@ async function submitGen(){
 
   document.getElementById('genBtn').disabled = true;
   document.getElementById('genBtn').textContent = 'Submitting...';
+
+  // Wake the GPU now, in parallel with the submit round-trip. If it's
+  // already warm this is a no-op; if it's cold the boot overlaps the
+  // upload instead of starting after it.
+  maybeWakeGpu();
 
   try {
     const imageB64 = STATE.imageDataUrl.split(',')[1];
@@ -1815,6 +1806,7 @@ function newGen(){
 // ────────────────────────────────────────────────────────────
 let _lastQueueSig = '';
 let _seenJobIds = new Set();
+let _lastJobs = [];
 async function pollQueue(){
   if (!STATE.user) {
     document.getElementById('queueBody').innerHTML = '';
@@ -1827,13 +1819,19 @@ async function pollQueue(){
   try {
     const r = await fetch('/api/trellis/jobs', { credentials: 'include' });
     const d = await r.json();
-    if (d.ok) renderQueue(d.jobs || []);
-  } catch(e) {}
+    if (d.ok) { _lastJobs = d.jobs || []; renderQueue(_lastJobs); }
+  } catch(e) {
+    // Network blip shouldn't drop the boot row — re-render from cache so
+    // GPU state stays visible.
+    renderQueue(_lastJobs);
+  }
 }
 function renderQueue(jobs){
   const panel = document.getElementById('queuePanel');
-  // Hide entire panel if nothing to show
-  if (jobs.length === 0) {
+  const boot = gpuBootRow();
+  // The panel now also carries GPU boot state, so "nothing to show" means
+  // no jobs AND no boot activity — not just an empty job list.
+  if (jobs.length === 0 && !boot.html) {
     panel.classList.add('empty');
     _lastQueueSig = '';
     return;
@@ -1842,12 +1840,12 @@ function renderQueue(jobs){
   document.getElementById('queueCount').textContent = String(jobs.length);
 
   // Skip rebuild if nothing changed (prevents animate-in flicker)
-  const sig = jobs.map(j => `${j.id}:${j.stage}:${j.step}:${j.total_steps}:${j.status}`).join('|');
+  const sig = boot.sig + '||' + jobs.map(j => `${j.id}:${j.stage}:${j.step}:${j.total_steps}:${j.status}`).join('|');
   if (sig === _lastQueueSig) return;
   _lastQueueSig = sig;
 
   const body = document.getElementById('queueBody');
-  body.innerHTML = jobs.map(j => {
+  body.innerHTML = boot.html + jobs.map(j => {
     // Overall progress across the pipeline, monotonic across stages.
     const stageDef = PIPELINE_STAGES.find(s => s.key === j.stage);
     let pct = 0;
@@ -2038,167 +2036,79 @@ function fmtDuration(sec){
   return `${Math.floor(sec / 60)}m ${sec % 60}s`;
 }
 
-// Manual re-nudge after a stalled boot. Clears the local clock so the
-// overlay starts counting the new attempt rather than continuing the old
-// one, then fires the same wake endpoint sign-in uses.
-window.retryGpuWake = async function retryGpuWake(){
-  const btn = document.getElementById('startupRetryBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
-  STATE.startupShowAt = 0;
-  STATE.wakeFiredAt = Date.now();
-  try {
-    await fetch('/api/trellis/wake', { method: 'POST', credentials: 'include' });
-    toast('GPU wake sent', 'success');
-  } catch(e) {
-    toast('Wake failed: ' + e.message, 'error');
-  } finally {
-    setTimeout(() => {
-      if (btn) { btn.disabled = false; btn.textContent = 'Retry GPU start'; }
-    }, 5000);
-  }
+// Manual re-nudge, callable from the console or a future UI affordance.
+// Clears the 30s guard in maybeWakeGpu so a stalled boot can be retried
+// immediately rather than waiting the debounce out.
+window.retryGpuWake = function retryGpuWake(){
+  STATE.wakeFiredAt = 0;
+  maybeWakeGpu();
 };
 
-function updateStartupOverlay(s){
-  const overlay = document.getElementById('startupOverlay');
-  const stageDef = STARTUP_STAGES.find(st => st.key === s.stage);
-  const isWarmingStage = !!stageDef;
-  const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
-  const inWakeGap = wakeAge < 30 && (!s.stage || s.stage === 'cold' || s.stage === 'unknown' || s.stage === 'ready');
-  // Hide overlay only when GPU is truly ready AND we're not still in the
-  // wake gap. Otherwise keep it open through the whole boot sequence.
-  const isReady = s.stage === 'ready' && !inWakeGap;
-  // 'boot_failed' is emitted by setup()'s preflight when the licensed
-  // wheels don't import. It has no STARTUP_STAGES entry, so without
-  // naming it here the overlay would treat it as "not warming" and hide
-  // itself — leaving the user on a working-looking page with a GPU that
-  // will never come up.
-  const isFailed = s.stage === 'boot_failed';
-  const isWarming = isWarmingStage || inWakeGap || isFailed;
+// The full-screen startup overlay is retired. Boot progress now renders as
+// a row in the queue panel (see gpuBootRow) so it sits alongside the jobs
+// it's blocking instead of covering the app. This function only ensures the
+// old overlay element stays hidden.
+function updateStartupOverlay(){
+  // No-op. Retained because pollGpuStatus still calls it; boot state is
+  // rendered by gpuBootRow inside the queue panel now.
+}
 
-  // ── Staleness ──────────────────────────────────────────────────────
-  // The worker never clears trellis_status, so startup_stage keeps
-  // reporting whatever stage was last emitted — forever, even if the
-  // container died mid-boot. Reading only .stage (which this used to do)
-  // makes a crashed boot indistinguishable from a slow one: the overlay
-  // sits on "LOADING TRANSFORMER" until the user gives up.
-  //
-  // heartbeat_age_s is the signal that actually separates them. The
-  // container now heartbeats every 20s for the whole of setup(), so a
-  // heartbeat older than ~90s means the container is gone, whatever the
-  // stage field claims.
+// Build the synthetic queue row describing GPU boot state, or '' when the
+// GPU is warm and there's nothing to report. Returns {html, sig} so
+// renderQueue can fold it into its change-detection signature.
+function gpuBootRow(){
+  const s = STATE.gpuState || {};
+  const stage = s.stage;
+  const stageDef = STARTUP_STAGES.find(st => st.key === stage);
+  const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
+  const inWakeGap = wakeAge < 30 && (!stage || stage === 'cold' || stage === 'unknown');
   const hbAge = (s.heartbeat_age_s === null || s.heartbeat_age_s === undefined)
     ? null : Number(s.heartbeat_age_s);
-  const isStale = isFailed || (isWarming && !inWakeGap && hbAge !== null && hbAge > 90);
+  const isFailed = stage === 'boot_failed';
+  const isStale = isFailed || (!!stageDef && !inWakeGap && hbAge !== null && hbAge > 90);
 
-  if (isReady) {
-    overlay.classList.remove('show');
-    STATE.startupShowAt = 0;
-    STATE.startupStallNotified = false;
-    return;
-  }
-  if (!isWarming) {
-    overlay.classList.remove('show');
-    STATE.startupShowAt = 0;
-    STATE.startupStallNotified = false;
-    return;
-  }
+  // Warm and healthy, or stone cold with nothing pending — nothing to show.
+  if (!stageDef && !inWakeGap && !isFailed) return { html: '', sig: '' };
+  if (stage === 'ready' && !inWakeGap) return { html: '', sig: '' };
 
-  if (!STATE.startupShowAt) STATE.startupShowAt = Date.now();
-  overlay.classList.add('show');
-
-  // The server's startup_age_s is measured on the container from the top of
-  // setup(). The local clock measures from when this overlay opened. Those
-  // are overlapping intervals, so ADDING them (which this used to do)
-  // roughly doubles the figure — a ~10 min boot renders as "1280S". Take
-  // the larger instead: the server value is authoritative once we have it,
-  // the local one covers the wake-gap before the first status update lands.
-  const localElapsed = (Date.now() - STATE.startupShowAt) / 1000;
-  const elapsed = Math.max(localElapsed, s.startup_age_s || 0);
-
-  // Overall progress: cumulative-weight position within the pipeline +
-  // any sub-stage fraction (only "registering" reports N/M).
-  let overallPct;
-  if (stageDef) {
-    let localPct = 0;
-    if (s.total > 0) localPct = (s.progress || 0) / s.total;
-    const frac = (stageDef.cum + stageDef.weight * localPct) / STARTUP_TOTAL_WEIGHT;
-    overallPct = Math.min(95, frac * 100);
-  } else {
-    // Wake-gap fallback: time-based until the first real heartbeat lands.
-    const expectedTotal = 180;
-    overallPct = Math.min(15, 100 * elapsed / expectedTotal);
-  }
-  document.getElementById('startupFill').style.width = overallPct + '%';
-
-  // Stage label (big)
-  let label;
+  let label, detail, pct, cls;
   if (isFailed) {
     label = 'BOOT FAILED';
+    detail = 'GPU aborted during startup — check Modal logs';
+    pct = 100; cls = ' failed';
   } else if (isStale) {
-    label = 'LOST CONTACT';
+    label = 'GPU LOST';
+    detail = `no heartbeat for ${Math.round(hbAge)}s`;
+    pct = 100; cls = ' failed';
   } else if (stageDef) {
-    label = stageDef.label.toUpperCase();
-    if (s.stage === 'registering' && s.total > 0) {
-      label += ` ${s.progress}/${s.total}`;
-    }
+    label = stageDef.label;
+    if (stage === 'registering' && s.total > 0) label += ` ${s.progress}/${s.total}`;
+    const localPct = s.total > 0 ? (s.progress || 0) / s.total : 0;
+    pct = Math.min(95, 100 * (stageDef.cum + stageDef.weight * localPct) / STARTUP_TOTAL_WEIGHT);
+    detail = fmtDuration(Math.max(wakeAge === Infinity ? 0 : wakeAge, s.startup_age_s || 0));
+    cls = '';
   } else {
-    label = 'STARTING…';
+    label = 'Starting GPU';
+    detail = 'allocating container';
+    pct = 4; cls = '';
   }
-  document.getElementById('startupStage').textContent = label;
-  document.getElementById('startupTime').textContent = fmtDuration(elapsed);
 
-  // Substage detail message
-  let msg;
-  if (isFailed) {
-    msg = 'The GPU container aborted during startup — its licensed CUDA '
-        + 'extensions failed to load. This needs a fix on the backend, not '
-        + 'a retry; check the Modal logs for the preflight report.';
-  } else if (isStale) {
-    const lastStage = STAGE_LABELS[s.stage] || s.stage || 'startup';
-    msg = `No heartbeat from the GPU for ${Math.round(hbAge)}s — the container `
-        + `stopped during "${lastStage}". This is usually an out-of-memory or `
-        + `image-build failure; check the Modal logs for the real error.`;
-  } else if (stageDef) {
-    msg = stageDef.msg;
-    if (s.stage === 'registering' && s.total > 0) {
-      msg = `Compiling flow model ${s.progress + 1} of ${s.total} — torch.compile traces each model the first time it runs.`;
-    }
-  } else if (inWakeGap) {
-    msg = 'Spinning up the GPU container — usually 60-90s on a warm cache, 3-4 min cold.';
-  } else {
-    msg = '';
-  }
-  document.getElementById('startupMsg').textContent = msg;
-
-  // Retry button + spinner only make sense while something is actually
-  // happening; a stalled boot shows the button instead of a spinner that
-  // implies progress.
-  const retryBtn = document.getElementById('startupRetryBtn');
-  if (retryBtn) retryBtn.style.display = (isStale && !isFailed) ? '' : 'none';
-  const spinner = overlay.querySelector('.startup-spinner');
-  if (spinner) spinner.style.visibility = isStale ? 'hidden' : '';
-  document.getElementById('startupFill').style.background = isStale ? 'var(--red)' : '';
-
-  // Stage chips (visual breadcrumb)
-  renderStartupChips(s.stage);
+  const sig = `gpu:${stage}:${s.progress}:${s.total}:${label}:${Math.round(pct)}:${detail}`;
+  const html = `
+    <div class="queue-item gpu-boot${cls}">
+      <div class="top">
+        <div class="qthumb qthumb-empty" style="display:flex;align-items:center;justify-content:center;font-size:16px">${cls ? '⚠' : '⚙'}</div>
+        <div class="qmeta">
+          <div class="stage">${label}</div>
+          <div class="id">${detail}</div>
+        </div>
+      </div>
+      <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+    </div>
+  `;
+  return { html, sig };
 }
 
-function renderStartupChips(currentStage){
-  const container = document.getElementById('startupChips');
-  if (!container) return;
-  // Collapse 'registering' and 'compiling' into one chip — they're the same
-  // logical step, the GPU just labels it differently in different contexts.
-  const visibleStages = STARTUP_STAGES.filter(s => s.key !== 'compiling');
-  const currentIdx = visibleStages.findIndex(s =>
-    s.key === currentStage || (currentStage === 'compiling' && s.key === 'registering'),
-  );
-  container.innerHTML = visibleStages.map((s, i) => {
-    let cls = '';
-    if (i < currentIdx) cls = 'done';
-    else if (i === currentIdx) cls = 'active';
-    return `<div class="startup-chip ${cls}" title="${s.label}"></div>`;
-  }).join('');
-}
 
 // ────────────────────────────────────────────────────────────
 // Boot
@@ -2511,14 +2421,13 @@ setInterval(() => {
     const elEl = document.getElementById('progElapsed');
     if (elEl) elEl.textContent = ` ${elapsedSec >= 60 ? `${Math.floor(elapsedSec/60)}m ${elapsedSec%60}s` : `${elapsedSec}s`}`;
   }
-  // Same for the startup overlay's elapsed counter
-  if (STATE.startupShowAt && document.getElementById('startupOverlay').classList.contains('show')) {
-    const elapsed = Math.round(Math.max(
-      (Date.now() - STATE.startupShowAt) / 1000,
-      STATE.gpuState.startup_age_s || 0,
-    ));
-    const tEl = document.getElementById('startupTime');
-    if (tEl) tEl.textContent = elapsed + 's';
+  // Keep the GPU boot row's elapsed clock moving between status polls.
+  // Re-render from the cached job list rather than refetching — this runs
+  // every second, and gpuBootRow folds elapsed into the signature so
+  // renderQueue still skips the DOM rebuild when nothing actually changed.
+  if (STATE.user && STATE.gpuState && STATE.gpuState.stage
+      && STATE.gpuState.stage !== 'ready') {
+    renderQueue(_lastJobs);
   }
 }, 1000);
 
