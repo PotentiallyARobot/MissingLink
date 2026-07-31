@@ -312,7 +312,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <a href="/studio.html" class="hdr-link">← Studio</a>
     <button id="historyBtn" class="hdr-link" onclick="toggleHistory()" style="cursor:pointer;background:none">📂 History</button>
     <div id="tokenBadge" class="token-badge" style="display:none" title="Click to buy more tokens">— tokens</div>
-    <div id="connBadge" class="hdr-badge"><span class="dot cold"></span><span>GPU cold</span></div>
+    <div id="connBadge" class="hdr-badge" title="NVIDIA L4 · 24 GB · Modal"><span class="dot cold"></span><span>GPU cold</span></div>
     <div id="authIn" class="user-pill" style="display:none">
       <img id="authPic" src="" alt="">
       <span id="authEmail">—</span>
@@ -383,17 +383,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     </div>
     <div class="field">
       <label>Vertex Target <span class="val" id="decimateVal">500K</span></label>
-      <input type="range" id="decimate" min="50000" max="16777216" step="50000" value="500000">
-      <div class="field-hint">Max 16.7M (nvdiffrast hard limit)</div>
+      <input type="range" id="decimate" min="50000" max="1500000" step="50000" value="500000">
+      <div class="field-hint">Max 1.5M — the L4's 24 GB, not nvdiffrast's 16.7M, is the real ceiling here</div>
     </div>
 
     <h2>Pipeline</h2>
     <div class="field">
       <label>Pipeline Type</label>
       <select id="pipelineType">
-        <option value="512" selected>Standard 512³ (~30s, less VRAM)</option>
-        <option value="1024_cascade">High 1024³ (~60s, more detail)</option>
+        <option value="512" selected>Standard 512³ (~45s preview on L4)</option>
+        <option value="1024_cascade">High 1024³ (needs A100 — falls back to 512³)</option>
       </select>
+      <div class="field-hint" id="pipelineHint"></div>
     </div>
     <div class="field">
       <label class="checkbox-label">
@@ -500,13 +501,15 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   <div class="startup-card">
     <div class="startup-spinner"></div>
     <h3>Starting GPU</h3>
-    <p id="startupMsg">Spinning up the model engine. This takes ~2-3 minutes on cold start.</p>
+    <p id="startupMsg">Spinning up the model engine on an L4. This takes ~3-4 minutes on cold start.</p>
     <div class="startup-bar"><div class="startup-bar-fill" id="startupFill"></div></div>
     <div class="startup-meta">
       <span class="startup-stage" id="startupStage">CONNECTING…</span>
       <span id="startupTime">0s</span>
     </div>
     <div class="startup-chips" id="startupChips"></div>
+    <button id="startupRetryBtn" class="mini-btn" style="display:none;margin-top:14px"
+            onclick="retryGpuWake()">Retry GPU start</button>
   </div>
 </div>
 
@@ -743,13 +746,24 @@ document.getElementById('decimate').addEventListener('input', (e) => {
 });
 
 // Presets — single-click recipes covering the realistic quality spectrum.
-// fast: minimum acceptable quality, ~30s; balanced: defaults; quality: TRELLIS
-// recommended for production assets; max: pushes everything to its ceiling.
+//
+// All four stay on pipeline_type '512'. That isn't a quality compromise so
+// much as an acknowledgement of the hardware: 1024_cascade holds two
+// resolutions of shape SLat resident at once and doesn't fit in the L4's
+// 24 GB, so the backend downgrades it to '512' anyway. A preset that asked
+// for it would just be lying to the user about what they're getting.
+//
+// The quality axis that IS available on an L4 is step count — it costs
+// time, not memory — so quality/max buy detail with steps rather than
+// resolution. Vertex targets stay at or under the 1.5M server-side clamp.
+//
+// Rough preview timings on a warm L4 at these settings: fast ~30s,
+// balanced ~45s, quality ~70s, max ~110s. Finalize adds ~25-40s on top.
 const PRESETS = {
-  fast:     { ss:6,  shape:6,  tex:4,  ssCfg:7.5, shapeCfg:3.0, texCfg:3.0, dec:200000,    tex_size:1024, pipe:'512',          remesh:false },
-  balanced: { ss:8,  shape:8,  tex:6,  ssCfg:7.5, shapeCfg:3.0, texCfg:3.0, dec:500000,    tex_size:1536, pipe:'512',          remesh:true  },
-  quality:  { ss:12, shape:12, tex:10, ssCfg:8.0, shapeCfg:3.5, texCfg:3.0, dec:1000000,   tex_size:2048, pipe:'1024_cascade', remesh:true  },
-  max:      { ss:20, shape:20, tex:16, ssCfg:8.5, shapeCfg:4.0, texCfg:3.5, dec:2000000,   tex_size:2048, pipe:'1024_cascade', remesh:true  },
+  fast:     { ss:6,  shape:6,  tex:4,  ssCfg:7.5, shapeCfg:3.0, texCfg:3.0, dec:200000,    tex_size:1024, pipe:'512', remesh:false },
+  balanced: { ss:8,  shape:8,  tex:6,  ssCfg:7.5, shapeCfg:3.0, texCfg:3.0, dec:500000,    tex_size:1536, pipe:'512', remesh:true  },
+  quality:  { ss:12, shape:12, tex:10, ssCfg:8.0, shapeCfg:3.5, texCfg:3.0, dec:1000000,   tex_size:2048, pipe:'512', remesh:true  },
+  max:      { ss:20, shape:20, tex:16, ssCfg:8.5, shapeCfg:4.0, texCfg:3.5, dec:1500000,   tex_size:2048, pipe:'512', remesh:true  },
 };
 function applyPreset(name){
   const p = PRESETS[name];
@@ -781,6 +795,28 @@ function applyPreset(name){
 document.querySelectorAll('.preset-btn').forEach(b => {
   b.addEventListener('click', () => applyPreset(b.dataset.preset));
 });
+
+// The backend accepts '1024_cascade' so the wire contract survives an A100
+// redeploy, but clamps it to '512' on the L4 (see clamp_params_for_gpu).
+// Say so up front rather than letting the user discover it from a result
+// that doesn't match the setting they picked.
+function updatePipelineHint(){
+  const sel = document.getElementById('pipelineType');
+  const hint = document.getElementById('pipelineHint');
+  if (!sel || !hint) return;
+  if (sel.value === '1024_cascade') {
+    hint.textContent = 'Current hardware is an L4 (24 GB) — this will run as 512³. '
+                     + 'The setting is preserved for when an A100 is available.';
+    hint.style.color = 'var(--gold)';
+    hint.style.opacity = '1';
+  } else {
+    hint.textContent = '';
+    hint.style.color = '';
+    hint.style.opacity = '';
+  }
+}
+document.getElementById('pipelineType')?.addEventListener('change', updatePipelineHint);
+updatePipelineHint();
 
 // Seed controls. Empty = random per gen. A specific value = reproducible.
 function randomSeed(){
@@ -1510,22 +1546,24 @@ function setActionBar(html){
 // ────────────────────────────────────────────────────────────
 // Progress strip
 // ────────────────────────────────────────────────────────────
-// Pipeline stages in order, with relative time weights based on observed
-// timings on A100 with warm cache. These are rough — actual durations vary
-// with user params (steps, texture_size, vertex target). Used to compute
-// monotonically-advancing OVERALL progress so the bar doesn't reset every
-// stage transition the way per-stage % does.
+// Pipeline stages in order, with relative time weights. Retuned for L4:
+// sampling dominates more than it did on the A100 (the L4 has far less
+// tensor throughput), while the CPU-ish finalize steps are comparatively
+// closer. These are rough — actual durations vary with user params
+// (steps, texture_size, vertex target). Used to compute a monotonically-
+// advancing OVERALL progress so the bar doesn't reset every stage
+// transition the way per-stage % does.
 const PIPELINE_STAGES = [
   // Preview pipeline
   { key: 'queued',                label: 'Queued',           weight: 1, group: 'preview' },
-  { key: 'sampling_ss',           label: 'Sampling structure', weight: 8, group: 'preview' },
-  { key: 'sampling_shape',        label: 'Sampling shape',     weight: 12, group: 'preview' },
-  { key: 'sampling_tex',          label: 'Sampling texture',   weight: 10, group: 'preview' },
-  { key: 'decoding',              label: 'Decoding',           weight: 4, group: 'preview' },
+  { key: 'sampling_ss',           label: 'Sampling structure', weight: 10, group: 'preview' },
+  { key: 'sampling_shape',        label: 'Sampling shape',     weight: 16, group: 'preview' },
+  { key: 'sampling_tex',          label: 'Sampling texture',   weight: 13, group: 'preview' },
+  { key: 'decoding',              label: 'Decoding',           weight: 6, group: 'preview' },
   { key: 'rendering',             label: 'Rendering preview',  weight: 6, group: 'preview' },
   // Finalize pipeline (only runs after Approve)
   { key: 'finalize_queued',       label: 'Finalize queued',     weight: 1, group: 'finalize' },
-  { key: 'finalize_fill_holes',   label: 'Filling holes',       weight: 2, group: 'finalize' },
+  { key: 'finalize_fill_holes',   label: 'Filling holes',       weight: 3, group: 'finalize' },
   { key: 'finalize_prepare_mesh', label: 'Preparing mesh',      weight: 8, group: 'finalize' },
   { key: 'finalize_uv_unwrap',    label: 'UV unwrapping',       weight: 6, group: 'finalize' },
   { key: 'finalize_bake_export',  label: 'Baking textures',     weight: 8, group: 'finalize' },
@@ -1946,7 +1984,16 @@ function updateBadge(s){
   // user sees "GPU cold" for ~10s after sign-in even though the wake fired.
   const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
   const inWakeGap = wakeAge < 30 && (!s.stage || s.stage === 'cold' || s.stage === 'unknown');
-  if (s.stage === 'ready') {
+  // A frozen startup_stage with a dead heartbeat means the container is
+  // gone, not warming — don't show a reassuring "Compiling 3/5" for a
+  // process that stopped existing minutes ago.
+  const hbAge = (s.heartbeat_age_s === null || s.heartbeat_age_s === undefined)
+    ? null : Number(s.heartbeat_age_s);
+  const isStale = hbAge !== null && hbAge > 90 && !inWakeGap;
+  if (isStale) {
+    dot.classList.add('cold');
+    text.textContent = 'GPU lost';
+  } else if (s.stage === 'ready') {
     dot.classList.add('ready');
     text.textContent = 'GPU ready';
   } else if (['booting','loading_transformer','building_pipeline','registering','compiling','warming_up'].includes(s.stage)) {
@@ -1961,24 +2008,55 @@ function updateBadge(s){
     text.textContent = 'GPU cold';
   }
 }
-// Startup pipeline weights — relative time each stage takes on cold boot,
-// derived from production logs:
-//   booting ~5s, loading_transformer ~25s, building_pipeline ~10s,
-//   registering 5x compile ~80s, ready (instant transition).
-// We use these weights to compute a monotonic overall progress bar instead
-// of letting it reset between stages.
+// Startup pipeline weights — relative time each stage takes on cold boot.
+// Retuned for L4: the card is slower through inductor than the A100 was,
+// so compile dominates the boot even harder than before. Rough L4 numbers
+// with a warm HF cache and a warm inductor volume:
+//   booting ~10s, loading_transformer ~40s, building_pipeline ~15s,
+//   registering 5x compile ~120s, ready (instant transition).
+// On a COLD inductor volume the registering stage is several minutes, and
+// on a cold HF cache loading_transformer can run 10+ minutes on its own —
+// which is why that stage carries a stall hint below.
 const STARTUP_STAGES = [
-  { key: 'booting',             label: 'Booting container',           weight: 1, msg: 'Modal is allocating an A100 and pulling the container image.' },
-  { key: 'loading_transformer', label: 'Loading transformer',         weight: 5, msg: 'Streaming 4B params from HuggingFace cache to GPU memory.' },
+  { key: 'booting',             label: 'Booting container',           weight: 1, msg: 'Modal is allocating an L4 and pulling the container image.' },
+  { key: 'loading_transformer', label: 'Loading transformer',         weight: 5, msg: 'Streaming 4B params from the HuggingFace cache volume to GPU memory.' },
   { key: 'building_pipeline',   label: 'Building pipeline',           weight: 2, msg: 'Wiring up the SS / shape SLat / texture SLat models.' },
-  { key: 'registering',         label: 'Compiling CUDA kernels',      weight: 16, msg: 'torch.compile is JIT-ing each flow model. This is the long part.' },
-  { key: 'compiling',           label: 'Compiling CUDA kernels',      weight: 16, msg: 'torch.compile is JIT-ing each flow model. This is the long part.' },
+  { key: 'registering',         label: 'Compiling CUDA kernels',      weight: 18, msg: 'torch.compile is JIT-ing each flow model. This is the long part on an L4.' },
+  { key: 'compiling',           label: 'Compiling CUDA kernels',      weight: 18, msg: 'torch.compile is JIT-ing each flow model. This is the long part on an L4.' },
   { key: 'warming_up',          label: 'Warming up',                  weight: 1, msg: 'Final warm-up pass before the first real job.' },
 ];
 // Cumulative weight up to (but not including) each stage.
 let _startupCum = 0;
 STARTUP_STAGES.forEach(s => { s.cum = _startupCum; _startupCum += s.weight; });
 const STARTUP_TOTAL_WEIGHT = _startupCum;
+
+// Format seconds as "45s" / "3m 20s" / "21m 20s". A raw "1280S" reads as
+// noise; minutes make it obvious at a glance that something is wrong.
+function fmtDuration(sec){
+  sec = Math.round(sec);
+  if (sec < 60) return sec + 's';
+  return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+}
+
+// Manual re-nudge after a stalled boot. Clears the local clock so the
+// overlay starts counting the new attempt rather than continuing the old
+// one, then fires the same wake endpoint sign-in uses.
+window.retryGpuWake = async function retryGpuWake(){
+  const btn = document.getElementById('startupRetryBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  STATE.startupShowAt = 0;
+  STATE.wakeFiredAt = Date.now();
+  try {
+    await fetch('/api/trellis/wake', { method: 'POST', credentials: 'include' });
+    toast('GPU wake sent', 'success');
+  } catch(e) {
+    toast('Wake failed: ' + e.message, 'error');
+  } finally {
+    setTimeout(() => {
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry GPU start'; }
+    }, 5000);
+  }
+};
 
 function updateStartupOverlay(s){
   const overlay = document.getElementById('startupOverlay');
@@ -1991,21 +2069,45 @@ function updateStartupOverlay(s){
   const isReady = s.stage === 'ready' && !inWakeGap;
   const isWarming = isWarmingStage || inWakeGap;
 
+  // ── Staleness ──────────────────────────────────────────────────────
+  // The worker never clears trellis_status, so startup_stage keeps
+  // reporting whatever stage was last emitted — forever, even if the
+  // container died mid-boot. Reading only .stage (which this used to do)
+  // makes a crashed boot indistinguishable from a slow one: the overlay
+  // sits on "LOADING TRANSFORMER" until the user gives up.
+  //
+  // heartbeat_age_s is the signal that actually separates them. The
+  // container now heartbeats every 20s for the whole of setup(), so a
+  // heartbeat older than ~90s means the container is gone, whatever the
+  // stage field claims.
+  const hbAge = (s.heartbeat_age_s === null || s.heartbeat_age_s === undefined)
+    ? null : Number(s.heartbeat_age_s);
+  const isStale = isWarming && !inWakeGap && hbAge !== null && hbAge > 90;
+
   if (isReady) {
     overlay.classList.remove('show');
     STATE.startupShowAt = 0;
+    STATE.startupStallNotified = false;
     return;
   }
   if (!isWarming) {
     overlay.classList.remove('show');
     STATE.startupShowAt = 0;
+    STATE.startupStallNotified = false;
     return;
   }
 
   if (!STATE.startupShowAt) STATE.startupShowAt = Date.now();
   overlay.classList.add('show');
 
-  const elapsed = (Date.now() - STATE.startupShowAt) / 1000 + (s.startup_age_s || 0);
+  // The server's startup_age_s is measured on the container from the top of
+  // setup(). The local clock measures from when this overlay opened. Those
+  // are overlapping intervals, so ADDING them (which this used to do)
+  // roughly doubles the figure — a ~10 min boot renders as "1280S". Take
+  // the larger instead: the server value is authoritative once we have it,
+  // the local one covers the wake-gap before the first status update lands.
+  const localElapsed = (Date.now() - STATE.startupShowAt) / 1000;
+  const elapsed = Math.max(localElapsed, s.startup_age_s || 0);
 
   // Overall progress: cumulative-weight position within the pipeline +
   // any sub-stage fraction (only "registering" reports N/M).
@@ -2024,7 +2126,9 @@ function updateStartupOverlay(s){
 
   // Stage label (big)
   let label;
-  if (stageDef) {
+  if (isStale) {
+    label = 'LOST CONTACT';
+  } else if (stageDef) {
     label = stageDef.label.toUpperCase();
     if (s.stage === 'registering' && s.total > 0) {
       label += ` ${s.progress}/${s.total}`;
@@ -2033,21 +2137,35 @@ function updateStartupOverlay(s){
     label = 'STARTING…';
   }
   document.getElementById('startupStage').textContent = label;
-  document.getElementById('startupTime').textContent = Math.round(elapsed) + 's';
+  document.getElementById('startupTime').textContent = fmtDuration(elapsed);
 
   // Substage detail message
   let msg;
-  if (stageDef) {
+  if (isStale) {
+    const lastStage = STAGE_LABELS[s.stage] || s.stage || 'startup';
+    msg = `No heartbeat from the GPU for ${Math.round(hbAge)}s — the container `
+        + `stopped during "${lastStage}". This is usually an out-of-memory or `
+        + `image-build failure; check the Modal logs for the real error.`;
+  } else if (stageDef) {
     msg = stageDef.msg;
     if (s.stage === 'registering' && s.total > 0) {
       msg = `Compiling flow model ${s.progress + 1} of ${s.total} — torch.compile traces each model the first time it runs.`;
     }
   } else if (inWakeGap) {
-    msg = 'Spinning up the GPU container — usually 30-90s on warm cache, 2-3 min cold.';
+    msg = 'Spinning up the GPU container — usually 60-90s on a warm cache, 3-4 min cold.';
   } else {
     msg = '';
   }
   document.getElementById('startupMsg').textContent = msg;
+
+  // Retry button + spinner only make sense while something is actually
+  // happening; a stalled boot shows the button instead of a spinner that
+  // implies progress.
+  const retryBtn = document.getElementById('startupRetryBtn');
+  if (retryBtn) retryBtn.style.display = isStale ? '' : 'none';
+  const spinner = overlay.querySelector('.startup-spinner');
+  if (spinner) spinner.style.visibility = isStale ? 'hidden' : '';
+  document.getElementById('startupFill').style.background = isStale ? 'var(--red)' : '';
 
   // Stage chips (visual breadcrumb)
   renderStartupChips(s.stage);
@@ -2383,7 +2501,10 @@ setInterval(() => {
   }
   // Same for the startup overlay's elapsed counter
   if (STATE.startupShowAt && document.getElementById('startupOverlay').classList.contains('show')) {
-    const elapsed = Math.round((Date.now() - STATE.startupShowAt) / 1000 + (STATE.gpuState.startup_age_s || 0));
+    const elapsed = Math.round(Math.max(
+      (Date.now() - STATE.startupShowAt) / 1000,
+      STATE.gpuState.startup_age_s || 0,
+    ));
     const tEl = document.getElementById('startupTime');
     if (tEl) tEl.textContent = elapsed + 's';
   }
