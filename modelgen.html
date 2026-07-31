@@ -600,13 +600,19 @@ async function loadMe(){
 // scale down between generations now, so a later Generate must be able to
 // wake it again. The server side is still idempotent.
 function maybeWakeGpu(){
-  const stage = STATE.gpuState && STATE.gpuState.stage;
-  if (stage === 'ready') return;                 // already warm
-  // Don't re-nudge while a boot we already kicked is in flight.
-  if (STATE.wakeFiredAt && (Date.now() - STATE.wakeFiredAt) < 30000) return;
+  const s = STATE.gpuState || {};
+  const hbAge = (s.heartbeat_age_s === null || s.heartbeat_age_s === undefined)
+    ? null : Number(s.heartbeat_age_s);
+  // Same trust rule as gpuBootRow: 'ready' without a fresh heartbeat is a
+  // stale reading from a dead container, not a warm GPU.
+  if (s.stage === 'ready' && hbAge !== null && hbAge <= 90) return;
+  // Don't re-nudge while a boot we already kicked is still plausibly in
+  // flight. 90s rather than 30s: container allocation plus image pull
+  // regularly outlasts 30s, and re-firing mid-allocation achieves nothing.
+  if (STATE.wakeFiredAt && (Date.now() - STATE.wakeFiredAt) < 90000) return;
   STATE.wakeFiredAt = Date.now();
   updateBadge(STATE.gpuState);
-  pollQueue();   // surface the boot row immediately rather than up to 2s later
+  pollQueue();   // surface the boot row immediately rather than up to 3s later
   fetch('/api/trellis/wake', { method: 'POST', credentials: 'include' })
     .then(r => r.json())
     .then(d => {
@@ -1828,7 +1834,7 @@ async function pollQueue(){
 }
 function renderQueue(jobs){
   const panel = document.getElementById('queuePanel');
-  const boot = gpuBootRow();
+  const boot = gpuBootRow(jobs);
   // The panel now also carries GPU boot state, so "nothing to show" means
   // no jobs AND no boot activity — not just an empty job list.
   if (jobs.length === 0 && !boot.html) {
@@ -2056,48 +2062,75 @@ function updateStartupOverlay(){
 // Build the synthetic queue row describing GPU boot state, or '' when the
 // GPU is warm and there's nothing to report. Returns {html, sig} so
 // renderQueue can fold it into its change-detection signature.
-function gpuBootRow(){
+function gpuBootRow(jobs){
   const s = STATE.gpuState || {};
   const stage = s.stage;
   const stageDef = STARTUP_STAGES.find(st => st.key === stage);
-  const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : Infinity;
-  const inWakeGap = wakeAge < 30 && (!stage || stage === 'cold' || stage === 'unknown');
   const hbAge = (s.heartbeat_age_s === null || s.heartbeat_age_s === undefined)
     ? null : Number(s.heartbeat_age_s);
-  const isFailed = stage === 'boot_failed';
-  const isStale = isFailed || (!!stageDef && !inWakeGap && hbAge !== null && hbAge > 90);
+  const hbFresh = hbAge !== null && hbAge <= 90;
 
-  // Warm and healthy, or stone cold with nothing pending — nothing to show.
-  if (!stageDef && !inWakeGap && !isFailed) return { html: '', sig: '' };
-  if (stage === 'ready' && !inWakeGap) return { html: '', sig: '' };
+  // "Ready" is only trustworthy alongside a fresh heartbeat. The worker
+  // never clears trellis_status, so a container that died while ready
+  // keeps reporting 'ready' indefinitely — that stale value is exactly
+  // what a cold start reads during the minute before the new container
+  // emits its first stage.
+  const gpuReady = stage === 'ready' && hbFresh;
+  if (gpuReady) {
+    STATE.wakeFiredAt = 0;          // boot resolved; stop tracking it
+    return { html: '', sig: '' };
+  }
+
+  const isFailed = stage === 'boot_failed';
+  // Do we have reason to believe a boot is (or should be) in progress?
+  // Either this tab kicked a wake, or there is queued work and the GPU
+  // isn't confirmably up — the latter covers a page reload mid-boot,
+  // where wakeFiredAt is gone but the job is still waiting.
+  const jobsPending = (jobs || []).some(j =>
+    ['queued', 'finalize_queued', 'running_preview', 'running_finalize'].includes(j.status));
+  const awaiting = STATE.wakeFiredAt > 0 || jobsPending;
+  if (!awaiting && !isFailed) return { html: '', sig: '' };
+
+  // Elapsed: server clock once we have it, local wake clock before that.
+  const wakeAge = STATE.wakeFiredAt ? (Date.now() - STATE.wakeFiredAt) / 1000 : 0;
+  const elapsed = Math.max(wakeAge, s.startup_age_s || 0);
+
+  // Stale only counts once a real stage has been reported — before that,
+  // an old heartbeat just means the previous container is long gone.
+  const isStale = !isFailed && !!stageDef && hbAge !== null && hbAge > 90;
 
   let label, detail, pct, cls;
   if (isFailed) {
-    label = 'BOOT FAILED';
-    detail = 'GPU aborted during startup — check Modal logs';
+    label = 'Boot failed';
+    detail = 'aborted during startup — check Modal logs';
     pct = 100; cls = ' failed';
   } else if (isStale) {
-    label = 'GPU LOST';
-    detail = `no heartbeat for ${Math.round(hbAge)}s`;
+    label = 'GPU lost';
+    detail = `no heartbeat for ${fmtDuration(hbAge)}`;
     pct = 100; cls = ' failed';
   } else if (stageDef) {
     label = stageDef.label;
     if (stage === 'registering' && s.total > 0) label += ` ${s.progress}/${s.total}`;
     const localPct = s.total > 0 ? (s.progress || 0) / s.total : 0;
     pct = Math.min(95, 100 * (stageDef.cum + stageDef.weight * localPct) / STARTUP_TOTAL_WEIGHT);
-    detail = fmtDuration(Math.max(wakeAge === Infinity ? 0 : wakeAge, s.startup_age_s || 0));
+    detail = fmtDuration(elapsed);
     cls = '';
   } else {
+    // Wake fired (or work is queued) but no stage yet: Modal is still
+    // allocating the container and pulling the image. This can run well
+    // past a minute on a cold image, so it needs a real row rather than
+    // a short-lived placeholder.
     label = 'Starting GPU';
-    detail = 'allocating container';
-    pct = 4; cls = '';
+    detail = `allocating container · ${fmtDuration(elapsed)}`;
+    pct = Math.min(6, elapsed / 20);
+    cls = '';
   }
 
   const sig = `gpu:${stage}:${s.progress}:${s.total}:${label}:${Math.round(pct)}:${detail}`;
   const html = `
     <div class="queue-item gpu-boot${cls}">
       <div class="top">
-        <div class="qthumb qthumb-empty" style="display:flex;align-items:center;justify-content:center;font-size:16px">${cls ? '⚠' : '⚙'}</div>
+        <div class="qthumb qthumb-empty" style="display:flex;align-items:center;justify-content:center;font-size:16px">${cls ? '\u26a0' : '\u2699'}</div>
         <div class="qmeta">
           <div class="stage">${label}</div>
           <div class="id">${detail}</div>
@@ -2422,11 +2455,12 @@ setInterval(() => {
     if (elEl) elEl.textContent = ` ${elapsedSec >= 60 ? `${Math.floor(elapsedSec/60)}m ${elapsedSec%60}s` : `${elapsedSec}s`}`;
   }
   // Keep the GPU boot row's elapsed clock moving between status polls.
-  // Re-render from the cached job list rather than refetching — this runs
-  // every second, and gpuBootRow folds elapsed into the signature so
-  // renderQueue still skips the DOM rebuild when nothing actually changed.
-  if (STATE.user && STATE.gpuState && STATE.gpuState.stage
-      && STATE.gpuState.stage !== 'ready') {
+  // Gate on wakeFiredAt as well as stage: during container allocation the
+  // reported stage is often a stale 'ready' from the previous container,
+  // and gating on stage alone would freeze the clock for that whole phase
+  // — exactly the window where the user most wants to see something move.
+  const gs = STATE.gpuState || {};
+  if (STATE.user && (STATE.wakeFiredAt > 0 || (gs.stage && gs.stage !== 'ready'))) {
     renderQueue(_lastJobs);
   }
 }, 1000);
