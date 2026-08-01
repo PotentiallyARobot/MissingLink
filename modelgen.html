@@ -178,8 +178,18 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .dpad-btn.up{grid-area:1/2}.dpad-btn.left{grid-area:2/1}
 .dpad-btn.mid{grid-area:2/2;font-size:11px}.dpad-btn.right{grid-area:2/3}
 .dpad-btn.down{grid-area:3/2}
-.dpad-btn.mid.pan{border-color:var(--gold);color:var(--gold)}
 .glb-viewer .toolbar{position:absolute;bottom:16px;right:16px;display:flex;gap:4px}
+.glb-viewer .tb-select{font-family:var(--font-mono);font-size:9px;letter-spacing:.5px;
+  padding:5px 20px 5px 8px;border:1px solid var(--border);border-radius:4px;
+  background:rgba(17,17,19,.85);color:var(--text-dim);cursor:pointer;
+  -webkit-appearance:none;appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-muted) 50%),
+                   linear-gradient(135deg,var(--text-muted) 50%,transparent 50%);
+  background-position:calc(100% - 11px) 52%, calc(100% - 7px) 52%;
+  background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+.glb-viewer .tb-select:hover{border-color:var(--gold);color:var(--gold)}
+.glb-viewer .tb-select:focus{outline:none;border-color:var(--gold)}
+.glb-viewer .tb-select:disabled{opacity:.5;cursor:wait}
 .glb-viewer .tb-btn{cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:5px 9px;border:1px solid var(--border);border-radius:3px;background:rgba(17,17,19,.85);color:var(--text-dim);transition:.1s;backdrop-filter:blur(4px)}
 .glb-viewer .tb-btn:hover{border-color:var(--gold);color:var(--gold)}
 .glb-viewer .tb-btn.active{background:var(--gold);color:var(--black);border-color:var(--gold)}
@@ -354,10 +364,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-drawer.expanded .history-end{grid-column:1/-1}
 /* Queue panel: draggable container with a header, contains job items.
    Stays put after user drags it; remembers position via a STATE flag. */
-.queue-panel{position:fixed;top:60px;right:14px;width:300px;max-height:calc(100vh - 80px);background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:90;display:flex;flex-direction:column;box-shadow:0 6px 20px rgba(0,0,0,.4);overflow:hidden;transition:width .2s, height .2s}
+.queue-panel{position:fixed;top:60px;right:14px;width:300px;max-height:calc(100vh - 80px);background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:120;display:flex;flex-direction:column;box-shadow:0 6px 20px rgba(0,0,0,.4);overflow:hidden;transition:width .2s, height .2s}
 .queue-panel.minimized{width:auto;max-height:none;height:auto}
 .queue-panel.minimized .queue-body{display:none}
-.queue-panel.empty{display:none}
+.queue-panel.empty .queue-body{padding:10px;color:var(--text-muted);
+  font-family:var(--font-mono);font-size:9px;text-align:center;letter-spacing:.5px}
+.queue-panel.empty .qp-count{opacity:.4}
 .queue-panel-header{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--surface-2);border-bottom:1px solid var(--border);cursor:grab;user-select:none;font-family:var(--font-display);font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase}
 .queue-panel-header.dragging{cursor:grabbing}
 .queue-panel-header .qp-title{display:flex;align-items:center;gap:6px}
@@ -1759,24 +1771,34 @@ function showGlbViewer(glbUrl){
       <canvas id="glbCanvas"></canvas>
       <div class="hud"><span class="mode" id="glbMode">PBR</span> · <span id="glbStats">—</span></div>
       <div class="tb-spin" id="glbLoading">LOADING…</div>
-      <!-- D-pad. Orbit on the arrows, pan with Shift held (or the centre
-           toggle on touch, where there's no modifier key). Sits opposite
+      <!-- D-pad: pans the camera. Orbit stays on mouse-drag. Sits opposite
            the toolbar so neither covers the model. -->
       <div class="dpad" id="glbDpad">
-        <button class="dpad-btn up"    title="Up (Shift: pan)"    onmousedown="_dpadStart('up',event)"    ontouchstart="_dpadStart('up',event)">▲</button>
-        <button class="dpad-btn left"  title="Left (Shift: pan)"  onmousedown="_dpadStart('left',event)"  ontouchstart="_dpadStart('left',event)">◀</button>
-        <button class="dpad-btn mid"   id="dpadModeBtn" title="Toggle orbit / pan" onclick="_dpadToggleMode()">⟲</button>
-        <button class="dpad-btn right" title="Right (Shift: pan)" onmousedown="_dpadStart('right',event)" ontouchstart="_dpadStart('right',event)">▶</button>
-        <button class="dpad-btn down"  title="Down (Shift: pan)"  onmousedown="_dpadStart('down',event)"  ontouchstart="_dpadStart('down',event)">▼</button>
+        <button class="dpad-btn up"    title="Pan up (↑)"      onmousedown="_dpadStart('up',event)"    ontouchstart="_dpadStart('up',event)">▲</button>
+        <button class="dpad-btn left"  title="Pan left (←)"    onmousedown="_dpadStart('left',event)"  ontouchstart="_dpadStart('left',event)">◀</button>
+        <button class="dpad-btn mid"   title="Re-centre on the model" onclick="_dpadCenter()">✥</button>
+        <button class="dpad-btn right" title="Pan right (→)"   onmousedown="_dpadStart('right',event)" ontouchstart="_dpadStart('right',event)">▶</button>
+        <button class="dpad-btn down"  title="Pan down (↓)"    onmousedown="_dpadStart('down',event)"  ontouchstart="_dpadStart('down',event)">▼</button>
       </div>
       <div class="toolbar">
         <button class="tb-btn" title="Zoom in" onclick="_glbViewer && _glbViewer.zoomIn()">+</button>
         <button class="tb-btn" title="Zoom out" onclick="_glbViewer && _glbViewer.zoomOut()">−</button>
         <button class="tb-btn" title="Reset view" onclick="_glbViewer && _glbViewer.resetCamera()">⟲</button>
         <button class="tb-btn" id="glbProxyBtn" title="Toggle drag proxy mode" onclick="_glbViewer && _glbViewer.cycleProxy()">FLAT</button>
-        <button class="tb-btn" id="glbEnvBtn" title="Cycle lighting environment" onclick="_glbViewer && _glbViewer.cycleEnvironment()">STUDIO</button>
+        <select class="tb-select" id="glbEnvSel" title="Lighting environment"
+                onchange="_glbViewer && _glbViewer.onEnvSelect(this.value)">
+          <option value="forest" selected>Forest</option>
+          <option value="studio">Studio</option>
+          <option value="city">City</option>
+          <option value="courtyard">Courtyard</option>
+          <option value="interior">Interior</option>
+          <option value="night">Night</option>
+          <option value="sunrise">Sunrise</option>
+          <option value="sunset">Sunset</option>
+          <option value="room">Neutral</option>
+          <option value="custom">Load .hdr / .exr…</option>
+        </select>
         <button class="tb-btn" id="glbBgBtn" title="Show environment as backdrop" onclick="_glbViewer && _glbViewer.toggleEnvBackground()">BG</button>
-        <button class="tb-btn" title="Load your own .hdr / .exr environment map" onclick="_glbViewer && _glbViewer.pickCustomEnv()">HDR+</button>
         <button class="tb-btn" id="glbRecBtn" title="Record a 360° turntable video" onclick="_glbViewer && _glbViewer.showTurntableOptions()">VID</button>
         <button class="tb-btn" id="glbPbrBtn" title="Render on the GPU with TRELLIS's own PBR renderer" onclick="showPbrRenderOptions()">PBR VID</button>
         <button class="tb-btn" title="View texture maps" onclick="_glbViewer && _glbViewer.showTextures()">MAPS</button>
@@ -1825,38 +1847,57 @@ async function initThreeViewer(glbUrl){
   // light. All are equirectangular .hdr served from the three.js example
   // CDN. Each is PMREM-prefiltered once and cached, so cycling is instant
   // after first load.
+  // The same eight HDRIs the GPU renderer uses, pulled straight from the
+  // TRELLIS.2 repo via jsDelivr (raw.githubusercontent doesn't set
+  // long-lived cache headers and rate-limits; jsDelivr does neither).
+  // Using the identical maps means the interactive view and the PBR
+  // render agree — previously the viewer lit with threejs.org's sample
+  // HDRIs while the server rendered with forest.exr, so the video never
+  // matched the preview.
+  const HDRI_BASE = 'https://cdn.jsdelivr.net/gh/PotentiallyARobot/TRELLIS.2@main/assets/hdri/';
   const ENVIRONMENTS = [
-    { key: 'studio',  label: 'STUDIO',  url: null },   // RoomEnvironment, no fetch
-    { key: 'plaza',   label: 'PLAZA',   url: 'https://threejs.org/examples/textures/equirectangular/royal_esplanade_1k.hdr' },
-    { key: 'venice',  label: 'SUNSET',  url: 'https://threejs.org/examples/textures/equirectangular/venice_sunset_1k.hdr' },
-    { key: 'pedestrian', label: 'NIGHT', url: 'https://threejs.org/examples/textures/equirectangular/pedestrian_overpass_1k.hdr' },
+    { key: 'forest',    label: 'FOREST',    url: HDRI_BASE + 'forest.exr' },
+    { key: 'studio',    label: 'STUDIO',    url: HDRI_BASE + 'studio.exr' },
+    { key: 'city',      label: 'CITY',      url: HDRI_BASE + 'city.exr' },
+    { key: 'courtyard', label: 'COURTYARD', url: HDRI_BASE + 'courtyard.exr' },
+    { key: 'interior',  label: 'INTERIOR',  url: HDRI_BASE + 'interior.exr' },
+    { key: 'night',     label: 'NIGHT',     url: HDRI_BASE + 'night.exr' },
+    { key: 'sunrise',   label: 'SUNRISE',   url: HDRI_BASE + 'sunrise.exr' },
+    { key: 'sunset',    label: 'SUNSET',    url: HDRI_BASE + 'sunset.exr' },
+    { key: 'room',      label: 'NEUTRAL',   url: null },   // RoomEnvironment, no fetch
   ];
   const _envCache = new Map();     // key → {envMap, bgTex}
-  let envIndex = 0;
+  let envIndex = 0;               // forest — matches the render default
   let showEnvBackground = false;
 
-  // Studio (RoomEnvironment) is synchronous and needs no network, so it
-  // renders immediately while any HDRI loads behind it.
+  // RoomEnvironment is synchronous and needs no network, so it lights the
+  // model instantly while forest.exr streams in behind it. Without this
+  // the model would pop in unlit for a second or two.
   const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  _envCache.set('studio', { envMap: roomEnv, bgTex: null });
+  _envCache.set('room', { envMap: roomEnv, bgTex: null });
   scene.environment = roomEnv;
+  // Kick off the real default immediately. Deferred a tick so the rest of
+  // viewer construction isn't blocked behind a multi-MB fetch.
+  setTimeout(() => { if (alive) setEnvironment(0); }, 0);
 
   function applyEnv(entry, cached){
     scene.environment = cached.envMap;
     _invalidate();
     scene.background = (showEnvBackground && cached.bgTex) ? cached.bgTex : null;
-    const el = document.getElementById('glbEnvBtn');
-    if (el) el.textContent = entry.label;
+    const sel = document.getElementById('glbEnvSel');
+    if (sel && sel.value !== entry.key) sel.value = entry.key;
   }
 
   async function setEnvironment(i){
     envIndex = ((i % ENVIRONMENTS.length) + ENVIRONMENTS.length) % ENVIRONMENTS.length;
     const entry = ENVIRONMENTS[envIndex];
     if (_envCache.has(entry.key)) { applyEnv(entry, _envCache.get(entry.key)); return; }
-    const btn = document.getElementById('glbEnvBtn');
-    if (btn) btn.textContent = '…';
+    const sel = document.getElementById('glbEnvSel');
+    if (sel) sel.disabled = true;
     try {
-      const hdrTex = await new RGBELoader().loadAsync(entry.url);
+      // .exr and .hdr need different loaders; pick by extension.
+      const Loader = /\.exr($|\?)/i.test(entry.url) ? EXRLoader : RGBELoader;
+      const hdrTex = await new Loader().loadAsync(entry.url);
       hdrTex.mapping = THREE.EquirectangularReflectionMapping;
       const envMap = pmrem.fromEquirectangular(hdrTex).texture;
       // Keep the raw equirect around for use as a visible backdrop; the
@@ -1866,14 +1907,26 @@ async function initThreeViewer(glbUrl){
       if (!alive) return;
       applyEnv(entry, cached);
     } catch (e) {
+      // Non-fatal: the neutral RoomEnvironment is already lighting the
+      // scene, so a failed fetch degrades rather than breaking the view.
       console.warn('[viewer] HDRI load failed for', entry.key, e);
-      toast('Environment failed to load', 'error');
-      applyEnv(ENVIRONMENTS[0], _envCache.get('studio'));
-      envIndex = 0;
+      const roomIdx = ENVIRONMENTS.findIndex(x => x.key === 'room');
+      applyEnv(ENVIRONMENTS[roomIdx], _envCache.get('room'));
+      envIndex = roomIdx;
+    } finally {
+      const s2 = document.getElementById('glbEnvSel');
+      if (s2) s2.disabled = false;
     }
   }
 
-  function cycleEnvironment(){ setEnvironment(envIndex + 1); }
+  // Driven by the toolbar <select>. 'custom' opens the file picker rather
+  // than selecting a preset — folding it in here is why HDR+ no longer
+  // needs its own button.
+  function onEnvSelect(value){
+    if (value === 'custom') { pickCustomEnv(); return; }
+    const i = ENVIRONMENTS.findIndex(e => e.key === value);
+    if (i >= 0) setEnvironment(i);
+  }
 
   // ── Custom environment map ───────────────────────────────────
   // Load an equirectangular .hdr (Radiance) or .exr off disk. Read as an
@@ -1888,9 +1941,6 @@ async function initThreeViewer(glbUrl){
       toast('Need an equirectangular .hdr or .exr', 'error');
       return;
     }
-    const btn = document.getElementById('glbEnvBtn');
-    const prevLabel = btn ? btn.textContent : '';
-    if (btn) btn.textContent = '…';
     try {
       const buf = await file.arrayBuffer();
       const loader = isExr ? new EXRLoader() : new RGBELoader();
@@ -1928,7 +1978,6 @@ async function initThreeViewer(glbUrl){
     } catch (e) {
       console.error('[viewer] custom HDRI failed', e);
       toast('Could not read that environment map', 'error');
-      if (btn) btn.textContent = prevLabel;
     }
   }
 
@@ -2604,63 +2653,44 @@ async function initThreeViewer(glbUrl){
     toast(`Turntable saved (${(blob.size / 1048576).toFixed(1)} MB)`, 'success');
   }
 
-  // ── D-pad camera nudging ─────────────────────────────────
-  // Orbit rotates around the target; pan slides the target itself, which
-  // is what you want for framing a detail off-centre. Pan distance scales
-  // with camera distance so it feels the same zoomed in or out.
-  let dpadMode = 'orbit';
-  const ORBIT_SPEED = 1.6;   // radians/sec
-  const PAN_SPEED   = 0.9;   // fraction of view height/sec
+  // ── D-pad camera panning ─────────────────────────────────
+  // Pan only. Orbiting is already what mouse-drag does, so duplicating it
+  // here would waste the control; sliding the view up/down/left/right is
+  // the thing you otherwise can't do without a middle-mouse drag.
+  //
+  // Moves the camera AND its orbit target together, in screen space. Both
+  // parts matter: screen space so "up" means up regardless of how the
+  // camera is currently oriented, and moving the target so that orbiting
+  // afterwards still rotates around what you framed rather than swinging
+  // around a point that's drifted off-screen.
+  const PAN_SPEED = 0.9;   // fraction of the visible view height per second
 
-  function nudgeCamera(dir, dt, mode){
+  function panCamera(dir, dt){
     const target = controls.target;
-    if (mode === 'pan') {
-      // Pan in SCREEN space, not world space — dragging "up" should move
-      // the view up regardless of how the camera is oriented.
-      const dist = camera.position.distanceTo(target);
-      const viewH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
-      const amt = viewH * PAN_SPEED * dt;
-      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
-      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
-      const delta = new THREE.Vector3();
-      if (dir === 'left')  delta.addScaledVector(right, -amt);
-      if (dir === 'right') delta.addScaledVector(right,  amt);
-      if (dir === 'up')    delta.addScaledVector(up,     amt);
-      if (dir === 'down')  delta.addScaledVector(up,    -amt);
-      camera.position.add(delta);
-      target.add(delta);
-    } else {
-      const offset = camera.position.clone().sub(target);
-      const r = offset.length();
-      let az = Math.atan2(offset.x, offset.z);
-      let polar = Math.acos(THREE.MathUtils.clamp(offset.y / r, -1, 1));
-      const step = ORBIT_SPEED * dt;
-      if (dir === 'left')  az += step;
-      if (dir === 'right') az -= step;
-      // Clamp off the poles: at exactly 0 or π the azimuth becomes
-      // undefined and the camera flips.
-      if (dir === 'up')    polar = Math.max(0.05, polar - step);
-      if (dir === 'down')  polar = Math.min(Math.PI - 0.05, polar + step);
-      const sp = Math.sin(polar), cp = Math.cos(polar);
-      camera.position.set(
-        target.x + r * sp * Math.sin(az),
-        target.y + r * cp,
-        target.z + r * sp * Math.cos(az),
-      );
-    }
-    camera.lookAt(target);
+    // Scale by distance so panning feels the same zoomed in or out — a
+    // fixed world-space step would crawl when far out and overshoot when
+    // close in.
+    const dist = camera.position.distanceTo(target);
+    const viewH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const amt = viewH * PAN_SPEED * dt;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+    const delta = new THREE.Vector3();
+    if (dir === 'left')  delta.addScaledVector(right, -amt);
+    if (dir === 'right') delta.addScaledVector(right,  amt);
+    if (dir === 'up')    delta.addScaledVector(up,     amt);
+    if (dir === 'down')  delta.addScaledVector(up,    -amt);
+    camera.position.add(delta);
+    target.add(delta);
     controls.update();
     _invalidate();
   }
 
-  // Press-and-hold repeat, driven by rAF so the speed is frame-rate
-  // independent rather than tied to a timer interval.
+  // Press-and-hold repeat on rAF, so speed is frame-rate independent
+  // rather than tied to a timer interval.
   let dpadRaf = null;
   function dpadStart(dir, ev){
     if (ev) ev.preventDefault();
-    // Shift is the transient modifier; the centre button is the sticky
-    // toggle for touch, where no modifier key exists.
-    const mode = (ev && ev.shiftKey) ? (dpadMode === 'pan' ? 'orbit' : 'pan') : dpadMode;
     dpadStop();
     if (pbrMeshes.length > 0) applyMode(proxyType);
     setPR(DRAG_PR);
@@ -2668,7 +2698,7 @@ async function initThreeViewer(glbUrl){
     const step = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      nudgeCamera(dir, dt, mode);
+      panCamera(dir, dt);
       dpadRaf = requestAnimationFrame(step);
     };
     dpadRaf = requestAnimationFrame(step);
@@ -2680,22 +2710,28 @@ async function initThreeViewer(glbUrl){
     if (pbrMeshes.length > 0) applyMode('pbr');
     setPR(FULL_PR);
   }
-  function dpadToggleMode(){
-    dpadMode = dpadMode === 'orbit' ? 'pan' : 'orbit';
-    const b = document.getElementById('dpadModeBtn');
-    if (b) {
-      b.textContent = dpadMode === 'pan' ? '✥' : '⟲';
-      b.classList.toggle('pan', dpadMode === 'pan');
-      b.title = dpadMode === 'pan' ? 'Pan mode (Shift for orbit)' : 'Orbit mode (Shift for pan)';
-    }
-  }
-  // Exposed globally because the buttons are inline-handler driven and
-  // live outside this closure.
-  window._dpadStart = dpadStart;
-  window._dpadToggleMode = dpadToggleMode;
 
-  // Keyboard equivalents. Ignored while a text field has focus so typing
-  // a seed doesn't fly the camera around.
+  // Re-centre the pan without disturbing the orbit angle or zoom — this
+  // is the counterpart to panning, not a full camera reset (the toolbar's
+  // ⟲ already does that).
+  function centerPan(){
+    const box = new THREE.Box3().setFromObject(modelGroup || scene);
+    if (box.isEmpty()) return;
+    const c = box.getCenter(new THREE.Vector3());
+    const delta = c.clone().sub(controls.target);
+    controls.target.add(delta);
+    camera.position.add(delta);
+    controls.update();
+    _invalidate();
+  }
+
+  // Exposed globally: the buttons use inline handlers and live outside
+  // this closure.
+  window._dpadStart = dpadStart;
+  window._dpadCenter = centerPan;
+
+  // Arrow keys mirror the pad. Ignored while a field has focus so typing
+  // a seed value doesn't slide the camera.
   const dpadKeys = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
   const onKeyDown = (e) => {
     const dir = dpadKeys[e.key];
@@ -2713,7 +2749,7 @@ async function initThreeViewer(glbUrl){
 
   _glbViewer = {
     cycleProxy,
-    cycleEnvironment,
+    onEnvSelect,
     toggleEnvBackground,
     pickCustomEnv,
     recordTurntable,
@@ -3211,8 +3247,15 @@ function renderQueue(jobs){
   // The panel now also carries GPU boot state, so "nothing to show" means
   // no jobs AND no boot activity — not just an empty job list.
   if (jobs.length === 0 && !boot.html) {
+    // Keep the panel mounted rather than display:none-ing it. Hiding it
+    // meant the user's dragged position was invisible until work landed,
+    // and there was nothing to grab in between.
     panel.classList.add('empty');
-    _lastQueueSig = '';
+    document.getElementById('queueCount').textContent = '0';
+    if (_lastQueueSig !== 'EMPTY') {
+      document.getElementById('queueBody').innerHTML = 'No active jobs';
+      _lastQueueSig = 'EMPTY';
+    }
     return;
   }
   panel.classList.remove('empty');
@@ -3299,6 +3342,22 @@ function initQueueDrag(){
   const panel = document.getElementById('queuePanel');
   const header = document.getElementById('queuePanelHeader');
   if (!panel || !header) return;
+
+  // Restore a previously dragged position.
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('modelgen:queuePos') || 'null');
+    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      // Clamp to the current viewport — a position saved on a wider
+      // monitor would otherwise drop the panel off-screen.
+      const x = Math.max(8, Math.min(window.innerWidth - 120, saved.x));
+      const y = Math.max(8, Math.min(window.innerHeight - 60, saved.y));
+      panel.style.right = 'auto';
+      panel.style.left = x + 'px';
+      panel.style.top = y + 'px';
+      STATE.queuePos = { x, y };
+    }
+  } catch (e) { /* ignore */ }
+
   let dragging = false, startX = 0, startY = 0, panelStartX = 0, panelStartY = 0;
   header.addEventListener('pointerdown', (e) => {
     // Don't start a drag if the user clicked on a button inside the header
@@ -3322,6 +3381,9 @@ function initQueueDrag(){
     const newY = Math.max(8, Math.min(window.innerHeight - 60, panelStartY + dy));
     panel.style.left = newX + 'px';
     panel.style.top = newY + 'px';
+    STATE.queuePos = { x: newX, y: newY };
+    try { sessionStorage.setItem('modelgen:queuePos', JSON.stringify(STATE.queuePos)); }
+    catch (e) { /* private mode — position just won't persist */ }
   });
   const endDrag = (e) => {
     if (!dragging) return;
