@@ -100,6 +100,15 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .field{display:flex;flex-direction:column;gap:4px}
 .field label{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between}
 .field label .val{color:var(--gold);font-weight:600}
+/* Editable readouts. Click to type an exact value instead of fighting a
+   slider for one-unit precision. */
+.field label .val[contenteditable]{cursor:text;padding:0 3px;border-radius:3px;
+  border:1px solid transparent;outline:none;min-width:26px;display:inline-block;
+  text-align:right}
+.field label .val[contenteditable]:hover{border-color:var(--border-light)}
+.field label .val[contenteditable]:focus{border-color:var(--gold);
+  background:var(--surface-2);color:var(--white)}
+.field label .val.invalid{border-color:var(--red);color:var(--red)}
 .field input[type=range]{width:100%;accent-color:var(--gold)}
 .field input[type=number],.field select{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:6px 8px;font-family:var(--font-mono);font-size:11px}
 .field input[type=number]:focus,.field select:focus{border-color:var(--gold);outline:0}
@@ -151,7 +160,14 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
    viewer read as a card floating inside the app rather than the app's
    main surface. Other viewport contents (empty state, sprite preview)
    are centered flex children, so they're unaffected. */
-.clear-stage-btn{position:absolute;top:16px;right:16px;z-index:20;cursor:pointer;
+.stage-actions{position:absolute;top:16px;right:16px;z-index:20;
+  display:flex;align-items:center;gap:8px}
+.stage-dl-btn{cursor:pointer;text-decoration:none;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.5px;padding:7px 14px;
+  border:1px solid var(--gold);border-radius:4px;background:var(--gold);
+  color:var(--black);font-weight:600;transition:.12s;white-space:nowrap}
+.stage-dl-btn:hover{background:var(--gold-light);border-color:var(--gold-light)}
+.clear-stage-btn{position:static;z-index:20;cursor:pointer;
   font-family:var(--font-mono);font-size:10px;letter-spacing:.5px;padding:6px 12px;
   border:1px solid var(--border);border-radius:4px;background:rgba(17,17,19,.85);
   color:var(--text-dim);backdrop-filter:blur(4px);transition:.12s}
@@ -608,7 +624,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     min-height:32px;               /* touch target */
   }
   .glb-viewer .tb-select{padding-right:20px}
-  .clear-stage-btn{top:8px;right:8px}
+  .stage-actions{top:8px;right:8px;gap:6px}
+  .stage-dl-btn{padding:8px 11px;font-size:10px}
 
   /* D-pad: bigger targets, clear of the sidebar dock */
   .dpad{
@@ -942,7 +959,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     </div>
     <div class="field">
       <label>Min Component Size <span class="val" id="minCompVal">1e-4</span></label>
-      <input type="range" id="minComp" min="0" max="10" step="1" value="4">
+      <input type="range" id="minComp" min="0" max="10" step="1" value="4"
+             data-value-map='[0,1e-6,1e-5,5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2,1e-1]'>
       <div class="field-hint">Drops disconnected fragments below this fraction of the mesh. Also removes floaters and shadow planes.</div>
     </div>
 
@@ -1036,8 +1054,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   <div id="sheetScrim" class="hidden" onclick="toggleSheet(false)"></div>
 
   <main class="main">
-    <button id="clearStageBtn" class="clear-stage-btn" style="display:none"
-            title="Clear the stage" onclick="clearStage()">Clear stage</button>
+    <div class="stage-actions">
+      <a id="stageDownloadBtn" class="stage-dl-btn" style="display:none"
+         href="#" download title="Download the GLB">⬇ Download GLB</a>
+      <button id="clearStageBtn" class="clear-stage-btn" style="display:none"
+              title="Clear the stage" onclick="clearStage()">Clear stage</button>
+    </div>
     <div class="main-viewport" id="mainViewport">
       <div class="empty-state" id="emptyState">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M12 2L2 7L12 12L22 7L12 2Z"/><path d="M2 17L12 22L22 17"/><path d="M2 12L12 17L22 12"/></svg>
@@ -1358,6 +1380,122 @@ async function resumePendingGen(){
   } else {
     toast('Signed in — your image and settings are restored', 'success');
   }
+}
+
+// ── EDITABLE SLIDER READOUTS ─────────────────────────────────────────
+// Every .val readout that belongs to a range input becomes click-to-type.
+// Sliders can't hit an exact value at these ranges — vertex target steps
+// in 50,000s across a 50k-8M span — so typing is the only way to be
+// precise.
+//
+// Values are round-tripped through the slider itself: parse → clamp →
+// snap to step → set → dispatch 'input'. That last part matters, because
+// the existing readout formatters and updateTierUI are all wired to
+// 'input' events, so they redisplay and re-price automatically instead of
+// needing a parallel code path.
+function parseLooseNumber(txt){
+  let t = String(txt).trim().toLowerCase();
+  if (!t || t === 'auto' || t === 'off') return 0;
+  // Strip thousands separators and display-only suffixes (°, %, px).
+  t = t.replace(/[,\s]/g, '').replace(/(°|deg|%|px)$/g, '');
+  // 500k / 1.5m shorthand, and scientific notation for tiny thresholds.
+  const m = t.match(/^(-?\d*\.?\d+(?:e[-+]?\d+)?)([km])?$/);
+  if (!m) return NaN;
+  let v = parseFloat(m[1]);
+  if (!isFinite(v)) return NaN;
+  if (m[2] === 'k') v *= 1e3;
+  if (m[2] === 'm') v *= 1e6;
+  return v;
+}
+
+function commitValEdit(span, range){
+  const raw = parseLooseNumber(span.textContent);
+  // Some sliders are an INDEX into a value table rather than the value
+  // itself (min component size is a 0-10 stop over a log scale). For
+  // those, the displayed text is the mapped value, so a typed number has
+  // to be matched back to the nearest stop — clamping it as a raw slider
+  // value would land on index 0 for anything under 1.
+  const mapAttr = range.dataset.valueMap;
+  if (mapAttr && isFinite(raw)) {
+    const table = JSON.parse(mapAttr);
+    let best = 0, bestD = Infinity;
+    table.forEach((v, i) => {
+      // Compare in log space where possible: these tables span orders of
+      // magnitude, and a linear distance would make every small value
+      // look equally close to zero.
+      const d = (raw > 0 && v > 0)
+        ? Math.abs(Math.log10(raw) - Math.log10(v))
+        : Math.abs(raw - v);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    range.value = String(best);
+    span.classList.remove('invalid');
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    range.dispatchEvent(new Event('change', { bubbles: true }));
+    return;
+  }
+  if (!isFinite(raw)) {
+    span.classList.add('invalid');
+    // Snap back to the slider's truth rather than leaving garbage on screen.
+    setTimeout(() => {
+      span.classList.remove('invalid');
+      range.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 600);
+    return;
+  }
+  const min = parseFloat(range.min), max = parseFloat(range.max);
+  const step = parseFloat(range.step) || 1;
+  let v = Math.min(max, Math.max(min, raw));
+  // Snap to the slider's step grid, relative to min — steps don't
+  // necessarily start at zero.
+  v = min + Math.round((v - min) / step) * step;
+  v = Math.min(max, Math.max(min, v));
+  // Kill float dust from the round-trip (0.30000000000000004).
+  range.value = String(parseFloat(v.toPrecision(12)));
+  span.classList.remove('invalid');
+  range.dispatchEvent(new Event('input', { bubbles: true }));
+  range.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function makeReadoutsEditable(){
+  document.querySelectorAll('.field').forEach(field => {
+    const span = field.querySelector('label .val');
+    const range = field.querySelector('input[type=range]');
+    if (!span || !range || span.dataset.editable) return;
+    span.dataset.editable = '1';
+    span.setAttribute('contenteditable', 'plaintext-only');
+    span.setAttribute('spellcheck', 'false');
+    span.setAttribute('inputmode', 'decimal');
+    span.setAttribute('title', 'Click to type an exact value');
+
+    span.addEventListener('focus', () => {
+      // Select-all on focus: the readout already holds a value, and
+      // making the user clear it first is friction for no benefit.
+      const r = document.createRange();
+      r.selectNodeContents(span);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(r);
+    });
+    span.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        range.dispatchEvent(new Event('input', { bubbles: true }));
+        span.blur();
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        // Nudge by one step without leaving the field.
+        e.preventDefault();
+        const step = parseFloat(range.step) || 1;
+        range.value = String(parseFloat(range.value) + (e.key === 'ArrowUp' ? step : -step));
+        range.dispatchEvent(new Event('input', { bubbles: true }));
+        range.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    span.addEventListener('blur', () => commitValEdit(span, range));
+    // Clicking the label shouldn't hand focus to the slider and steal it
+    // back from the field the user just clicked into.
+    span.addEventListener('click', (e) => e.preventDefault());
+  });
 }
 
 // ── GPU TIER ─────────────────────────────────────────────────────────
@@ -1736,6 +1874,7 @@ const PRESETS = {
   },
 };
 function applyPreset(name){
+  makeReadoutsEditable();   // idempotent; covers any late-added fields
   const p = PRESETS[name];
   if (!p) return;
   const set = (id, val) => {
@@ -2008,6 +2147,7 @@ async function submitGen(){
 // ────────────────────────────────────────────────────────────
 function showSpritePreview(meta, url, jobId){
   setClearStageVisible(true);
+  setStageDownload(null);   // no GLB until finalize completes
   // Idempotency: if the viewport is already showing this exact preview, do
   // nothing. The job poller calls this on every cycle while the job is in
   // preview_ready state, and rebuilding would reset the user's drag position
@@ -2045,6 +2185,7 @@ function showSpritePreview(meta, url, jobId){
 // version) — that way the user's drag position is preserved across polls.
 function showSpritePreviewBlurred(meta, url, jobId, stage){
   setClearStageVisible(true);
+  setStageDownload(null);   // no GLB until finalize completes
   const overlayKey = `${jobId}:blur:${stage}`;
   if (STATE.spriteOverlayKey === overlayKey
       && document.getElementById('previewCanvas')) {
@@ -3376,9 +3517,11 @@ function handleJobUpdate(j){
 
   if (j.status === 'done' && j.glb_url) {
     showGlbViewer(j.glb_url);
-    setActionBar(`
-      <a class="btn btn-primary" href="${j.glb_url}" download="model_${j.job_id}.glb">⬇ Download GLB</a>
-    `);
+    // Download lives on the stage next to Clear Stage rather than in the
+    // action bar — it belongs with the thing it acts on, and it reclaims
+    // the strip of vertical space the bar was occupying.
+    setStageDownload(j.glb_url, j.job_id);
+    setActionBar(null);
     setProgress(false);
     refreshTokens();
   } else if (j.status === 'failed') {
@@ -3482,6 +3625,20 @@ function clearStage(){
 function setClearStageVisible(v){
   const b = document.getElementById('clearStageBtn');
   if (b) b.style.display = v ? '' : 'none';
+  // Clearing the stage must also retract the download — otherwise it
+  // lingers pointing at the previous job's GLB.
+  if (!v) setStageDownload(null);
+}
+
+// Show/hide the on-stage download. Only a finished job has a glb_url, so
+// this stays hidden through preview and finalize.
+function setStageDownload(url, jobId){
+  const a = document.getElementById('stageDownloadBtn');
+  if (!a) return;
+  if (!url) { a.style.display = 'none'; a.removeAttribute('href'); return; }
+  a.href = url;
+  a.setAttribute('download', `model_${String(jobId || 'asset').slice(0, 8)}.glb`);
+  a.style.display = '';
 }
 window.clearStage = clearStage;
 
@@ -4316,6 +4473,7 @@ Object.defineProperty(window, '_glbViewer', {
 // ────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────
+makeReadoutsEditable();
 updateTierUI();       // prices the button and starts it disabled
 loadMe();
 pollGpuStatus();
