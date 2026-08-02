@@ -932,6 +932,20 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       </div>
     </div>
 
+    <h2>Topology</h2>
+    <div class="field">
+      <label class="checkbox-label">
+        <input type="checkbox" id="repairTopology" checked>
+        <span>Repair topology after remesh</span>
+      </label>
+      <div class="field-hint">Fixes non-manifold edges and inconsistent face winding. The remesh path skips these by default.</div>
+    </div>
+    <div class="field">
+      <label>Min Component Size <span class="val" id="minCompVal">1e-4</span></label>
+      <input type="range" id="minComp" min="0" max="10" step="1" value="4">
+      <div class="field-hint">Drops disconnected fragments below this fraction of the mesh. Also removes floaters and shadow planes.</div>
+    </div>
+
     <h2>Texture Atlas</h2>
     <div class="field">
       <label>UV Chart Merging <span class="val" id="chartRefineVal">4</span></label>
@@ -1708,6 +1722,7 @@ function applyPreset(name){
  ['chartRefine','chartRefineVal',v=>v],
  ['chartAngle','chartAngleVal',v=>v+'°'],
  ['uvPad','uvPadVal',v=>(+v===0?'auto':v+'px')],
+ ['minComp','minCompVal',v=>['off','1e-6','1e-5','5e-5','1e-4','5e-4','1e-3','5e-3','1e-2','5e-2','1e-1'][+v]],
  ['normalStrength','normalStrengthVal',v=>(+v).toFixed(2)],
  ['ssRescale','ssRescaleVal',v=>(+v).toFixed(2)],
  ['shapeRescale','shapeRescaleVal',v=>(+v).toFixed(2)],
@@ -1754,6 +1769,7 @@ document.querySelectorAll('.preset-btn').forEach(b => {
  ['chartRefine','chartRefineVal',v=>v],
  ['chartAngle','chartAngleVal',v=>v+'°'],
  ['uvPad','uvPadVal',v=>(+v===0?'auto':v+'px')],
+ ['minComp','minCompVal',v=>['off','1e-6','1e-5','5e-5','1e-4','5e-4','1e-3','5e-3','1e-2','5e-2','1e-1'][+v]],
  ['normalStrength','normalStrengthVal',v=>(+v).toFixed(2)],
  ['ssRescale','ssRescaleVal',v=>(+v).toFixed(2)],
  ['shapeRescale','shapeRescaleVal',v=>(+v).toFixed(2)],
@@ -1877,6 +1893,12 @@ async function submitGen(){
     chart_global_iters: Math.max(1, Math.round(num('chartRefine') * 0.75)),
     chart_cone_angle_deg: num('chartAngle'),
     uv_padding_px: num('uvPad'),
+    repair_topology: document.getElementById('repairTopology').checked,
+    // Slider is a linear 0-10 stop mapped onto a log scale: component
+    // thresholds are only meaningful across orders of magnitude, and a
+    // linear 0-0.01 slider would spend nine tenths of its travel in a
+    // range where nothing changes.
+    min_component_size: [0, 1e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1][num('minComp')],
     bake_normal_map: document.getElementById('bakeNormalMap').checked,
     normal_strength: num('normalStrength'),
     pipeline_type: document.getElementById('pipelineType').value,
