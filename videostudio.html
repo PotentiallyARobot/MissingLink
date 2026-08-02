@@ -2006,8 +2006,15 @@ function _populateCivBase(engine){
 }
 
 function setEngine(e){
+  const _prevLane=(typeof _activeLane==="function")?_activeLane():null;
   currentEngine=e;
   try{refreshLoras();}catch(_e){}
+  // Switching between LTX and Wan means a different container. Start the
+  // new one warming now rather than at Generate.
+  try{
+    const l=_activeLane();
+    if(l!==_prevLane){wakeGpu(l);pollGpu();}
+  }catch(_e){}
   const ltx=e==="ltx";
   const wan22=e==="wan22";
   const wan=e==="wan";
@@ -5264,7 +5271,14 @@ async function _submitOne(body,prompt,thumb){
   }
   queue.unshift({id:o.job_id,prompt:prompt,thumb:thumb,
     status:"queued",progress:0,stage:"queued"});
+  // Assume cold until the next poll says otherwise. Without this the
+  // queue shows a bare "queued" row for up to 3s before the boot card
+  // appears, which is the exact moment the user is looking for feedback.
+  const _l=_activeLane();
+  if(!gpuLanes[_l])gpuLanes[_l]={ready:false,stage:"waking",boot_elapsed:0,
+    boot_eta:null,boot_samples:0,queue_depth:1};
   renderQueue();
+  pollGpu();
   return o.job_id;
 }
 
@@ -5299,8 +5313,12 @@ async function _submitJobs(payload,prompt,thumb){
     // engine decides which GPU lane the job lands in — LTX on the L40S,
     // Wan 2.1/2.2 on the L4. steps/guidance/lightning are Wan-only; LTX
     // 2.3 distilled has a fixed schedule and no CFG knob.
-    const eng=(payload.engine==="wan21"||payload.engine==="wan22")
-      ? payload.engine : "ltx";
+    // The UI's ids are "wan" (2.1), "wan22" (2.2) and "ltx"; the backend
+    // wants "wan21"/"wan22"/"ltx". Mapping them here, because testing for
+    // "wan21" against a value that is only ever "wan" silently routed
+    // every Wan 2.1 job to the LTX lane.
+    const eng=(payload.engine==="wan22") ? "wan22"
+      : (payload.engine==="wan"||payload.engine==="wan21") ? "wan21" : "ltx";
     const common={
       engine:eng,
       negative_prompt:payload.negative_prompt||"",
@@ -5353,6 +5371,8 @@ async function _submitJobs(payload,prompt,thumb){
    say so, rather than inventing a number. */
 let gpuLanes={ltx:null,wan:null};
 function _activeLane(){
+  // "wan" and "wan22" both run on the Wan container; only "ltx" is the
+  // L40S lane.
   return (typeof currentEngine!=="undefined"&&currentEngine==="ltx")?"ltx":"wan";
 }
 const _BOOT_STAGE_TXT={
@@ -5416,6 +5436,18 @@ function _paintBoot(){
       L.boot_samples+" boot"+(L.boot_samples===1?"":"s")+")":""))
     :(_mmss(el)+" elapsed \u2014 first boot, no timing history yet");
 }
+/* Pre-warm the lane. Called on load and when the engine changes, so the
+   container is booting while the user writes their prompt instead of
+   starting cold on Generate. Debounced server-side. */
+async function wakeGpu(lane){
+  if(!mlState.authed)return;          // /wake needs a session
+  try{
+    await fetch("/api/videostudio/wake",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({lane:lane||_activeLane()})});
+  }catch(e){}
+}
+
 async function pollGpu(){
   try{
     const j=await(await fetch("/api/videostudio/gpu-status")).json();
@@ -6076,6 +6108,8 @@ updateDur();
 setEngine("ltx");   // LTX-2.3 is the default engine
 setInterval(pollHw,3000);pollHw();
 setInterval(pollGpu,3000);pollGpu();
+// Start the GPU coming up as soon as someone opens the studio.
+setTimeout(()=>wakeGpu(),1500);
 setInterval(pollConsole,1200);pollConsole();
 mlBoot();refreshLoras();renderQueue();renderHistory();restoreJobs();
 </script></body></html>
