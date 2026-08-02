@@ -415,7 +415,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .queue-item .qthumb-empty{}
 .queue-item .qmeta{display:flex;flex-direction:column;flex:1;gap:2px;min-width:0}
 .queue-item .id{color:var(--text-muted);font-size:9px}
-.queue-item .stage{color:var(--gold);text-transform:uppercase;letter-spacing:.5px;font-size:9px}
+.queue-item .stage{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gold);text-transform:uppercase;letter-spacing:.5px;font-size:9px}
 .queue-item .bar{height:3px;background:var(--surface-3);border-radius:1px;overflow:hidden}
 .queue-item .bar-fill{height:100%;background:var(--gold);transition:width .3s}
 .queue-item .actions{display:flex;gap:4px;margin-top:2px}
@@ -3803,7 +3803,8 @@ function updateBadge(s){
 // which is why that stage carries a stall hint below.
 const STARTUP_STAGES = [
   { key: 'booting',             label: 'Booting container',           weight: 1, msg: 'Modal is allocating an L4 and pulling the container image.' },
-  { key: 'loading_transformer', label: 'Loading transformer',         weight: 5, msg: 'Streaming 4B params from the HuggingFace cache volume to GPU memory.' },
+  { key: 'loading_transformer', label: 'Loading transformer',         weight: 6, msg: 'Streaming 4B params from the HuggingFace cache volume.' },
+  { key: 'moving_to_gpu',       label: 'Moving to GPU',               weight: 2, msg: 'Transferring model weights into VRAM.' },
   { key: 'building_pipeline',   label: 'Building pipeline',           weight: 2, msg: 'Wiring up the SS / shape SLat / texture SLat models.' },
   { key: 'registering',         label: 'Compiling CUDA kernels',      weight: 18, msg: 'torch.compile is JIT-ing each flow model. This is the long part on an L4.' },
   { key: 'compiling',           label: 'Compiling CUDA kernels',      weight: 18, msg: 'torch.compile is JIT-ing each flow model. This is the long part on an L4.' },
@@ -3890,7 +3891,12 @@ function gpuBootRow(jobs){
     pct = 100; cls = ' failed';
   } else if (stageDef) {
     label = stageDef.label;
-    if (stage === 'registering' && s.total > 0) label += ` ${s.progress}/${s.total}`;
+    // Any stage reporting a total gets its sub-progress shown. Previously
+    // only 'registering' did, so the multi-minute model load appeared
+    // frozen even while it was reporting percentages.
+    if (s.total > 0 && s.progress > 0) {
+      label += (s.total === 100) ? ` ${s.progress}%` : ` ${s.progress}/${s.total}`;
+    }
     const localPct = s.total > 0 ? (s.progress || 0) / s.total : 0;
     pct = Math.min(95, 100 * (stageDef.cum + stageDef.weight * localPct) / STARTUP_TOTAL_WEIGHT);
     detail = fmtDuration(elapsed);
