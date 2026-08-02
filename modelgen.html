@@ -841,8 +841,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       <select id="textureSize">
         <option value="512">512 × 512</option>
         <option value="1024">1024 × 1024</option>
-        <option value="1536" selected>1536 × 1536</option>
-        <option value="2048">2048 × 2048</option>
+        <option value="1536">1536 × 1536</option>
+        <option value="2048" selected>2048 × 2048</option>
       </select>
     </div>
     <div class="field">
@@ -898,8 +898,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       <select id="textureSize">
         <option value="512">512 × 512</option>
         <option value="1024">1024 × 1024</option>
-        <option value="1536" selected>1536 × 1536</option>
-        <option value="2048">2048 × 2048</option>
+        <option value="1536">1536 × 1536</option>
+        <option value="2048" selected>2048 × 2048</option>
         <option value="4096">4096 × 4096 — A100</option>
       </select>
     </div>
@@ -920,7 +920,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     </div>
     <div class="field">
       <label>Remesh Projection <span class="val" id="remeshProjectVal">0.90</span></label>
-      <input type="range" id="remeshProject" min="0" max="1" step="0.05" value="0.9">
+      <input type="range" id="remeshProject" min="0" max="1" step="0.05" value="0">
       <div class="field-hint">How far remeshed vertices snap back to the original surface.</div>
     </div>
     <div class="field">
@@ -983,8 +983,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <input type="range" id="ssIntervalHi" min="0" max="1" step="0.05" value="1"></div>
       </div>
       <div class="field">
-        <label>SS Schedule Shape <span class="val" id="ssRescaleVal">1.00</span></label>
-        <input type="range" id="ssRescale" min="0.2" max="3" step="0.05" value="1">
+        <label>SS Guidance Rescale <span class="val" id="ssGuidanceRescaleVal">0.70</span></label>
+        <input type="range" id="ssGuidanceRescale" min="0" max="1" step="0.05" value="0.7">
+      </div>
+      <div class="field">
+        <label>SS Schedule Shape <span class="val" id="ssRescaleVal">5.0</span></label>
+        <input type="range" id="ssRescale" min="1" max="6" step="0.1" value="5">
       </div>
       <div class="field">
         <label>Shape Guidance Window <span class="val" id="shapeIntervalVal">0.00 – 1.00</span></label>
@@ -992,8 +996,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <input type="range" id="shapeIntervalHi" min="0" max="1" step="0.05" value="1"></div>
       </div>
       <div class="field">
-        <label>Shape Schedule Shape <span class="val" id="shapeRescaleVal">1.00</span></label>
-        <input type="range" id="shapeRescale" min="0.2" max="3" step="0.05" value="1">
+        <label>Shape Guidance Rescale <span class="val" id="shapeGuidanceRescaleVal">0.50</span></label>
+        <input type="range" id="shapeGuidanceRescale" min="0" max="1" step="0.05" value="0.5">
+      </div>
+      <div class="field">
+        <label>Shape Schedule Shape <span class="val" id="shapeRescaleVal">3.0</span></label>
+        <input type="range" id="shapeRescale" min="1" max="6" step="0.1" value="3">
       </div>
       <div class="field">
         <label>Texture Guidance Window <span class="val" id="texIntervalVal">0.00 – 1.00</span></label>
@@ -1001,14 +1009,19 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
         <input type="range" id="texIntervalHi" min="0" max="1" step="0.05" value="1"></div>
       </div>
       <div class="field">
-        <label>Texture Schedule Shape <span class="val" id="texRescaleVal">1.00</span></label>
-        <input type="range" id="texRescale" min="0.2" max="3" step="0.05" value="1">
+        <label>Texture Guidance Rescale <span class="val" id="texGuidanceRescaleVal">0.00</span></label>
+        <input type="range" id="texGuidanceRescale" min="0" max="1" step="0.05" value="0">
+      </div>
+      <div class="field">
+        <label>Texture Schedule Shape <span class="val" id="texRescaleVal">3.0</span></label>
+        <input type="range" id="texRescale" min="1" max="6" step="0.1" value="3">
       </div>
       <div class="field-hint">
-        Guidance window: CFG applies only inside it; outside, the model runs
-        unguided. Narrowing keeps structure guided while letting late steps
-        refine freely. Schedule shape: &gt;1 spends more steps on broad
-        structure, &lt;1 on fine detail.
+        Guidance rescale dampens over-saturation and artifacts from high CFG —
+        reference values are 0.7 / 0.5 / 0.0. Schedule shape (rescale_t,
+        range 1–6) redistributes guidance across the denoising steps;
+        reference is 5 / 3 / 3. Guidance window applies CFG only inside the
+        given fraction of the schedule.
       </div>
     </details>
 
@@ -1679,13 +1692,48 @@ document.getElementById('decimate').addEventListener('input', (e) => {
 //
 // Rough preview timings on a warm L4 at these settings: fast ~30s,
 // balanced ~45s, quality ~70s, max ~110s. Finalize adds ~25-40s on top.
+// Presets derived from the reference configuration, NOT invented.
+// Sources that agree exactly: TRELLIS.2 repo app.py slider defaults, and
+// fal.ai's published API defaults —
+//   ss   7.5 / rescale 0.7 / 12 steps / rescale_t 5
+//   shape 7.5 / rescale 0.5 / 12 steps / rescale_t 3
+//   tex   1.0 / rescale 0.0 / 12 steps / rescale_t 3
+//   resolution 1024, decimate 500k, texture 2048, remesh_project 0
+//
+// 'balanced' IS that reference config. 'fast' trims steps and resolution
+// only; it does not touch guidance, because the guidance values are what
+// make the output correct rather than merely quick. 'max' follows the
+// best-quality baseline from microsoft/TRELLIS.2 issue #92 (50 steps,
+// rescale_t 6, 1536³, 4K textures).
+//
+// The single most consequential value here is tex CFG at 1.0. Raising it
+// (we previously shipped 3.0) makes textures drift from the reference
+// image and read as stylized — it is the main reason colours looked off.
 const PRESETS = {
-  fast:     { ss:6,  shape:6,  tex:4,  ssCfg:7.5, shapeCfg:3.0, texCfg:3.0, dec:200000,  tex_size:1024, pipe:'512',           remesh:false, samples:1, tokens:49152 },
-  balanced: { ss:8,  shape:8,  tex:6,  ssCfg:7.5, shapeCfg:3.0, texCfg:3.0, dec:500000,  tex_size:1536, pipe:'512',           remesh:true,  samples:1, tokens:49152 },
-  quality:  { ss:12, shape:12, tex:10, ssCfg:8.0, shapeCfg:3.5, texCfg:3.0, dec:1000000, tex_size:2048, pipe:'512',           remesh:true,  samples:1, tokens:49152 },
-  // MAX is the A100 ceiling: highest pipeline the model supports, full
-  // token budget, 4K textures. Prices at 500 and spins up a separate GPU.
-  max:      { ss:30, shape:30, tex:24, ssCfg:8.5, shapeCfg:4.0, texCfg:3.5, dec:4000000, tex_size:4096, pipe:'1536_cascade', remesh:true,  samples:1, tokens:131072 },
+  fast: {
+    ss:8,  shape:8,  tex:8,  ssCfg:7.5, shapeCfg:7.5, texCfg:1.0,
+    ssResc:0.7, shapeResc:0.5, texResc:0.0,
+    ssT:5.0, shapeT:3.0, texT:3.0,
+    dec:200000, tex_size:1024, pipe:'512', remesh:true, samples:1, tokens:49152,
+  },
+  balanced: {
+    ss:12, shape:12, tex:12, ssCfg:7.5, shapeCfg:7.5, texCfg:1.0,
+    ssResc:0.7, shapeResc:0.5, texResc:0.0,
+    ssT:5.0, shapeT:3.0, texT:3.0,
+    dec:500000, tex_size:2048, pipe:'512', remesh:true, samples:1, tokens:49152,
+  },
+  quality: {
+    ss:24, shape:24, tex:24, ssCfg:8.0, shapeCfg:8.0, texCfg:1.5,
+    ssResc:0.7, shapeResc:0.5, texResc:0.1,
+    ssT:5.5, shapeT:4.0, texT:4.0,
+    dec:300000, tex_size:2048, pipe:'1024', remesh:true, samples:1, tokens:65536,
+  },
+  max: {
+    ss:50, shape:50, tex:50, ssCfg:8.0, shapeCfg:8.5, texCfg:2.5,
+    ssResc:0.7, shapeResc:0.5, texResc:0.2,
+    ssT:6.0, shapeT:6.0, texT:6.0,
+    dec:800000, tex_size:4096, pipe:'1536_cascade', remesh:true, samples:1, tokens:131072,
+  },
 };
 function applyPreset(name){
   const p = PRESETS[name];
@@ -1711,6 +1759,10 @@ function applyPreset(name){
   set('remesh', p.remesh);
   set('numSamples', p.samples);
   set('maxTokens', p.tokens);
+  set('ssRescale', p.ssT); set('shapeRescale', p.shapeT); set('texRescale', p.texT);
+  set('ssGuidanceRescale', p.ssResc);
+  set('shapeGuidanceRescale', p.shapeResc);
+  set('texGuidanceRescale', p.texResc);
   updateTierUI();
   // Visual state for the buttons
   // Value readouts for the newly surfaced controls.
@@ -1724,9 +1776,12 @@ function applyPreset(name){
  ['uvPad','uvPadVal',v=>(+v===0?'auto':v+'px')],
  ['minComp','minCompVal',v=>['off','1e-6','1e-5','5e-5','1e-4','5e-4','1e-3','5e-3','1e-2','5e-2','1e-1'][+v]],
  ['normalStrength','normalStrengthVal',v=>(+v).toFixed(2)],
- ['ssRescale','ssRescaleVal',v=>(+v).toFixed(2)],
- ['shapeRescale','shapeRescaleVal',v=>(+v).toFixed(2)],
- ['texRescale','texRescaleVal',v=>(+v).toFixed(2)],
+ ['ssRescale','ssRescaleVal',v=>(+v).toFixed(1)],
+ ['shapeRescale','shapeRescaleVal',v=>(+v).toFixed(1)],
+ ['texRescale','texRescaleVal',v=>(+v).toFixed(1)],
+ ['ssGuidanceRescale','ssGuidanceRescaleVal',v=>(+v).toFixed(2)],
+ ['shapeGuidanceRescale','shapeGuidanceRescaleVal',v=>(+v).toFixed(2)],
+ ['texGuidanceRescale','texGuidanceRescaleVal',v=>(+v).toFixed(2)],
 ].forEach(([src,dst,fmt]) => {
   const el = document.getElementById(src), out = document.getElementById(dst);
   if (el && out) el.addEventListener('input', () => out.textContent = fmt(el.value));
@@ -1771,9 +1826,12 @@ document.querySelectorAll('.preset-btn').forEach(b => {
  ['uvPad','uvPadVal',v=>(+v===0?'auto':v+'px')],
  ['minComp','minCompVal',v=>['off','1e-6','1e-5','5e-5','1e-4','5e-4','1e-3','5e-3','1e-2','5e-2','1e-1'][+v]],
  ['normalStrength','normalStrengthVal',v=>(+v).toFixed(2)],
- ['ssRescale','ssRescaleVal',v=>(+v).toFixed(2)],
- ['shapeRescale','shapeRescaleVal',v=>(+v).toFixed(2)],
- ['texRescale','texRescaleVal',v=>(+v).toFixed(2)],
+ ['ssRescale','ssRescaleVal',v=>(+v).toFixed(1)],
+ ['shapeRescale','shapeRescaleVal',v=>(+v).toFixed(1)],
+ ['texRescale','texRescaleVal',v=>(+v).toFixed(1)],
+ ['ssGuidanceRescale','ssGuidanceRescaleVal',v=>(+v).toFixed(2)],
+ ['shapeGuidanceRescale','shapeGuidanceRescaleVal',v=>(+v).toFixed(2)],
+ ['texGuidanceRescale','texGuidanceRescaleVal',v=>(+v).toFixed(2)],
 ].forEach(([src,dst,fmt]) => {
   const el = document.getElementById(src), out = document.getElementById(dst);
   if (el && out) el.addEventListener('input', () => out.textContent = fmt(el.value));
@@ -1876,6 +1934,9 @@ async function submitGen(){
     ss_guidance_interval:    [num('ssIntervalLo'), num('ssIntervalHi')].sort((a,b)=>a-b),
     shape_guidance_interval: [num('shapeIntervalLo'), num('shapeIntervalHi')].sort((a,b)=>a-b),
     tex_guidance_interval:   [num('texIntervalLo'), num('texIntervalHi')].sort((a,b)=>a-b),
+    ss_guidance_rescale: num('ssGuidanceRescale'),
+    shape_guidance_rescale: num('shapeGuidanceRescale'),
+    tex_guidance_rescale: num('texGuidanceRescale'),
     ss_rescale_t: num('ssRescale'),
     shape_rescale_t: num('shapeRescale'),
     tex_rescale_t: num('texRescale'),
