@@ -6225,6 +6225,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="history-modal-head modal-drag-handle" data-modal="history" title="Drag to move · double-click to reset">
             <span class="modal-grip" aria-hidden="true">⋮⋮</span>
             <div class="history-modal-title">Your Generations <span id="historyModalCount" class="q-count">—</span></div>
+            <div id="historyKindTabs" style="display:flex;gap:6px;margin-left:14px">
+                <button class="ems-btn hk-tab active" data-kind="image" onclick="setHistoryKind('image', this)">🖼 Images</button>
+                <button class="ems-btn hk-tab" data-kind="video" onclick="setHistoryKind('video', this)">🎞 Video</button>
+                <button class="ems-btn hk-tab" data-kind="3d" onclick="setHistoryKind('3d', this)">🧊 3D</button>
+            </div>
             <label class="q-restore-toggle" style="margin-right:12px" title="When checked, clicking a history image also restores its prompt, negative prompt, and seed. Uncheck to load only the image and keep your current prompt." onclick="event.stopPropagation()">
                 <input type="checkbox" id="chkRestorePromptsModal" checked onchange="toggleRestorePrompts(this.checked)">↩ restore prompt
             </label>
@@ -20839,7 +20844,11 @@ async function maybeStartRemixImport(){
         // per-shot cache can't collide.
         const inp = await prepareBatchShotForReuse({ url: s.url, label: s.label, w: s.w, h: s.h }, imported);
         if (!inp) continue;
-        _batchInputs.push({ ...inp, selected: false, _genPrompt: s.prompt || '' });
+        // _histPrompt (not _genPrompt): entries carrying _genPrompt render
+        // through the gen-result tile template, which has NO selection
+        // checkbox — batch-restored images couldn't be selected for
+        // further batch operations. Neutral key = standard input tiles.
+        _batchInputs.push({ ...inp, selected: false, _histPrompt: s.prompt || '' });
         if (s.prompt) {
             if (typeof _aiSelectedCache === 'undefined' || !_aiSelectedCache) {
                 window._aiSelectedCache = { captions: {} };
@@ -23895,16 +23904,39 @@ function setupHistoryInfiniteScroll(){
     _historyScrollObserver.observe(sentinel);
 }
 
+// History modal kind filter: image (default) | video | 3d. Classifies
+// by job mode — video jobs carry mode 'video'; 3D (legacy Trellis) rows
+// carry mode 'trellis'/'3d'; everything else is an image generation.
+let _historyKind = 'image';
+function _historyItemKind(j){
+    const m = (j && j.mode) || '';
+    if (m === 'video') return 'video';
+    if (m === 'trellis' || m === '3d') return '3d';
+    return 'image';
+}
+function setHistoryKind(kind, btn){
+    if (_historyKind === kind) return;
+    _historyKind = kind;
+    document.querySelectorAll('#historyKindTabs .hk-tab').forEach(b =>
+        b.classList.toggle('active', b === btn));
+    const grid = $('historyModalGrid');
+    if (grid) grid.querySelectorAll('.history-card').forEach(c => c.remove());
+    renderHistoryModal();
+}
 function renderHistoryModal(){
     const grid = $('historyModalGrid');
     const countEl = $('historyModalCount');
     const sentinel = $('historyScrollSentinel');
     // Show current-count only; total isn't meaningful now that infinite
     // scroll loads more as the user scrolls. Hide before any load happens.
-    countEl.textContent = _historyItems.length > 0 ? `(${_historyItems.length})` : '';
+    const _visItems = _historyItems.filter(j => _historyItemKind(j) === _historyKind);
+    countEl.textContent = _visItems.length > 0 ? `(${_visItems.length})` : '';
 
-    if (!_historyItems.length) {
-        grid.innerHTML = `<div class="history-empty">No generations yet — create one to see it here</div>`;
+    if (!_visItems.length) {
+        grid.innerHTML = `<div class="history-empty">${
+        _historyKind === 'image' ? 'No generations yet — create one to see it here'
+        : _historyKind === '3d' ? '3D models live in the Model Studio — <a href="modelgen.html" style="color:var(--gold)">open it \u2197</a>'
+        : 'No video generations yet — <a href="videostudio.html" style="color:var(--gold)">open Video Studio \u2197</a>'}</div>`;
         if (sentinel) sentinel.style.display = 'none';
         return;
     }
@@ -23926,7 +23958,7 @@ function renderHistoryModal(){
     //    { kind: 'batch', batch_id, items: [...], leader: j_first }]
     const grouped = [];
     const batchMap = new Map();
-    for (const j of _historyItems) {
+    for (const j of _visItems) {
         if (j.batch_id) {
             let entry = batchMap.get(j.batch_id);
             if (!entry) {
