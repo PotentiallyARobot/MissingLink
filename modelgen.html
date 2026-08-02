@@ -36,6 +36,17 @@
 html,body{height:100%;overflow:hidden;margin:0}
 body{background:var(--black);color:var(--text);font-family:var(--font-body);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
 
+.nav-toggle{display:none;flex-direction:column;justify-content:center;gap:4px;
+  width:34px;height:34px;padding:0 8px;flex:none;cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:6px}
+.nav-toggle span{display:block;height:2px;width:100%;border-radius:1px;
+  background:var(--text-dim);transition:transform .25s,opacity .2s}
+.nav-toggle[aria-expanded="true"]{border-color:var(--gold)}
+.nav-toggle[aria-expanded="true"] span{background:var(--gold)}
+/* Open state morphs the bars into an X. */
+.nav-toggle[aria-expanded="true"] span:nth-child(1){transform:translateY(6px) rotate(45deg)}
+.nav-toggle[aria-expanded="true"] span:nth-child(2){opacity:0}
+.nav-toggle[aria-expanded="true"] span:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
 .app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;grid-template-rows:var(--header-h) 1fr;grid-template-areas:"header header" "sidebar main";height:100vh;width:100vw;overflow:hidden}
 
 /* ── HEADER ─────────────────────────────────────────────── */
@@ -78,6 +89,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .upload-zone img{display:block;width:100%;border-radius:4px}
 .upload-zone .placeholder{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--text-muted);font-size:11px}
 .upload-zone .placeholder svg{width:32px;height:32px;opacity:.5}
+.upload-zone .upload-tip{font-size:9px;color:var(--text-muted);opacity:.65;font-family:var(--font-mono);text-align:center;padding:0 8px}
 .upload-zone .clear-btn{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;background:rgba(9,9,11,.85);border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:14px;cursor:pointer;display:none;align-items:center;justify-content:center;line-height:1;backdrop-filter:blur(4px);z-index:2;transition:.15s}
 .upload-zone .clear-btn:hover{border-color:var(--red);color:var(--red)}
 .upload-zone.has-image .clear-btn{display:flex}
@@ -403,7 +415,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .queue-item .qthumb-empty{}
 .queue-item .qmeta{display:flex;flex-direction:column;flex:1;gap:2px;min-width:0}
 .queue-item .id{color:var(--text-muted);font-size:9px}
-.queue-item .stage{color:var(--gold);text-transform:uppercase;letter-spacing:.5px;font-size:9px}
+.queue-item .stage{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gold);text-transform:uppercase;letter-spacing:.5px;font-size:9px}
 .queue-item .bar{height:3px;background:var(--surface-3);border-radius:1px;overflow:hidden}
 .queue-item .bar-fill{height:100%;background:var(--gold);transition:width .3s}
 .queue-item .actions{display:flex;gap:4px;margin-top:2px}
@@ -520,45 +532,67 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     height:100dvh;
   }
 
-  /* ── Header: icons only, no wrapping ── */
-  header{padding:0 8px;gap:6px;overflow:hidden}
-  header h1{font-size:11px;letter-spacing:1px;white-space:nowrap}
-  header h1 span{display:none}          /* "MODELGEN" — keep the brand */
-  .hdr-link{padding:5px 7px;font-size:0}  /* label out, emoji stays */
-  .hdr-link::first-letter{font-size:13px}
-  #connBadge span:not(.dot){display:none}
-  #connBadge{padding:4px 6px}
-  .token-badge{font-size:10px;padding:3px 6px}
-  .user-menu-trigger-email{display:none}  /* avatar + chevron only */
-  .user-menu{top:52px;right:8px;left:8px;width:auto}
+  /* ── Header ── */
+  /* Everything that has a home elsewhere is dropped rather than shrunk.
+     Studio and History both live in the user menu, and GPU boot state is
+     already reported by the queue panel's boot row — so on a phone the
+     header carries only: menu, brand, tokens, account. */
+  header{padding:0 8px;gap:8px;overflow:hidden}
+  header h1{font-size:11px;letter-spacing:1px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;min-width:0}
+  header h1 span{display:none}          /* drop "MODELGEN", keep the brand */
+  .hdr-link{display:none}               /* Studio + History → user menu */
 
-  /* ── Sidebar as a bottom sheet ── */
+  /* GPU status collapses to a bare status dot. The old rule hid the
+     label but left min-width:115px in place, so it reserved the space
+     anyway — which is what made the bar look so crowded. */
+  #connBadge{
+    min-width:0;width:auto;padding:0;gap:0;
+    border:0;background:none;flex:none;
+  }
+  #connBadge span:not(.dot){display:none}
+  #connBadge .dot{width:9px;height:9px;margin:0}
+  /* The dot is now the entire GPU indicator, so give it a real touch
+     target — tapping surfaces the state as a toast. Detailed boot
+     progress still lives in the queue panel's boot row. */
+  #connBadge{cursor:pointer;min-height:32px;align-items:center}
+
+  .token-badge{font-size:10px;padding:3px 7px;flex:none}
+  /* Push account to the far right; brand takes the slack. */
+  header h1{flex:1}
+  .user-menu-trigger-email{display:none}  /* avatar + chevron only */
+  .user-menu-trigger{flex:none;padding:2px 4px 2px 2px}
+  .user-menu{top:52px;right:8px;left:8px;width:auto}
+  .signin-btn{font-size:10px;padding:5px 9px;flex:none}
+
+  /* ── Sidebar as a side drawer ── */
+  /* Slides in from the left over the stage rather than docking at the
+     bottom. Starts OPEN so the controls are the first thing you see —
+     the parameters are the point of the app, and hiding them behind a
+     tap on first load buries it. */
   .sidebar{
-    position:fixed;left:0;right:0;bottom:0;
-    grid-area:unset;width:100%;
-    height:78dvh;max-height:78dvh;
-    border-right:0;border-top:1px solid var(--border);
-    border-radius:14px 14px 0 0;
-    box-shadow:0 -8px 32px rgba(0,0,0,.6);
-    transform:translateY(calc(100% - 96px));  /* dock peeks out */
+    position:fixed;top:var(--header-h);left:0;bottom:0;
+    grid-area:unset;
+    width:min(88vw, 340px);
+    height:auto;max-height:none;
+    border-right:1px solid var(--border);border-top:0;
+    box-shadow:6px 0 28px rgba(0,0,0,.55);
+    transform:translateX(0);
     transition:transform .28s cubic-bezier(.4,0,.2,1);
     z-index:130;
-    padding-top:26px;   /* room for the grab handle */
+    padding:14px 14px 0;
   }
-  .sidebar.open{transform:translateY(0)}
-  /* Grab handle. Tapping anywhere on it toggles the sheet. */
-  .sidebar::before{
-    content:"";position:absolute;top:9px;left:50%;
-    transform:translateX(-50%);
-    width:40px;height:4px;border-radius:2px;
-    background:var(--border-light);
+  .sidebar.collapsed{transform:translateX(-100%)}
+
+  /* Scrim behind the open drawer. Pointer-events only when open so it
+     never blocks the stage while collapsed. */
+  #sheetScrim{
+    position:fixed;inset:var(--header-h) 0 0 0;z-index:125;
+    background:rgba(9,9,11,.55);backdrop-filter:blur(2px);
+    opacity:1;transition:opacity .28s;
   }
-  #sheetToggle{
-    position:absolute;top:0;left:0;right:0;height:26px;
-    background:none;border:0;cursor:pointer;z-index:2;
-  }
-  /* The Generate dock is what peeks above the fold when closed, so it
-     must sit at the visual bottom of the sheet in both states. */
+  #sheetScrim.hidden{opacity:0;pointer-events:none}
+
   .gen-dock{padding:12px 14px calc(12px + env(safe-area-inset-bottom))}
 
   /* ── Stage ── */
@@ -574,11 +608,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     min-height:32px;               /* touch target */
   }
   .glb-viewer .tb-select{padding-right:20px}
-  .clear-stage-btn{top:auto;bottom:calc(96px + 10px);right:10px}
+  .clear-stage-btn{top:8px;right:8px}
 
   /* D-pad: bigger targets, clear of the sidebar dock */
   .dpad{
-    left:10px;bottom:calc(96px + 10px);
+    left:10px;bottom:10px;
     grid-template-columns:repeat(3,38px);
     grid-template-rows:repeat(3,38px);
     opacity:.85;
@@ -588,7 +622,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   /* ── Panels: full-width sheets rather than floating cards ── */
   .tt-panel{
     left:8px;right:8px;width:auto;
-    bottom:calc(96px + 10px);
+    bottom:10px;
     max-height:56dvh;overflow-y:auto;
   }
   .render-overlay video{max-height:calc(100% - 130px)}
@@ -617,7 +651,11 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 /* Very narrow phones — drop the second preset row rather than squash. */
 @media (max-width: 400px){
   .preset-row{grid-template-columns:repeat(2,1fr)}
-  header h1{font-size:10px}
+  /* Under ~110px of slack the wordmark truncates to "MISSINGLI…", which
+     reads worse than not showing it — the logo mark still identifies the
+     app. Measured against a 360px viewport with the signed-out header,
+     which is the widest variant. */
+  header h1{display:none}
 }
 
 /* Landscape phone: the bottom sheet would cover everything, so keep the
@@ -625,10 +663,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 @media (max-width:860px) and (orientation:landscape) and (max-height:520px){
   .app{grid-template-columns:250px 1fr;grid-template-areas:"header header" "sidebar main"}
   .sidebar{position:static;transform:none;height:auto;max-height:none;
+    width:auto;top:auto;bottom:auto;
     border-radius:0;border-top:0;border-right:1px solid var(--border);
-    padding-top:12px;box-shadow:none}
-  .sidebar::before,#sheetToggle{display:none}
-  .dpad,.clear-stage-btn,.tt-panel{bottom:10px}
+    padding:12px 12px 0;box-shadow:none;z-index:auto}
+  .sidebar.collapsed{transform:none}
+  .nav-toggle,#sheetScrim{display:none}
+  .dpad,.tt-panel{bottom:10px}
 }
 
 </style>
@@ -637,13 +677,21 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 
 <div class="app">
   <header class="app-header">
+    <!-- Mobile only (hidden by default, shown in the <=860px query).
+         Lives in the header rather than on the drawer edge so it stays
+         in a fixed, predictable place whether the drawer is open or
+         closed — a tab that slides with the drawer is easy to lose. -->
+    <button id="navToggle" class="nav-toggle" aria-label="Toggle controls"
+            aria-expanded="true" aria-controls="sidebar" onclick="toggleSheet()">
+      <span></span><span></span><span></span>
+    </button>
     <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12 L11 15 L16 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     <h1>MISSINGLINK <span>MODELGEN</span></h1>
     <div class="spacer"></div>
     <a href="https://missinglink.build/studio" class="hdr-link">← Studio</a>
     <button id="historyBtn" class="hdr-link" onclick="toggleHistory()" style="cursor:pointer;background:none">📂 History</button>
     <div id="tokenBadge" class="token-badge" style="display:none" title="Click to buy more tokens">— tokens</div>
-    <div id="connBadge" class="hdr-badge" title="NVIDIA L4 · 24 GB · Modal"><span class="dot cold"></span><span>GPU cold</span></div>
+    <div id="connBadge" class="hdr-badge" onclick="announceGpuState()" title="NVIDIA L4 · 24 GB · Modal"><span class="dot cold"></span><span>GPU cold</span></div>
     <!-- User menu trigger — ported from studio.html so the account UI is
          identical across both apps. The avatar img and fallback are
          stacked: the img's onerror drops its opacity so the fallback
@@ -737,12 +785,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   <aside class="sidebar" id="sidebar">
     <!-- Mobile only: tap target over the grab handle. Hidden on
          desktop via CSS (the rule only exists inside the media query). -->
-    <button id="sheetToggle" aria-label="Toggle settings panel" onclick="toggleSheet()"></button>
     <h2>Input</h2>
     <label class="upload-zone" id="uploadZone">
       <div class="placeholder" id="uploadPlaceholder">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4M12 4L6 10M12 4L18 10M4 20H20" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>Drop image or click to upload</span>
+        <span class="upload-tip">PNG with transparency gives the best results</span>
       </div>
       <img id="uploadPreview" style="display:none">
       <button type="button" class="clear-btn" id="clearImageBtn" title="Remove image">×</button>
@@ -957,6 +1005,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       </button>
     </div>
   </aside>
+  <!-- Mobile only (see media query); inert on desktop. -->
+  <div id="sheetScrim" class="hidden" onclick="toggleSheet(false)"></div>
 
   <main class="main">
     <button id="clearStageBtn" class="clear-stage-btn" style="display:none"
@@ -1352,15 +1402,29 @@ function updateGenButton(){
   btn.innerHTML = `Generate <span class="cost">${cost} tokens</span>`;
   btn.title = u ? '' : 'You will be asked to sign in';
 }
+// On mobile the GPU badge collapses to a bare dot, so tapping it reports
+// the state in words. On desktop the label is visible anyway and this is
+// simply a no-op nicety.
+window.announceGpuState = function announceGpuState(){
+  const s = STATE.gpuState || {};
+  const label = STAGE_LABELS[s.stage] || s.stage || 'unknown';
+  const age = (s.heartbeat_age_s === null || s.heartbeat_age_s === undefined)
+    ? null : Number(s.heartbeat_age_s);
+  const live = age !== null && age <= 90;
+  toast(s.stage === 'ready' && live ? 'GPU ready'
+      : live || STATE.wakeFiredAt ? `GPU: ${label}`
+      : 'GPU cold — starts when you generate');
+};
+
 // ── MOBILE BOTTOM SHEET ──────────────────────────────────────────────
 // Below 860px the sidebar becomes a sheet docked at the bottom with the
 // Generate button peeking above the fold. This is the only piece of the
 // mobile layout that needs JS; everything else is CSS.
 const MOBILE_Q = window.matchMedia('(max-width: 860px)');
 function isMobileSheet(){
-  // The landscape-phone breakpoint restores the static sidebar, so the
-  // sheet logic must not run there — checking the computed position is
-  // more robust than duplicating the media query in JS.
+  // The landscape-phone breakpoint restores a static sidebar, where the
+  // drawer logic must not run. Reading the computed position is more
+  // robust than duplicating the media query conditions in JS.
   const el = document.getElementById('sidebar');
   return MOBILE_Q.matches && el && getComputedStyle(el).position === 'fixed';
 }
@@ -1379,23 +1443,42 @@ new MutationObserver(() => {
 
 window.toggleSheet = function toggleSheet(force){
   const el = document.getElementById('sidebar');
+  const scrim = document.getElementById('sheetScrim');
+  const nav = document.getElementById('navToggle');
   if (!el) return;
-  const open = (force === undefined) ? !el.classList.contains('open') : !!force;
-  el.classList.toggle('open', open);
-  // Scroll back to the top when opening — the sheet is usually left
-  // scrolled to the Generate dock from the previous interaction.
-  if (open) el.scrollTop = 0;
+  // Default state is OPEN, so the class tracks the closed case.
+  const open = (force === undefined) ? el.classList.contains('collapsed') : !!force;
+  el.classList.toggle('collapsed', !open);
+  if (scrim) scrim.classList.toggle('hidden', !open);
+  // aria-expanded drives the bars→X morph in CSS as well as the a11y state.
+  if (nav) nav.setAttribute('aria-expanded', String(open));
 };
 
-// Tapping the stage closes the sheet, the way any bottom sheet behaves.
-document.addEventListener('click', (e) => {
-  if (!isMobileSheet()) return;
+// Start collapsed on mobile ONLY after a result is on the stage — until
+// then the controls are the whole point of the screen, so they stay open.
+// Desktop is unaffected: the drawer classes only do anything inside the
+// media query.
+function syncSheetForViewport(){
   const el = document.getElementById('sidebar');
-  if (!el || !el.classList.contains('open')) return;
-  if (el.contains(e.target)) return;
-  if (e.target.closest('.queue-panel, .user-menu, .history-drawer, header')) return;
-  toggleSheet(false);
-});
+  const scrim = document.getElementById('sheetScrim');
+  if (!el) return;
+  if (!isMobileSheet()) {
+    // Leaving mobile: clear mobile-only state so the desktop grid layout
+    // isn't left with a stray transform or a live scrim.
+    el.classList.remove('collapsed');
+    if (scrim) scrim.classList.add('hidden');
+    const nav = document.getElementById('navToggle');
+    if (nav) nav.setAttribute('aria-expanded', 'true');
+    return;
+  }
+  toggleSheet(!el.classList.contains('collapsed'));
+}
+MOBILE_Q.addEventListener('change', syncSheetForViewport);
+window.addEventListener('orientationchange', () => setTimeout(syncSheetForViewport, 200));
+syncSheetForViewport();
+
+// The scrim handles dismiss-on-tap-outside, so no document-level click
+// handler is needed — and using one would fight the scrim's own onclick.
 
 // Generating collapses the sheet so the result is visible as it renders.
 // A listener rather than a wrapper around submitGen: submitGen is exported
@@ -1403,6 +1486,13 @@ document.addEventListener('click', (e) => {
 // undefined and then be overwritten by that later assignment.
 document.getElementById('genBtn')?.addEventListener('click', () => {
   if (isMobileSheet()) setTimeout(() => toggleSheet(false), 150);
+});
+
+// Also collapse when a model finishes loading onto the stage, so the
+// result isn't hidden behind the drawer if the user re-opened it while
+// waiting.
+window.addEventListener('modelgen:stage-loaded', () => {
+  if (isMobileSheet()) toggleSheet(false);
 });
 
 // ── USER MENU ────────────────────────────────────────────────────────
@@ -1996,6 +2086,7 @@ let _invalidate = () => {};
 let _glbCurrentUrl = null;
 function showGlbViewer(glbUrl){
   setClearStageVisible(true);
+  window.dispatchEvent(new CustomEvent('modelgen:stage-loaded'));
   // Idempotency: skip rebuild if we're already showing this exact GLB.
   // Without this guard, every poll cycle (1.5s) would dispose + recreate
   // the three.js scene, re-fetch the GLB, and reset the user's camera.
@@ -3712,7 +3803,8 @@ function updateBadge(s){
 // which is why that stage carries a stall hint below.
 const STARTUP_STAGES = [
   { key: 'booting',             label: 'Booting container',           weight: 1, msg: 'Modal is allocating an L4 and pulling the container image.' },
-  { key: 'loading_transformer', label: 'Loading transformer',         weight: 5, msg: 'Streaming 4B params from the HuggingFace cache volume to GPU memory.' },
+  { key: 'loading_transformer', label: 'Loading transformer',         weight: 6, msg: 'Streaming 4B params from the HuggingFace cache volume.' },
+  { key: 'moving_to_gpu',       label: 'Moving to GPU',               weight: 2, msg: 'Transferring model weights into VRAM.' },
   { key: 'building_pipeline',   label: 'Building pipeline',           weight: 2, msg: 'Wiring up the SS / shape SLat / texture SLat models.' },
   { key: 'registering',         label: 'Compiling CUDA kernels',      weight: 18, msg: 'torch.compile is JIT-ing each flow model. This is the long part on an L4.' },
   { key: 'compiling',           label: 'Compiling CUDA kernels',      weight: 18, msg: 'torch.compile is JIT-ing each flow model. This is the long part on an L4.' },
@@ -3799,7 +3891,12 @@ function gpuBootRow(jobs){
     pct = 100; cls = ' failed';
   } else if (stageDef) {
     label = stageDef.label;
-    if (stage === 'registering' && s.total > 0) label += ` ${s.progress}/${s.total}`;
+    // Any stage reporting a total gets its sub-progress shown. Previously
+    // only 'registering' did, so the multi-minute model load appeared
+    // frozen even while it was reporting percentages.
+    if (s.total > 0 && s.progress > 0) {
+      label += (s.total === 100) ? ` ${s.progress}%` : ` ${s.progress}/${s.total}`;
+    }
     const localPct = s.total > 0 ? (s.progress || 0) / s.total : 0;
     pct = Math.min(95, 100 * (stageDef.cum + stageDef.weight * localPct) / STARTUP_TOTAL_WEIGHT);
     detail = fmtDuration(elapsed);
