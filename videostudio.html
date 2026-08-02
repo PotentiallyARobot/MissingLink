@@ -190,6 +190,27 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);
 .chip:hover{border-color:var(--gold);color:var(--gold)}
 
 /* ── free-floating Jobs panel (queue + history) ── */
+/* Default stacking: queue above, history below. Either can be dragged
+   anywhere and the position persists, so these are only the starting
+   points. max-height keeps them inside the stage on short viewports. */
+#queuePanel{top:14px;right:14px;max-height:34vh}
+#historyPanel{top:calc(34vh + 24px);right:14px;max-height:52vh}
+#queuePanel .float-sec-body{max-height:calc(34vh - 46px)}
+#historyPanel .float-sec-body{max-height:calc(52vh - 46px)}
+.float.dragged{right:auto}
+/* Boot card — shown in the queue while a GPU container is cold. */
+.boot-card{background:var(--surface-2);border:1px solid var(--gold);
+  border-radius:7px;padding:10px;margin-bottom:7px}
+.boot-top{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.boot-spin{width:12px;height:12px;border:2px solid var(--surface-3);
+  border-top-color:var(--gold);border-radius:50%;animation:bootspin .8s linear infinite;flex:0 0 auto}
+@keyframes bootspin{to{transform:rotate(360deg)}}
+.boot-ttl{font:700 10px/1 'JetBrains Mono',monospace;color:var(--gold);
+  letter-spacing:.06em;text-transform:uppercase}
+.boot-stage{font:400 10px/1.5 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:6px}
+.boot-bar{height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden}
+.boot-fill{height:100%;background:var(--gold);border-radius:2px;transition:width .6s linear}
+.boot-eta{font:400 9px/1.4 'JetBrains Mono',monospace;color:var(--text-muted);margin-top:5px}
 .float{position:absolute;top:14px;right:14px;width:262px;z-index:20;
   background:rgba(17,17,20,.9);backdrop-filter:blur(14px);
   border:1px solid var(--border);border-radius:11px;
@@ -1091,27 +1112,37 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     </div>
 
 
-    <!-- free-floating Jobs panel: queue + history -->
-    <div class="float" id="jobsPanel">
-      <div class="float-head" id="jobsHandle">
+    <!-- Two independent floating panels. They were one "Jobs" window with
+         two collapsible sections; queue and history are watched at
+         different times (queue while a render runs, history while
+         picking a frame) and stacking them meant one was always in the
+         other's way. Each drags and minimizes on its own and remembers
+         where it was put. -->
+    <div class="float" id="queuePanel" data-float="queue">
+      <div class="float-head float-drag" id="queueHandle" data-float="queue">
         <span class="float-grip">&#8942;&#8942;</span>
-        <span class="float-title"><span class="icon">&#9776;</span> Jobs</span>
-        <div class="float-btns"><button class="float-min" id="jobsMin" onclick="toggleMin(event)" title="Minimize">&ndash;</button></div>
+        <span class="float-title"><span class="icon">&#9636;</span> Queue <span class="q-count" id="qCount">0</span></span>
+        <div class="float-btns"><button class="float-min" onclick="toggleMin(event,'queuePanel')" title="Minimize">&ndash;</button></div>
       </div>
-      <div class="float-inner" id="jobsInner">
-        <div class="float-sec q" id="secQueue">
-          <div class="float-sec-hd" onclick="toggleSec('secQueue')"><span class="icon">&#9636;</span> Queue <span class="q-count" id="qCount">0</span><span class="caret">&#9662;</span></div>
-          <div class="float-sec-body"><div id="queueBody"><div class="empty">No active jobs.</div></div></div>
-        </div>
-        <div class="float-sec h" id="secHistory">
-          <div class="float-sec-hd" onclick="toggleSec('secHistory')"><span class="icon">&#9638;</span> History <span class="q-count" id="hCount">0</span><span class="caret">&#9662;</span></div>
-          <div class="float-sec-body">
-            <div class="h-tabs">
-              <button class="h-tab active" id="hTabAll" onclick="setHistFilter('all')">All<span class="n" id="hnAll">0</span></button>
-              <button class="h-tab" id="hTabVideo" onclick="setHistFilter('video')">Video<span class="n" id="hnVideo">0</span></button>
-              <button class="h-tab" id="hTabImage" onclick="setHistFilter('image')">Images<span class="n" id="hnImage">0</span></button>
-            </div>
-            <div id="historyBody"><div class="empty">Finished videos and generated images appear here. Click to load one onto the stage.</div></div></div>
+      <div class="float-inner">
+        <div class="float-sec-body"><div id="queueBody"><div class="empty">No active jobs.</div></div></div>
+      </div>
+    </div>
+
+    <div class="float" id="historyPanel" data-float="history">
+      <div class="float-head float-drag" id="historyHandle" data-float="history">
+        <span class="float-grip">&#8942;&#8942;</span>
+        <span class="float-title"><span class="icon">&#9638;</span> History <span class="q-count" id="hCount">0</span></span>
+        <div class="float-btns"><button class="float-min" onclick="toggleMin(event,'historyPanel')" title="Minimize">&ndash;</button></div>
+      </div>
+      <div class="float-inner">
+        <div class="float-sec-body">
+          <div class="h-tabs">
+            <button class="h-tab active" id="hTabAll" onclick="setHistFilter('all')">All<span class="n" id="hnAll">0</span></button>
+            <button class="h-tab" id="hTabVideo" onclick="setHistFilter('video')">Video<span class="n" id="hnVideo">0</span></button>
+            <button class="h-tab" id="hTabImage" onclick="setHistFilter('image')">Images<span class="n" id="hnImage">0</span></button>
+          </div>
+          <div id="historyBody"><div class="empty">Finished videos and generated images appear here. Click to load one onto the stage.</div></div>
         </div>
       </div>
     </div>
@@ -5310,11 +5341,104 @@ async function _submitJobs(payload,prompt,thumb){
   }catch(e){toast("Error: "+e,true);}
 }
 
+/* ── GPU boot status ───────────────────────────────────────────────────
+   Both engines scale to zero, so the first render after an idle period
+   waits on a cold container: Modal pulls the image layer, then the model
+   loads onto the card. That is a long silence, and without something on
+   screen it is indistinguishable from a stuck queue — which is what makes
+   people submit the job again.
+
+   The ETA is a median of this lane's last five real boots, reported by
+   the container itself. Until there are samples we show elapsed only and
+   say so, rather than inventing a number. */
+let gpuLanes={ltx:null,wan:null};
+function _activeLane(){
+  return (typeof currentEngine!=="undefined"&&currentEngine==="ltx")?"ltx":"wan";
+}
+const _BOOT_STAGE_TXT={
+  waking:"Waking the GPU \u2014 pulling the container image",
+  starting:"Container up \u2014 initialising",
+  loading_model:"Loading the model onto the card",
+  ready:"Ready"};
+function _mmss(s){
+  s=Math.max(0,Math.round(s));
+  return Math.floor(s/60)+":"+String(s%60).padStart(2,"0");
+}
+function _bootCardHtml(lane){
+  const L=gpuLanes[lane];
+  if(!L||L.ready)return "";
+  const el=L.boot_elapsed||0, eta=L.boot_eta;
+  const stage=_BOOT_STAGE_TXT[L.stage]||"Starting up";
+  const card=(lane==="ltx")?"L40S":"L4";
+  let pct, note;
+  if(eta){
+    // Cap at 95% — claiming 100% while it is still booting is the one
+    // thing guaranteed to read as broken.
+    pct=Math.min(95,Math.round((el/eta)*100));
+    note=_mmss(el)+" / ~"+_mmss(eta)+
+      (L.boot_samples<3?" (estimate from "+L.boot_samples+" boot"+
+        (L.boot_samples===1?"":"s")+")":"");
+  }else{
+    // No history yet. An indeterminate-looking crawl beats a fake bar.
+    pct=Math.min(90,10+el*1.2);
+    note=_mmss(el)+" elapsed \u2014 first boot, no timing history yet";
+  }
+  return "<div class='boot-card'>"+
+    "<div class='boot-top'><span class='boot-spin'></span>"+
+    "<span class='boot-ttl'>Starting "+card+"</span></div>"+
+    "<div class='boot-stage'>"+esc(stage)+"</div>"+
+    "<div class='boot-bar'><i class='boot-fill' style='display:block;width:"+pct+"%'></i></div>"+
+    "<div class='boot-eta'>"+esc(note)+"</div></div>";
+}
+/* Repaint the boot slot in place. Rebuilding the queue every 3s would
+   recreate the spinner element and restart its CSS animation, producing a
+   visible stutter, and reset the progress bar's transition. So the poll
+   only touches the slot's innards; a full renderQueue happens just when
+   the card appears or disappears. */
+function _paintBoot(){
+  const slot=$("bootSlot");
+  if(!slot)return;
+  const want=queue.length?_bootCardHtml(_activeLane()):"";
+  const had=!!slot.firstChild;
+  if(!want){ if(had)slot.innerHTML=""; return; }
+  if(!had){ slot.innerHTML=want; return; }
+  // Card already there — update only the text and bar width.
+  const L=gpuLanes[_activeLane()]||{};
+  const el=L.boot_elapsed||0, eta=L.boot_eta;
+  const st=slot.querySelector(".boot-stage");
+  const fill=slot.querySelector(".boot-fill");
+  const note=slot.querySelector(".boot-eta");
+  if(st)st.textContent=_BOOT_STAGE_TXT[L.stage]||"Starting up";
+  if(fill)fill.style.width=(eta?Math.min(95,Math.round((el/eta)*100))
+    :Math.min(90,10+el*1.2))+"%";
+  if(note)note.textContent=eta
+    ?(_mmss(el)+" / ~"+_mmss(eta)+(L.boot_samples<3?" (estimate from "+
+      L.boot_samples+" boot"+(L.boot_samples===1?"":"s")+")":""))
+    :(_mmss(el)+" elapsed \u2014 first boot, no timing history yet");
+}
+async function pollGpu(){
+  try{
+    const j=await(await fetch("/api/videostudio/gpu-status")).json();
+    if(!j||!j.lanes)return;
+    const wasReady=(gpuLanes[_activeLane()]||{}).ready;
+    gpuLanes=j.lanes;
+    // Only a full rebuild when the card should appear or vanish.
+    if(wasReady!==(gpuLanes[_activeLane()]||{}).ready)renderQueue();
+    else _paintBoot();
+  }catch(e){}
+}
+
 function renderQueue(){
   $("qCount").textContent=queue.length;
   const box=$("queueBody");
-  if(!queue.length){box.innerHTML="<div class='empty'>No active jobs.</div>";return;}
-  box.innerHTML="";
+  // Only surface the boot card when it explains something — i.e. the
+  // user has work waiting on that lane. A cold GPU with an empty queue
+  // is just idle, and saying so would be noise.
+  if(!queue.length){
+    box.innerHTML="<div class='empty'>No active jobs.</div>";return;
+  }
+  box.innerHTML="<div id='bootSlot'></div>";
+  _paintBoot();
   queue.forEach(q=>{
     const badge=q.status==="running"?"<span class='badge b-run'>run</span>"
       :q.status==="cancelling"?"<span class='badge b-err'>cancelling</span>"
@@ -5736,29 +5860,117 @@ function renderGallery(){
 function openGallery(){renderGallery();$("overlay").classList.add("open");}
 function closeGallery(){$("overlay").classList.remove("open");}
 
-/* ── floating Jobs panel: minimize, section collapse, drag ── */
-function toggleMin(e){e.stopPropagation();
-  const p=$("jobsPanel");p.classList.toggle("min");
-  $("jobsMin").innerHTML=p.classList.contains("min")?"\u25A1":"\u2013";}
-function toggleSec(id){$(id).classList.toggle("closed");}
-(function makeDraggable(){
-  const panel=$("jobsPanel"),handle=$("jobsHandle");let drag=false,sx,sy,ox,oy;
-  handle.addEventListener("pointerdown",e=>{
-    if(e.target.closest("button"))return;
-    drag=true;handle.setPointerCapture(e.pointerId);
-    const par=panel.offsetParent.getBoundingClientRect(),r=panel.getBoundingClientRect();
-    ox=r.left-par.left;oy=r.top-par.top;sx=e.clientX;sy=e.clientY;
-    panel.style.right="auto";panel.style.left=ox+"px";panel.style.top=oy+"px";
+/* ── floating panels: minimize, drag, persist ──────────────────────────
+   Generalised from the single-panel version so Queue and History each
+   drag independently. Same shape as studio.html's draggable modals:
+   pointerdown on the handle starts a drag, pointermove writes inline
+   left/top, pointerup clamps to the container and saves. Double-click a
+   handle to send that panel back to its default corner.
+
+   Positions live in localStorage keyed per panel — someone who drags the
+   queue somewhere deliberately should not have to redo it every visit. */
+const _FLOAT_POS_KEY="vs_float_positions";
+function _loadFloatPos(){
+  try{return JSON.parse(localStorage.getItem(_FLOAT_POS_KEY)||"{}");}
+  catch(e){return {};}
+}
+function _saveFloatPos(p){
+  try{localStorage.setItem(_FLOAT_POS_KEY,JSON.stringify(p));}catch(e){}
+}
+function _clampFloat(panel,x,y){
+  const par=panel.offsetParent;
+  if(!par)return {x:x,y:y};
+  return {x:Math.max(0,Math.min(x,par.clientWidth-panel.offsetWidth)),
+          y:Math.max(0,Math.min(y,par.clientHeight-panel.offsetHeight))};
+}
+function _applyFloatPos(panel,x,y){
+  const c=_clampFloat(panel,x,y);
+  panel.classList.add("dragged");
+  panel.style.right="auto";
+  panel.style.left=c.x+"px";panel.style.top=c.y+"px";
+}
+function toggleMin(e,id){
+  e.stopPropagation();
+  const p=$(id);if(!p)return;
+  p.classList.toggle("min");
+  const b=e.currentTarget;
+  if(b)b.innerHTML=p.classList.contains("min")?"\u25A1":"\u2013";
+  // Minimizing shrinks the panel, which can leave it hanging off the
+  // bottom edge if it was dragged low. Re-clamp after the class change.
+  if(p.classList.contains("dragged")){
+    const r=p.getBoundingClientRect(),par=p.offsetParent.getBoundingClientRect();
+    _applyFloatPos(p,r.left-par.left,r.top-par.top);
+  }
+}
+/* Kept because older markup and a couple of handlers still call it; the
+   collapsible sections are gone now that each panel is its own window. */
+function toggleSec(id){const e=$(id);if(e)e.classList.toggle("closed");}
+
+(function initFloats(){
+  const saved=_loadFloatPos();
+  document.querySelectorAll(".float-drag").forEach(handle=>{
+    const key=handle.dataset.float;
+    const panel=handle.closest(".float");
+    if(!panel||!key)return;
+    if(saved[key])
+      requestAnimationFrame(()=>_applyFloatPos(panel,saved[key].x,saved[key].y));
+
+    handle.addEventListener("pointerdown",e=>{
+      if(e.target.closest("button"))return;
+      if(e.button!==undefined&&e.button!==0)return;
+      const par=panel.offsetParent.getBoundingClientRect();
+      const r=panel.getBoundingClientRect();
+      const ox=r.left-par.left, oy=r.top-par.top;
+      const sx=e.clientX, sy=e.clientY;
+      let started=false;
+      const onMove=ev=>{
+        const dx=ev.clientX-sx, dy=ev.clientY-sy;
+        // 4px threshold so a click on the handle isn't read as a drag.
+        if(!started){
+          if(Math.hypot(dx,dy)<4)return;
+          started=true;
+          try{handle.setPointerCapture(ev.pointerId);}catch(_){}
+          handle.classList.add("dragging");
+          // Bring the panel being moved to the front.
+          document.querySelectorAll(".float").forEach(f=>f.style.zIndex="20");
+          panel.style.zIndex="30";
+        }
+        _applyFloatPos(panel,ox+dx,oy+dy);
+        ev.preventDefault();
+      };
+      const onUp=()=>{
+        handle.removeEventListener("pointermove",onMove);
+        handle.removeEventListener("pointerup",onUp);
+        handle.removeEventListener("pointercancel",onUp);
+        handle.classList.remove("dragging");
+        if(started){
+          const par2=panel.offsetParent.getBoundingClientRect();
+          const r2=panel.getBoundingClientRect();
+          const all=_loadFloatPos();
+          all[key]={x:r2.left-par2.left,y:r2.top-par2.top};
+          _saveFloatPos(all);
+        }
+      };
+      handle.addEventListener("pointermove",onMove);
+      handle.addEventListener("pointerup",onUp);
+      handle.addEventListener("pointercancel",onUp);
+    });
+
+    handle.addEventListener("dblclick",()=>{
+      panel.classList.remove("dragged");
+      panel.style.left="";panel.style.top="";panel.style.right="";
+      const all=_loadFloatPos();delete all[key];_saveFloatPos(all);
+    });
   });
-  handle.addEventListener("pointermove",e=>{
-    if(!drag)return;
-    const par=panel.offsetParent;
-    let nx=ox+(e.clientX-sx),ny=oy+(e.clientY-sy);
-    nx=Math.max(0,Math.min(nx,par.clientWidth-panel.offsetWidth));
-    ny=Math.max(0,Math.min(ny,par.clientHeight-panel.offsetHeight));
-    panel.style.left=nx+"px";panel.style.top=ny+"px";
+  // A panel parked near the right edge would sit off-screen after the
+  // window narrows; re-clamp both on resize.
+  window.addEventListener("resize",()=>{
+    document.querySelectorAll(".float.dragged").forEach(p=>{
+      const par=p.offsetParent.getBoundingClientRect();
+      const r=p.getBoundingClientRect();
+      _applyFloatPos(p,r.left-par.left,r.top-par.top);
+    });
   });
-  handle.addEventListener("pointerup",()=>{drag=false;});
 })();
 
 /* ── console dock ── */
@@ -5863,6 +6075,7 @@ async function restoreJobs(){
 updateDur();
 setEngine("ltx");   // LTX-2.3 is the default engine
 setInterval(pollHw,3000);pollHw();
+setInterval(pollGpu,3000);pollGpu();
 setInterval(pollConsole,1200);pollConsole();
 mlBoot();refreshLoras();renderQueue();renderHistory();restoreJobs();
 </script></body></html>
