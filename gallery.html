@@ -53,15 +53,17 @@ img,video{display:block;max-width:100%}
 .wrap{max-width:var(--max);margin:0 auto;padding:0 20px 90px}
 
 /* ── hero (featured) ────────────────────────────────────── */
-.hero{position:relative;margin:22px 0 8px;border-radius:16px;overflow:hidden;
-  background:var(--surface);border:1px solid var(--border);min-height:190px}
+.hero{position:relative;margin:18px 0 6px;border-radius:14px;overflow:hidden;
+  background:var(--surface);border:1px solid var(--border)}
 .hero-grid{display:grid;grid-template-columns:1.55fr .95fr}
-.hero-img{position:relative;background:var(--surface-2);min-height:340px;overflow:hidden}
-.hero-img img,.hero-img video{width:100%;height:100%;object-fit:cover}
-.hero-side{padding:30px 30px 26px;display:flex;flex-direction:column;justify-content:center;gap:13px}
+/* Feature screenshots must be seen WHOLE — contain, never crop. Capped
+   height keeps the announcement strip compact so the wall stays the star. */
+.hero-img{position:relative;background:#08080a;height:250px;display:grid;place-items:center;padding:10px}
+.hero-img img,.hero-img video{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;border-radius:6px}
+.hero-side{padding:22px 24px;display:flex;flex-direction:column;justify-content:center;gap:11px}
 .hero-tag{font-family:var(--font-mono);font-size:10px;letter-spacing:2.2px;color:var(--gold);
   display:flex;align-items:center;gap:7px}
-.hero-title{font-family:var(--font-display);font-size:37px;line-height:1.1;font-weight:700;margin:0}
+.hero-title{font-family:var(--font-display);font-size:27px;line-height:1.15;font-weight:700;margin:0}
 .hero-desc{color:var(--text-dim);font-size:14px;line-height:1.6;margin:0;
   display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .hero-by{display:flex;align-items:center;gap:10px;margin-top:2px}
@@ -250,7 +252,7 @@ img,video{display:block;max-width:100%}
 @media(max-width:1180px){.grid{column-count:3}}
 @media(max-width:900px){
   .hero-grid{grid-template-columns:1fr}
-  .hero-img{min-height:250px}
+  .hero-img{height:190px}
   .hero-title{font-size:29px}
   .lb{grid-template-columns:1fr}
   .lb.open{display:block;overflow-y:auto}
@@ -308,19 +310,10 @@ img,video{display:block;max-width:100%}
         <div class="hero-side">
           <div class="hero-tag" id="heroTag">★ FEATURED TODAY</div>
           <h1 class="hero-title" id="heroTitle"></h1>
-          <div class="hero-by">
-            <div class="av" id="heroAv"></div>
-            <div>
-              <div class="handle" id="heroBy"></div>
-              <div class="sub">creator</div>
-            </div>
-          </div>
           <p class="hero-desc" id="heroDesc"></p>
-          <div class="hero-stats" id="heroStats"></div>
           <div class="hero-act">
-            <button class="btn gold" id="heroOpen">View piece</button>
-            <button class="btn" id="heroProfile">See their work</button>
-            <a class="btn" id="heroHow" href="https://missinglink.build/studio.html">See how to make this →</a>
+            <a class="btn gold" id="heroHow" href="https://missinglink.build/studio.html">Open</a>
+            <a class="btn" id="heroLearn" href="/learn.html">Learn more →</a>
           </div>
           <div class="hero-dots" id="heroDots"></div>
         </div>
@@ -582,28 +575,6 @@ function paint(grid, items, offsetIndex){
   grid.appendChild(frag);
 }
 
-function heroFrom(it){
-  $('hero').style.display='block';
-  const h=$('heroImg');
-  h.innerHTML = (it.media_type==='video'&&it.video_url)
-    ? '<video src="'+esc(it.video_url)+'" poster="'+esc(it.poster||it.url)+'" autoplay muted loop playsinline></video>'
-    : '<img src="'+esc(it.url)+'" alt="">';
-  $('heroTitle').textContent = titleOf(it);
-  $('heroDesc').textContent = it.share_caption || it.description || it.prompt || '';
-  $('heroBy').textContent = it.author;
-  avatar($('heroAv'), it.author);
-  $('heroBy').onclick = () => openCreator(it.author);
-  $('heroProfile').onclick = () => openCreator(it.author);
-  $('heroOpen').onclick = () => openLb(0);
-  api('/api/studio/job/'+encodeURIComponent(it.id)+'/social').then(({data})=>{
-    if(!data||!data.ok) return;
-    $('heroStats').innerHTML =
-      '<span><b>'+(data.likes_count||0)+'</b> likes</span>'+
-      '<span><b>'+((data.comments&&data.comments.length)||0)+'</b> comments</span>'+
-      '<span><b>'+(data.tips_total||0)+'</b> tokens tipped</span>';
-  });
-}
-
 /* Creator rail built from who appears in the loaded feed — real users,
    ranked by how much of the current wall is theirs. */
 function buildRail(){
@@ -749,47 +720,49 @@ function harvestTags(items){
 }
 
 /* ── rotating hero: platform pitches + real featured art ── */
+const SHOT = 'https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/';
+/* Platform announcements — NOT artist features. Each slide pairs a
+   capability with its own screenshot and a Learn-more deep link.
+   Drop matching PNGs in the Extras repo (names below) and they appear;
+   until then each slide falls back to a representative gallery piece. */
 const PITCHES = [
-  { tag:'★ FEATURED TODAY',        cta:'See how to make this →', href:'https://missinglink.build/studio.html' },
-  { tag:'✦ IMAGE STUDIO',          title:'Edit any image by describing the change.',
-    desc:'Camera angles, background swaps, batch edits across 20 images at once — driven by plain language.',
-    cta:'Open Image Studio →',      href:'https://missinglink.build/studio.html' },
-  { tag:'🎞 VIDEO STUDIO',          title:'Turn a still into motion.',
-    desc:'Image-to-video with your own LoRAs. Start from anything on this wall.',
-    cta:'Open Video Studio →',      href:'https://missinglink.build/videostudio' },
-  { tag:'🧊 3D MODELS',             title:'Generate a 3D model from one photo.',
-    desc:'Textured meshes you can download and use — from a single reference image.',
-    cta:'Open 3D Models →',         href:'https://missinglink.build/modelgen' },
-  { tag:'⟳ NEXT SCENE',             title:'Continue the story, shot by shot.',
-    desc:'Chain generations into cinematic sequences — each frame evolving from the last.',
-    cta:'Try sequences →',          href:'https://missinglink.build/studio.html' },
+  { tag:'✦ IMAGE STUDIO', title:'Edit any image by describing the change.',
+    desc:'Swap backgrounds, change outfits, fix details — in plain language, on your own uploads.',
+    shot:'feat_edit.png', cta:'Open Studio', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#edit' },
+  { tag:'🎥 CAMERA VIEWS', title:'Any angle of the same subject.',
+    desc:'Orbit the camera around a photo — 6 or 20 consistent views from one image.',
+    shot:'feat_camera.png', cta:'Try Camera', href:'https://missinglink.build/studio.html#camera',
+    learn:'/learn.html#camera' },
+  { tag:'▦ BATCH', title:'One instruction. Twenty images.',
+    desc:'Apply the same edit across a whole set, with per-image AI planning and auto-QA.',
+    shot:'feat_batch.png', cta:'Try Batch', href:'https://missinglink.build/studio.html#batch',
+    learn:'/learn.html#batch' },
+  { tag:'🎞 VIDEO STUDIO', title:'Turn a still into motion.',
+    desc:'Image-to-video with your own LoRAs — start from anything on this wall.',
+    shot:'feat_video.png', cta:'Open Video Studio', href:'https://missinglink.build/videostudio',
+    learn:'/learn.html#video' },
+  { tag:'🧊 3D MODELS', title:'A textured 3D model from one photo.',
+    desc:'Generate downloadable meshes from a single reference image.',
+    shot:'feat_3d.png', cta:'Open 3D Models', href:'https://missinglink.build/modelgen',
+    learn:'/learn.html#3d' },
 ];
 let heroIx = 0, heroTimer = null;
 function paintHero(i){
-  const items = state.items.filter(x=>x.url);
-  if (!items.length) return;
   heroIx = (i + PITCHES.length) % PITCHES.length;
   const p = PITCHES[heroIx];
-  const art = items[heroIx % items.length];
   $('hero').style.display='block';
-  $('heroImg').innerHTML = (art.media_type==='video'&&art.video_url)
-    ? '<video src="'+esc(art.video_url)+'" poster="'+esc(art.poster||art.url)+'" autoplay muted loop playsinline></video>'
-    : '<img src="'+esc(art.url)+'" alt="">';
+  const fallback = (state.items.filter(x=>x.url)[heroIx % Math.max(1,state.items.length)]||{}).url || '';
+  const img = new Image();
+  $('heroImg').innerHTML = '<img id="heroShot" alt="'+esc(p.title)+'">';
+  const el = $('heroShot');
+  el.onerror = () => { if (fallback && el.src !== fallback) el.src = fallback; };
+  el.src = SHOT + p.shot;
   $('heroTag').textContent = p.tag;
-  $('heroTitle').textContent = p.title || titleOf(art);
-  $('heroDesc').textContent = p.desc || art.share_caption || art.description || art.prompt || '';
-  $('heroBy').textContent = art.author;
-  avatar($('heroAv'), art.author);
-  $('heroBy').onclick = $('heroProfile').onclick = () => openCreator(art.author);
-  $('heroOpen').onclick = () => { const ix = state.items.indexOf(art); if (ix>=0) openLb(ix); };
+  $('heroTitle').textContent = p.title;
+  $('heroDesc').textContent = p.desc;
   $('heroHow').textContent = p.cta; $('heroHow').href = p.href;
-  api('/api/studio/job/'+encodeURIComponent(art.id)+'/social').then(({data})=>{
-    if(!data||!data.ok) return;
-    $('heroStats').innerHTML =
-      '<span><b>'+(data.likes_count||0)+'</b> likes</span>'+
-      '<span><b>'+((data.comments&&data.comments.length)||0)+'</b> comments</span>'+
-      '<span><b>'+(data.tips_total||0)+'</b> tokens tipped</span>';
-  });
+  $('heroLearn').href = p.learn;
   $('heroDots').innerHTML = PITCHES.map((_,k)=>'<i class="'+(k===heroIx?'on':'')+'" data-k="'+k+'"></i>').join('');
   $('heroDots').querySelectorAll('i').forEach(d => d.onclick = () => { paintHero(+d.dataset.k); restartHero(); });
 }
