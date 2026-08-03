@@ -159,6 +159,21 @@ img,video{display:block;max-width:100%}
   transition:.25s}
 .hero-dots i.on{background:var(--gold);width:34px}
 
+/* ── challenges ─────────────────────────────────────────── */
+.chal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.chal{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;
+  display:flex;flex-direction:column;transition:.16s}
+.chal:hover{border-color:var(--gold);transform:translateY(-2px)}
+.chal .top{padding:16px 17px 0;display:flex;align-items:center;gap:9px}
+.chal .st{font-family:var(--font-mono);font-size:9px;letter-spacing:1.6px;padding:3px 9px;
+  border-radius:99px;border:1px solid var(--gold-dim);color:var(--gold)}
+.chal .st.soon{border-color:var(--border);color:var(--text-mute)}
+.chal .bd{padding:12px 17px 17px;display:flex;flex-direction:column;gap:9px;flex:1}
+.chal h3{font-family:var(--font-display);font-size:20px;margin:0;line-height:1.2}
+.chal p{margin:0;font-size:13.5px;line-height:1.6;color:var(--text-dim)}
+.chal .meta{font-family:var(--font-mono);font-size:10px;color:var(--text-mute);margin-top:auto;
+  display:flex;gap:12px;padding-top:6px}
+
 /* ── models grid ────────────────────────────────────────── */
 .mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:15px}
 .mcard{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;
@@ -289,6 +304,7 @@ img,video{display:block;max-width:100%}
     <nav class="hdr-nav">
       <a href="#" class="on" id="tabGallery" onclick="showTab('gallery');return false">Community</a>
       <a href="#" id="tabModels" onclick="showTab('models');return false">LoRA Models</a>
+      <a href="#" id="tabChal" onclick="showTab('challenges');return false">Challenges</a>
       <a href="https://missinglink.build/studio.html">Image Studio</a>
       <a href="https://missinglink.build/videostudio">Video Studio</a>
       <a href="https://missinglink.build/modelgen">3D Models</a>
@@ -319,12 +335,6 @@ img,video{display:block;max-width:100%}
         </div>
       </div>
     </section>
-
-    <div class="sec-h">
-      <h2>Creators to watch</h2>
-      <span class="note">most active this week</span>
-    </div>
-    <div class="rail" id="rail"></div>
 
     <div class="filters">
       <button class="chip on" data-sort="new">Latest</button>
@@ -359,6 +369,11 @@ img,video{display:block;max-width:100%}
     </div>
 
     <div class="grid" id="grid"></div>
+    <div class="sec-h" id="railHead" style="display:none">
+      <h2>Creators to watch</h2>
+      <span class="note">most active on the wall right now</span>
+    </div>
+    <div class="rail" id="rail"></div>
     <div class="load" id="loader"><div class="spin"></div></div>
     <div class="empty" id="empty" style="display:none"></div>
   </div>
@@ -382,6 +397,22 @@ img,video{display:block;max-width:100%}
     <div class="sec-h"><h2 id="cpCount">Creations</h2></div>
     <div class="grid" id="cpGrid"></div>
     <div class="load" id="cpLoader" style="display:none"><div class="spin"></div></div>
+  </div>
+
+  <!-- ══ CHALLENGES ══ -->
+  <div id="chalView" style="display:none">
+    <div class="sec-h" style="margin-top:26px">
+      <h2>Challenges</h2>
+      <span class="note">a new brief every week — make something, share it, get seen</span>
+    </div>
+    <div class="chal-grid" id="chalGrid"></div>
+    <div class="tipbox" style="margin-top:24px;font-family:var(--font-mono);font-size:11px;
+      line-height:1.9;color:var(--text-mute);border:1px dashed var(--border);border-radius:10px;padding:16px">
+      HOW IT WORKS<br>
+      Make something that fits the brief in any studio → share it to the community gallery →
+      tag it by putting the challenge word in your title or prompt. Entries are collected
+      automatically and featured at the top of the wall.
+    </div>
   </div>
 
   <!-- ══ MODELS (CivitAI LoRA browser) ══ -->
@@ -615,13 +646,14 @@ function buildRail(){
   const by = {};
   state.items.forEach(it => { (by[it.author] = by[it.author] || []).push(it); });
   const top = Object.entries(by).sort((a,b)=>b[1].length-a[1].length).slice(0,12);
-  if (top.length < 2){ $('rail').parentNode.querySelector('.sec-h').style.display='none'; return; }
+  if (top.length < 2){ return; }
+  $('railHead').style.display='flex';
   $('rail').innerHTML = top.map(([handle, list]) =>
     '<div class="cr" onclick="openCreator(\''+esc(handle)+'\')">'+
       avHtml(handle)+
       '<div class="cr-h">'+esc(handle)+'</div>'+
       '<div class="cr-n">'+list.length+' piece'+(list.length===1?'':'s')+'</div>'+
-      '<div class="cr-strip">'+list.slice(0,3).map(x=>
+      '<div class="cr-strip">'+list.slice(0,3).filter(x=>x.poster||x.url).map(x=>
         '<div style="background-image:url('+JSON.stringify(x.poster||x.url)+')"></div>').join('')+
       '</div>'+
     '</div>').join('');
@@ -898,17 +930,67 @@ let mqt=null;
 $('mq').addEventListener('input', e => { clearTimeout(mqt);
   mqt = setTimeout(()=>{ mstate.q = e.target.value.trim(); loadModels(true); }, 400); });
 
+/* ── challenges ───────────────────────────────────────────
+   Curated briefs. Each keys off a WORD entrants put in their title or
+   prompt, so entries collect through the existing gallery search — no
+   new backend needed. Edit this list to run a new challenge. */
+const CHALLENGES = [
+  { key:'liminal', title:'Liminal Spaces', state:'live',
+    brief:'Empty places that feel like someone just left. Hallways, pools, waiting rooms at 3am.',
+    tool:'Image Studio', ends:'this Sunday' },
+  { key:'turnaround', title:'Character Turnaround', state:'live',
+    brief:'One character, six angles, perfectly consistent. Show us the sheet.',
+    tool:'Camera · Multi-view', ends:'this Sunday' },
+  { key:'onephoto', title:'One Photo, Three Worlds', state:'live',
+    brief:'Take a single source image and edit it into three completely different settings.',
+    tool:'Batch', ends:'this Sunday' },
+  { key:'inmotion', title:'Bring It To Life', state:'live',
+    brief:'Animate something from the community wall. Credit the original creator.',
+    tool:'Video Studio', ends:'this Sunday' },
+  { key:'sculpt', title:'Photo to Sculpture', state:'soon',
+    brief:'Turn an everyday object into a 3D model worth printing.',
+    tool:'3D Models', ends:'starts next week' },
+  { key:'nextscene', title:'Six-Shot Story', state:'soon',
+    brief:'Tell a complete story in six chained frames. No text, no captions.',
+    tool:'Next Scene chain', ends:'starts next week' },
+];
+function renderChallenges(){
+  $('chalGrid').innerHTML = CHALLENGES.map(c =>
+    '<div class="chal" onclick="openChallenge('+JSON.stringify(c.key)+')">'+
+      '<div class="top">'+
+        '<span class="st'+(c.state==='soon'?' soon':'')+'">'+(c.state==='soon'?'COMING SOON':'● LIVE')+'</span>'+
+        '<span class="sub">'+esc(c.tool)+'</span>'+
+      '</div>'+
+      '<div class="bd">'+
+        '<h3>'+esc(c.title)+'</h3>'+
+        '<p>'+esc(c.brief)+'</p>'+
+        '<div class="meta"><span>tag: <b style="color:var(--gold)">'+esc(c.key)+'</b></span>'+
+          '<span>'+esc(c.ends)+'</span></div>'+
+      '</div>'+
+    '</div>').join('');
+}
+function openChallenge(key){
+  showTab('gallery');
+  $('q').value = key;
+  state.q = key;
+  load(true);
+  toast('Showing entries tagged "'+key+'"');
+}
+
 /* ── tab switching ── */
 function showTab(t){
-  const isM = t === 'models';
-  $('feedView').style.display = isM ? 'none' : 'block';
+  const isM = t === 'models', isC = t === 'challenges';
+  $('feedView').style.display = (isM || isC) ? 'none' : 'block';
   $('modelsView').style.display = isM ? 'block' : 'none';
+  $('chalView').style.display = isC ? 'block' : 'none';
   $('creatorView').classList.remove('on');
-  $('tabGallery').classList.toggle('on', !isM);
+  $('tabGallery').classList.toggle('on', !isM && !isC);
   $('tabModels').classList.toggle('on', isM);
-  location.hash = isM ? 'models' : '';
+  $('tabChal').classList.toggle('on', isC);
+  location.hash = isM ? 'models' : (isC ? 'challenges' : '');
   window.scrollTo(0,0);
   if (isM && !$('mgrid').children.length) loadModels(true);
+  if (isC && !$('chalGrid').children.length) renderChallenges();
 }
 
 /* ── advanced filter wiring ── */
@@ -934,6 +1016,7 @@ $('q').addEventListener('input', e => { clearTimeout(qt);
 window.addEventListener('scroll', () => {
   if ($('creatorView').classList.contains('on')) return;
   if ($('modelsView').style.display === 'block') return;
+  if ($('chalView').style.display === 'block') return;
   if (window.innerHeight + window.scrollY > document.body.offsetHeight - 900) load(false);
 });
 
@@ -941,6 +1024,7 @@ window.addEventListener('scroll', () => {
 (function boot(){
   const h = location.hash.slice(1);
   if (h === 'models') { load(true).then(()=>showTab('models')); return; }
+  if (h === 'challenges') { load(true).then(()=>showTab('challenges')); return; }
   if (h.startsWith('creator=')) { load(false).then(()=>openCreator(decodeURIComponent(h.slice(8)))); return; }
   load(true).then(()=>{
     if (h.startsWith('piece=')){
