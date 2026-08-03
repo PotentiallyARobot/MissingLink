@@ -931,7 +931,6 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       <div id="authIn" style="display:none">
         <div class="hdr-badge" id="mlBadge" style="cursor:pointer" onclick="mlBadgeClick()" title="Token balance — click to buy more"><span style="color:var(--gold)">&#9670;</span><span id="mlBadgeTxt">&mdash;</span></div>
       </div>
-      <div class="hdr-badge" title="VRAM on the active lane"><span>&#9635;</span><span id="vramPill">&ndash; / &ndash; GB</span></div>
       <!-- GPU name folded into the connection pill. It used to sit in a
            chip shaped exactly like studio's account menu, which is why
            people looked there for their user and found "GPU". -->
@@ -5716,6 +5715,7 @@ async function pollGpu(){
     // Only a full rebuild when the card should appear or vanish.
     if(wasReady!==(gpuLanes[_activeLane()]||{}).ready)renderQueue();
     else _paintBoot();
+    paintConn();
   }catch(e){}
 }
 
@@ -6301,27 +6301,29 @@ async function copyConsole(e){
 }
 
 /* ── hardware / GPU state ── */
-async function pollHw(){
-  // Ask for the lane the user is actually on — the two engines run on
-  // different cards, so a single VRAM number would be wrong half the time.
-  const _lane=(typeof currentEngine!=="undefined"&&currentEngine==="ltx")
-    ?"ltx":"wan";
-  try{const j=await(await fetch("/api/videostudio/hw?lane="+_lane)).json();
-    if(j.gpu){
-      $("vramPill").textContent=j.vram_used+" / "+j.vram_total+" GB";
-      $("gpuName").textContent=j.gpu.length>20?j.gpu.slice(0,20)+"\u2026":j.gpu;
-    }
-    const anyRun=queue.some(q=>q.status==="running");
-    const res=j.residency&&j.residency!=="unknown"?j.residency:"";
-    let cls,label;
-    if(!j.gpu){cls="off";label="No GPU";}
-    else if(anyRun){cls="warm";label="Generating";}
-    else if(res==="gpu"){cls="on";label="GPU resident";}
-    else if(res==="cpu-offload"){cls="on";label="CPU offload";}
-    else{cls="cold";label="Connecting";}
-    $("connDot").className="dot "+cls;$("connLabel").textContent=label;
-  }catch(e){}
+/* The connection pill now reads from gpu-status rather than /hw. /hw only
+   answers once a container is already alive, so it could never describe
+   the one window that actually needs explaining — the cold start. VRAM
+   numbers are gone from the header entirely: they told the user nothing
+   they could act on. */
+function paintConn(){
+  const L=gpuLanes[_activeLane()]||{};
+  const anyRun=queue.some(q=>q.status==="running");
+  let cls,label;
+  if(anyRun){cls="warm";label="Generating";}
+  else if(L.ready){cls="on";label="GPU ready";}
+  else if(L.stage==="loading_model"){cls="cold";label="Loading model";}
+  else if(L.stage==="starting"){cls="cold";label="Starting";}
+  else if(L.stage==="waking"||(L.queue_depth||0)>0){cls="cold";label="Waking GPU";}
+  else{cls="off";label="Idle";}
+  const d=$("connDot"),l=$("connLabel");
+  if(d)d.className="dot "+cls;
+  if(l)l.textContent=label;
+  // GPU name only once we actually know it.
+  const g=$("gpuName");
+  if(g)g.textContent=L.ready?(_activeLane()==="ltx"?" L40S":" L4"):"";
 }
+async function pollHw(){ paintConn(); }
 
 /* ── console log ── */
 let _conSeen=0;
