@@ -1065,6 +1065,16 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 .img-slot{border:1.5px dashed var(--border);border-radius:8px;overflow:hidden;margin-bottom:8px;transition:all .15s}
 .img-slot:last-child{margin-bottom:0}
 .img-slot.drag-over{border-color:var(--gold);background:var(--gold-dim)}
+/* An "armed" slot is the pending destination for the next history click.
+   Solid gold ring + soft glow so it reads clearly against the dashed
+   empty state and stays visible once the slot is filled. */
+.img-slot.armed{border-style:solid;border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-dim)}
+/* History-click target picker. Reuses the un-scoped .ems-btn chrome. */
+.bctx-target{display:flex;align-items:center;gap:6px;margin:0 0 8px;flex-wrap:wrap}
+.bctx-target-lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:.5px;color:var(--text-muted);text-transform:uppercase;margin-right:2px}
+.bctx-target .ems-btn{padding:4px 9px;font-size:10px}
+.bctx-target .ems-btn.active{background:var(--gold);border-color:var(--gold);color:#0a0a0c;font-weight:600}
+.bctx-target .ems-btn.active:hover{background:var(--gold-light);color:#0a0a0c}
 .slot-empty{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;transition:background .15s;position:relative}
 .slot-empty:hover{background:var(--surface-3)}
 .slot-empty input[type=file]{display:none}
@@ -5412,6 +5422,19 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="sec-label"><span class="icon">🧩</span> SHARED CONTEXT
             <span class="sec-label-count">optional · reused across every job</span>
         </div>
+        <!-- Where a history thumbnail click lands. Default "Stage" appends to
+             BATCH INPUTS; picking a slot arms it so the next history click
+             fills that reference instead. One-shot — it disarms after the
+             assign so a stray click can't overwrite the reference. -->
+        <div class="bctx-target" id="bctxTarget">
+            <span class="bctx-target-lbl">History click →</span>
+            <button type="button" class="ems-btn active" data-bctx="stage" onclick="setBatchHistoryTarget('stage')"
+                    title="Clicking a history image appends it to BATCH INPUTS (default)">Stage</button>
+            <button type="button" class="ems-btn" data-bctx="1" onclick="setBatchHistoryTarget(1)"
+                    title="Arm slot Image 2 — the next history image you click fills this shared-context slot instead of the batch stage">Image 2</button>
+            <button type="button" class="ems-btn" data-bctx="2" onclick="setBatchHistoryTarget(2)"
+                    title="Arm slot Image 3 — the next history image you click fills this shared-context slot instead of the batch stage">Image 3</button>
+        </div>
         <div class="img-slot" id="bslot1"
              ondragover="event.preventDefault()" ondrop="batchContextDrop(event,1)">
             <div class="slot-empty" onclick="$('bslotFile1').click()">
@@ -8982,6 +9005,11 @@ function setMode(mode, opts){
         if (typeof renderBatchInputs === 'function') setTimeout(renderBatchInputs, 0);
     }
     currentMode = mode;
+    // Leaving (or re-entering) Batch disarms any pending shared-context
+    // slot target. An armed slot is a "next click goes here" intent scoped
+    // to the current batch session; carrying it across a mode switch would
+    // silently hijack the first history click after the user comes back.
+    if (mode !== 'batch' && typeof setBatchHistoryTarget === 'function') setBatchHistoryTarget('stage');
     // Camera↔Edit transition: reset all LoRA sliders to the new mode's
     // defaults. The two Qwen modes want different adapter stacks (Angles is
     // camera-only; Upscale/Skin/A2R are opt-in per session), and carrying a
@@ -27908,6 +27936,43 @@ function toggleRestorePrompts(on){
 // Sync checkbox DOM to the persisted value on load (markup defaults to checked).
 document.addEventListener('DOMContentLoaded', () => toggleRestorePrompts(_restorePromptsOnStage));
 
+// Turn a history job into a real studio_uploads row usable anywhere an
+// upload id is required (batch inputs, shared-context slots, edit inputs).
+// Shared by addHistoryImageToBatch and addHistoryImageToContext so the
+// endpoint call, the 401 handling and the skip-reason messaging live in
+// exactly one place. Returns the input descriptor, or null (already having
+// shown the user a specific reason).
+async function resolveHistoryUpload(j, what){
+    const noun = what || 'the batch';
+    try {
+        const r = await fetchT(`${API}/api/studio/output-to-input`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_ids: [j.id] }),
+        }, 20000);
+        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return null; }
+        const d = await r.json().catch(() => null);
+        const inp = d && d.ok && Array.isArray(d.inputs) && d.inputs[0];
+        if (inp) return inp;
+        // The server reports WHY a job couldn't be converted instead of
+        // returning a bare empty list, so say something actionable.
+        const why = (d && Array.isArray(d.skipped) && d.skipped[0] && d.skipped[0].reason) || '';
+        const msg = why === 'object_missing'
+                ? 'That image file is gone — it was deleted or purged.'
+            : why === 'not_done'
+                ? 'That generation hasn\u2019t finished yet.'
+            : why === 'not_found'
+                ? 'That history item no longer exists.'
+            : why === 'unsupported_result'
+                ? 'That history item has no still image to use (video and 3D results can\u2019t be staged).'
+                : `Couldn\u2019t add this image to ${noun}.`;
+        showNotif(msg, 'error');
+        return null;
+    } catch (e) {
+        showNotif(`Couldn\u2019t add this image to ${noun}.`, 'error');
+        return null;
+    }
+}
+
 // Batch mode: clicking a single history image ADDS it to the batch
 // inputs (the batch "stage") instead of loading the shared #outImg
 // stage, which isn't what batch works from. Converts the job output to
@@ -27924,55 +27989,92 @@ async function addHistoryImageToBatch(j){
         return;
     }
     showNotif('Adding image to batch…', 'info');
-    try {
-        const r = await fetchT(`${API}/api/studio/output-to-input`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ job_ids: [j.id] }),
-        }, 20000);
-        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
-        const d = await r.json().catch(() => null);
-        const inp = d && d.ok && Array.isArray(d.inputs) && d.inputs[0];
-        if (!inp) {
-            // The server now reports WHY a job couldn't be converted instead
-            // of returning a bare empty list, so say something actionable.
-            const why = (d && Array.isArray(d.skipped) && d.skipped[0] && d.skipped[0].reason) || '';
-            const msg = why === 'object_missing'
-                    ? 'That image file is gone — it was deleted or purged.'
-                : why === 'not_done'
-                    ? 'That generation hasn\u2019t finished yet.'
-                : why === 'not_found'
-                    ? 'That history item no longer exists.'
-                : why === 'unsupported_result'
-                    ? 'That history item has no still image to add (video or 3D results can\u2019t go in the batch).'
-                    : 'Couldn\u2019t add this image to the batch.';
-            showNotif(msg, 'error');
-            return;
-        }
-        // Second dedupe pass on the RESOLVED upload id: two different history
-        // rows (an agent edit and its re-save, say) can point at the same
-        // underlying upload, which the _srcJobId check above can't catch.
-        const dupe = (_batchInputs || []).find(b => b.id === inp.id);
-        if (dupe) {
-            dupe.selected = true;
-            dupe._srcJobId = dupe._srcJobId || j.id;
-            renderBatchInputs();
-            showNotif('Already in the batch — selected it.', 'info');
-            return;
-        }
-        _batchInputs.push({
-            id: inp.id, url: inp.url,
-            w: inp.w || j.w || 0, h: inp.h || j.h || 0,
-            fname: inp.filename || `${inp.id}.png`,
-            selected: true,
-            _histPrompt: j.prompt || '',
-            _srcJobId: j.id,
-        });
+    const inp = await resolveHistoryUpload(j, 'the batch');
+    if (!inp) return;
+    // Second dedupe pass on the RESOLVED upload id: two different history
+    // rows (an agent edit and its re-save, say) can point at the same
+    // underlying upload, which the _srcJobId check above can't catch.
+    const dupe = (_batchInputs || []).find(b => b.id === inp.id);
+    if (dupe) {
+        dupe.selected = true;
+        dupe._srcJobId = dupe._srcJobId || j.id;
         renderBatchInputs();
-        if (typeof updateGenButton === 'function') updateGenButton();
-        showNotif('Added to batch (selected).', 'success');
-    } catch (e) {
-        showNotif('Couldn\u2019t add this image to the batch.', 'error');
+        showNotif('Already in the batch — selected it.', 'info');
+        return;
     }
+    _batchInputs.push({
+        id: inp.id, url: inp.url,
+        w: inp.w || j.w || 0, h: inp.h || j.h || 0,
+        fname: inp.filename || `${inp.id}.png`,
+        selected: true,
+        _histPrompt: j.prompt || '',
+        _srcJobId: j.id,
+    });
+    renderBatchInputs();
+    if (typeof updateGenButton === 'function') updateGenButton();
+    showNotif('Added to batch (selected).', 'success');
+}
+
+// ── HISTORY CLICK TARGET (batch mode) ──────────────────────────────────
+// Where does clicking a history thumbnail land? 'stage' appends to the
+// batch inputs (the long-standing behavior); 1 or 2 assigns into the
+// SHARED CONTEXT slots labelled "Image 2" / "Image 3" instead.
+//
+// Deliberately ONE-SHOT: after a successful assign the target snaps back
+// to 'stage'. A sticky slot target means the next casual history click
+// silently overwrites the reference you just placed, which is a far worse
+// failure than having to re-arm for the second slot.
+// `var`, not `let`: setMode() lives ~19k lines above this and calls
+// setBatchHistoryTarget(). A function declaration is hoisted, so the
+// `typeof … === 'function'` guard there passes regardless of position —
+// a `let` would then throw a TDZ ReferenceError on any mode switch that
+// happens before this line evaluates. var hoists to undefined, and the
+// setter coerces anything that isn't 1/2 to 'stage'.
+var _batchHistoryTarget = 'stage';
+
+function setBatchHistoryTarget(t){
+    _batchHistoryTarget = (t === 1 || t === 2 || t === '1' || t === '2') ? Number(t) : 'stage';
+    const row = $('bctxTarget');
+    if (row) row.querySelectorAll('.ems-btn').forEach(b => {
+        b.classList.toggle('active', String(b.dataset.bctx) === String(_batchHistoryTarget));
+    });
+    // Ring the slot that's currently armed so it's obvious where the next
+    // history click is going, even if the toolbar has scrolled out of view.
+    for (const idx of [1, 2]) {
+        const slot = $(`bslot${idx}`);
+        if (slot) slot.classList.toggle('armed', _batchHistoryTarget === idx);
+    }
+}
+
+// Assign a history image into shared-context slot 1 (Image 2) or 2 (Image 3).
+// Same conversion path as the batch stage — the slots hold real upload ids
+// because every batch job submits them as image_ids alongside its own input.
+async function addHistoryImageToContext(j, slotIdx){
+    if (!j || !j.id) return;
+    if (slotIdx !== 1 && slotIdx !== 2) return;
+    const label = `Image ${slotIdx + 1}`;
+    // Re-assigning the same image to the slot it already occupies is a no-op
+    // worth naming rather than a silent round trip.
+    const cur = _batchContext[slotIdx];
+    if (cur && cur._srcJobId === j.id) {
+        showNotif(`Already in ${label}.`, 'info');
+        setBatchHistoryTarget('stage');
+        return;
+    }
+    showNotif(`Assigning to ${label}…`, 'info');
+    const inp = await resolveHistoryUpload(j, `${label}`);
+    if (!inp) return;
+    _batchContext[slotIdx] = {
+        id: inp.id, url: inp.url,
+        w: inp.w || j.w || 0, h: inp.h || j.h || 0,
+        fname: inp.filename || `${inp.id}.png`,
+        _srcJobId: j.id,
+    };
+    renderBatchContext();
+    log(`Batch context slot ${slotIdx + 1} (${label}) \u2190 history ${j.id}`);
+    showNotif(`Assigned to shared context ${label}.`, 'success');
+    // One-shot: disarm so the next history click stages normally.
+    setBatchHistoryTarget('stage');
 }
 
 function restoreFromHistory(j){
@@ -27980,9 +28082,14 @@ function restoreFromHistory(j){
     // BATCH MODE: route single-image clicks into the batch inputs — the
     // batch has no use for the shared #outImg stage. (Batch GROUP entries
     // don't come through here; their click handlers offer restore-grid /
-    // load-to-inputs directly.)
+    // load-to-inputs directly.) If a SHARED CONTEXT slot is armed, the
+    // click goes there instead of onto the batch stage.
     if (typeof currentMode === 'string' && currentMode === 'batch') {
-        addHistoryImageToBatch(j);
+        if (_batchHistoryTarget === 1 || _batchHistoryTarget === 2) {
+            addHistoryImageToContext(j, _batchHistoryTarget);
+        } else {
+            addHistoryImageToBatch(j);
+        }
         return;
     }
     // Clicking a history image loads it onto the stage in WHATEVER mode the
