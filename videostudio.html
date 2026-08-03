@@ -2261,11 +2261,12 @@ function setEngine(e){
   const _prevLane=(typeof _activeLane==="function")?_activeLane():null;
   currentEngine=e;
   try{refreshLoras();}catch(_e){}
-  // Switching between LTX and Wan means a different container. Start the
-  // new one warming now rather than at Generate.
+  // Switching engines changes which container would run the job, but
+  // browsing the engine list is not intent to render either — just
+  // refresh that lane's status so the pill is accurate.
   try{
     const l=_activeLane();
-    if(l!==_prevLane){wakeGpu(l);pollGpu();}
+    if(l!==_prevLane)pollGpu();
   }catch(_e){}
   const ltx=e==="ltx";
   const wan22=e==="wan22";
@@ -5536,6 +5537,11 @@ async function _submitOne(body,prompt,thumb){
   if(!gpuLanes[_l])gpuLanes[_l]={ready:false,stage:"waking",boot_elapsed:0,
     boot_eta:null,boot_samples:0,queue_depth:1};
   renderQueue();
+  // Signed in + funded + pressed Generate: all three conditions met, so
+  // this is the point where spinning up a GPU is justified. The Worker
+  // also wakes the lane on submit; this one covers the case where the
+  // browser gets there first.
+  wakeGpu(_l);
   pollGpu();
   return o.job_id;
 }
@@ -6369,8 +6375,10 @@ updateDur();
 setEngine("ltx");   // LTX-2.3 is the default engine
 setInterval(pollHw,3000);pollHw();
 setInterval(pollGpu,3000);pollGpu();
-// Start the GPU coming up as soon as someone opens the studio.
-setTimeout(()=>wakeGpu(),1500);
+// Deliberately NOT waking the GPU here. Opening the page is not intent to
+// render, and an L40S spun up by a sign-in bills for its whole idle
+// window whether or not anything is generated. The wake happens on
+// submit, where a job actually exists to justify it.
 setInterval(pollConsole,1200);pollConsole();
 mlBoot();refreshLoras();renderQueue();renderHistory();restoreJobs();
 </script></body></html>
