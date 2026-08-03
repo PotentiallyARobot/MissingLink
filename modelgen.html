@@ -65,7 +65,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .hdr-badge .dot.error{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
-.hdr-link{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);text-decoration:none;padding:3px 8px;border:1px solid var(--border);border-radius:4px;transition:.15s}
+.hdr-link{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);text-decoration:none;padding:3px 8px;border:1px solid var(--border);border-radius:4px;transition:.15s;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.hdr-ico{line-height:1}
 .hdr-link:hover{border-color:var(--gold);color:var(--gold)}
 
 .token-badge{cursor:pointer;font-family:var(--font-mono);font-size:11px;font-weight:600;padding:4px 10px;border:1px solid var(--gold);border-radius:4px;background:var(--gold-dim);color:var(--gold);transition:.15s}
@@ -557,7 +558,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   header h1{font-size:11px;letter-spacing:1px;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis;min-width:0}
   header h1 span{display:none}          /* drop "MODELGEN", keep the brand */
-  .hdr-link{display:none}               /* Studio + History → user menu */
+  /* History stays as an icon-only button — it's a frequent in-app
+     action and burying it in the account menu made it undiscoverable.
+     Studio is a navigation away from the app and remains in that menu. */
+  #studioLink{display:none}
+  .hdr-label{display:none}
+  #historyBtn{padding:0;width:34px;min-height:32px;justify-content:center;flex:none}
+  .hdr-ico{font-size:14px}
 
   /* GPU status collapses to a bare status dot. The old rule hid the
      label but left min-width:115px in place, so it reserved the space
@@ -666,12 +673,12 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 }
 
 /* Very narrow phones — drop the second preset row rather than squash. */
-@media (max-width: 400px){
+@media (max-width: 430px){
   .preset-row{grid-template-columns:repeat(2,1fr)}
-  /* Under ~110px of slack the wordmark truncates to "MISSINGLI…", which
-     reads worse than not showing it — the logo mark still identifies the
-     app. Measured against a 360px viewport with the signed-out header,
-     which is the widest variant. */
+  /* Measured: with History restored, a 360px signed-in header leaves
+     107px for the wordmark — not enough for "MISSINGLINK" at 11px mono,
+     so it would truncate to "MISSINGLI…". The logo mark still identifies
+     the app, so dropping the text reads better than clipping it. */
   header h1{display:none}
 }
 
@@ -705,8 +712,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12 L11 15 L16 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     <h1>MISSINGLINK <span>MODELGEN</span></h1>
     <div class="spacer"></div>
-    <a href="https://missinglink.build/studio" class="hdr-link">← Studio</a>
-    <button id="historyBtn" class="hdr-link" onclick="toggleHistory()" style="cursor:pointer;background:none">📂 History</button>
+    <a href="https://missinglink.build/studio" class="hdr-link" id="studioLink" title="Back to Studio"><span class="hdr-ico">←</span><span class="hdr-label">Studio</span></a>
+    <button id="historyBtn" class="hdr-link" onclick="toggleHistory()" title="Generation history"
+            style="cursor:pointer;background:none"><span class="hdr-ico">📂</span><span class="hdr-label">History</span></button>
     <div id="tokenBadge" class="token-badge" style="display:none" title="Click to buy more tokens">— tokens</div>
     <div id="connBadge" class="hdr-badge" onclick="announceGpuState()" title="NVIDIA L4 · 24 GB · Modal"><span class="dot cold"></span><span>GPU cold</span></div>
     <!-- User menu trigger — ported from studio.html so the account UI is
@@ -852,22 +860,6 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       <input type="range" id="texCfg" min="0" max="10" step="0.5" value="3.0">
     </div>
 
-    <h2>Mesh Output</h2>
-    <div class="field">
-      <label>Texture Resolution</label>
-      <select id="textureSize">
-        <option value="512">512 × 512</option>
-        <option value="1024">1024 × 1024</option>
-        <option value="1536">1536 × 1536</option>
-        <option value="2048" selected>2048 × 2048</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Vertex Target <span class="val" id="decimateVal">500K</span></label>
-      <input type="range" id="decimate" min="50000" max="1500000" step="50000" value="500000">
-      <div class="field-hint">Max 1.5M — the L4's 24 GB, not nvdiffrast's 16.7M, is the real ceiling here</div>
-    </div>
-
     <h2>Pipeline</h2>
     <div class="field">
       <label>Pipeline Type</label>
@@ -958,10 +950,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
       <div class="field-hint">Fixes non-manifold edges and inconsistent face winding. The remesh path skips these by default.</div>
     </div>
     <div class="field">
-      <label>Min Component Size <span class="val" id="minCompVal">1e-4</span></label>
-      <input type="range" id="minComp" min="0" max="10" step="1" value="4"
+      <label>Min Component Size <span class="val" id="minCompVal">1e-5</span></label>
+      <input type="range" id="minComp" min="0" max="10" step="1" value="2"
              data-value-map='[0,1e-6,1e-5,5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2,1e-1]'>
-      <div class="field-hint">Drops disconnected fragments below this fraction of the mesh. Also removes floaters and shadow planes.</div>
+      <div class="field-hint">Drops disconnected fragments below this fraction of the mesh. 1e-5 matches the reference; higher values delete thin geometry like cloth edges and leave holes.</div>
     </div>
 
     <h2>Texture Atlas</h2>
@@ -1879,9 +1871,18 @@ function applyPreset(name){
   if (!p) return;
   const set = (id, val) => {
     const el = document.getElementById(id);
-    if (!el) return;
+    if (!el) { console.error(`[preset] no element #${id}`); return; }
     if (el.type === 'checkbox') el.checked = val;
     else el.value = val;
+    // Assigning a value a <select> has no matching <option> for silently
+    // yields "", which then reads back as 0 downstream. That exact bug
+    // (a duplicate #textureSize whose first copy lacked the 4096 option)
+    // surfaced only as a rasterizer "resolution must be [>0, >0]" twelve
+    // minutes into a paid job. Fail loudly and immediately instead.
+    if (String(el.value) !== String(val)) {
+      console.error(`[preset] #${id} rejected ${val} (value is now "${el.value}")`);
+      toast(`Preset couldn't set ${id} to ${val}`, 'error');
+    }
     // Trigger input event so val displays update
     el.dispatchEvent(new Event('input', { bubbles:true }));
     if (el.tagName === 'SELECT') el.dispatchEvent(new Event('change', { bubbles:true }));
