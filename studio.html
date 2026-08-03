@@ -4103,6 +4103,30 @@ body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained){display:
 .agent-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:8px;font-size:12px;line-height:1.45;scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
 .agent-body::-webkit-scrollbar{width:6px}
 .agent-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px}
+/* NEXT SCENE composer — sits between the chat body and the input row. */
+.agent-scene{border-top:1px solid var(--border);flex:0 0 auto}
+.agent-scene-toggle{width:100%;display:flex;align-items:center;gap:6px;background:none;border:0;cursor:pointer;
+    padding:7px 10px;font-family:var(--font-mono);font-size:10px;letter-spacing:.8px;color:var(--text-muted);text-align:left}
+.agent-scene-toggle:hover{background:rgba(255,255,255,.03);color:var(--gold)}
+.agent-scene-caret{display:inline-block;transition:transform .15s;font-size:9px}
+.agent-scene.open .agent-scene-caret{transform:rotate(90deg)}
+.agent-scene.open .agent-scene-toggle{color:var(--gold)}
+.agent-scene-body{padding:2px 10px 10px;display:flex;flex-direction:column;gap:7px}
+.agent-scene-frame{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
+    background:var(--surface-3);border:1px solid var(--border);border-radius:5px;padding:5px 7px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-scene-frame.ready{color:var(--green);border-color:rgba(34,197,94,.35)}
+.agent-scene-story{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;
+    color:var(--text);font-family:inherit;font-size:11.5px;line-height:1.4;padding:6px 8px;resize:vertical;min-height:52px}
+.agent-scene-story:focus{outline:none;border-color:var(--gold)}
+.agent-scene-row{display:flex;align-items:center;gap:8px}
+.agent-scene-lbl{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:.4px;white-space:nowrap}
+.agent-scene-row input[type=range]{flex:1;min-width:0;accent-color:var(--gold)}
+.agent-scene-count{font-family:var(--font-mono);font-size:11px;color:var(--gold);font-variant-numeric:tabular-nums;min-width:14px;text-align:right}
+.agent-scene-anchor{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);cursor:pointer}
+.agent-scene-anchor input{accent-color:var(--gold);cursor:pointer}
+.agent-scene-run{width:100%;justify-content:center}
+.agent-scene-note{font-family:var(--font-mono);font-size:9px;line-height:1.4;color:var(--text-dim)}
 .agent-empty{color:var(--text-muted);font-size:11px;font-style:italic;padding:6px 0}
 .agent-empty em{font-style:italic;color:var(--text-dim)}
 .agent-msg{display:flex;flex-direction:column;gap:2px}
@@ -4264,6 +4288,13 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
    .q-positioned class flips the anchoring so left/top take effect cleanly
    without right/bottom continuing to fight the new values. */
 .queue-overlay.q-positioned, .history-overlay.q-positioned{right:auto;bottom:auto}
+/* .agent-overlay was missing here. Its base rule is `top:50%; right:10px`,
+   so once JS set an inline `left` the box was over-constrained (left +
+   right + a fixed width). LTR resolves that by dropping `right`, so it
+   limped along — but the anchors were still fighting, and any change to
+   the panel's width handling would have broken positioning outright.
+   The transform reset lives next to the .agent-overlay rules above. */
+.agent-overlay.q-positioned{right:auto;bottom:auto}
 .q-global-hint{font-family:var(--font-mono);font-size:9px;font-weight:400;color:var(--text-dim);letter-spacing:.3px;text-transform:none}
 .q-count{margin-left:auto;font-weight:400;color:var(--gold)}
 .q-clear{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:10px;font-weight:600;cursor:pointer;letter-spacing:.5px;padding:5px 10px;border-radius:5px;display:inline-flex;align-items:center;gap:5px;transition:all .12s;line-height:1;white-space:nowrap}
@@ -6047,6 +6078,33 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <span class="agent-div-label">Diversity</span>
                     <input type="range" id="agentDiversity" min="0" max="1" step="0.05" value="0.5" oninput="setAgentDiversity(this.value)">
                     <span class="agent-div-value" id="agentDiversityVal">0.50</span>
+                </div>
+                <!-- NEXT SCENE composer. Collapsed by default so it doesn't
+                     crowd the chat. It doesn't call the tool directly — it
+                     composes an explicit instruction into #agentInput and
+                     reuses sendAgentMessage(), so there's exactly one path
+                     into the agent and the model still writes the beats. -->
+                <div class="agent-scene" id="agentScene">
+                    <button type="button" class="agent-scene-toggle" id="agentSceneToggle" onclick="toggleSceneComposer()"
+                            title="Chain a story: each frame is generated using the previous frame as a reference">
+                        <span class="agent-scene-caret" id="agentSceneCaret">▸</span>
+                        <span>🎬 NEXT SCENE</span>
+                    </button>
+                    <div class="agent-scene-body" id="agentSceneBody" style="display:none">
+                        <div class="agent-scene-frame" id="agentSceneFrame">Select one batch image to use as frame 1.</div>
+                        <textarea id="agentSceneStory" class="agent-scene-story" rows="3"
+                                  placeholder="Describe the sequence — e.g. “The knight leaves the ruined cathedral at dawn, crosses a burning field, and finally kneels at the broken gate as it starts to rain.”"></textarea>
+                        <div class="agent-scene-row">
+                            <span class="agent-scene-lbl">New frames</span>
+                            <input type="range" id="agentSceneCount" min="1" max="8" step="1" value="4" oninput="syncSceneCount()">
+                            <span class="agent-scene-count" id="agentSceneCountVal">4</span>
+                        </div>
+                        <label class="agent-scene-anchor" title="Also attach frame 1 to every generation. Keeps a character or location from drifting over a long sequence.">
+                            <input type="checkbox" id="agentSceneAnchor" checked> Anchor to frame 1
+                        </label>
+                        <button type="button" class="ems-btn active agent-scene-run" id="agentSceneRun" onclick="runSceneSequence()">Generate sequence</button>
+                        <div class="agent-scene-note">Frames render one at a time — each one becomes the reference for the next. ~1–2 min per frame.</div>
+                    </div>
                 </div>
                 <div class="agent-input-row">
                     <textarea id="agentInput" class="agent-input" rows="2" placeholder="Ask the agent…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentMessage()}"></textarea>
@@ -9082,6 +9140,13 @@ function setMode(mode, opts){
     // them is misleading.
     document.querySelectorAll('.generate-only').forEach(el => el.style.display = mode === 'generate' ? '' : 'none');
     document.querySelectorAll('.not-generate').forEach(el => el.style.display = mode === 'generate' ? 'none' : '');
+    // The agent overlay is display:none until batch mode, so the saved
+    // position applied at startup was clamped against a 0×0 rect. Now that
+    // it has real dimensions, re-clamp it. Deferred a frame so layout has
+    // settled after the display flip.
+    if (mode === 'batch' && typeof _reclampAllOverlays === 'function') {
+        requestAnimationFrame(_reclampAllOverlays);
+    }
     // Re-apply per-model panel visibility when entering Create. genSetModel
     // toggles the multi-ref slot count based on the active model.
     if (mode === 'generate' && typeof genSetModel === 'function') {
@@ -9204,6 +9269,10 @@ function setMode(mode, opts){
 }
 
 function updateGenButton(){
+    // Keep the Next Scene composer's frame-1 readout in step with the batch
+    // selection. Hooked here (before the early return below) because this
+    // is the one function every selection/render path already calls.
+    if (typeof syncSceneFirstFrame === 'function') { try { syncSceneFirstFrame(); } catch (_) {} }
     const MAX_QUEUED = 12;  // matches STUDIO_MAX_QUEUED on the worker
     // The primary GENERATE button is NEVER disabled — clicking it always
     // does *something* (sign-in flow, token-buy modal, error notif, or the
@@ -22678,6 +22747,129 @@ async function batchUpscaleSelected(){
     }
 }
 
+// Generate ONE image through the agent gpt-image-2 endpoint, with the same
+// placeholder-tile + synthetic-queue-entry bookkeeping generate_new_images
+// does, and resolve to the finished batch entry.
+//
+// Exists so generate_scene_sequence can await frames one at a time without
+// duplicating ~150 lines of tile/queue plumbing. Deliberately NOT a
+// refactor of generate_new_images: that handler is the parallel lane and
+// owns extra behavior (queue-overlay reset, p50 duration sampling, its own
+// tool-result shape) that the sequential path doesn't want.
+//
+// Throws on failure — the caller decides whether to continue. The
+// placeholder is marked failed and swept either way.
+async function _agentGenerateFrame({ prompt, size, refIds, label, caption }){
+    const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
+    const refs = Array.isArray(refIds) ? refIds : [];
+    _batchInputs.push({
+        id: placeholderId,
+        url: '',
+        fname: 'generating…',
+        selected: false,
+        _placeholder: true,
+        _placeholderLabel: label || 'Generating',
+        _placeholderEstSec: refs.length ? 150 : 90,
+        _placeholderStartedAt: Date.now(),
+    });
+    renderBatchInputs();
+
+    const synthJobId = 'agen_' + Math.random().toString(36).slice(2, 10);
+    let thumb = null;
+    if (refs.length) {
+        const refImg = _batchInputs.find(b => b.id === refs[0])
+            || ((typeof _batchContext !== 'undefined' && _batchContext)
+                ? [_batchContext[1], _batchContext[2]].find(x => x && x.id === refs[0]) : null);
+        if (refImg && refImg.url) thumb = refImg.url;
+    }
+    myJobs.unshift({
+        id: synthJobId, status: 'running', mode: 'agent_gen', stage: 'agent_generating',
+        thumb, result: null, submittedAt: Date.now(), startedAt: Date.now(),
+        agentEstimateSec: refs.length ? (_agentGenDurationsP50(true) || 150) : (_agentGenDurationsP50(false) || 90),
+        refCount: refs.length,
+        agentPrompt: prompt,
+    });
+    renderQueue();
+    const tickHandle = setInterval(() => { try { renderQueue(); } catch {} }, 1000);
+
+    try {
+        const ctrl = new AbortController();
+        const _sj = myJobs.find(jj => jj.id === synthJobId);
+        if (_sj) _sj._abort = ctrl;
+        const r = await fetchT(`${API}/api/studio/agent-image-gen`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt, source: 'agent', n: 1,
+                size: size || '1024x1024',
+                reference_image_ids: refs,
+            }),
+        }, refs.length ? 390_000 : 270_000, ctrl.signal);
+        const d = await r.json();
+        if (d.status === 'error') throw new Error(d.error ? friendlyGenError(d.error) : 'image_gen_failed');
+        if (!d.ok && !d.images && !(d.result && d.result.images)) {
+            throw new Error(d.detail || d.error || 'image_gen_failed');
+        }
+        const _imgs = (d.result && Array.isArray(d.result.images) && d.result.images.length)
+            ? d.result.images : (Array.isArray(d.images) ? d.images : []);
+        const img = _imgs[0];
+        if (!img) throw new Error('no_image_returned');
+
+        const newEntry = {
+            id: img.id, url: img.url, w: img.w, h: img.h,
+            fname: img.filename,
+            selected: false,
+            _genPrompt: prompt,
+            _genModel: 'gpt-image-2',
+            _genReferences: refs,
+        };
+        if (typeof _aiSelectedCache === 'undefined' || !_aiSelectedCache) window._aiSelectedCache = { captions: {} };
+        if (!_aiSelectedCache.captions) _aiSelectedCache.captions = {};
+        // Caption with the beat text, not the full assembled prompt — the
+        // next turn's batch_state then reads as a legible shot list.
+        _aiSelectedCache.captions[img.id] = caption || prompt;
+
+        const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+        if (idx !== -1) _batchInputs[idx] = newEntry;
+        else if (!_batchInputs.some(b => b.id === newEntry.id)) _batchInputs.push(newEntry);
+        renderBatchInputs();
+        updateGenButton();
+
+        if (d.tokens_remaining !== undefined && _user) {
+            _user.tokens = d.tokens_remaining;
+            const tc = document.getElementById('tokenCount');
+            if (tc) tc.textContent = d.tokens_remaining;
+        }
+        const synthJob = myJobs.find(jj => jj.id === synthJobId);
+        if (synthJob) {
+            synthJob.status = 'done';
+            synthJob.finishedAt = Date.now();
+            synthJob.result = { url: img.url, w: img.w, h: img.h };
+            const elapsedMs = synthJob.finishedAt - (synthJob.startedAt || synthJob.finishedAt);
+            if (elapsedMs > 1000) _agentGenDurationsRecord(refs.length > 0, elapsedMs);
+        }
+        renderQueue();
+        if (typeof syncHistory === 'function') syncHistory().catch(() => {});
+        return newEntry;
+    } catch (e) {
+        const idx = _batchInputs.findIndex(b => b.id === placeholderId);
+        if (idx !== -1) {
+            _batchInputs[idx]._placeholderError = true;
+            _batchInputs[idx]._placeholderLabel = 'Failed';
+            renderBatchInputs();
+            setTimeout(() => {
+                const j = _batchInputs.findIndex(b => b.id === placeholderId);
+                if (j !== -1) { _batchInputs.splice(j, 1); renderBatchInputs(); }
+            }, 3000);
+        }
+        const sj2 = myJobs.find(jj => jj.id === synthJobId);
+        if (sj2) { sj2.status = 'error'; sj2.error = (e && e.message) || 'failed'; sj2.finishedAt = Date.now(); }
+        renderQueue();
+        throw e;
+    } finally {
+        clearInterval(tickHandle);
+    }
+}
+
 const AGENT_TOOL_HANDLERS = {
     async web_image_search(args){
         const q = String((args && args.query) || '').trim();
@@ -23004,6 +23196,124 @@ const AGENT_TOOL_HANDLERS = {
             // generation leaks a setInterval that fires forever.
             clearInterval(tickHandle);
         }
+    },
+    // ── SCENE SEQUENCE ────────────────────────────────────────────────
+    // Chained story frames. Unlike generate_new_images (which fans out in
+    // parallel and whose calls cannot see each other), this renders frames
+    // STRICTLY in order and feeds each finished frame in as the reference
+    // for the next. That serialization is the whole feature — frame N's
+    // reference is frame N-1's upload id, which does not exist until
+    // frame N-1 has actually come back from the worker.
+    async generate_scene_sequence(args){
+        const beats = Array.isArray(args.beats) ? args.beats.filter(b => typeof b === 'string' && b.trim()) : [];
+        if (!beats.length) {
+            return { error: true, summary: 'Scene sequence needs at least one beat.',
+                     result: { ok: false, error: 'no_beats', batch_state: _agentBatchState() } };
+        }
+        // Hard ceiling of 8 generated frames per request. Enforced here as
+        // well as in the tool description because the description is a
+        // suggestion to the model and this is the actual limit — a model
+        // that emits 20 beats gets 8 frames and an explicit note saying so,
+        // rather than a 20-frame run that burns tokens for ten minutes.
+        const MAX_SEQUENCE_FRAMES = 8;
+        const truncated = beats.length > MAX_SEQUENCE_FRAMES;
+        const runBeats = beats.slice(0, MAX_SEQUENCE_FRAMES);
+
+        // Resolve frame 1. It can be any image already in the batch grid or
+        // sitting in a shared-context slot. We never generate it — the
+        // premise of the feature is that the user supplies the opening image.
+        const firstId = String(args.first_frame_image_id || '');
+        const findImg = (id) => (_batchInputs || []).find(b => b.id === id && !b._placeholder)
+            || ((typeof _batchContext !== 'undefined' && _batchContext)
+                ? [_batchContext[1], _batchContext[2]].find(x => x && x.id === id) : null);
+        const firstFrame = findImg(firstId);
+        if (!firstFrame) {
+            return { error: true, summary: `Can't start the sequence — no image with id ${firstId || '(none given)'}.`,
+                     result: { ok: false, error: 'first_frame_not_found', batch_state: _agentBatchState() } };
+        }
+
+        // Shared-context images ride along on every frame, same contract as
+        // generate_new_images: the context slots mean "accompany every job".
+        const ctxIds = (typeof _batchContext !== 'undefined' && _batchContext)
+            ? [_batchContext[1], _batchContext[2]].filter(x => x && x.id).map(x => x.id) : [];
+        const anchor = !!args.anchor_first_frame;
+        const size = (function(){
+            const w = parseInt(($('inpWidth') || {}).value) || 0;
+            const h = parseInt(($('inpHeight') || {}).value) || 0;
+            if (w && h) return w > h ? '1536x1024' : (h > w ? '1024x1536' : '1024x1024');
+            return args.size || '1024x1024';
+        })();
+
+        _agentRender('tool', { text: `Scene sequence: ${runBeats.length} frame${runBeats.length === 1 ? '' : 's'} from “${firstFrame.fname || firstId}”, one at a time…` });
+
+        const made = [];
+        let prevId = firstId;
+        let failedAt = 0;
+        let failMsg = '';
+
+        for (let i = 0; i < runBeats.length; i++) {
+            const frameNo = i + 2;  // user's image is frame 1
+            // Reference budget is 4. Priority: the immediately-preceding
+            // frame (continuity), then the anchor (drift control), then
+            // shared context. Deduped — on frame 2 prev IS the anchor.
+            const refIds = [...new Set([
+                prevId,
+                ...(anchor ? [firstId] : []),
+                ...ctxIds,
+            ])].slice(0, 4);
+            // Every frame carries the whole through-line plus its own beat,
+            // so the model renders this moment while aware of the arc.
+            const framePrompt =
+                `This is frame ${frameNo} of a ${runBeats.length + 1}-frame visual sequence.\n` +
+                `STORY: ${args.story || ''}\n` +
+                `THIS FRAME: ${runBeats[i]}\n` +
+                `CONTINUITY: the attached reference image is the immediately preceding frame` +
+                (anchor && prevId !== firstId ? `, and the opening frame of the sequence is also attached` : '') +
+                `. Keep the same characters, wardrobe, art style, palette and rendering treatment. ` +
+                `Change only what this frame's description calls for.`;
+            try {
+                const entry = await _agentGenerateFrame({
+                    prompt: framePrompt,
+                    size,
+                    refIds,
+                    label: `Frame ${frameNo}/${runBeats.length + 1}`,
+                    caption: `Frame ${frameNo}: ${runBeats[i]}`,
+                });
+                made.push({ frame: frameNo, id: entry.id, beat: runBeats[i] });
+                // THE CHAIN: this frame becomes the reference for the next.
+                prevId = entry.id;
+                _agentRender('tool', { text: `Frame ${frameNo}/${runBeats.length + 1} done.` });
+            } catch (e) {
+                // Stop the run. Continuing is meaningless — the next frame's
+                // reference is this frame, which doesn't exist. Partial
+                // results are kept and reported so the user can restart from
+                // the last good frame rather than losing everything.
+                failedAt = frameNo;
+                failMsg = (e && e.message) || String(e);
+                break;
+            }
+        }
+
+        const total = made.length;
+        let summary = failedAt
+            ? `Sequence stopped at frame ${failedAt} (${failMsg}). ${total} frame${total === 1 ? '' : 's'} completed.`
+            : `Scene sequence complete — ${total} new frame${total === 1 ? '' : 's'}.`;
+        if (truncated) summary += ` (Capped at ${MAX_SEQUENCE_FRAMES}; ${beats.length} beats were requested.)`;
+        return {
+            error: !!failedAt,
+            summary,
+            result: {
+                ok: !failedAt,
+                first_frame_id: firstId,
+                frames: made,
+                frames_generated: total,
+                stopped_at_frame: failedAt || null,
+                error: failedAt ? failMsg : undefined,
+                truncated_to: truncated ? MAX_SEQUENCE_FRAMES : undefined,
+                last_frame_id: prevId,
+                batch_state: _agentBatchState(),
+            },
+        };
     },
     async edit_with_gpt_image(args){
         const placeholderId = '__pending_' + Math.random().toString(36).slice(2, 10);
@@ -23350,11 +23660,19 @@ async function _agentRunTurn(){
         const PARALLEL_GPT_TOOLS = new Set(['generate_new_images', 'edit_with_gpt_image']);
         const SERIAL_QWEN_TOOLS  = new Set(['edit_with_qwen']);
         const PARALLEL_TOOLS     = new Set(['find_visual_issues']);
+        //   - SEQUENCE_TOOLS: generate_scene_sequence owns its own internal
+        //     loop and MUST NOT enter the parallel pool. Each of its frames
+        //     references the previous one, so parallelising it would break
+        //     the chain outright. It also counts as ONE call against
+        //     SERIAL_LIMIT despite producing up to 8 images, because its
+        //     internal cap (MAX_SEQUENCE_FRAMES) is the real bound.
+        const SEQUENCE_TOOLS     = new Set(['generate_scene_sequence']);
         const PARALLEL_GPT_LIMIT = 4;   // simultaneous OpenAI calls
         const SERIAL_LIMIT       = 12;  // per-turn creation-call cap
 
         const isCreation = (c) => PARALLEL_GPT_TOOLS.has(c.name) || SERIAL_QWEN_TOOLS.has(c.name);
-        const stateMutators = toolCalls.filter(c => !isCreation(c) && !PARALLEL_TOOLS.has(c.name));
+        const stateMutators = toolCalls.filter(c => !isCreation(c) && !PARALLEL_TOOLS.has(c.name) && !SEQUENCE_TOOLS.has(c.name));
+        const sequenceCalls = toolCalls.filter(c => SEQUENCE_TOOLS.has(c.name));
         const creationsAll  = toolCalls.filter(isCreation);
         const creations     = creationsAll.slice(0, SERIAL_LIMIT);
         const droppedCalls  = creationsAll.slice(SERIAL_LIMIT);
@@ -23411,6 +23729,15 @@ async function _agentRunTurn(){
         // 1) State mutators first — strictly serial so selection/prompt
         //    edits land before the creation calls observe batch state.
         for (const call of stateMutators) {
+            const result = await _runOne(call);
+            _agentMessages.push(result);
+        }
+        // 1b) Scene sequences — strictly serial, and before the parallel
+        //     lane so a sequence isn't competing with a fan-out for the
+        //     same OpenAI concurrency. Each call blocks until its whole
+        //     chain finishes (up to 8 frames × ~60-150s), which is the
+        //     intended behavior: frames must land in order.
+        for (const call of sequenceCalls) {
             const result = await _runOne(call);
             _agentMessages.push(result);
         }
@@ -23485,6 +23812,73 @@ function cancelAgentInFlightJobs(){
             try { if (j._abort) j._abort.abort(); } catch (e) {}
         }
     }
+}
+
+// ── NEXT SCENE composer ────────────────────────────────────────────────
+// Builds an explicit scene-sequence instruction and pushes it through the
+// normal agent path. We deliberately do NOT call the tool handler directly:
+// the model still has to write the per-frame beats, which is the part that
+// makes the sequence a story rather than the same prompt eight times.
+function toggleSceneComposer(){
+    const wrap = $('agentScene'), body = $('agentSceneBody');
+    if (!wrap || !body) return;
+    const open = body.style.display === 'none';
+    body.style.display = open ? '' : 'none';
+    wrap.classList.toggle('open', open);
+    if (open) syncSceneFirstFrame();
+}
+function syncSceneCount(){
+    const el = $('agentSceneCount'), out = $('agentSceneCountVal');
+    if (el && out) out.textContent = el.value;
+}
+// Frame 1 is whatever the user has selected in the batch grid. Exactly one
+// selection is required — "start from this image" is ambiguous with two.
+// Falls back to shared-context slot 1 when nothing is selected, since a
+// character reference parked there is a reasonable opening frame.
+function _sceneFirstFrame(){
+    const sel = (_batchInputs || []).filter(b => b.selected && !b._placeholder);
+    if (sel.length === 1) return { img: sel[0], why: '' };
+    if (sel.length > 1) return { img: null, why: `${sel.length} images selected — select exactly one to be frame 1.` };
+    const ctx = (typeof _batchContext !== 'undefined' && _batchContext) ? _batchContext[1] : null;
+    if (ctx && ctx.id) return { img: ctx, why: '' };
+    return { img: null, why: 'Select one batch image to use as frame 1.' };
+}
+function syncSceneFirstFrame(){
+    const el = $('agentSceneFrame');
+    if (!el) return;
+    const { img, why } = _sceneFirstFrame();
+    if (img) {
+        el.textContent = `Frame 1: ${img.fname || img.filename || img.id}`;
+        el.classList.add('ready');
+    } else {
+        el.textContent = why;
+        el.classList.remove('ready');
+    }
+}
+function runSceneSequence(){
+    if (_agentRunning) { showNotif('The agent is already working — wait for it to finish.', 'info'); return; }
+    const { img, why } = _sceneFirstFrame();
+    if (!img) { showNotif(why, 'error'); return; }
+    const story = ($('agentSceneStory') || {}).value || '';
+    if (!story.trim()) { showNotif('Describe the sequence first.', 'error'); return; }
+    const count = Math.min(8, Math.max(1, parseInt(($('agentSceneCount') || {}).value) || 4));
+    const anchor = !!(($('agentSceneAnchor') || {}).checked);
+    const input = $('agentInput');
+    if (!input) return;
+    // Phrased as an instruction rather than raw JSON so the model still
+    // plans the beats itself; the ids and counts are pinned so it can't
+    // drift on the mechanical parts.
+    input.value =
+        `Scene sequence. Use the generate_scene_sequence tool.\n` +
+        `first_frame_image_id: ${img.id}\n` +
+        `Generate exactly ${count} new frame${count === 1 ? '' : 's'} continuing from it.\n` +
+        `anchor_first_frame: ${anchor}\n` +
+        `Story: ${story.trim()}`;
+    // Collapse the composer — the chat below is where the action is now.
+    const body = $('agentSceneBody'), wrap = $('agentScene');
+    if (body) body.style.display = 'none';
+    if (wrap) wrap.classList.remove('open');
+    sendAgentMessage();
 }
 
 async function sendAgentMessage(){
@@ -23582,20 +23976,44 @@ function _loadOverlayPositions(){
 function _saveOverlayPositions(positions){
     try { localStorage.setItem(_OVERLAY_POS_KEY, JSON.stringify(positions)); } catch (e) {}
 }
-// Clamp an (x,y) to the parent container so the panel can't be dragged
-// off-screen. Reserves a small margin so the panel doesn't sit flush
-// against the edges (and the resize handles in some browsers don't fight
-// with the scrollbar). The panel's own dimensions come from getBoundingClientRect.
+// Clamp an (x,y) to the parent container so the panel stays reachable.
+//
+// The original rule demanded the ENTIRE panel fit inside the container:
+//     maxY = pRect.height - oRect.height - margin
+// That works for the 240×~250 queue/history panels, but the agent panel is
+// 340 wide and runs ~560 tall (480px body cap + header + diversity row +
+// input row). On any stage shorter than the panel, maxY goes negative,
+// Math.max(margin, negative) pins it at 4, and the panel CANNOT BE MOVED
+// VERTICALLY AT ALL — which is exactly the "can't drag the agent window"
+// symptom. Even when it does fit, the agent panel got tens of pixels of
+// freedom where queue/history got hundreds.
+//
+// New rule is the standard window-manager one: let the panel overhang the
+// container, but always keep _OVERLAY_MIN_VISIBLE px of it inside so
+// there's something left to grab. The top edge is the exception — it stays
+// pinned at the margin, because the drag handle lives at the top of the
+// panel and letting it slide above the container makes it unreachable.
+const _OVERLAY_MIN_VISIBLE = 56;
 function _clampOverlayPosition(overlay, x, y){
     const parent = overlay.offsetParent || document.querySelector('.main-area') || document.body;
     const pRect = parent.getBoundingClientRect();
     const oRect = overlay.getBoundingClientRect();
     const margin = 4;
-    const maxX = Math.max(margin, pRect.width  - oRect.width  - margin);
-    const maxY = Math.max(margin, pRect.height - oRect.height - margin);
+    // A display:none panel measures 0×0. Clamping against that produces
+    // garbage, so pass the position through untouched and let the next
+    // reclamp (once it's visible and has real dimensions) sort it out.
+    if (!oRect.width && !oRect.height) return { x, y };
+    const keepX = Math.min(oRect.width,  _OVERLAY_MIN_VISIBLE);
+    const keepY = Math.min(oRect.height, _OVERLAY_MIN_VISIBLE);
+    const minX = margin - (oRect.width - keepX);   // negative → may overhang left
+    const minY = margin;                           // header never leaves the top
+    const maxX = pRect.width  - keepX - margin;
+    const maxY = pRect.height - keepY - margin;
+    // If a bound inverts (panel wider/taller than the container) the
+    // Math.min/Math.max pair settles on the min, which is the safe corner.
     return {
-        x: Math.max(margin, Math.min(maxX, x)),
-        y: Math.max(margin, Math.min(maxY, y)),
+        x: Math.max(minX, Math.min(maxX, x)),
+        y: Math.max(minY, Math.min(maxY, y)),
     };
 }
 function _applyOverlayPosition(overlay, pos){
@@ -23607,13 +24025,19 @@ function _applyOverlayPosition(overlay, pos){
 // Re-clamp every positioned overlay on window resize. Without this, a
 // panel dragged near the right edge of a 1600px window ends up off-screen
 // on a 1024px window after a Cmd-Tab back-and-forth.
+// agentOverlay was missing from this list, so it was the one panel that
+// could get stranded outside the stage with no reachable drag handle.
 function _reclampAllOverlays(){
     const positions = _loadOverlayPositions();
     let dirty = false;
-    for (const id of ['queueOverlay', 'historyOverlay']) {
+    for (const id of ['queueOverlay', 'historyOverlay', 'agentOverlay']) {
         const el = document.getElementById(id);
         if (!el || !el.classList.contains('q-positioned')) continue;
-        const key = el.dataset.overlayKey || (id === 'queueOverlay' ? 'queue' : 'history');
+        // Skip hidden panels — they measure 0×0 and would clamp to garbage.
+        // Entering batch mode calls this again once the agent panel is up.
+        if (!el.offsetWidth && !el.offsetHeight) continue;
+        const key = el.dataset.overlayKey ||
+            (id === 'queueOverlay' ? 'queue' : id === 'historyOverlay' ? 'history' : 'agent');
         const cur = positions[key];
         if (!cur) continue;
         const clamped = _clampOverlayPosition(el, cur.x, cur.y);
@@ -23680,6 +24104,15 @@ function initOverlayDragging(){
             const startY = oRect.top  - parentRect.top;
 
             let started = false;
+            // Capture IMMEDIATELY on pointerdown, not after the threshold.
+            // pointermove is bound to the handle, which is a ~28px-tall
+            // strip; without capture, a quick flick moves the cursor off it
+            // before the first >4px move event is delivered, so the drag
+            // never engages and the panel feels stuck unless you start
+            // slowly. Capture retargets every subsequent move to the handle
+            // regardless of where the cursor actually is. It does not
+            // suppress the click event, so header buttons still work.
+            try { handle.setPointerCapture(e.pointerId); } catch (_) {}
             const onMove = (ev) => {
                 const dx = ev.clientX - e.clientX;
                 const dy = ev.clientY - e.clientY;
@@ -23690,9 +24123,6 @@ function initOverlayDragging(){
                     started = true;
                     handle.classList.add('dragging');
                     document.body.classList.add('q-overlay-dragging');
-                    // Capture so we still get move events if the cursor
-                    // leaves the handle (or the window).
-                    try { handle.setPointerCapture(ev.pointerId); } catch (_) {}
                 }
                 // New corner position. Use ev.clientX/Y - parentRect - grabOffset
                 // so the panel tracks the cursor by its grabbed point.
@@ -23705,6 +24135,7 @@ function initOverlayDragging(){
                 handle.removeEventListener('pointermove', onMove);
                 handle.removeEventListener('pointerup', onUp);
                 handle.removeEventListener('pointercancel', onUp);
+                try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
                 handle.classList.remove('dragging');
                 document.body.classList.remove('q-overlay-dragging');
                 if (started) {
