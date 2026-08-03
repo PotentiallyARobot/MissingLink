@@ -27932,7 +27932,33 @@ async function addHistoryImageToBatch(j){
         if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
         const d = await r.json().catch(() => null);
         const inp = d && d.ok && Array.isArray(d.inputs) && d.inputs[0];
-        if (!inp) { showNotif('Couldn\u2019t add this image to the batch.', 'error'); return; }
+        if (!inp) {
+            // The server now reports WHY a job couldn't be converted instead
+            // of returning a bare empty list, so say something actionable.
+            const why = (d && Array.isArray(d.skipped) && d.skipped[0] && d.skipped[0].reason) || '';
+            const msg = why === 'object_missing'
+                    ? 'That image file is gone — it was deleted or purged.'
+                : why === 'not_done'
+                    ? 'That generation hasn\u2019t finished yet.'
+                : why === 'not_found'
+                    ? 'That history item no longer exists.'
+                : why === 'unsupported_result'
+                    ? 'That history item has no still image to add (video or 3D results can\u2019t go in the batch).'
+                    : 'Couldn\u2019t add this image to the batch.';
+            showNotif(msg, 'error');
+            return;
+        }
+        // Second dedupe pass on the RESOLVED upload id: two different history
+        // rows (an agent edit and its re-save, say) can point at the same
+        // underlying upload, which the _srcJobId check above can't catch.
+        const dupe = (_batchInputs || []).find(b => b.id === inp.id);
+        if (dupe) {
+            dupe.selected = true;
+            dupe._srcJobId = dupe._srcJobId || j.id;
+            renderBatchInputs();
+            showNotif('Already in the batch — selected it.', 'info');
+            return;
+        }
         _batchInputs.push({
             id: inp.id, url: inp.url,
             w: inp.w || j.w || 0, h: inp.h || j.h || 0,
