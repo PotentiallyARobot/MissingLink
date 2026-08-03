@@ -397,6 +397,9 @@ img,video{display:block;max-width:100%}
       <button class="chip" data-mbase="Illustrious">Illustrious</button>
       <button class="chip" data-mbase="Qwen">Qwen</button>
       <div class="fsp"></div>
+      <button class="chip on" data-mnsfw="off">Safe LoRAs</button>
+      <button class="chip" data-mnsfw="on">Include 18+</button>
+      <div class="fsp"></div>
       <button class="chip on" data-msort="Most Downloaded">Popular</button>
       <button class="chip" data-msort="Highest Rated">Top rated</button>
       <button class="chip" data-msort="Newest">New</button>
@@ -404,6 +407,7 @@ img,video{display:block;max-width:100%}
     </div>
     <div class="mgrid" id="mgrid"></div>
     <div class="load" id="mloader" style="display:none"><div class="spin"></div></div>
+    <div class="load"><button class="btn" id="mMore" style="display:none" onclick="loadModels(false)">Load more LoRAs</button></div>
     <div class="empty" id="mempty" style="display:none"></div>
   </div>
 
@@ -464,6 +468,36 @@ img,video{display:block;max-width:100%}
         <input id="lbCmtIn" placeholder="Say something kind…" maxlength="500">
         <button class="btn" id="lbCmtBtn">Post</button>
       </div>
+    </div>
+  </aside>
+</div>
+
+<!-- LoRA detail -->
+<div class="lb" id="mlb">
+  <div class="lb-stage">
+    <button class="lb-close" onclick="closeModel()">✕</button>
+    <div id="mlbMedia"></div>
+  </div>
+  <aside class="lb-side">
+    <h2 class="lb-title" id="mlbName"></h2>
+    <div class="lb-stats" id="mlbEng"></div>
+    <div>
+      <div class="sub" style="margin-bottom:6px">RUNS ON</div>
+      <div style="font-size:13.5px;line-height:1.6" id="mlbBase"></div>
+    </div>
+    <div id="mlbTrigWrap">
+      <div class="sub" style="margin-bottom:6px">TRIGGER WORDS</div>
+      <div class="lb-prompt" id="mlbTrig"></div>
+      <button class="btn" style="margin-top:8px" id="mlbCopy">⧉ Copy triggers</button>
+    </div>
+    <div class="lb-acts">
+      <button class="btn gold" id="mlbUse">Use in Studio</button>
+      <button class="btn" id="mlbCiv">View on Civitai ↗</button>
+    </div>
+    <div class="tipbox" style="font-family:var(--font-mono);font-size:10.5px;line-height:1.8;
+      color:var(--text-mute);border:1px dashed var(--border);border-radius:8px;padding:12px">
+      Match the engine badge to the engine selected in the Studio — a Pony LoRA will not work on
+      Qwen, and vice versa. Start around 1.0 weight and lower it when stacking several.
     </div>
   </aside>
 </div>
@@ -616,7 +650,7 @@ async function openLb(idx){
 }
 function closeLb(){ $('lb').classList.remove('open'); document.body.style.overflow='';
   const v=$('lbMedia').querySelector('video'); if(v) v.pause(); }
-document.addEventListener('keydown', e => { if(e.key==='Escape') closeLb(); });
+document.addEventListener('keydown', e => { if(e.key==='Escape'){ closeLb(); closeModel(); } });
 
 async function loadSocial(id){
   const { data } = await api('/api/studio/job/'+encodeURIComponent(id)+'/social');
@@ -770,7 +804,11 @@ function restartHero(){ clearInterval(heroTimer); heroTimer = setInterval(()=>pa
 function heroFrom(){ paintHero(0); restartHero(); }
 
 /* ── LoRA models tab (Civitai) ── */
-let mstate = { base:'all', sort:'Most Downloaded', q:'', loading:false };
+let mstate = { base:'all', sort:'Most Downloaded', q:'', nsfw:'off', loading:false, page:1, done:false };
+/* Civitai's image CDN rejects cross-origin hotlinks — route every thumb
+   through the worker's authenticated proxy, which is why direct URLs
+   showed as broken tiles. */
+function cthumb(u){ return u ? ('/api/notebook/civitai/thumb?url='+encodeURIComponent(u)) : ''; }
 function engineOf(bm){
   const b = (bm||'').toLowerCase();
   if (b.includes('pony')) return { label:'PONY', cls:'p' };
@@ -780,27 +818,34 @@ function engineOf(bm){
   if (b.includes('flux')) return { label:'FLUX · n/a', cls:'' };
   return { label:(bm||'OTHER').toUpperCase().slice(0,14), cls:'' };
 }
-async function loadModels(){
+async function loadModels(reset){
   if (mstate.loading) return;
+  if (reset){ mstate.page = 1; mstate.done = false; $('mgrid').innerHTML=''; }
+  if (mstate.done) return;
   mstate.loading = true;
-  $('mloader').style.display='block'; $('mempty').style.display='none'; $('mgrid').innerHTML='';
+  $('mloader').style.display='block'; $('mempty').style.display='none';
   const { data } = await api('/api/notebook/civitai/search', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ query:mstate.q, sort:mstate.sort, nsfw:(state.content!=='sfw'),
-      base_model: mstate.base })
+    body: JSON.stringify({ query:mstate.q, sort:mstate.sort, nsfw:(mstate.nsfw!=='off'),
+      base_model: mstate.base, page: mstate.page })
   });
   mstate.loading = false; $('mloader').style.display='none';
   const items = (data && (data.items||data.models)) || [];
   if (!items.length){
-    $('mempty').style.display='block';
-    $('mempty').innerHTML = 'No LoRAs found.<br>Try another search or engine filter.';
+    mstate.done = true;
+    if (!$('mgrid').children.length){
+      $('mempty').style.display='block';
+      $('mempty').innerHTML = 'No LoRAs found.<br>Try another search or engine filter.';
+    }
     return;
   }
-  $('mgrid').innerHTML = items.map(m => {
+  if (items.length < 20) mstate.done = true;
+  mstate.page++;
+  $('mgrid').insertAdjacentHTML('beforeend', items.map(m => {
     const e = engineOf(m.base_model);
     const trg = (m.triggers||[]).slice(0,3).join(', ');
-    return '<div class="mcard">'+
-      '<div class="th" style="background-image:url('+JSON.stringify(m.thumb||'')+')">'+
+    return '<div class="mcard" onclick="openModel('+JSON.stringify(JSON.stringify(m)).replace(/"/g,'&quot;')+')">'+
+      '<div class="th" style="background-image:url('+JSON.stringify(cthumb(m.thumb))+')">'+
         '<span class="eng '+e.cls+'">'+esc(e.label)+'</span>'+
         (m.nsfw?'<span class="nsfwt">18+</span>':'')+
       '</div>'+
@@ -808,26 +853,50 @@ async function loadModels(){
         '<div class="mn">'+esc(m.name)+'</div>'+
         '<div class="mt" title="'+esc(trg)+'">'+(trg?'trigger: '+esc(trg):'no trigger words')+'</div>'+
         '<div class="ma">'+
-          '<button onclick="useLora('+JSON.stringify(m.download_url||'').replace(/"/g,'&quot;')+')">Use in Studio</button>'+
-          '<button onclick="window.open(\'https://civitai.com/models/'+encodeURIComponent(m.model_id)+'\',\'_blank\')">Civitai ↗</button>'+
+          '<button onclick="event.stopPropagation();useLora('+JSON.stringify(m.download_url||'').replace(/"/g,'&quot;')+')">Use in Studio</button>'+
+          '<button onclick="event.stopPropagation();window.open(\'https://civitai.com/models/'+encodeURIComponent(m.model_id)+'\',\'_blank\')">Civitai ↗</button>'+
         '</div>'+
       '</div>'+
     '</div>';
-  }).join('');
+  }).join(''));
+  const mb = $('mMore');
+  if (mb) mb.style.display = mstate.done ? 'none' : 'inline-block';
 }
+function openModel(json){
+  let m; try { m = typeof json === 'string' ? JSON.parse(json) : json; } catch(e){ return; }
+  const e = engineOf(m.base_model);
+  $('mlb').classList.add('open'); document.body.style.overflow='hidden';
+  $('mlbMedia').innerHTML = m.video
+    ? '<video src="'+esc(cthumb(m.video))+'" autoplay muted loop playsinline></video>'
+    : '<img src="'+esc(cthumb(m.thumb))+'" alt="">';
+  $('mlbName').textContent = m.name || '(untitled)';
+  $('mlbEng').innerHTML = '<span class="kw">'+esc(e.label)+'</span>'+(m.nsfw?'<span class="kw">18+</span>':'');
+  $('mlbBase').textContent = m.base_model || 'unspecified';
+  const t = (m.triggers||[]).join(', ');
+  $('mlbTrigWrap').style.display = t ? 'block' : 'none';
+  $('mlbTrig').textContent = t;
+  $('mlbCopy').onclick = () => navigator.clipboard.writeText(t).then(()=>toast('Triggers copied'));
+  $('mlbUse').onclick = () => useLora(m.download_url);
+  $('mlbCiv').onclick = () => window.open('https://civitai.com/models/'+encodeURIComponent(m.model_id),'_blank');
+}
+function closeModel(){ $('mlb').classList.remove('open'); document.body.style.overflow='';
+  const v=$('mlbMedia').querySelector('video'); if(v) v.pause(); }
 function useLora(url){
   if (!url) return toast('No download URL for that LoRA.');
   location.href = 'https://missinglink.build/studio.html#lora='+encodeURIComponent(url);
 }
 document.querySelectorAll('[data-mbase]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-mbase]').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); mstate.base = b.dataset.mbase; loadModels(); });
+  b.classList.add('on'); mstate.base = b.dataset.mbase; loadModels(true); });
+document.querySelectorAll('[data-mnsfw]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-mnsfw]').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); mstate.nsfw = b.dataset.mnsfw; loadModels(true); });
 document.querySelectorAll('[data-msort]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-msort]').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); mstate.sort = b.dataset.msort; loadModels(); });
+  b.classList.add('on'); mstate.sort = b.dataset.msort; loadModels(true); });
 let mqt=null;
 $('mq').addEventListener('input', e => { clearTimeout(mqt);
-  mqt = setTimeout(()=>{ mstate.q = e.target.value.trim(); loadModels(); }, 400); });
+  mqt = setTimeout(()=>{ mstate.q = e.target.value.trim(); loadModels(true); }, 400); });
 
 /* ── tab switching ── */
 function showTab(t){
@@ -839,7 +908,7 @@ function showTab(t){
   $('tabModels').classList.toggle('on', isM);
   location.hash = isM ? 'models' : '';
   window.scrollTo(0,0);
-  if (isM && !$('mgrid').children.length) loadModels();
+  if (isM && !$('mgrid').children.length) loadModels(true);
 }
 
 /* ── advanced filter wiring ── */
