@@ -1676,7 +1676,7 @@ const _MLS_UNBUILT={
   "facesplit/start":"Shot detection","facekeyframes":"Face keyframes",
   "faceautoclip":"Auto-clip","qwenedit/submit":"Qwen edit",
   "editor/export":"Timeline export","vr180":"VR180 export",
-  "agent":"Agent","editimage":"Edit image","checkout":"Checkout",
+  "agent":"Agent","editimage":"Edit image",
   "nextscene/propose":"Next scene","nextscene/generate":"Next scene",
   "partial":"Live clip preview"};
 function _mlsUnbuilt(u){
@@ -3929,12 +3929,18 @@ function _applyTokBadge(tokens,per,ownKey){
     :"Each image costs "+per+" tokens. You have enough for "+imgs+".";
 }
 async function buyTokens(){
+  // Tokens are ONE balance shared with the image studio, so this is the
+  // studio's own checkout — not a videostudio-namespaced copy. Namespacing
+  // it was my mistake: /api/videostudio/checkout has never existed, which
+  // is why this reported "not available in the hosted studio".
   toast("Opening secure checkout\u2026");
   try{
-    const r=await fetch("/api/videostudio/checkout",{method:"POST"});
+    const r=await fetch("/api/studio/checkout",
+      {method:"POST",headers:{"Content-Type":"application/json"}});
     const j=await r.json();
-    if(j.ok&&j.url){window.open(j.url,"_blank");}
-    else toast(j.error||"Couldn't open checkout.",true);
+    // Same response shape studio.html expects: a bare {url}.
+    if(j.url){location.href=j.url;}
+    else toast(j.error||"Payment setup failed. Please try again.",true);
   }catch(e){toast("Error: "+e,true);}
 }
 async function _nextComposeGenerate(){
