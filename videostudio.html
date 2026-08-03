@@ -956,11 +956,41 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         </div>
       </div>
       <div class="user-menu-section">
-        <button class="user-menu-item user-menu-cta" onclick="closeUserMenu();buyTokens()" role="menuitem">
+        <!-- Subscribe and Manage are mutually exclusive, toggled by
+             _mlAccount() on the raw Stripe status: 'active' or 'past_due'
+             gets Manage (past_due needs the portal to fix a card),
+             anything else gets the Subscribe CTA. -->
+        <button class="user-menu-item user-menu-cta" id="userMenuSubscribe" onclick="closeUserMenu();doSubscribe()" role="menuitem" style="display:none">
+          <span class="user-menu-icon">&#128081;</span>
+          <span class="user-menu-label"><span class="user-menu-title">Subscribe &mdash; Pro</span>
+          <span class="user-menu-sub">$20 / month &middot; 50,000 tokens monthly</span></span>
+        </button>
+        <button class="user-menu-item" id="userMenuManage" onclick="closeUserMenu();doManageSubscription()" role="menuitem" style="display:none">
+          <span class="user-menu-icon">&#9881;</span>
+          <span class="user-menu-label"><span class="user-menu-title">Manage subscription</span>
+          <span class="user-menu-sub">Cancel &middot; update card &middot; invoices</span></span>
+        </button>
+        <button class="user-menu-item" onclick="closeUserMenu();buyTokens()" role="menuitem">
           <span class="user-menu-icon">&#9670;</span>
           <span class="user-menu-label"><span class="user-menu-title">Buy tokens</span>
-          <span class="user-menu-sub">300 per video render</span></span>
+          <span class="user-menu-sub">One-time purchase, never expire</span></span>
         </button>
+      </div>
+      <div class="user-menu-section">
+        <!-- Profile and API key live in the image studio's modals. Linked
+             rather than duplicated: they edit the same studio_users row,
+             and a second copy of that UI would be a second place for it
+             to drift. -->
+        <a class="user-menu-item" href="/studio#profile" role="menuitem" style="text-decoration:none">
+          <span class="user-menu-icon">&#128100;</span>
+          <span class="user-menu-label"><span class="user-menu-title">Profile</span>
+          <span class="user-menu-sub" id="userMenuProfileSub">Display name &amp; gallery handle</span></span>
+        </a>
+        <a class="user-menu-item" href="/studio#apikey" role="menuitem" style="text-decoration:none">
+          <span class="user-menu-icon">&#128273;</span>
+          <span class="user-menu-label"><span class="user-menu-title">API key</span>
+          <span class="user-menu-sub">For Colab notebooks &amp; the HTTP API</span></span>
+        </a>
         <a class="user-menu-item" href="/studio" role="menuitem" style="text-decoration:none">
           <span class="user-menu-icon">&#127912;</span>
           <span class="user-menu-label"><span class="user-menu-title">Image Studio</span>
@@ -968,7 +998,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         </a>
       </div>
       <div class="user-menu-section">
-        <button class="user-menu-item" onclick="closeUserMenu();location.href='/auth/logout'" role="menuitem">
+        <button class="user-menu-item" onclick="closeUserMenu();doLogout()" role="menuitem">
           <span class="user-menu-icon">&#8629;</span>
           <span class="user-menu-label"><span class="user-menu-title">Sign out</span></span>
         </button>
@@ -1728,7 +1758,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       <div id="mlGateLimit" style="display:none">
         <div class="hintline gold" style="font-size:12px;margin:0 0 6px;line-height:1.8">You&rsquo;re out of tokens<span id="mlLimitEmail"></span>. Each video render costs <b id="mlLimitN">300</b> &mdash; top up, or subscribe for a monthly allowance.</div>
         <button class="gen-btn" style="margin-top:12px;width:100%" onclick="buyTokens()">&#9670; Buy tokens</button>
-        <a class="gen-btn gen-btn-secondary" style="display:flex;margin-top:8px;text-decoration:none" id="mlSubBtn" href="https://www.missinglink.build/" target="_blank">&#10024; Subscribe to MissingLink</a>
+        <button class="gen-btn gen-btn-secondary" style="margin-top:8px;width:100%" id="mlSubBtn" onclick="doSubscribe()">&#10024; Subscribe &mdash; 50,000 tokens / month</button>
         <button class="gen-btn gen-btn-secondary" style="margin-top:8px;width:100%" onclick="mlRecheck()">Check my balance again</button>
         <button class="q-clear" style="margin-top:10px;width:100%" onclick="mlSwitchAccount()">Use a different account</button>
       </div>
@@ -1767,7 +1797,7 @@ const $=id=>document.getElementById(id);
 
 /* ── MissingLink Google sign-in + free-trial gate ── */
 let mlState={authed:false,member:false,email:null,used:0,remaining:25,
-  tokens:null,tokens_per_gen:300,picture:null,
+  tokens:null,tokens_per_gen:300,picture:null,subscription_status:null,
   free_limit:25,unlocked:false,reason:"no_session",
   signup:"https://www.missinglink.build/",
   login:"https://missinglink.build/notebook-signin"};
@@ -1882,6 +1912,45 @@ function _mlLinks(){
   if($("mlSubBtn"))$("mlSubBtn").href=mlState.signup;
   if($("mlGoogleBtn"))$("mlGoogleBtn").href=mlState.login;
 }
+
+/* ── billing actions ───────────────────────────────────────────────────
+   Same three endpoints studio.html calls, so there is one billing flow
+   for both apps and one Stripe configuration behind it:
+     /api/studio/subscribe            -> Checkout for the $20/mo plan
+     /api/studio/subscription/portal  -> Stripe billing portal
+     /api/studio/checkout             -> one-off token purchase
+   All three answer with a bare {url}; location.href rather than
+   window.open because popup blockers eat the latter on a click that
+   went through a menu. */
+async function _billingRedirect(path,failMsg){
+  try{
+    const r=await fetch(path,{method:"POST",
+      headers:{"Content-Type":"application/json"}});
+    const d=await r.json();
+    if(d.url){location.href=d.url;return;}
+    toast(d.message||d.error||failMsg,true);
+  }catch(e){toast("Error: "+e,true);}
+}
+async function doSubscribe(){
+  if(!mlState.authed){_signIn();return;}
+  toast("Opening subscription checkout\u2026");
+  await _billingRedirect("/api/studio/subscribe",
+    "Subscription setup failed. Please try again.");
+}
+async function doManageSubscription(){
+  if(!mlState.authed){_signIn();return;}
+  toast("Opening the billing portal\u2026");
+  await _billingRedirect("/api/studio/subscription/portal",
+    "Could not open the billing portal.");
+}
+async function doLogout(){
+  try{await fetch("/auth/logout",{method:"POST"});}catch(e){}
+  mlState.authed=false;mlState.email=null;mlState.tokens=null;
+  mlState.picture=null;mlState.member=false;
+  _mlBadge();closeUserMenu();
+  location.href="/auth/logout";
+}
+
 /* ── account chip ──────────────────────────────────────────────────────
    Mirrors studio.html: signed out shows one SIGN IN button, signed in
    shows balance + the avatar/email chip. Driven entirely off mlState so
@@ -1907,10 +1976,23 @@ function _mlAccount(){
   const tk=$("userMenuTokens");
   if(tk)tk.textContent=(typeof mlState.tokens==="number")
     ?mlState.tokens.toLocaleString():"\u2014";
+  // 'active' means paid through the current period — Stripe keeps that
+  // status even once cancel_at_period_end is set, so Manage stays up
+  // until the period actually ends. 'past_due' also gets Manage, because
+  // the portal is exactly where they fix a declined card. Anything else
+  // (canceled, null) falls back to the Subscribe CTA.
+  const st=mlState.subscription_status;
+  const live=(st==="active"||st==="past_due")||(!st&&mlState.member);
+  const sub=$("userMenuSubscribe"),man=$("userMenuManage");
+  if(sub)sub.style.display=live?"none":"";
+  if(man)man.style.display=live?"":"none";
+
   const ss=$("userMenuSubStatus");
   if(ss){
-    ss.textContent=mlState.member?"Subscribed":"No subscription";
-    ss.style.color=mlState.member?"var(--gold)":"";
+    ss.textContent=live
+      ?(st==="past_due"?"Payment overdue":"Subscribed")
+      :"No subscription";
+    ss.style.color=live?(st==="past_due"?"var(--red)":"var(--gold)"):"";
   }
 }
 function toggleUserMenu(e){
@@ -1976,6 +2058,8 @@ function _mlApply(s){
   if(typeof s.free_limit!=="undefined")mlState.free_limit=s.free_limit;
   if(typeof s.tokens!=="undefined")mlState.tokens=s.tokens;
   if(typeof s.picture!=="undefined")mlState.picture=s.picture;
+  if(typeof s.subscription_status!=="undefined")
+    mlState.subscription_status=s.subscription_status;
   if(typeof s.name!=="undefined")mlState.name=s.name;
   if(typeof s.tokens_per_gen!=="undefined")mlState.tokens_per_gen=s.tokens_per_gen;
   if(s.signup_url)mlState.signup=s.signup_url;
