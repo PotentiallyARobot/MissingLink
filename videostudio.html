@@ -5979,14 +5979,21 @@ function _civRefreshApplied(){
 /* ── generate -> queue ── */
 function generate(){
   const mode=currentMode;
-  if(currentEngine==="ltx" && !_committedClips){
-    toast("Add at least one clip to the timeline first (\u2795 Add to timeline).",true);return;
-  }
+  /* The LTX branch used to demand _committedClips — clips committed to
+     the timeline. The timeline is gone and nothing increments that
+     counter, so this rejected every LTX render with an instruction to
+     press a button that no longer exists. (Second place this same stale
+     check was hiding; the first was _syncGenerateEnabled.)
+
+     Preconditions are the same for every engine now: a starting frame,
+     and for the modes that need one, an end or reference frame. */
+  const startImg=imgData||(typeof clipStartImages!=="undefined"&&clipStartImages[1])||null;
+  if(!startImg){toast("Add a starting frame first.",true);return;}
   if(currentEngine!=="ltx"){
-    if(mode==="i2v" && !imgData){toast("Add a starting image first.",true);return;}
-    if(mode==="flf2v" && (!imgData||!lastData)){toast("First-Last needs a first AND a last frame.",true);return;}
+    if(mode==="flf2v" && !lastData){toast("First-Last needs a first AND a last frame.",true);return;}
     if(mode==="vace" && !refData && !imgData){toast("Reference mode needs a reference image (or a start frame).",true);return;}
   }
+  if(!($("prompt").value||"").trim()){toast("Write a scene prompt first.",true);return;}
   const prompt=$("prompt").value;
   const payload={mode:mode,prompt:prompt,negative_prompt:$("neg").value,
     steps:+$("stepsV").value||40,guidance:+$("guidV").value,flow_shift:+$("shiftV").value,
@@ -6026,7 +6033,16 @@ function generate(){
         cl.control_video=i;
       }});
     payload.control_sources=srcs;
-    payload.image=(clips.length?(clips[0].start_image||null):null);
+    /* buildLtxClips() returns [] until clips are "committed" — a timeline
+       concept that no longer exists, so it is now always empty. Fall back
+       to the staged frames and the prompt as written, which is what the
+       single-clip studio actually renders from. Without this the image is
+       null and submit rejects a frame you can plainly see on screen. */
+    payload.image=(clips.length?(clips[0].start_image||null):null)
+      ||(typeof clipStartImages!=="undefined"&&clipStartImages[1])||imgData||null;
+    payload.last_image=(clips.length?(clips[0].end_image||null):null)
+      ||(typeof _stagedEnd!=="undefined"&&_stagedEnd)
+      ||(typeof clipEndImages!=="undefined"&&clipEndImages[1])||null;
     payload.clips=clips;
     payload.prompt=clips.length?clips[0].prompt:buildLtxPrompt();
     // Auto length (or the manual override) decides this now — the old
@@ -6210,7 +6226,7 @@ async function _submitJobs(payload,prompt,thumb){
     }else{
       const key=await _uploadImage(payload.image);
       if(!key){toast("Add a starting image first.",true);return;}
-      const endKey=payload.last_image?await _uploadImage(payload.last_image):"";
+      const endKey=payload.last_image?await _uploadImage(payload.last_image):"";  // staged LAST frame
       const id=await _submitOne(Object.assign({},common,{
         prompt:prompt, image_r2_key:key, end_image_r2_key:endKey||"",
         frames:payload.frames||_clipFrames(),
