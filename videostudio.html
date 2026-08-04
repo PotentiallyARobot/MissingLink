@@ -42,6 +42,211 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);
 .stage-tab.active{background:var(--gold);color:var(--black)}
 .stage-tab-icon{font-size:13px;line-height:1}
 
+
+/* ── FULL HISTORY MODAL ─────────────────────────────────────────────────
+   Chrome lifted from studio.html (.history-modal-panel and friends) so
+   the two apps' history reads identically. Same drag handle, same kind
+   tabs, same card grid. The floating History panel stays as the compact
+   at-a-glance view; this is the "show me everything" surface. */
+.vsmodal{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.82);
+  display:flex;align-items:center;justify-content:center;padding:40px}
+.history-modal-panel{background:var(--surface);border:1px solid var(--border);
+  border-radius:10px;width:min(1200px,95vw);height:min(85vh,800px);
+  display:flex;flex-direction:column;overflow:hidden;position:relative}
+.history-modal-head{display:flex;align-items:center;padding:16px 20px;
+  border-bottom:1px solid var(--border);cursor:grab;user-select:none}
+.history-modal-head:active{cursor:grabbing}
+.history-modal-title{font-family:'JetBrains Mono',monospace;font-size:13px;
+  font-weight:700;color:var(--text);letter-spacing:1px}
+.modal-grip{color:var(--text-dim);font-size:12px;margin-right:10px;letter-spacing:-2px}
+.modal-close{width:28px;height:28px;border-radius:50%;
+  background:rgba(255,255,255,.1);color:var(--text);font-size:14px;border:none;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:background .15s;margin-left:auto}
+.modal-close:hover{background:rgba(255,255,255,.2)}
+.hk-tab{background:var(--surface-2);border:1px solid var(--border);
+  color:var(--text-muted);font:600 10px/1 'JetBrains Mono',monospace;
+  letter-spacing:.06em;padding:7px 11px;border-radius:6px;cursor:pointer;
+  transition:all .15s}
+.hk-tab:hover{color:var(--text);border-color:var(--gold)}
+.hk-tab.active{background:var(--gold);border-color:var(--gold);color:#18181B}
+.history-modal-body{flex:1;overflow-y:auto;padding:20px;
+  scrollbar-width:thin;scrollbar-color:var(--surface-3) transparent}
+.history-modal-body::-webkit-scrollbar{width:8px}
+.history-modal-body::-webkit-scrollbar-track{background:var(--surface-2)}
+.history-modal-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+.vs-history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));
+  gap:16px;align-content:start}
+.hcard{background:var(--surface-2);border:1px solid var(--border);
+  border-radius:10px;overflow:hidden;position:relative;cursor:pointer;
+  transition:transform .2s cubic-bezier(.2,.7,.3,1),border-color .2s,box-shadow .2s;
+  display:flex;flex-direction:column}
+.hcard:hover{border-color:var(--gold);transform:translateY(-3px);
+  box-shadow:0 10px 28px -8px rgba(0,0,0,.65),0 0 0 1px rgba(232,169,23,.25)}
+.hcard-thumb{width:100%;aspect-ratio:1/1;background:var(--surface-3);
+  overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+.hcard-thumb img,.hcard-thumb video{width:100%;height:100%;object-fit:cover;display:block}
+.hcard-badge{position:absolute;top:6px;left:6px;z-index:2;
+  background:rgba(232,169,23,.92);color:#0a0a0c;
+  font:700 9px/1 'JetBrains Mono',monospace;letter-spacing:1px;
+  padding:3px 7px;border-radius:4px;pointer-events:none}
+.hcard-meta{padding:8px 10px;font:400 9px/1.3 'JetBrains Mono',monospace;
+  color:var(--text-muted);letter-spacing:.5px}
+.hcard-meta .hc-prompt{display:-webkit-box;-webkit-line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
+/* Hover actions. Full-width row across the bottom of the thumb so the
+   labels stay readable — these are verbs, not icons. */
+.hcard-acts{position:absolute;left:0;right:0;bottom:0;display:none;gap:3px;
+  padding:4px;background:linear-gradient(transparent,rgba(0,0,0,.88) 45%);z-index:3}
+.hcard:hover .hcard-acts{display:flex}
+.hcard-acts button{flex:1;background:rgba(24,24,27,.94);
+  border:1px solid var(--gold);color:var(--gold);
+  font:700 9px/1 'JetBrains Mono',monospace;padding:6px 2px;border-radius:4px;
+  cursor:pointer;transition:all .12s}
+.hcard-acts button:hover{background:var(--gold);color:#18181B}
+.vs-history-empty{color:var(--text-muted);font:400 12px/1.6 'JetBrains Mono',monospace;
+  padding:40px;text-align:center;grid-column:1/-1}
+/* Control-video chip in the left panel, once one is chosen. */
+.ctrlvid-chip{display:flex;align-items:center;gap:8px;margin-top:8px;
+  background:var(--surface-2);border:1px solid var(--gold);border-radius:7px;
+  padding:7px 9px;font:400 10px/1.3 'JetBrains Mono',monospace;color:var(--text)}
+.ctrlvid-chip video{width:44px;height:28px;object-fit:cover;border-radius:4px}
+.ctrlvid-chip button{margin-left:auto;background:transparent;border:none;
+  color:var(--text-dim);cursor:pointer;font-size:14px}
+.ctrlvid-chip button:hover{color:var(--red)}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE  (<= 900px)
+   ══════════════════════════════════════════════════════════════════════
+   The desktop layout is a two-column grid with overlay panels floating
+   on top of the stage. Neither survives a phone: 262px panels covering a
+   360px viewport leave no video, and a 630px sidebar has nowhere to go.
+
+   So on mobile the app becomes a single vertical column — stage first,
+   controls under it — and the floating panels become bottom sheets that
+   collapse to a title bar. Hover-only affordances are made permanent,
+   because a touch device has no hover and those buttons are the only way
+   to reach half the features. */
+@media (max-width: 900px){
+
+  /* dvh, not vh: mobile browser chrome slides away as you scroll, and
+     100vh leaves a dead strip under the fold that the user can never
+     scroll to because the app itself has overflow:hidden. */
+  .app{
+    grid-template-columns:1fr;
+    grid-template-rows:var(--header-h) minmax(34vh,42vh) 1fr auto;
+    grid-template-areas:"header" "main" "sidebar" "dock";
+    height:100dvh;
+  }
+  .sidebar{border-right:none;border-top:1px solid var(--border)}
+  /* Room at the bottom so the collapsed sheets never cover Generate. */
+  .sidebar-scroll{padding-bottom:8px}
+  .sidebar-foot{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+  .stage{min-height:0}
+  .viewer{padding:8px}
+
+  /* ── header: the title is the first thing to go ────────────────────
+     "MISSINGLINK VIDEO STUDIO" is 220px of decoration on a device where
+     the balance and the account chip are what people came for. */
+  .app-header{padding:0 10px;gap:7px}
+  .app-header h1{display:none}
+  .stage-tabs{margin-left:4px}
+  .stage-tab{padding:8px 10px;font-size:9px;gap:4px}
+  .hdr-right{gap:6px}
+  .hdr-badge{padding:6px 8px;font-size:9px}
+  /* Email is the widest thing in the chip and the avatar already says
+     who you are; the address is still in the dropdown. */
+  .user-menu-trigger-email{display:none}
+  .user-menu-trigger{padding:2px}
+  .auth-btn{padding:9px 10px;font-size:9px}
+  .user-menu{right:8px;left:8px;width:auto;top:calc(var(--header-h) + 4px)}
+
+  /* ── floating panels become bottom sheets ─────────────────────────
+     Fixed to the bottom edge, full width, collapsed to their title bar.
+     Only one opens at a time (see _mobileSheetSync) — two 60vh sheets on
+     a phone is just a stack of nothing. */
+  .float{
+    position:fixed;left:0;right:0;width:auto;top:auto !important;
+    border-radius:14px 14px 0 0;border-bottom:none;
+    max-height:min(62vh,520px);z-index:60;
+    box-shadow:0 -8px 32px rgba(0,0,0,.6);
+    transition:bottom .18s ease;
+  }
+  .float.dragged{left:0 !important;right:0 !important}
+  #queuePanel{bottom:0}
+  #historyPanel{bottom:0}
+  /* When both are collapsed they stack; the open one sits on the floor. */
+  .float.min{max-height:none}
+  body.sheet-queue #historyPanel{bottom:0}
+  body.sheet-queue #queuePanel{bottom:44px}
+  body.sheet-history #queuePanel{bottom:0}
+  body.sheet-history #historyPanel{bottom:44px}
+  .float-head{padding:12px;cursor:pointer}
+  /* The grip means "drag me", and dragging a docked sheet does nothing. */
+  .float-grip{display:none}
+  .float-min{width:34px;height:34px;font-size:15px}
+  .float-sec-body{max-height:none !important}
+  #queuePanel,#historyPanel{max-height:min(62vh,520px)}
+  #queuePanel .float-sec-body,#historyPanel .float-sec-body{
+    max-height:calc(min(62vh,520px) - 54px)}
+  .h-grid{grid-template-columns:repeat(3,1fr)}
+
+  /* ── touch has no hover ───────────────────────────────────────────
+     Every action hidden behind :hover is unreachable on a phone. Make
+     them permanent and give them a real tap target. */
+  .h-use,.hcard-acts{display:flex !important}
+  .h-use button,.hcard-acts button{padding:9px 2px;font-size:9px}
+  .history-card:hover,.hcard:hover{transform:none}
+
+  /* ── modals go full-screen ────────────────────────────────────────
+     A centred dialog with 40px of padding wastes a third of a phone. */
+  .vsmodal,.civ-search-modal,.modal-scrim{padding:0;align-items:stretch}
+  .history-modal-panel,.civ-search-box,.clip-modal-box{
+    width:100vw !important;max-width:none !important;
+    height:100dvh !important;max-height:none !important;border-radius:0;border:none}
+  .history-modal-head{padding:12px;flex-wrap:wrap;gap:8px;cursor:default}
+  .history-modal-head .modal-grip{display:none}
+  .history-modal-title{font-size:12px;flex:1 1 100%;order:1}
+  .history-modal-head>div[style*="margin-left:14px"]{margin-left:0 !important;order:3;flex:1 1 100%}
+  .history-modal-head .modal-close{order:2;width:34px;height:34px;font-size:16px}
+  .hk-tab{flex:1;padding:10px 6px}
+  .history-modal-body{padding:10px}
+  .vs-history-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+  .civ-search-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));padding:10px}
+  .civ-search-controls{padding:10px;gap:8px}
+  .civ-search-controls input[type=text]{min-width:0;flex:1 1 100%}
+  .clip-modal-body{padding:12px;gap:14px}
+  .clip-frames-row{flex-direction:column}
+  .clip-modal-foot{flex-wrap:wrap;gap:8px;padding:12px}
+
+  /* ── stage tools wrap instead of running off-screen ───────────────── */
+  .stage-tools{left:8px;right:8px;top:8px;flex-wrap:wrap;gap:6px}
+  .chip{padding:9px 10px;font-size:9px}
+  .stage-status{font-size:9px;top:auto;bottom:10px}
+
+  /* ── inputs: 16px stops iOS zooming the page on focus ─────────────── */
+  .ta,.lora-url,.model-select,.seed-row input[type=number],
+  .clip-modal-ta,.cd-row textarea{font-size:16px}
+  .mode-btn{padding:12px 0}
+  .gen-btn{padding:15px}
+  /* Sliders need a bigger thumb to be usable with a fingertip. */
+  .slider-row input[type=range]{height:22px}
+  .slider-row input[type=range]::-webkit-slider-thumb{width:20px;height:20px}
+
+  .toast{bottom:calc(56px + env(safe-area-inset-bottom));max-width:92vw}
+  .dock{display:none}          /* debug console is not a phone feature */
+  #agentPanel{width:96vw;left:2vw !important;right:2vw}
+}
+
+/* Very narrow phones: two-up history, tighter header. */
+@media (max-width: 400px){
+  .h-grid{grid-template-columns:repeat(2,1fr)}
+  .vs-history-grid{grid-template-columns:repeat(2,1fr)}
+  .stage-tab span:not(.stage-tab-icon){display:none}
+  .stage-tab{padding:8px}
+}
+
 /* ── Account chip + dropdown ───────────────────────────────────────────
    Lifted from studio.html so the two apps read as one product. The chip
    lives at the far right of the header because that is where people look
@@ -946,7 +1151,26 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       </button>
     </div>
 
-    <div class="user-menu" id="userMenu" style="display:none" role="menu" aria-labelledby="userMenuTrigger">
+    
+<!-- FULL HISTORY MODAL — studio.html chrome, videostudio contents -->
+<div id="vsHistoryModal" class="vsmodal" style="display:none" onclick="if(event.target===this)closeHistoryModal()">
+  <div class="history-modal-panel" id="vsHistoryPanel" onclick="event.stopPropagation()">
+    <div class="history-modal-head" id="vsHistoryHead" title="Drag to move &middot; double-click to reset">
+      <span class="modal-grip" aria-hidden="true">&#8942;&#8942;</span>
+      <div class="history-modal-title">Your Generations <span id="vsHistCount" class="q-count">&mdash;</span></div>
+      <div style="display:flex;gap:6px;margin-left:14px">
+        <button class="hk-tab active" data-kind="all" onclick="setModalKind('all',this)">All</button>
+        <button class="hk-tab" data-kind="video" onclick="setModalKind('video',this)">&#127902; Video</button>
+        <button class="hk-tab" data-kind="image" onclick="setModalKind('image',this)">&#128444; Images</button>
+      </div>
+      <button class="modal-close" onclick="closeHistoryModal()">&times;</button>
+    </div>
+    <div class="history-modal-body">
+      <div id="vsHistoryGrid" class="vs-history-grid"></div>
+    </div>
+  </div>
+</div>
+<div class="user-menu" id="userMenu" style="display:none" role="menu" aria-labelledby="userMenuTrigger">
       <div class="user-menu-head">
         <div class="user-menu-email" id="userMenuEmail">&mdash;</div>
         <div class="user-menu-stats">
@@ -1229,7 +1453,8 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     </div>
 
     <div class="sidebar-foot">
-      <button class="gen-btn" id="genBtn" onclick="generate()">&#10022; Generate Video</button>
+      <div id="ctrlVidSlot"></div>
+<button class="gen-btn" id="genBtn" onclick="generate()">&#10022; Generate Video</button>
     </div>
   </aside>
 
@@ -1241,7 +1466,13 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     <div class="stage-status" id="stage_status"></div>
     <div class="progrow"><div class="prog"><div class="fill" id="fill"></div></div></div>
     <!-- ── STAGE TIMELINE (relocated from the sidebar) ── -->
-    <div class="stage-timeline" id="dlgSec" style="display:none">
+    <!-- Timeline strip hidden. It competed with the stage for vertical
+         space while only ever showing what the left panel already
+         controls, and its "add clip" affordance duplicated CREATE CLIP.
+         Kept in the DOM because renderClipOverview() and the clip
+         editors write into it; a Timeline TAB is the right home for
+         this, built from finished clips rather than pending ones. -->
+    <div class="stage-timeline" id="dlgSec" style="display:none !important">
       <div class="stl-head">
         <span class="stl-title"><span class="icon">&#127916;</span> Timeline <span class="c">clips play in order, continuously</span></span>
         <button class="q-clear" id="charPersistBtn" onclick="openCharPersist()" title="Face-swap a character reference onto every clip's start frame (Qwen faceswap, token-billed)">&#128100; Persist character</button>
@@ -1274,7 +1505,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       <div class="float-head float-drag" id="historyHandle" data-float="history">
         <span class="float-grip">&#8942;&#8942;</span>
         <span class="float-title"><span class="icon">&#9638;</span> History <span class="q-count" id="hCount">0</span></span>
-        <div class="float-btns"><button class="float-min" onclick="toggleMin(event,'historyPanel')" title="Minimize">&ndash;</button></div>
+        <div class="float-btns"><button class="float-min" onclick="event.stopPropagation();openHistoryModal()" title="Open the full history">&#9974;</button><button class="float-min" onclick="toggleMin(event,'historyPanel')" title="Minimize">&ndash;</button></div>
       </div>
       <div class="float-inner">
         <div class="float-sec-body">
@@ -1769,7 +2000,11 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 <div class="toast" id="toast"></div>
 
 <!-- ── FLOATING AGENT ── -->
-<button id="agentFab" title="Open the storyboard agent" onclick="agentOpen()">&#10024; Agent</button>
+<!-- Agent hidden: /api/videostudio/agent was never implemented on the
+     Worker, so every click ended in a "not available" toast. Hidden
+     rather than deleted — the panel markup and its JS are intact, so
+     restoring it is one style change once the endpoint exists. -->
+<button id="agentFab" style="display:none" title="Open the storyboard agent" onclick="agentOpen()">&#10024; Agent</button>
 <div id="agentPanel" style="display:none">
   <div id="agentHead">
     <span class="ag-grip">&#8942;&#8942;&#8942;</span>
@@ -5594,7 +5829,18 @@ async function _submitJobs(payload,prompt,thumb){
       steps:payload.steps||40,
       guidance:payload.guidance||5.0,
       lightning:!!(payload.wan22_lightning||payload.wan21_lightning),
+      // Control video, when the user staged one from History. Sent as a
+      // URL the GPU can fetch. NOTE: no lane consumes this yet — LTX
+      // video-to-video needs the bf16 checkpoint and the IC-LoRA control
+      // models on their own container, which is not deployed. The field
+      // travels so the wiring is done, and the warning below is what
+      // stops it silently doing nothing.
+      control_video_url:(controlVideo&&controlVideo.url)||"",
     };
+    if(controlVideo){
+      toast("Control video is staged but the video-to-video lane isn\u2019t "
+        +"deployed yet \u2014 this render will ignore it.",true);
+    }
     if(clips){
       let queued=0;
       for(let i=0;i<clips.length;i++){
@@ -5623,6 +5869,101 @@ async function _submitJobs(payload,prompt,thumb){
   }catch(e){toast("Error: "+e,true);}
 }
 
+
+/* ── FULL HISTORY MODAL ────────────────────────────────────────────────
+   Same chrome and same interaction model as studio.html's history modal:
+   drag by the head, kind tabs, a card grid, click a card to load it.
+
+   One deliberate difference, per the brief: video cards also offer "USE AS
+   CONTROL", which stages that clip as the control video for the next
+   render. See _setControlVideo for what that currently does and does not
+   do end to end. */
+let modalKind="all";
+function openHistoryModal(){
+  const m=$("vsHistoryModal");if(!m)return;
+  m.style.display="flex";renderHistoryModal();
+  _histEsc=e=>{if(e.key==="Escape")closeHistoryModal();};
+  document.addEventListener("keydown",_histEsc);
+}
+let _histEsc=null;
+function closeHistoryModal(){
+  const m=$("vsHistoryModal");if(m)m.style.display="none";
+  if(_histEsc){document.removeEventListener("keydown",_histEsc);_histEsc=null;}
+}
+function setModalKind(k,btn){
+  modalKind=k;
+  document.querySelectorAll("#vsHistoryModal .hk-tab").forEach(b=>
+    b.classList.toggle("active",b===btn));
+  renderHistoryModal();
+}
+function renderHistoryModal(){
+  const g=$("vsHistoryGrid");if(!g)return;
+  const items=history.filter(x=>modalKind==="all"||_histKind(x)===modalKind);
+  const c=$("vsHistCount");if(c)c.textContent=items.length;
+  if(!items.length){
+    g.innerHTML="<div class='vs-history-empty'>Nothing here yet. Rendered clips "
+      +"and their last frames land here automatically.</div>";
+    return;
+  }
+  g.innerHTML="";
+  items.forEach(it=>{
+    const isImg=_histKind(it)==="image";
+    const card=document.createElement("div");
+    card.className="hcard";
+    card.title=it.prompt||"";
+    // Video cards render a muted, preload=metadata <video> so the poster
+    // frame shows without pulling the whole file for every tile.
+    const media=isImg
+      ? "<img src='"+(it.thumb||it.url||"")+"'>"
+      : "<video src='"+(it.url||"")+"' muted preload='metadata' "
+        +"poster='"+(it.thumb||"")+"'></video>";
+    const acts=isImg
+      ? "<button data-a='first'>FIRST FRAME</button>"
+        +"<button data-a='last'>LAST FRAME</button>"
+      : "<button data-a='stage'>OPEN</button>"
+        +"<button data-a='control'>USE AS CONTROL</button>";
+    card.innerHTML="<div class='hcard-thumb'>"+media
+      +"<div class='hcard-badge'>"+(isImg?"IMG":"VIDEO")+"</div>"
+      +"<div class='hcard-acts'>"+acts+"</div></div>"
+      +"<div class='hcard-meta'><div class='hc-prompt'>"
+      +esc(it.prompt||"untitled")+"</div></div>";
+    card.onclick=()=>{isImg?showImage(it):showVideo(it);closeHistoryModal();};
+    card.querySelectorAll(".hcard-acts button").forEach(b=>{
+      b.addEventListener("click",ev=>{
+        ev.stopPropagation();
+        const a=b.getAttribute("data-a");
+        if(a==="first")_useAsFrame(it,"start");
+        else if(a==="last")_useAsFrame(it,"end");
+        else if(a==="stage"){showVideo(it);closeHistoryModal();}
+        else if(a==="control")_setControlVideo(it);
+      });
+    });
+    g.appendChild(card);
+  });
+}
+
+/* Stage a finished clip as the control video for the next render.
+   The selection is real and travels with the job, but see the note in
+   renderControlVideo() about what the backend does with it today. */
+let controlVideo=null;
+function _setControlVideo(item){
+  if(!item||!item.url){toast("That clip is no longer available.",true);return;}
+  controlVideo={id:item.id,url:item.url,thumb:item.thumb||"",prompt:item.prompt||""};
+  renderControlVideo();
+  closeHistoryModal();
+  toast("Set as control video for the next render.");
+}
+function clearControlVideo(){controlVideo=null;renderControlVideo();}
+function renderControlVideo(){
+  const slot=$("ctrlVidSlot");if(!slot)return;
+  if(!controlVideo){slot.innerHTML="";return;}
+  slot.innerHTML="<div class='ctrlvid-chip'>"
+    +"<video src='"+controlVideo.url+"' muted preload='metadata'></video>"
+    +"<span>Control video<br><span style='color:var(--text-muted)'>"
+    +esc((controlVideo.prompt||"clip").slice(0,40))+"</span></span>"
+    +"<button onclick='clearControlVideo()' title='Remove'>&times;</button></div>";
+}
+
 /* ── GPU boot status ───────────────────────────────────────────────────
    Both engines scale to zero, so the first render after an idle period
    waits on a cold container: Modal pulls the image layer, then the model
@@ -5640,6 +5981,9 @@ function _activeLane(){
   return (typeof currentEngine!=="undefined"&&currentEngine==="ltx")?"ltx":"wan";
 }
 const _BOOT_STAGE_TXT={
+  // 'waking' covers the image pull, during which our code isn't running
+  // and nothing can report — so it is inferred from "work queued, no
+  // container yet" rather than announced by the container itself.
   waking:"Waking the GPU \u2014 pulling the container image",
   starting:"Container up \u2014 initialising",
   loading_model:"Loading the model onto the card",
@@ -5650,7 +5994,10 @@ function _mmss(s){
 }
 function _bootCardHtml(lane){
   const L=gpuLanes[lane];
-  if(!L||L.ready)return "";
+  // No card when ready, and none when the lane is simply idle (stage
+  // null) — a card that says "starting up" about a GPU nobody asked for
+  // is worse than no card.
+  if(!L||L.ready||!L.stage)return "";
   const el=L.boot_elapsed||0, eta=L.boot_eta;
   const stage=_BOOT_STAGE_TXT[L.stage]||"Starting up";
   const card=(lane==="ltx")?"L40S":"L4";
@@ -5825,6 +6172,9 @@ function renderHistory(){
     g.appendChild(c);
   });
   renderGallery();
+  // Keep the full modal in sync when it happens to be open.
+  if(($("vsHistoryModal")||{}).style && $("vsHistoryModal").style.display==="flex")
+    renderHistoryModal();
 }
 
 /* Route a history image into the first/last frame slot. Goes through the
@@ -6103,11 +6453,23 @@ setInterval(async()=>{
             }
             else{toast("Image build finished but returned no image.",true);}
           }else{
-            let url=null;
-            try{const rr=await(await fetch("/api/videostudio/result/"+q.id)).json();url=rr.result;}
+            let url=null,lastFrame=null;
+            try{const rr=await(await fetch("/api/videostudio/result/"+q.id)).json();
+              url=rr.result;lastFrame=rr.last_frame_url||null;}
             catch(e){}
             if(url){const h={id:q.id,prompt:q.prompt,thumb:q.thumb,url:url,ts:Date.now()};
-              history.unshift(h);showVideo(h);renderHistory();}
+              history.unshift(h);showVideo(h);
+              // The clip's FINAL frame goes into History as its own image.
+              // That is the whole mechanism for continuing a shot: drop it
+              // into the next clip's first-frame slot and the motion
+              // carries across the cut. Added after the video so it sits
+              // directly above it in the list.
+              if(lastFrame)_addImageToHistory(lastFrame,
+                "Last frame \u2014 "+(q.prompt||"clip"));
+              renderHistory();
+              if(lastFrame)toast("Rendered. Last frame saved to History \u2014 "
+                +"use it as the next clip's first frame.");
+            }
           }
         }
         queue=queue.filter(x=>x.id!==q.id);changed=true;
@@ -6157,6 +6519,62 @@ function renderGallery(){
 function openGallery(){renderGallery();$("overlay").classList.add("open");}
 function closeGallery(){$("overlay").classList.remove("open");}
 
+
+/* ── MOBILE BEHAVIOUR ──────────────────────────────────────────────────
+   Three things change on a phone, and all three are behavioural rather
+   than cosmetic — CSS alone can't express them.
+
+   1. Dragging a docked bottom sheet is meaningless, so the drag handler
+      is skipped and the whole title bar becomes a tap-to-toggle.
+   2. Only one sheet opens at a time. Two 62vh sheets on a 700px screen
+      leaves nothing of the app visible.
+   3. A saved desktop drag position must not be applied — it would park a
+      full-width sheet at some x/y from a 1440px session. */
+const _isMobile=()=>window.matchMedia("(max-width:900px)").matches;
+
+function _mobileSheetSync(){
+  // Drives the CSS that stacks the collapsed sheet above the open one.
+  const q=$("queuePanel"),hp=$("historyPanel");
+  const qOpen=q&&!q.classList.contains("min");
+  const hOpen=hp&&!hp.classList.contains("min");
+  document.body.classList.toggle("sheet-queue",!!qOpen);
+  document.body.classList.toggle("sheet-history",!!hOpen&&!qOpen);
+}
+
+function _mobileToggleSheet(panelId){
+  const p=$(panelId);if(!p)return;
+  const opening=p.classList.contains("min");
+  if(opening){
+    // Opening one closes the other.
+    ["queuePanel","historyPanel"].forEach(id=>{
+      if(id!==panelId){const o=$(id);if(o)o.classList.add("min");}
+    });
+    p.classList.remove("min");
+  }else{
+    p.classList.add("min");
+  }
+  _mobileSheetSync();
+}
+
+/* Start collapsed on mobile so the first thing a user sees is the stage
+   and the controls, not two panels covering them. */
+function _mobileInitSheets(){
+  if(!_isMobile())return;
+  ["queuePanel","historyPanel"].forEach(id=>{
+    const p=$(id);
+    if(p){
+      p.classList.add("min");
+      // Clear any position saved from a desktop session.
+      p.classList.remove("dragged");
+      p.style.left="";p.style.top="";p.style.right="";
+    }
+  });
+  _mobileSheetSync();
+}
+window.addEventListener("resize",()=>{
+  if(_isMobile())_mobileInitSheets();
+});
+
 /* ── floating panels: minimize, drag, persist ──────────────────────────
    Generalised from the single-panel version so Queue and History each
    drag independently. Same shape as studio.html's draggable modals:
@@ -6194,9 +6612,20 @@ function toggleMin(e,id){
   if(b)b.innerHTML=p.classList.contains("min")?"\u25A1":"\u2013";
   // Minimizing shrinks the panel, which can leave it hanging off the
   // bottom edge if it was dragged low. Re-clamp after the class change.
-  if(p.classList.contains("dragged")){
+  if(p.classList.contains("dragged")&&!_isMobile()){
     const r=p.getBoundingClientRect(),par=p.offsetParent.getBoundingClientRect();
     _applyFloatPos(p,r.left-par.left,r.top-par.top);
+  }
+  if(_isMobile()){
+    // Opening one sheet via its minimize button must still close the
+    // other, same as tapping the title bar.
+    if(!p.classList.contains("min")){
+      ["queuePanel","historyPanel"].forEach(oid=>{
+        if(oid!==id){const o=$(oid);if(o)o.classList.add("min");}
+      });
+      p.classList.remove("min");
+    }
+    _mobileSheetSync();
   }
 }
 /* Kept because older markup and a couple of handlers still call it; the
@@ -6209,12 +6638,15 @@ function toggleSec(id){const e=$(id);if(e)e.classList.toggle("closed");}
     const key=handle.dataset.float;
     const panel=handle.closest(".float");
     if(!panel||!key)return;
-    if(saved[key])
+    // A position saved on desktop is meaningless for a full-width sheet.
+    if(saved[key]&&!_isMobile())
       requestAnimationFrame(()=>_applyFloatPos(panel,saved[key].x,saved[key].y));
 
     handle.addEventListener("pointerdown",e=>{
       if(e.target.closest("button"))return;
       if(e.button!==undefined&&e.button!==0)return;
+      // Docked bottom sheets don't drag — the whole bar is a toggle.
+      if(_isMobile())return;
       const par=panel.offsetParent.getBoundingClientRect();
       const r=panel.getBoundingClientRect();
       const ox=r.left-par.left, oy=r.top-par.top;
@@ -6253,6 +6685,12 @@ function toggleSec(id){const e=$(id);if(e)e.classList.toggle("closed");}
       handle.addEventListener("pointercancel",onUp);
     });
 
+    // Tap the title bar to open/close the sheet.
+    handle.addEventListener("click",e=>{
+      if(!_isMobile())return;
+      if(e.target.closest("button"))return;
+      _mobileToggleSheet(panel.id);
+    });
     handle.addEventListener("dblclick",()=>{
       panel.classList.remove("dragged");
       panel.style.left="";panel.style.top="";panel.style.right="";
@@ -6316,11 +6754,15 @@ function paintConn(){
   const L=gpuLanes[_activeLane()]||{};
   const anyRun=queue.some(q=>q.status==="running");
   let cls,label;
+  // Order matters: a running job wins, then real readiness, then the
+  // boot stages the container reported, and only then the pre-report
+  // "waking" gap. A null stage means nothing is happening — say Idle
+  // rather than implying a startup nobody triggered.
   if(anyRun){cls="warm";label="Generating";}
   else if(L.ready){cls="on";label="GPU ready";}
   else if(L.stage==="loading_model"){cls="cold";label="Loading model";}
   else if(L.stage==="starting"){cls="cold";label="Starting";}
-  else if(L.stage==="waking"||(L.queue_depth||0)>0){cls="cold";label="Waking GPU";}
+  else if(L.stage==="waking"){cls="cold";label="Waking GPU";}
   else{cls="off";label="Idle";}
   const d=$("connDot"),l=$("connLabel");
   if(d)d.className="dot "+cls;
@@ -6374,6 +6816,7 @@ async function restoreJobs(){
 updateDur();
 setEngine("ltx");   // LTX-2.3 is the default engine
 setInterval(pollHw,3000);pollHw();
+_mobileInitSheets();
 setInterval(pollGpu,3000);pollGpu();
 // Deliberately NOT waking the GPU here. Opening the page is not intent to
 // render, and an L40S spun up by a sign-in bills for its whole idle
