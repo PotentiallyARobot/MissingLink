@@ -4127,6 +4127,11 @@ body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained){display:
 .agent-scene-anchor input{accent-color:var(--gold);cursor:pointer}
 .agent-scene-run{width:100%;justify-content:center}
 .agent-scene-note{font-family:var(--font-mono);font-size:9px;line-height:1.4;color:var(--text-dim)}
+/* The diversity dial governs how UNLIKE each other independent generations
+   are. Sequence frames are the one case where that's inverted, so the dial
+   does nothing here — dim it while the composer is open rather than leave a
+   live-looking control sitting directly above it implying otherwise. */
+.agent-diversity-row.seq-muted{opacity:.35;pointer-events:none}
 .agent-empty{color:var(--text-muted);font-size:11px;font-style:italic;padding:6px 0}
 .agent-empty em{font-style:italic;color:var(--text-dim)}
 .agent-msg{display:flex;flex-direction:column;gap:2px}
@@ -23205,7 +23210,24 @@ const AGENT_TOOL_HANDLERS = {
     // reference is frame N-1's upload id, which does not exist until
     // frame N-1 has actually come back from the worker.
     async generate_scene_sequence(args){
-        const beats = Array.isArray(args.beats) ? args.beats.filter(b => typeof b === 'string' && b.trim()) : [];
+        // Beats are shot cards: { camera, scene, action, cut }. Older callers
+        // (and any model that ignores the schema) may still send plain
+        // strings — those are accepted and treated as a hard cut with no
+        // stated camera, which is the safe default: withhold the previous
+        // frame rather than let it dictate the composition.
+        const _normBeat = (b) => {
+            if (typeof b === 'string') {
+                const t = b.trim();
+                return t ? { camera: '', scene: '', action: t, cut: true } : null;
+            }
+            if (!b || typeof b !== 'object') return null;
+            const camera = String(b.camera || '').trim();
+            const scene  = String(b.scene  || '').trim();
+            const action = String(b.action || '').trim();
+            if (!camera && !scene && !action) return null;
+            return { camera, scene, action, cut: b.cut !== false };
+        };
+        const beats = Array.isArray(args.beats) ? args.beats.map(_normBeat).filter(Boolean) : [];
         if (!beats.length) {
             return { error: true, summary: 'Scene sequence needs at least one beat.',
                      result: { ok: false, error: 'no_beats', batch_state: _agentBatchState() } };
@@ -23232,11 +23254,30 @@ const AGENT_TOOL_HANDLERS = {
                      result: { ok: false, error: 'first_frame_not_found', batch_state: _agentBatchState() } };
         }
 
-        // Shared-context images ride along on every frame, same contract as
-        // generate_new_images: the context slots mean "accompany every job".
+        // REFERENCE POLICY. This is the part that decides whether a sequence
+        // reads as a story or as one picture rendered eight times.
+        //
+        // Every image attached to a generation is treated by the renderer as
+        // content to PRESERVE, not as a hint. It cannot tell "use this for
+        // the character's face" from "use this as the scene". So the old
+        // behavior here — previous frame + frame 1 + both shared-context
+        // slots, on every frame — meant three or four pictures of the same
+        // person in the same place were attached to a request asking for a
+        // different place, and the renderer did the reasonable thing: it
+        // gave back the same person in the same place.
+        //
+        // So: at most ONE identity reference for the whole run, and the
+        // previous frame only on shots that actually continue the previous
+        // one. Shared-context slots do not ride along — "accompany every
+        // job" is the right contract for independent generations and the
+        // wrong one for frames of a sequence.
         const ctxIds = (typeof _batchContext !== 'undefined' && _batchContext)
             ? [_batchContext[1], _batchContext[2]].filter(x => x && x.id).map(x => x.id) : [];
         const anchor = !!args.anchor_first_frame;
+        // Anchoring on → frame 1 is the identity reference. Anchoring off →
+        // fall back to a shared-context slot if the user parked a character
+        // sheet there, since that's an explicit "this is who it is" gesture.
+        const identityId = anchor ? firstId : (ctxIds[0] || null);
         const size = (function(){
             const w = parseInt(($('inpWidth') || {}).value) || 0;
             const h = parseInt(($('inpHeight') || {}).value) || 0;
@@ -23253,33 +23294,59 @@ const AGENT_TOOL_HANDLERS = {
 
         for (let i = 0; i < runBeats.length; i++) {
             const frameNo = i + 2;  // user's image is frame 1
-            // Reference budget is 4. Priority: the immediately-preceding
-            // frame (continuity), then the anchor (drift control), then
-            // shared context. Deduped — on frame 2 prev IS the anchor.
-            const refIds = [...new Set([
-                prevId,
-                ...(anchor ? [firstId] : []),
-                ...ctxIds,
-            ])].slice(0, 4);
-            // Every frame carries the whole through-line plus its own beat,
-            // so the model renders this moment while aware of the arc.
+            const beat = runBeats[i];
+            // On a hard cut the previous frame is withheld on purpose: it is
+            // a picture of the place this shot is trying to leave, and
+            // attaching it is the single biggest cause of a sequence that
+            // never goes anywhere. Identity is what carries across a cut, so
+            // that's the one thing attached. If there is no identity
+            // reference at all we fall back to the previous frame rather
+            // than generating from nothing — but the prompt then leans hard
+            // on "new setup" language to fight it.
+            const refIds = beat.cut
+                ? [...new Set([identityId || prevId])]
+                : [...new Set([prevId, ...(identityId ? [identityId] : [])])].slice(0, 4);
+
+            const refRole = beat.cut
+                ? (identityId
+                    ? `REFERENCE: the attached image is supplied ONLY as a likeness reference for the recurring cast — their faces, build, hair and wardrobe. Its location, camera angle, framing, background and lighting are NOT part of this shot and must not be reproduced.`
+                    : `REFERENCE: the attached image is the previous shot, supplied ONLY for the likeness of the recurring cast. Do not reuse its framing, background or camera position.`)
+                : `REFERENCE: the attached image is the immediately preceding shot, which this one continues in the same place and moment` +
+                  (identityId && prevId !== identityId ? `; the opening frame is also attached as a likeness reference` : ``) +
+                  `. Hold the location, light and wardrobe; move the camera as described.`;
+
+            const shotLines = [
+                beat.camera ? `CAMERA: ${beat.camera}` : '',
+                beat.scene  ? `SCENE: ${beat.scene}`   : '',
+                beat.action ? `ACTION: ${beat.action}` : '',
+            ].filter(Boolean).join('\n');
+
+            // Every frame carries the whole through-line plus its own shot
+            // card, so the renderer stages this moment while aware of the arc.
             const framePrompt =
-                `This is frame ${frameNo} of a ${runBeats.length + 1}-frame visual sequence.\n` +
-                `STORY: ${args.story || ''}\n` +
-                `THIS FRAME: ${runBeats[i]}\n` +
-                `CONTINUITY: the attached reference image is the immediately preceding frame` +
-                (anchor && prevId !== firstId ? `, and the opening frame of the sequence is also attached` : '') +
-                `. Keep the same characters, wardrobe, art style, palette and rendering treatment. ` +
-                `Change only what this frame's description calls for.`;
+                `Shot ${frameNo} of ${runBeats.length + 1} in a film sequence. ` +
+                `Each shot is the opening frame of a separate 15-30 second clip, so this is ` +
+                (beat.cut ? `A HARD CUT — a new camera setup in a new moment. ` : `a continuation of the previous shot. `) +
+                `\nSTORY: ${args.story || ''}\n` +
+                `${shotLines}\n` +
+                `${refRole}\n` +
+                `CONTINUITY: same characters, same wardrobe, same art style, palette and rendering treatment as the reference. ` +
+                (beat.cut
+                    ? `COMPOSITION: build this shot from the CAMERA and SCENE lines above, not from the reference. A shot that repeats the reference's framing is a failed shot.`
+                    : `COMPOSITION: keep the location and staging, change the camera as described.`);
             try {
                 const entry = await _agentGenerateFrame({
                     prompt: framePrompt,
                     size,
                     refIds,
                     label: `Frame ${frameNo}/${runBeats.length + 1}`,
-                    caption: `Frame ${frameNo}: ${runBeats[i]}`,
+                    // Caption reads as a slate line so the next turn's
+                    // batch_state is a legible shot list, and so the model
+                    // can see what camera setups it has already spent.
+                    caption: `Shot ${frameNo}${beat.cut ? ' (cut)' : ' (cont.)'}: `
+                        + [beat.camera, beat.scene, beat.action].filter(Boolean).join(' — '),
                 });
-                made.push({ frame: frameNo, id: entry.id, beat: runBeats[i] });
+                made.push({ frame: frameNo, id: entry.id, beat, cut: beat.cut });
                 // THE CHAIN: this frame becomes the reference for the next.
                 prevId = entry.id;
                 _agentRender('tool', { text: `Frame ${frameNo}/${runBeats.length + 1} done.` });
@@ -23825,7 +23892,21 @@ function toggleSceneComposer(){
     const open = body.style.display === 'none';
     body.style.display = open ? '' : 'none';
     wrap.classList.toggle('open', open);
+    _syncSceneDiversityMute(open);
     if (open) syncSceneFirstFrame();
+}
+// Diversity doesn't apply to sequences — the agent is told to ignore it for
+// generate_scene_sequence. Mute the dial so the UI says the same thing.
+function _syncSceneDiversityMute(open){
+    const row = document.querySelector('.agent-diversity-row');
+    if (!row) return;
+    row.classList.toggle('seq-muted', !!open);
+    if (open) {
+        row._prevTitle = row._prevTitle || row.title;
+        row.title = "Doesn't apply to scene sequences — frames of one sequence are meant to match, not differ.";
+    } else if (row._prevTitle) {
+        row.title = row._prevTitle;
+    }
 }
 function syncSceneCount(){
     const el = $('agentSceneCount'), out = $('agentSceneCountVal');
@@ -23871,13 +23952,18 @@ function runSceneSequence(){
     input.value =
         `Scene sequence. Use the generate_scene_sequence tool.\n` +
         `first_frame_image_id: ${img.id}\n` +
-        `Generate exactly ${count} new frame${count === 1 ? '' : 's'} continuing from it.\n` +
+        `Generate exactly ${count} new shot${count === 1 ? '' : 's'} continuing from it.\n` +
         `anchor_first_frame: ${anchor}\n` +
+        `Each shot is the opening frame of its own 15-30 second clip, so write them as ` +
+        `CUTS, not as small edits of the previous frame. Every beat needs a concrete new ` +
+        `camera setup and, where the story allows, a new location. Do not describe what ` +
+        `the characters look like — the reference image carries that.\n` +
         `Story: ${story.trim()}`;
     // Collapse the composer — the chat below is where the action is now.
     const body = $('agentSceneBody'), wrap = $('agentScene');
     if (body) body.style.display = 'none';
     if (wrap) wrap.classList.remove('open');
+    _syncSceneDiversityMute(false);
     sendAgentMessage();
 }
 
