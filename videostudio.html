@@ -1349,14 +1349,15 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         <div class="sec-label"><span class="icon">&#10022;</span> <span id="promptLbl">Prompt</span>
           <button class="spk-gear" id="autoCfgGear" style="margin-left:auto" onclick="openAutoCfg()" title="Auto Prompt settings: standing instructions &amp; extra context">&#9881;</button>
           <button class="q-clear" id="autoBtn" style="margin-left:8px" onclick="autoPrompt()" title="Look at the image with GPT and write the prompt (and dialogue on LTX)">&#10024; Auto Prompt</button></div>
-        <textarea class="ta" id="prompt" oninput="if(currentEngine==='ltx'){renderDialog();_updateSceneRoleHint();}">a calm ocean at golden hour, gentle waves rolling, cinematic slow push-in, the water shimmering</textarea>
+        <textarea class="ta" id="prompt" oninput="if(currentEngine==='ltx'){renderDialog();_updateSceneRoleHint();}updateDur();">a calm ocean at golden hour, gentle waves rolling, cinematic slow push-in, the water shimmering</textarea>
         <div class="hintline" id="promptRoleHint" style="display:none"></div>
         <div class="sec-label" style="margin:12px 0 8px" id="negLabel"><span class="icon">&#8856;</span> Negative</div>
         <textarea class="ta neg" id="neg">overexposed, static, blurred details, subtitles, worst quality, low quality, JPEG artifacts, ugly, deformed, disfigured, messy background, still picture</textarea>
-        <button class="gen-btn" id="addToTimelineBtn" style="display:none;width:100%;margin-top:12px" onclick="addToTimeline()" title="Commits this image &amp; scene as a clip and clears the fields for the next one">&#10133; Create clip</button>
-        <label id="appendTlWrap" title="On: add this clip after the existing timeline. Off: start a new timeline." style="display:none;align-items:center;gap:7px;margin-top:8px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap">
-          <input type="checkbox" id="appendTl"> Append
-        </label>
+        <!-- "Create clip" / "Append" belonged to the timeline. One clip
+             per render now, so Generate is the only commit action. Inputs
+             kept hidden because a few handlers still read them. -->
+        <button id="addToTimelineBtn" style="display:none" onclick="addToTimeline()"></button>
+        <label id="appendTlWrap" style="display:none"><input type="checkbox" id="appendTl"></label>
         <div id="splitHint" title="This control video is longer than one segment, so it will be split into chained clips and stitched back after rendering. Adjust seconds-per-clip here." style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--gold);white-space:nowrap">
           &#9986;&nbsp;<b id="splitN">2</b>&#215;<b id="splitPer">15</b>s
           <input type="number" id="splitSeg" min="4" max="40" step="1" style="width:46px;padding:2px 4px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;margin-left:auto">s
@@ -1364,15 +1365,44 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         <div id="addToTimelineHint" style="display:none"></div>
       </div>
 
+      <!-- Dialogue moved out of the clip modal and onto the left rail.
+           It drives the clip's length and is edited alongside the scene,
+           so hiding it two clicks deep in a modal made no sense once the
+           timeline was gone. LTX only — Wan has no speech synthesis. -->
+      <div class="sec" id="dlgLeftSec" style="display:none">
+        <div class="sec-label"><span class="icon">&#128172;</span> Dialogue
+          <span class="c">spoken in order, lip-synced</span></div>
+        <div id="clipDlgList"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="gen-btn gen-btn-secondary" style="flex:1;padding:9px;font-size:11px"
+            onclick="clipModalAddLine()">+ Add line</button>
+          <button class="gen-btn gen-btn-secondary" style="flex:1;padding:9px;font-size:11px"
+            onclick="clipModalAutoDialog()" title="AI writes this clip's scene and dialogue">&#10024; Auto-write</button>
+        </div>
+        <button class="gen-btn gen-btn-secondary" style="width:100%;margin-top:8px;padding:9px;font-size:11px"
+          onclick="openSpeakerModal()">&#127908; Speakers &amp; voices</button>
+      </div>
+
       <!-- timeline moved below the stage -->
 
 
       <div class="sec" id="lengthSec">
-        <div class="sec-label"><span class="icon">&#9201;</span> Length <span class="c">long video</span></div>
-        <div class="slider-row"><span class="sl">Clips</span>
-          <input type="range" id="segments" min="1" max="12" value="1"><input class="sv" id="segmentsV" value="1"></div>
-        <div class="lenbox"><span>&#9202;</span> <span id="durHint">~5 s &middot; 1 clip</span></div>
-        <div class="hintline">Each clip is one ~5 s Wan generation. Extra clips are chained: the last frame of each becomes the start of the next. Quality drifts over many clips &mdash; use <b style="color:var(--gold)">Lightning</b> so long renders stay fast.</div>
+        <div class="sec-label"><span class="icon">&#9201;</span> Length
+          <label class="c" style="margin-left:auto;display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;letter-spacing:0">
+            <input type="checkbox" id="autoLen" checked onchange="_autoLenChange()"> auto
+          </label>
+        </div>
+        <div class="lenbox"><span>&#9202;</span> <span id="durHint">Auto &mdash; from your scene</span></div>
+        <!-- Manual override, hidden while auto is on. -->
+        <div id="lenManual" style="display:none">
+          <div class="slider-row" style="margin-top:10px"><span class="sl">Seconds</span>
+            <input type="range" id="clipSecs" min="2" max="20" step="0.5" value="5"><input class="sv" id="clipSecsV" value="5"></div>
+        </div>
+        <div class="hintline" id="autoLenHint">Length is worked out from your scene &mdash; how much dialogue there is, and how much has to happen. Untick <b>auto</b> to set it yourself.</div>
+        <!-- The multi-clip chaining slider went with the timeline. Kept
+             hidden because updateDur() and the submit path still read it. -->
+        <input type="range" id="segments" min="1" max="12" value="1" style="display:none">
+        <input id="segmentsV" value="1" type="hidden">
       </div>
 
       <div class="sec">
@@ -1380,7 +1410,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
           <div class="sec-label"><span class="icon">&#9638;</span> Resolution</div>
           <select class="model-select" id="profile">
             <option value="480P">480P &mdash; faster, lighter</option>
-            <option value="720P">720P &mdash; sharper, heavier</option>
+            <option value="720P" selected>720P &mdash; sharper, heavier</option>
           </select>
         </div>
         <div id="flfNote" class="hintline" style="display:none">FLF2V runs at 720P only.</div>
@@ -1477,25 +1507,11 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     <div class="stage-tools" id="stageTools"><a class="chip" id="dlBtn" download="missinglink_video.mp4">&#11015; Download</a><button class="chip" id="vr180Btn" onclick="convertVR180()" title="Convert this clip to 180&deg; VR (mono, headset-ready)">&#129488; 180&deg; VR</button><button class="chip" id="faceKfBtn" onclick="extractFaceKeyframes()" title="Find the first face every 10s and download the frames + timestamps">&#128100; Face frames</button><button class="chip" id="autoClipBtn" onclick="faceAutoClip()" title="Auto-cut into clips at face boundaries; download each clip + its first/last frames for consistent-character reskinning">&#9986; Auto-clip</button><button class="chip" id="nextSceneBtn" onclick="autoNextScene()" title="Look at the last clip and build the next scene's starting image">&#127916; Auto Next Scene</button><button class="chip" id="nextCfgBtn" onclick="openNextCfg()" title="Auto Next Scene settings: story context &amp; instructions">&#9881;</button><button class="chip" id="useFirstBtn" onclick="_stageUseAs('start')" title="Use this image as the first frame" style="display:none">&#11015; First frame</button><button class="chip" id="useLastBtn" onclick="_stageUseAs('end')" title="Use this image as the last frame" style="display:none">&#11015; Last frame</button><button class="chip" id="clearBtn" onclick="clearStage()" title="Clear the stage">&#128465; Clear</button></div>
     <div class="stage-status" id="stage_status"></div>
     <div class="progrow"><div class="prog"><div class="fill" id="fill"></div></div></div>
-    <!-- ── STAGE TIMELINE (relocated from the sidebar) ── -->
-    <!-- Timeline strip hidden. It competed with the stage for vertical
-         space while only ever showing what the left panel already
-         controls, and its "add clip" affordance duplicated CREATE CLIP.
-         Kept in the DOM because renderClipOverview() and the clip
-         editors write into it; a Timeline TAB is the right home for
-         this, built from finished clips rather than pending ones. -->
-    <div class="stage-timeline" id="dlgSec" style="display:none !important">
-      <div class="stl-head">
-        <span class="stl-title"><span class="icon">&#127916;</span> Timeline <span class="c">clips play in order, continuously</span></span>
-        <button class="q-clear" id="charPersistBtn" onclick="openCharPersist()" title="Face-swap a character reference onto every clip's start frame (Qwen faceswap, token-billed)">&#128100; Persist character</button>
-        <button class="q-clear" onclick="clearTimeline()" title="Remove all clips and start fresh">&#128465;</button>
-        <button class="q-clear" id="stlMin" onclick="toggleStl()" title="Minimize the timeline">&#9662;</button>
-      </div>
-      <div class="stl-strip" id="clipOverview"></div>
-      <div class="hintline stl-hint">Tap a clip to edit, or &#10024; Auto-write to fill it. Add clips at the end of the strip.</div>
-    </div>
-
-
+    <!-- Timeline removed. This studio makes one clip at a time; the
+         strip only ever mirrored the left panel, and its "add clip"
+         duplicated CREATE CLIP. Assembling finished clips is a separate
+         job (see the note on a Timeline tab) and does not belong over
+         the video. -->
     <!-- Two independent floating panels. They were one "Jobs" window with
          two collapsible sections; queue and history are watched at
          different times (queue while a render runs, history while
@@ -1962,7 +1978,10 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       </div>
       <div class="clip-modal-dlg">
         <label class="clip-modal-lbl">Dialogue in this clip <span class="c">spoken in order, lip-synced</span></label>
-        <div id="clipDlgList"></div>
+        <!-- Dialogue now lives on the left rail; this modal block is
+             retained for per-clip editing but shares the same renderer,
+             so it must not duplicate the id. -->
+        <div id="clipDlgListModal"></div>
         <div style="display:flex;gap:8px;margin-top:6px;align-items:stretch">
           <button class="gen-btn gen-btn-secondary" style="flex:1;padding:9px;font-size:11px" onclick="clipModalAddLine()">+ Add line</button>
           <button class="gen-btn gen-btn-secondary" id="clipAutoDlgBtn" style="flex:1;padding:9px;font-size:11px" onclick="clipModalAutoDialog()" title="AI writes this clip's scene AND dialogue, continuing the story from previous clips — builds on whatever you've already typed, looks at the start (and end frame if set)">&#10024; Auto-write scene &amp; dialogue</button>
@@ -2306,7 +2325,7 @@ async function mlLogin(tok){
       _mlApply(j);
       toast(j.member?("Welcome"+(j.email?", "+j.email:"")+" \u2014 subscribed.")
         :("Signed in"+(j.email?" as "+j.email:"")+"."));
-      refreshLoras();restoreJobs();
+      refreshLoras();restoreJobs();_libLoaded=false;loadImageLibrary();
     }else if(!tok){_signIn();}
   }catch(e){toast("Sign-in check failed: "+e,true);}
 }
@@ -2367,10 +2386,88 @@ function esc(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replac
 });
 function setSL(id,val){$(id).value=val;$(id+"V").value=val;}
 function randSeed(){$("seed").value=Math.floor(Math.random()*2e9);}
+
+/* ── clip length ───────────────────────────────────────────────────────
+   The old control asked for a CLIP COUNT, which only made sense when a
+   timeline chained them. One clip per render now, so the question is just
+   "how long", and the answer is usually derivable from the scene:
+
+     - Dialogue is the hard constraint. Speech that gets cut off is the
+       most obvious way for a clip to look broken, so lines are costed at
+       a natural speaking rate with a beat between them and a little head
+       and tail room.
+     - With no dialogue, longer and more eventful prompts want more time
+       than a held shot does.
+
+   Clamped to what the model can actually do: LTX takes up to 481 frames
+   (~20s at 24fps), Wan to 129 (~8s at 16). Untick auto to set it by hand. */
+function _spokenSeconds(text){
+  const words=(text||"").trim().split(/\s+/).filter(Boolean).length;
+  if(!words)return 0;
+  return words/2.6;                    // ~155 wpm, unhurried delivery
+}
+function _autoClipSeconds(){
+  const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
+  const maxF=currentEngine==="ltx"?481:129;
+  const maxS=maxF/fps;
+
+  // Dialogue first, if this scene has any.
+  let dlg=0,lines=0;
+  try{
+    (clipDialog&&clipDialog[1]||[]).forEach(l=>{
+      const s=_spokenSeconds(l&&l.text);
+      if(s>0){dlg+=s;lines++;}
+    });
+  }catch(e){}
+  if(dlg>0){
+    // A beat between lines, plus head and tail room so nothing is clipped.
+    const secs=dlg+Math.max(0,lines-1)*0.45+1.6;
+    return Math.min(maxS,Math.max(3,secs));
+  }
+
+  // No dialogue: scale with how much the prompt is asking for.
+  const p=($("prompt")&&$("prompt").value||"").trim();
+  const words=p.split(/\s+/).filter(Boolean).length;
+  let secs=4;
+  if(words>25)secs=5;
+  if(words>60)secs=6.5;
+  if(words>110)secs=8;
+  // Explicit motion cues want room to actually happen.
+  if(/\b(walks?|runs?|turns?|enters?|exits?|pans?|zooms?|dolly|tracking|reveals?|approaches?)\b/i.test(p))
+    secs+=1.5;
+  return Math.min(maxS,Math.max(3,secs));
+}
+function _clipSeconds(){
+  const auto=$("autoLen");
+  if(auto&&!auto.checked){
+    const v=parseFloat(($("clipSecsV")||{}).value);
+    if(v>0)return v;
+  }
+  return _autoClipSeconds();
+}
+/* Seconds -> the frame count the engine actually accepts. */
+function _clipFrames(){
+  const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
+  const want=Math.round(_clipSeconds()*fps);
+  if(currentEngine==="ltx")
+    return Math.max(9,Math.min(481,Math.round((want-1)/8)*8+1));   // 8n+1
+  return Math.max(17,Math.min(129,Math.round((want-1)/4)*4+1));    // 4n+1
+}
+function _autoLenChange(){
+  const auto=$("autoLen"),man=$("lenManual"),hint=$("autoLenHint");
+  const on=!auto||auto.checked;
+  if(man)man.style.display=on?"none":"block";
+  if(hint)hint.style.display=on?"":"none";
+  updateDur();
+}
+
 function updateDur(){
-  const clips=+$("segmentsV").value||1, frames=+$("framesV").value||81, fps=+$("fpsV").value||16;
-  const total=(clips*frames-(clips-1))/fps;
-  $("durHint").innerHTML="~"+total.toFixed(1)+" s &middot; "+clips+(clips>1?" clips":" clip");
+  const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
+  const f=_clipFrames(), secs=f/fps;
+  const auto=$("autoLen"), isAuto=!auto||auto.checked;
+  const d=$("durHint");
+  if(d)d.innerHTML=(isAuto?"Auto \u2014 ":"")+"~"+secs.toFixed(1)+" s"
+    +" <span style='opacity:.6'>&middot; "+f+" frames</span>";
 }
 
 /* speed modes ─────────────────────────────────────────────────────────
@@ -2399,6 +2496,13 @@ async function qualityMode(){
   toast("Quality mode on \u2014 slower, higher fidelity.");
 }
 $("profile").addEventListener("change",e=>{setSL("shift",e.target.value==="720P"?"5.0":"3.0");});
+// Manual seconds slider keeps its readout and the length box in step.
+(function(){
+  const sl=$("clipSecs"),nv=$("clipSecsV");
+  if(!sl||!nv)return;
+  sl.addEventListener("input",()=>{nv.value=(+sl.value).toFixed(1);updateDur();});
+  nv.addEventListener("change",()=>{sl.value=nv.value;updateDur();});
+})();
 
 /* advanced toggle */
 function toggleAdv(){
@@ -2473,7 +2577,9 @@ function setEngine(e){
   $("lengthSec").style.display=showWan?"block":"none";
   $("ltxResHint").style.display=ltx?"block":"none";
   // Dialogue builder is an LTX feature; Wan (both) uses plain prompt.
-  $("dlgSec").style.display=ltx?"flex":"none";
+  {const d=$("dlgSec");if(d)d.style.display=ltx?"flex":"none";}  // timeline removed
+  // Dialogue is LTX-only — Wan has no speech synthesis.
+  {const dl=$("dlgLeftSec");if(dl)dl.style.display=ltx?"block":"none";}
   // On LTX the prompt IS the base scene for the clips below — label it so
   // and show the role hint, so it doesn't look like a duplicate.
   $("promptLbl").textContent=ltx?"Clip 1 \u00b7 scene":"Prompt";
@@ -3803,7 +3909,12 @@ async function agentSend(){
 }
 // One clean clip list — no separate "plan" panel. Each clip is a single
 // row: scene snippet, dialogue preview, an inline length field, and Edit.
-function renderDialog(){ renderClipOverview(); }
+function renderDialog(){
+  try{renderClipOverview();}catch(e){}
+  // The left-rail dialogue list is the primary one now.
+  try{renderClipModalDialog();}catch(e){}
+  updateDur();
+}
 function _updateSplitHint(){
   const row=$("splitHint");if(!row)return;
   const dur=clipControlDur[1],has=!!clipControlVideos[1];
@@ -3820,9 +3931,10 @@ function _updateSplitHint(){
   row.style.display=(willSplit||(editing&&has&&dur))?"flex":"none";
   if(has&&dur&&s>0){
     const n=Math.max(1,Math.ceil(dur/s));
-    $("splitN").textContent=n;
+    const sn=$("splitN"),sp=$("splitPer");
+    if(sn)sn.textContent=n;
     const rem=dur-(n-1)*s;
-    $("splitPer").textContent=(n<=3)
+    if(sp)sp.textContent=(n<=3)
       ?Array.from({length:n},(_,k)=>(k<n-1?s:rem.toFixed(1))).join("+")
       :s;
   }
@@ -4998,7 +5110,12 @@ function clearTimeline(){
   if(had)toastUndo("Timeline cleared.",()=>_restoreClips(_snap));
 }
 function renderClipModalDialog(){
-  const c=_clipModalC;const box=$("clipDlgList");box.innerHTML="";
+  // Renders into the left rail by default, or the modal when it is open.
+  const modalOpen=$("clipModal")&&$("clipModal").style.display!=="none";
+  const c=modalOpen?_clipModalC:1;
+  const box=modalOpen?$("clipDlgListModal"):$("clipDlgList");
+  if(!box)return;
+  box.innerHTML="";
   const idxs=[];dialog.forEach((l,i)=>{if((l.clip||1)===c)idxs.push(i);});
   if(!idxs.length){
     box.innerHTML="<div class='clip-empty'>No lines yet \u2014 add one below.</div>";
@@ -5685,7 +5802,10 @@ function generate(){
     payload.image=(clips.length?(clips[0].start_image||null):null);
     payload.clips=clips;
     payload.prompt=clips.length?clips[0].prompt:buildLtxPrompt();
-    payload.frames=clips.length?clips[0].frames:(+$("framesV").value||121);
+    // Auto length (or the manual override) decides this now — the old
+    // Frames/clip slider and the clip-count slider both went with the
+    // timeline.
+    payload.frames=_clipFrames();
     payload.ltx_strength=parseFloat($("ltxStrengthV").value)||0.9;
     payload.ltx_crf=parseInt($("ltxCrfV").value,10);
     payload.ltx_enhance=$("ltxEnhance").checked;
@@ -5855,7 +5975,7 @@ async function _submitJobs(payload,prompt,thumb){
         const id=await _submitOne(Object.assign({},common,{
           prompt:cl.prompt||prompt,
           image_r2_key:key, end_image_r2_key:endKey||"",
-          frames:cl.frames||payload.frames||(eng==="ltx"?121:81),
+          frames:cl.frames||payload.frames||_clipFrames(),
         }),cl.prompt||prompt,cl.start_image||thumb);
         if(id)queued++; else break;   // stop the batch on a hard failure
       }
@@ -5866,7 +5986,7 @@ async function _submitJobs(payload,prompt,thumb){
       const endKey=payload.last_image?await _uploadImage(payload.last_image):"";
       const id=await _submitOne(Object.assign({},common,{
         prompt:prompt, image_r2_key:key, end_image_r2_key:endKey||"",
-        frames:payload.frames||(eng==="ltx"?121:81),
+        frames:payload.frames||_clipFrames(),
       }),prompt,thumb);
       if(id)toast("Queued for generation.");
     }
@@ -5946,6 +6066,18 @@ function renderHistoryModal(){
     });
     g.appendChild(card);
   });
+  // More of the image library is only a page away; say so rather than let
+  // the grid just end.
+  if(_libMore&&(modalKind==="all"||modalKind==="image")){
+    const more=document.createElement("button");
+    more.className="gen-btn gen-btn-secondary";
+    more.style.cssText="grid-column:1/-1;margin-top:6px";
+    more.textContent=_libBusy?"Loading\u2026":"Load more from your image library";
+    more.disabled=_libBusy;
+    more.onclick=()=>{more.disabled=true;more.textContent="Loading\u2026";
+      loadImageLibrary().then(()=>renderHistoryModal());};
+    g.appendChild(more);
+  }
 }
 
 /* Stage a finished clip as the control video for the next render.
@@ -6841,6 +6973,59 @@ async function pollConsole(){
 }
 
 /* ── restore queue + history from the server after a page reload ── */
+
+/* ── the user's image library ───────────────────────────────────────────
+   /api/videostudio/jobs only ever returns mode='video' rows, which is
+   correct for the Queue but meant the Images tab showed nothing but local
+   uploads and last frames — while a whole library of generations sat in
+   the image studio under the same account.
+
+   So pull them from /api/studio/history, the endpoint studio.html itself
+   uses. Same origin, same session, no mode filter, and it already handles
+   grouping and paging — reimplementing that query here would be a second
+   copy to keep in sync for no gain.
+
+   Images land in History as normal image entries, which means the FIRST /
+   LAST chips work on them: generate in the image studio, use it as a
+   video's opening frame. */
+let _libLoaded=false,_libOffset=0,_libMore=true,_libBusy=false;
+async function loadImageLibrary(limit){
+  if(!mlState.authed||_libBusy||!_libMore)return;
+  _libBusy=true;
+  const take=limit||30;
+  try{
+    const r=await fetch("/api/studio/history?limit="+take+"&offset="+_libOffset);
+    if(!r.ok)return;                       // signed out or endpoint absent
+    const j=await r.json();
+    const items=(j&&(j.items||j.jobs))||[];
+    const add=[];
+    items.forEach(it=>{
+      // Skip this studio's own video renders — they arrive via /jobs with
+      // their poster and last frame already attached.
+      if(it.media_type==="video"||it.mode==="video")return;
+      const u=it.url||it.poster;
+      if(!u)return;
+      if(history.some(x=>x.url===u))return;
+      add.push({id:"lib_"+it.id,kind:"image",
+        prompt:it.prompt||it.mode||"image",
+        thumb:it.poster||u,url:u,
+        ts:(it.finished_at||it.created_at||0)*1000});
+    });
+    // offset pages over GROUPS, not rows — a batch counts as one. Advance
+    // by what we asked for rather than by items returned, or a batch of
+    // six would push the cursor six groups forward and skip five.
+    _libOffset+=take;
+    if(items.length<take)_libMore=false;
+    if(add.length){
+      history.push(...add);renderHistory();
+      if($("vsHistoryModal")&&$("vsHistoryModal").style.display==="flex")
+        renderHistoryModal();
+    }
+    _libLoaded=true;
+  }catch(e){/* the library is a bonus; never block the studio on it */}
+  finally{_libBusy=false;}
+}
+
 async function restoreJobs(){
   let j;
   try{
@@ -6883,6 +7068,9 @@ async function restoreJobs(){
   });
   if(add.length)history.unshift(...add);
   renderQueue();renderHistory();
+  // Video clips first (they are this app's output), then append the image
+  // library below them.
+  if(!_libLoaded)loadImageLibrary();
 
   // The Worker caps /jobs at 60 rows. Say so rather than let the list
   // just stop — "where did my older clips go" is the obvious next question.
