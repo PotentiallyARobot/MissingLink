@@ -3445,9 +3445,9 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 body.batch-sdxl-engine .qwen-pipeline-ctl{display:none !important}
 body.batch-gpt-engine .qwen-pipeline-ctl,body.batch-gpt-engine .gpt-na-ctl{display:none !important}
 /* Qwen engine in Batch: reveal every Qwen LoRA row regardless of its
-   camera/edit mode gating — batch edits can use them all. Unchained
-   excluded (entitlement-controlled). */
-body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained){display:flex !important}
+   camera/edit mode gating — batch edits can use them all. The eval rows
+   (Unchained, NSFW) are excluded — entitlement-controlled. */
+body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained):not(#rowNsfwEval){display:flex !important}
 .slider-row .sl{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.3px;min-width:65px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .slider-row input[type=range]{flex:1;height:4px;accent-color:var(--gold);cursor:pointer;-webkit-appearance:none;background:var(--surface-3);border-radius:2px}
 .slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--gold);cursor:pointer}
@@ -5826,6 +5826,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" id="rowSkin" title="Skin Detail (tlennon-ie) — adds natural skin texture to smooth/plastic-looking subjects. Upstream recommends 1.0–1.5; try prompting 'make the subjects skin details more prominent and natural'. Keep at 0 to disable."><span class="sl">Skin Detail <button type="button" class="lora-info-btn" onclick="openLoraInfo('skin')" title="How to use this LoRA" aria-label="How to use the Skin Detail LoRA">i</button></span><input type="range" id="rngLoraSkin" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraSkin" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row edit-only" id="rowFaceSwap" style="display:none" title="Face/Head Swap (BFS Head V5, Alissonerdx) — transfers a face/head onto another photo with consistent lighting and skin tone. Needs TWO images: slot 1 = body/target scene, slot 2 = face source (order matters!). Start the prompt with 'head_swap: start with Picture 1 as the base image, keeping its lighting, environment, and background. remove the head from Picture 1 completely and replace it with the head from Picture 2, strictly preserving the hair, eye color, and nose structure of Picture 2. copy the eye direction, head rotation, and micro-expressions from Picture 1.' Try 1.0; keep at 0 to disable."><span class="sl">Face Swap <button type="button" class="lora-info-btn" onclick="openLoraInfo('faceswap')" title="How to use this LoRA" aria-label="How to use the Face Swap LoRA">i</button></span><input type="range" id="rngLoraFaceSwap" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraFaceSwap" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation. Available in Edit, Camera & Batch. Default 0 (off)."><span class="sl">Unchained (eval) <button type="button" class="lora-info-btn" onclick="openLoraInfo('unchained')" title="How to use this LoRA" aria-label="How to use the Unchained (eval) LoRA">i</button></span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowNsfwEval" style="display:none" title="NSFW (eval) — CivitAI LoRA under evaluation. Available in Edit, Camera &amp; Batch. Default 0 (off)."><span class="sl">NSFW (eval) <button type="button" class="lora-info-btn" onclick="openLoraInfo('nsfw')" title="How to use this LoRA" aria-label="How to use the NSFW (eval) LoRA">i</button></span><input type="range" id="rngLoraNsfw" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraNsfw" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
     <div class="sec not-generate">
@@ -15158,6 +15159,17 @@ const LORA_INFO = {
         weight: '0 (off) unless evaluating',
         url: 'https://civitai.com/model-versions/2435942',
     },
+    nsfw: {
+        name: 'NSFW (eval)',
+        author: 'jerrydev11/Qwen_snof — CockQwen v3, under evaluation',
+        what: 'A Hugging Face LoRA currently under evaluation, gated to a single account. Available in Edit, Camera, and Batch.',
+        how: [
+            'Default 0 (off). Raise to engage on Edit, Camera, or Batch jobs.',
+            'Stacks on top of Lightning like the other adapters; start low (0.5–0.8) and climb.',
+        ],
+        weight: '0 (off) unless evaluating',
+        url: 'https://huggingface.co/jerrydev11/Qwen_snof',
+    },
 };
 
 function openLoraInfo(key){
@@ -15207,6 +15219,7 @@ function _resetLoraSliders(mode){
     set('rngLoraSkin',          'vLoraSkin',          0);
     set('rngLoraFaceSwap',      'vLoraFaceSwap',      0);
     set('rngLoraUnchained',     'vLoraUnchained',     0);
+    set('rngLoraNsfw',          'vLoraNsfw',          0);
 }
 
 function loraPayload(mode){
@@ -15242,6 +15255,11 @@ function loraPayload(mode){
     // everyone else regardless.
     const unchained = (mode === 'edit' || mode === 'camera')
         ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
+    // EVAL-ONLY NSFW LoRA: same surfaces and same server-side account gate
+    // as Unchained. Null-guarded on the element so an older cached shell
+    // without this row degrades to 0 rather than throwing.
+    const nsfw = ((mode === 'edit' || mode === 'camera') && $('rngLoraNsfw'))
+        ? (parseFloat($('rngLoraNsfw').value) || 0) : 0;
     return {
         lora_lightning: lightning,
         lora_angles: angles,
@@ -15251,21 +15269,27 @@ function loraPayload(mode){
         lora_skin: skin,
         lora_faceswap: faceswap,
         lora_unchained: unchained,
+        lora_nsfw: nsfw,
     };
 }
 
-// EVAL-ONLY: the Unchained slider is visible to a single account, in Edit,
-// Camera, and Batch modes (the eval now covers all three edit-family
-// surfaces). The worker enforces the same email gate server-side, so this
-// is purely about not showing the control to anyone else; it isn't a
-// security boundary on its own.
+// EVAL-ONLY: the eval LoRA sliders (Unchained, NSFW) are visible to a
+// single account, in Edit, Camera, and Batch modes (the evals cover all
+// three edit-family surfaces). The worker enforces the same email gate
+// server-side, so this is purely about not showing the controls to anyone
+// else; it isn't a security boundary on its own.
+// Name kept as _applyUnchainedGate for the existing call sites in
+// checkAuth() and setMode().
+const EVAL_LORA_EMAIL = 'ace0278@gmail.com';
+const EVAL_LORA_ROWS = ['rowUnchained', 'rowNsfwEval'];
 function _applyUnchainedGate(){
-    const row = document.getElementById('rowUnchained');
-    if (!row) return;
-    const okEmail = !!(_user && (_user.email || '').toLowerCase() === 'ace0278@gmail.com');
+    const okEmail = !!(_user && (_user.email || '').toLowerCase() === EVAL_LORA_EMAIL);
     const show = okEmail && (typeof currentMode === 'string')
         && (currentMode === 'edit' || currentMode === 'camera' || currentMode === 'batch');
-    row.style.display = show ? '' : 'none';
+    EVAL_LORA_ROWS.forEach(id => {
+        const row = document.getElementById(id);
+        if (row) row.style.display = show ? '' : 'none';
+    });
 }
 
 async function doGenerate(){
@@ -15423,6 +15447,7 @@ async function doGenerate(){
         lora_skin: payload.lora_skin,
         lora_faceswap: payload.lora_faceswap,
         lora_unchained: payload.lora_unchained,
+        lora_nsfw: payload.lora_nsfw,
         width: payload.width,
         height: payload.height,
         input_image_id: currentMode==='camera' ? imageId : null,
@@ -29393,6 +29418,8 @@ function restoreJobState(jobId){
     if ($('rngLoraFaceSwap')) { $('rngLoraFaceSwap').value = fsVal; $('vLoraFaceSwap').value = fsVal; }
     const unchVal = (s.lora_unchained != null) ? s.lora_unchained : 0;
     if ($('rngLoraUnchained')) { $('rngLoraUnchained').value = unchVal; $('vLoraUnchained').value = unchVal; }
+    const nsfwVal = (s.lora_nsfw != null) ? s.lora_nsfw : 0;
+    if ($('rngLoraNsfw')) { $('rngLoraNsfw').value = nsfwVal; $('vLoraNsfw').value = nsfwVal; }
     if(s.width) $('inpWidth').value=s.width;
     if(s.height) $('inpHeight').value=s.height;
     updateGenButton();
@@ -29861,6 +29888,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraSkin', 'vLoraSkin');
     bindSliderPair('rngLoraFaceSwap', 'vLoraFaceSwap');
     bindSliderPair('rngLoraUnchained', 'vLoraUnchained');
+    bindSliderPair('rngLoraNsfw', 'vLoraNsfw');
     initOverlayDragging();
     initModalDragging();
     window.addEventListener('resize', () => { if (_notifPanelOpen) _positionNotifPanel(); });
