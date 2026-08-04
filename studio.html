@@ -4104,14 +4104,11 @@ body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained){display:
 .agent-body::-webkit-scrollbar{width:6px}
 .agent-body::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:3px}
 /* NEXT SCENE composer — sits between the chat body and the input row. */
-.agent-scene{border-top:1px solid var(--border);flex:0 0 auto}
-.agent-scene-toggle{width:100%;display:flex;align-items:center;gap:6px;background:none;border:0;cursor:pointer;
-    padding:7px 10px;font-family:var(--font-mono);font-size:10px;letter-spacing:.8px;color:var(--text-muted);text-align:left}
-.agent-scene-toggle:hover{background:rgba(255,255,255,.03);color:var(--gold)}
-.agent-scene-caret{display:inline-block;transition:transform .15s;font-size:9px}
-.agent-scene.open .agent-scene-caret{transform:rotate(90deg)}
-.agent-scene.open .agent-scene-toggle{color:var(--gold)}
-.agent-scene-body{padding:2px 10px 10px;display:flex;flex-direction:column;gap:7px}
+/* NEXT SCENE composer — lives in the left rail as a .sec, so it inherits the
+   section's own padding and needs none of its own. The toggle/caret chrome
+   the old agent-panel version used is gone: it's a always-visible section
+   now, like BATCH TOOLS. */
+.agent-scene-body{display:flex;flex-direction:column;gap:7px;margin-top:7px}
 .agent-scene-frame{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
     background:var(--surface-3);border:1px solid var(--border);border-radius:5px;padding:5px 7px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -4127,11 +4124,7 @@ body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained){display:
 .agent-scene-anchor input{accent-color:var(--gold);cursor:pointer}
 .agent-scene-run{width:100%;justify-content:center}
 .agent-scene-note{font-family:var(--font-mono);font-size:9px;line-height:1.4;color:var(--text-dim)}
-/* The diversity dial governs how UNLIKE each other independent generations
-   are. Sequence frames are the one case where that's inverted, so the dial
-   does nothing here — dim it while the composer is open rather than leave a
-   live-looking control sitting directly above it implying otherwise. */
-.agent-diversity-row.seq-muted{opacity:.35;pointer-events:none}
+
 .agent-empty{color:var(--text-muted);font-size:11px;font-style:italic;padding:6px 0}
 .agent-empty em{font-style:italic;color:var(--text-dim)}
 .agent-msg{display:flex;flex-direction:column;gap:2px}
@@ -5525,6 +5518,36 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="ai-audit-panel" id="aiAuditPanel" style="display:none"></div>
     </div>
 
+    <!-- NEXT SCENE — chained story frames. Lives here, in the same column as
+         the stage grid, because frame 1 is whatever is selected in that grid:
+         the old home (inside the agent chat panel) meant picking a source on
+         the left and describing the sequence on the far right, and being
+         collapsed by default it was routinely just not findable.
+         It still doesn't call the tool handler directly — it composes an
+         explicit instruction into #agentInput and reuses sendAgentMessage(),
+         so there's one path into the agent and the model still writes the
+         beats. -->
+    <div class="sec batch-only" id="secNextScene" style="display:none">
+        <div class="sec-label"><span class="icon">🎬</span> NEXT SCENE
+            <span class="sec-label-count">chained story frames</span>
+        </div>
+        <div class="agent-scene-body" id="agentSceneBody">
+            <div class="agent-scene-frame" id="agentSceneFrame">Select one batch image to use as frame 1.</div>
+            <textarea id="agentSceneStory" class="agent-scene-story" rows="3"
+                      placeholder="Describe the sequence — e.g. “The knight leaves the ruined cathedral at dawn, crosses a burning field, and finally kneels at the broken gate as it starts to rain.”"></textarea>
+            <div class="agent-scene-row">
+                <span class="agent-scene-lbl">New shots</span>
+                <input type="range" id="agentSceneCount" min="1" max="8" step="1" value="4" oninput="syncSceneCount()">
+                <span class="agent-scene-count" id="agentSceneCountVal">4</span>
+            </div>
+            <label class="agent-scene-anchor" title="Attach frame 1 to every shot as a likeness reference. Keeps a character from drifting over a long sequence. Turn OFF when the sequence travels far from where it started — frame 1's location can otherwise keep contaminating later shots.">
+                <input type="checkbox" id="agentSceneAnchor" checked> Anchor to frame 1
+            </label>
+            <button type="button" class="ems-btn active agent-scene-run" id="agentSceneRun" onclick="runSceneSequence()">Generate sequence</button>
+            <div class="agent-scene-note">Each shot is the opening frame of its own clip. They render one at a time, ~1–2 min each.</div>
+        </div>
+    </div>
+
     <div class="sec batch-only" id="secBatchImageModel" style="display:none">
         <div class="sec-label"><span class="icon">🤖</span> IMAGE MODEL
             <span class="sec-label-count">for batch Generate &amp; agent edits</span>
@@ -6083,33 +6106,6 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                     <span class="agent-div-label">Diversity</span>
                     <input type="range" id="agentDiversity" min="0" max="1" step="0.05" value="0.5" oninput="setAgentDiversity(this.value)">
                     <span class="agent-div-value" id="agentDiversityVal">0.50</span>
-                </div>
-                <!-- NEXT SCENE composer. Collapsed by default so it doesn't
-                     crowd the chat. It doesn't call the tool directly — it
-                     composes an explicit instruction into #agentInput and
-                     reuses sendAgentMessage(), so there's exactly one path
-                     into the agent and the model still writes the beats. -->
-                <div class="agent-scene" id="agentScene">
-                    <button type="button" class="agent-scene-toggle" id="agentSceneToggle" onclick="toggleSceneComposer()"
-                            title="Chain a story: each frame is generated using the previous frame as a reference">
-                        <span class="agent-scene-caret" id="agentSceneCaret">▸</span>
-                        <span>🎬 NEXT SCENE</span>
-                    </button>
-                    <div class="agent-scene-body" id="agentSceneBody" style="display:none">
-                        <div class="agent-scene-frame" id="agentSceneFrame">Select one batch image to use as frame 1.</div>
-                        <textarea id="agentSceneStory" class="agent-scene-story" rows="3"
-                                  placeholder="Describe the sequence — e.g. “The knight leaves the ruined cathedral at dawn, crosses a burning field, and finally kneels at the broken gate as it starts to rain.”"></textarea>
-                        <div class="agent-scene-row">
-                            <span class="agent-scene-lbl">New frames</span>
-                            <input type="range" id="agentSceneCount" min="1" max="8" step="1" value="4" oninput="syncSceneCount()">
-                            <span class="agent-scene-count" id="agentSceneCountVal">4</span>
-                        </div>
-                        <label class="agent-scene-anchor" title="Also attach frame 1 to every generation. Keeps a character or location from drifting over a long sequence.">
-                            <input type="checkbox" id="agentSceneAnchor" checked> Anchor to frame 1
-                        </label>
-                        <button type="button" class="ems-btn active agent-scene-run" id="agentSceneRun" onclick="runSceneSequence()">Generate sequence</button>
-                        <div class="agent-scene-note">Frames render one at a time — each one becomes the reference for the next. ~1–2 min per frame.</div>
-                    </div>
                 </div>
                 <div class="agent-input-row">
                     <textarea id="agentInput" class="agent-input" rows="2" placeholder="Ask the agent…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentMessage()}"></textarea>
@@ -23886,28 +23882,11 @@ function cancelAgentInFlightJobs(){
 // normal agent path. We deliberately do NOT call the tool handler directly:
 // the model still has to write the per-frame beats, which is the part that
 // makes the sequence a story rather than the same prompt eight times.
-function toggleSceneComposer(){
-    const wrap = $('agentScene'), body = $('agentSceneBody');
-    if (!wrap || !body) return;
-    const open = body.style.display === 'none';
-    body.style.display = open ? '' : 'none';
-    wrap.classList.toggle('open', open);
-    _syncSceneDiversityMute(open);
-    if (open) syncSceneFirstFrame();
-}
-// Diversity doesn't apply to sequences — the agent is told to ignore it for
-// generate_scene_sequence. Mute the dial so the UI says the same thing.
-function _syncSceneDiversityMute(open){
-    const row = document.querySelector('.agent-diversity-row');
-    if (!row) return;
-    row.classList.toggle('seq-muted', !!open);
-    if (open) {
-        row._prevTitle = row._prevTitle || row.title;
-        row.title = "Doesn't apply to scene sequences — frames of one sequence are meant to match, not differ.";
-    } else if (row._prevTitle) {
-        row.title = row._prevTitle;
-    }
-}
+// The composer is always visible now that it lives in the left rail, so the
+// old collapse toggle is gone. Kept as a no-op shim because older saved
+// layouts / any stale onclick could still reference it, and a ReferenceError
+// here would break the whole handler chain.
+function toggleSceneComposer(){ /* no-op — composer is no longer collapsible */ }
 function syncSceneCount(){
     const el = $('agentSceneCount'), out = $('agentSceneCountVal');
     if (el && out) out.textContent = el.value;
@@ -23959,11 +23938,8 @@ function runSceneSequence(){
         `camera setup and, where the story allows, a new location. Do not describe what ` +
         `the characters look like — the reference image carries that.\n` +
         `Story: ${story.trim()}`;
-    // Collapse the composer — the chat below is where the action is now.
-    const body = $('agentSceneBody'), wrap = $('agentScene');
-    if (body) body.style.display = 'none';
-    if (wrap) wrap.classList.remove('open');
-    _syncSceneDiversityMute(false);
+    // The composer stays open and stays put. It used to collapse itself here,
+    // which is how it kept vanishing between runs.
     sendAgentMessage();
 }
 
