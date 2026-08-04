@@ -69,8 +69,14 @@ img,video{display:block;max-width:100%}
 /* Feature screenshots must be seen WHOLE — contain, never crop. */
 .hero-img{position:relative;background:#08080a;display:grid;place-items:center;padding:10px;
   overflow:hidden;min-width:0}
+/* Two layers stacked in the same grid cell. The outgoing shot fades and
+   settles back while the incoming one rises — a real crossfade instead
+   of a blank gap while the next file loads. */
+.hero-img .hl{grid-area:1/1;width:100%;height:100%;display:grid;place-items:center;
+  opacity:0;transform:scale(1.03);transition:opacity .62s ease,transform .62s ease}
+.hero-img .hl.on{opacity:1;transform:scale(1)}
 .hero-img img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;
-  border-radius:6px;transition:opacity .38s ease}
+  border-radius:6px}
 /* Screenshots are captured with browser chrome — clip 10px off every
    edge so the white window frame/scrollbar never shows. */
 .hero-img img,.shot img{clip-path:inset(10px);margin:-10px}
@@ -84,11 +90,22 @@ img,video{display:block;max-width:100%}
 .hero-desc{color:var(--text-dim);font-size:14px;line-height:1.6;margin:0;height:3.2em;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .hero-act{display:flex;gap:9px;flex-wrap:nowrap;margin-top:2px}
-.hero-dots{display:flex;gap:6px;margin-top:12px}
-.hero-dots i{width:22px;height:3px;border-radius:2px;background:var(--surface-3);cursor:pointer;
-  transition:.25s}
-.hero-dots i.on{background:var(--gold);width:34px}
-.hero.fade .hero-img img,.hero.fade .hero-side{opacity:0}
+.hero-dots{display:flex;gap:4px;margin-top:12px;flex-wrap:wrap}
+.hero-dots i{width:13px;height:3px;border-radius:2px;background:var(--surface-3);cursor:pointer;
+  transition:.25s;position:relative;overflow:hidden;flex-shrink:0}
+.hero-dots i:hover{background:var(--text-mute)}
+/* The active dot doubles as the timer — the gold fill runs out just as
+   the next slide arrives, so the rotation never feels arbitrary. */
+.hero-dots i.on{width:32px;background:var(--gold-dim)}
+.hero-dots i.on::after{content:"";position:absolute;inset:0;width:0;background:var(--gold);
+  animation:dotfill var(--slide-ms,5500ms) linear forwards}
+.hero:hover .hero-dots i.on::after{animation-play-state:paused}
+@keyframes dotfill{to{width:100%}}
+@media(prefers-reduced-motion:reduce){
+  .hero-dots i.on::after{animation:none;width:100%}
+  .hero-img .hl{transition:none;transform:none}
+}
+.hero.fade .hero-side{opacity:0}
 .hero-x{position:absolute;top:10px;right:11px;z-index:3;background:rgba(10,10,12,.6);border:1px solid var(--border);
   color:var(--text-mute);font-size:12px;line-height:1;border-radius:6px;padding:5px 7px}
 .hero-x:hover{color:var(--text);border-color:var(--text-mute)}
@@ -560,7 +577,10 @@ img,video{display:block;max-width:100%}
     <section class="hero" id="hero" style="display:none">
       <button class="hero-x" id="heroX" aria-label="Hide banner">✕</button>
       <div class="hero-grid">
-        <div class="hero-img" id="heroImg"></div>
+        <div class="hero-img" id="heroImg">
+            <div class="hl on"><img alt=""></div>
+            <div class="hl"><img alt=""></div>
+          </div>
         <div class="hero-side">
           <div class="hero-tag" id="heroTag"></div>
           <h1 class="hero-title" id="heroTitle"></h1>
@@ -1614,67 +1634,121 @@ function renderResources(){
     '</div>').join('');
 }
 
-/* ── hero banner ────────────────────────────────────────────
-   Platform announcements — NOT artist features. Each slide pairs a
-   capability with its own screenshot and a Learn-more deep link.
-   Drop matching PNGs in the Extras repo (names below) and they appear;
-   until then each slide falls back to a representative gallery piece. */
+/* ── hero banner ─────────────────────────────────
+   Every capability the app has, one per slide, each paired with its own
+   screenshot and a deep link into the matching section of Learn. Slides
+   are drawn from the same feature set learn.html documents, so the two
+   pages can't drift apart.
+
+   Geometry is fixed (see .hero-grid) — nothing here can change the
+   banner's height, whatever the copy or the screenshot's shape. */
 const SHOT = 'https://missinglink.build/';   // screenshots served from the site root
 const PITCHES = [
-  { tag:'✦ IMAGE STUDIO', title:'Edit any image by describing the change.',
-    desc:'Swap backgrounds, change outfits, fix details — in plain language, on your own uploads.',
+  { tag:'\u2726 EDIT', title:'Edit any image by describing the change.',
+    desc:'Upload a photo, write what should be different. Everything you did not mention stays exactly as it was.',
     shot:'feat_edit.png', cta:'Open Studio', href:'https://missinglink.build/studio.html',
     learn:'/learn.html#edit' },
-  { tag:'🎥 CAMERA VIEWS', title:'Any angle of the same subject.',
-    desc:'Orbit the camera around a photo — 6 or 20 consistent views from one image.',
+  { tag:'\u2726 CREATE', title:'Start from nothing but a sentence.',
+    desc:'No source image needed. Describe it and get up to four variations, optionally guided by references.',
+    shot:'feat_create.png', cta:'Start creating', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#create' },
+  { tag:'\u{1F3A5} CAMERA VIEWS', title:'Any angle of the same subject.',
+    desc:'Orbit a virtual camera around one photo. The subject holds while the viewpoint moves.',
     shot:'feat_camera.png', cta:'Try Camera', href:'https://missinglink.build/studio.html#camera',
     learn:'/learn.html#camera' },
-  { tag:'▦ BATCH', title:'One instruction. Twenty images.',
-    desc:'Apply the same edit across a whole set, with per-image AI planning and auto-QA.',
+  { tag:'\u25A6 BATCH', title:'One instruction. Up to twenty images.',
+    desc:'Load a set, write one edit, and it applies to every image \u2014 with per-image planning and auto-QA.',
     shot:'feat_batch.png', cta:'Try Batch', href:'https://missinglink.build/studio.html#batch',
     learn:'/learn.html#batch' },
-  { tag:'🎞 VIDEO STUDIO', title:'Turn a still into motion.',
-    desc:'Image-to-video with your own LoRAs — start from anything on this wall.',
+  { tag:'\u25C6 LORAS', title:'Style adapters, stacked to taste.',
+    desc:'Small add-ons that push a model toward a style, subject, or skill. Stack several and dial each one in.',
+    shot:'feat_loras.png', cta:'Browse LoRAs', href:'/gallery.html#models',
+    learn:'/learn.html#loras' },
+  { tag:'\u2318 SEQUENCES', title:'Continue the story, shot by shot.',
+    desc:'Chain generations into a cinematic run \u2014 every shot after the first grows out of the one before it.',
+    shot:'feat_sequence.png', cta:'Open Studio', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#sequences' },
+  { tag:'\u25CB PANORAMA', title:'Expand any photo into a full 360\u00B0 scene.',
+    desc:'Grow one ordinary picture into an equirectangular panorama \u2014 the whole environment around it.',
+    shot:'feat_pano.png', cta:'Try Panorama', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#pano' },
+  { tag:'\u2191 UPSCALE', title:'Sharpen detail and rescue soft renders.',
+    desc:'An enhance pass that lifts fine detail, fixes lighting, and clears the softness edit models leave behind.',
+    shot:'feat_upscale.png', cta:'Try Upscale', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#upscale' },
+  { tag:'\u25D1 FACE SWAP', title:"Put one person's face into another photo.",
+    desc:'Carries a face and identity onto the body, pose, lighting, and background of a different image.',
+    shot:'feat_faceswap.png', cta:'Open Studio', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#faceswap' },
+  { tag:'\u{1F39E} VIDEO', title:'Turn a still into motion.',
+    desc:'Hand it a picture, describe the movement, get a clip. Works on anything already on this wall.',
     shot:'feat_video.png', cta:'Open Video Studio', href:'https://missinglink.build/videostudio',
     learn:'/learn.html#video' },
-  { tag:'🧊 3D MODELS', title:'A textured 3D model from one photo.',
-    desc:'Generate downloadable meshes from a single reference image.',
+  { tag:'\u{1F9CA} 3D MODELS', title:'A textured 3D model from one photo.',
+    desc:'Generate a downloadable mesh from a single reference \u2014 for games, prints, or mockups.',
     shot:'modelgen_screenshot.png', cta:'Open 3D Models', href:'https://missinglink.build/modelgen',
     learn:'/learn.html#3d' },
+  { tag:'\u2699 AGENT', title:'Ask for the whole job, not each step.',
+    desc:'Tell the agent panel what you want in a sentence and it plans the work, then runs it.',
+    shot:'feat_agent.png', cta:'Meet the agent', href:'https://missinglink.build/studio.html',
+    learn:'/learn.html#agent' },
 ];
-let heroIx = 0, heroTimer = null, heroOff = false;
-/* Content swaps at the midpoint of a crossfade, so the change reads as
-   deliberate rather than as a flicker. Geometry never moves either way. */
+const SLIDE_MS = 5500;
+let heroIx = 0, heroTimer = null, heroOff = false, heroLayer = 0;
+
+/* Warm every screenshot up front. Without this each slide shows an empty
+   panel for as long as its file takes to arrive. */
+(function preloadShots(){ PITCHES.forEach(function(p){ new Image().src = SHOT + p.shot; }); })();
+
 function paintHero(i, instant){
   if (heroOff) return;
+  heroIx = (i + PITCHES.length) % PITCHES.length;
+  const p = PITCHES[heroIx];
   const el = $('hero');
-  const apply = () => {
-    heroIx = (i + PITCHES.length) % PITCHES.length;
-    const p = PITCHES[heroIx];
-    const fallback = (state.all.filter(x=>x.url)[heroIx % Math.max(1,state.all.length)]||{}).url || '';
-    $('heroImg').innerHTML = '<img id="heroShot" alt="'+esc(p.title)+'">';
-    const img = $('heroShot');
-    img.onerror = () => { if (fallback && img.src !== fallback) img.src = fallback; };
-    img.src = SHOT + p.shot;
+  el.style.display = 'block';
+  el.style.setProperty('--slide-ms', SLIDE_MS + 'ms');
+
+  /* Image: paint into the hidden layer, then swap which one is visible. */
+  const layers = el.querySelectorAll('.hl');
+  const next = instant ? heroLayer : (heroLayer ^ 1);
+  const img = layers[next].querySelector('img');
+  const fallback = (state.all.filter(function(x){ return x.url; })[heroIx % Math.max(1, state.all.length)] || {}).url || '';
+  img.onerror = function(){ if (fallback && img.src !== fallback) img.src = fallback; };
+  img.alt = p.title;
+  img.src = SHOT + p.shot;
+  layers[heroLayer].classList.remove('on');
+  layers[next].classList.add('on');
+  heroLayer = next;
+
+  /* Text: swap at the midpoint of its own fade so the change reads as
+     deliberate rather than as a flicker. */
+  const apply = function(){
     $('heroTag').textContent = p.tag;
     $('heroTitle').textContent = p.title;
     $('heroDesc').textContent = p.desc;
     $('heroHow').textContent = p.cta; $('heroHow').href = p.href;
     $('heroLearn').href = p.learn;
-    $('heroDots').innerHTML = PITCHES.map((_,k)=>
-      '<i class="'+(k===heroIx?'on':'')+'" data-k="'+k+'"></i>').join('');
-    $('heroDots').querySelectorAll('i').forEach(d => d.onclick = () => {
-      paintHero(+d.dataset.k); restartHero(); });
+    $('heroDots').innerHTML = PITCHES.map(function(q, k){
+      return '<i class="' + (k === heroIx ? 'on' : '') + '" data-k="' + k + '" role="button" tabindex="0" ' +
+        'title="' + esc(q.title) + '" aria-label="' + esc(q.title) + '"></i>'; }).join('');
+    $('heroDots').querySelectorAll('i').forEach(function(d){
+      const go = function(){ paintHero(+d.dataset.k); restartHero(); };
+      d.onclick = go;
+      d.onkeydown = function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } };
+    });
     el.classList.remove('fade');
   };
-  el.style.display = 'block';
   if (instant) return apply();
   el.classList.add('fade');
   setTimeout(apply, 190);
 }
 function restartHero(){ clearInterval(heroTimer);
-  heroTimer = setInterval(()=>paintHero(heroIx+1), 7000); }
-$('heroX').onclick = () => { heroOff = true; clearInterval(heroTimer); $('hero').style.display='none'; };
+  heroTimer = setInterval(function(){ paintHero(heroIx + 1); }, SLIDE_MS); }
+/* Hovering holds the current slide — the CSS pauses the dot's timer to
+   match, so the two never disagree about where you are. */
+$('hero').addEventListener('mouseenter', function(){ clearInterval(heroTimer); });
+$('hero').addEventListener('mouseleave', function(){ if (!heroOff) restartHero(); });
+$('heroX').onclick = function(){ heroOff = true; clearInterval(heroTimer); $('hero').style.display = 'none'; };
 
 /* ── LoRA models tab (Civitai) ── */
 let mstate = { base:'all', sort:'Most Downloaded', q:'', nsfw:'off', loading:false, page:1, done:false };
