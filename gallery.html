@@ -100,6 +100,9 @@ img,video{display:block;max-width:100%}
 .hero-dots i.on::after{content:"";position:absolute;inset:0;width:0;background:var(--gold);
   animation:dotfill var(--slide-ms,5500ms) linear forwards}
 .hero:hover .hero-dots i.on::after{animation-play-state:paused}
+/* Manual mode: the dot is simply full, not counting down to a tick that
+   is never coming. */
+.hero.manual .hero-dots i.on::after{animation:none;width:100%}
 @keyframes dotfill{to{width:100%}}
 @media(prefers-reduced-motion:reduce){
   .hero-dots i.on::after{animation:none;width:100%}
@@ -1693,8 +1696,12 @@ const PITCHES = [
     shot:'feat_agent.png', cta:'Meet the agent', href:'https://missinglink.build/studio.html',
     learn:'/learn.html#agent' },
 ];
-const SLIDE_MS = 5500;
+const SLIDE_MS = 3400;
 let heroIx = 0, heroTimer = null, heroOff = false, heroLayer = 0;
+/* Set once the reader clicks a dot. From then on the banner holds
+   whatever slide they chose — auto-advance doesn't resume behind them,
+   including after a hover ends. */
+let heroManual = false;
 
 /* Warm every screenshot up front. Without this each slide shows an empty
    panel for as long as its file takes to arrive. */
@@ -1732,7 +1739,14 @@ function paintHero(i, instant){
       return '<i class="' + (k === heroIx ? 'on' : '') + '" data-k="' + k + '" role="button" tabindex="0" ' +
         'title="' + esc(q.title) + '" aria-label="' + esc(q.title) + '"></i>'; }).join('');
     $('heroDots').querySelectorAll('i').forEach(function(d){
-      const go = function(){ paintHero(+d.dataset.k); restartHero(); };
+      const go = function(){
+        /* Taking manual control: stop the rotation for good rather than
+           restarting the timer under the reader. */
+        heroManual = true;
+        clearInterval(heroTimer);
+        $('hero').classList.add('manual');
+        paintHero(+d.dataset.k);
+      };
       d.onclick = go;
       d.onkeydown = function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } };
     });
@@ -1742,12 +1756,15 @@ function paintHero(i, instant){
   el.classList.add('fade');
   setTimeout(apply, 190);
 }
-function restartHero(){ clearInterval(heroTimer);
-  heroTimer = setInterval(function(){ paintHero(heroIx + 1); }, SLIDE_MS); }
+function restartHero(){
+  if (heroManual || heroOff) return;
+  clearInterval(heroTimer);
+  heroTimer = setInterval(function(){ paintHero(heroIx + 1); }, SLIDE_MS);
+}
 /* Hovering holds the current slide — the CSS pauses the dot's timer to
    match, so the two never disagree about where you are. */
 $('hero').addEventListener('mouseenter', function(){ clearInterval(heroTimer); });
-$('hero').addEventListener('mouseleave', function(){ if (!heroOff) restartHero(); });
+$('hero').addEventListener('mouseleave', function(){ restartHero(); });
 $('heroX').onclick = function(){ heroOff = true; clearInterval(heroTimer); $('hero').style.display = 'none'; };
 
 /* ── LoRA models tab (Civitai) ── */
