@@ -1966,37 +1966,10 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
   </div>
 </div>
 
-<!-- ── MISSINGLINK LOGIN GATE (Google sign-in) ── -->
-<div class="civ-search-modal" id="mlGate" style="display:none">
-  <div class="civ-search-box" style="width:min(460px,94vw);height:auto;max-height:none">
-    <div class="civ-search-head"><span><span style="color:var(--gold)">&#9670;</span>&nbsp; MissingLink Video Studio</span></div>
-    <div style="padding:22px 24px 24px">
+<!-- The blocking MissingLink login gate was removed. Sign-in happens in
+     the header (SIGN IN / account chip) and at the point of action, so
+     the studio is browsable without an account. -->
 
-      <!-- signed-out: sign in with Google -->
-      <div id="mlGateLogin">
-        <div class="hintline" style="font-size:12px;margin:0 0 16px;line-height:1.8">Sign in with your <b style="color:var(--gold)">MissingLink</b> account to use the studio. Video renders cost <b style="color:var(--gold)">300 tokens</b> each &mdash; new accounts start with enough for a handful, and your balance is shared with the image studio.</div>
-        <!-- Direct redirect, not the notebook's popup: that only existed
-             because Google won't run OAuth inside a Colab iframe. Here we
-             are a normal top-level page, so a redirect is both simpler and
-             immune to popup blockers. -->
-        <a class="gen-btn" id="mlGoogleBtn" style="display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none" href="/auth/google" onclick="_signIn();return false;">
-          <span style="font-size:15px">&#128273;</span> Sign in with Google</a>
-        <div class="hintline" style="margin-top:14px;text-align:center">Not a member yet? <a id="mlSignupA" href="https://www.missinglink.build/" target="_blank" style="color:var(--gold)">See plans at missinglink.build &rarr;</a></div>
-      </div>
-
-      <!-- free trial used up: prompt to subscribe -->
-      <div id="mlGateLimit" style="display:none">
-        <div class="hintline gold" style="font-size:12px;margin:0 0 6px;line-height:1.8">You&rsquo;re out of tokens<span id="mlLimitEmail"></span>. Each video render costs <b id="mlLimitN">300</b> &mdash; top up, or subscribe for a monthly allowance.</div>
-        <button class="gen-btn" style="margin-top:12px;width:100%" onclick="buyTokens()">&#9670; Buy tokens</button>
-        <button class="gen-btn gen-btn-secondary" style="margin-top:8px;width:100%" id="mlSubBtn" onclick="doSubscribe()">&#10024; Subscribe &mdash; 50,000 tokens / month</button>
-        <button class="gen-btn gen-btn-secondary" style="margin-top:8px;width:100%" onclick="mlRecheck()">Check my balance again</button>
-        <button class="q-clear" style="margin-top:10px;width:100%" onclick="mlSwitchAccount()">Use a different account</button>
-      </div>
-
-      <div class="hintline" id="mlGateErr" style="color:var(--red);margin-top:12px;display:none"></div>
-    </div>
-  </div>
-</div>
 <div class="toast" id="toast"></div>
 
 <!-- ── FLOATING AGENT ── -->
@@ -2084,42 +2057,12 @@ window.fetch=async function(u,o){
   return r;
 };
 function mlOpenSignin(e){
-  if(e)e.preventDefault();
-  // Open the Google sign-in as a POPUP so its callback page can post the
-  // token straight back to this window (no copy-paste). Google won't run
-  // OAuth inside the Colab iframe, so a popup is required — but the code
-  // returns automatically via the message listener below.
-  const w=680,h=760;
-  const y=(window.outerHeight-h)/2+ (window.screenY||0);
-  const x=(window.outerWidth-w)/2 + (window.screenX||0);
-  const pop=window.open(mlState.login,"missinglink_signin",
-    "width="+w+",height="+h+",left="+Math.max(0,x)+",top="+Math.max(0,y));
-  if(!pop){
-    // Popup blocked — fall back to a normal tab + manual paste.
-    window.open(mlState.login,"_blank");
-    toast("Allow popups for one-click sign-in, or paste the code below.");
-  }
-  setTimeout(()=>{const k=$("mlKey");if(k)k.focus();},200);
-  // Safety net for the Colab iframe: postMessage from the popup can be
-  // blocked by the sandbox, so watch the popup. If it closes and we're
-  // still locked, tell the user to paste the code it showed.
-  if(pop){
-    let ticks=0;
-    const iv=setInterval(()=>{
-      ticks++;
-      if(mlState.unlocked){clearInterval(iv);try{pop.close();}catch(_){}return;}
-      if(pop.closed){
-        clearInterval(iv);
-        if(!mlState.unlocked){
-          const k=$("mlKey");if(k)k.focus();
-          $("mlGateErr").textContent="Almost there \u2014 paste the code the sign-in window showed you into the box above, then press Unlock.";
-          $("mlGateErr").style.color="var(--gold)";
-          $("mlGateErr").style.display="block";
-        }
-      }
-      if(ticks>600)clearInterval(iv);   // give up after ~5 min
-    },500);
-  }
+  /* Was a popup + postMessage + paste-the-code fallback, all of which
+     existed only because Google refuses to run OAuth inside a Colab
+     iframe. On a normal page a redirect is simpler and can't be blocked,
+     and the gate that hosted the code box is gone. */
+  if(e&&e.preventDefault)e.preventDefault();
+  _signIn();
 }
 // Receive the token the sign-in popup posts back, and log in automatically.
 window.addEventListener("message",function(ev){
@@ -2301,21 +2244,28 @@ function _mlApply(s){
   mlState.unlocked=!!(s.unlocked||mlState.member||
     (mlState.authed&&(mlState.remaining>0||mlState.remaining===-1)));
   _mlLinks();_mlBadge();
-  if(mlState.unlocked){$("mlGate").style.display="none";}
-  else{
-    const limit=(s.reason==="free_limit_reached")||
-      (mlState.authed&&mlState.remaining===0);
-    showGate(limit?"free_limit_reached":"no_session");
-  }
 }
+
+/* ── the blocking sign-in gate is gone ─────────────────────────────────
+   It was a full-screen overlay that appeared before anyone had done
+   anything, hiding the entire studio behind a wall for a visitor who
+   might only want to look. Sign-in now lives where the user already
+   looks for it: the SIGN IN button in the header, the account chip, and
+   the point of action — pressing Generate takes you to Google and comes
+   back.
+
+   showGate/showGateIfLocked are kept as thin redirects rather than
+   deleted, because a dozen features still call them defensively and a
+   missing function would throw inside a click handler. */
 function showGate(reason){
-  const limit=reason==="free_limit_reached";
-  $("mlGateLogin").style.display=limit?"none":"block";
-  $("mlGateLimit").style.display=limit?"block":"none";
-  if($("mlLimitN"))$("mlLimitN").textContent=(mlState.tokens_per_gen||300);
-  if($("mlLimitEmail"))$("mlLimitEmail").textContent=mlState.email?" ("+mlState.email+")":"";
-  _mlLinks();
-  $("mlGate").style.display="flex";
+  if(reason==="free_limit_reached"||
+     (mlState.authed&&mlState.remaining===0)){
+    toast("Out of tokens \u2014 a video render costs "
+      +(mlState.tokens_per_gen||300)+".",true);
+    try{buyTokens();}catch(e){}
+    return;
+  }
+  if(!mlState.authed){_signIn();return;}
 }
 function showGateIfLocked(){ if(!mlState.unlocked)showGate(
   (mlState.authed&&mlState.remaining===0)?"free_limit_reached":"no_session"); }
@@ -2329,42 +2279,20 @@ function mlBadgeClick(){
 function mlSwitchAccount(){ mlState.authed=false;mlState.member=false;
   // Real logout: clears the server's cached session (incl. the on-disk
   // token that survives cell re-runs) so a new sign-in is required.
-  try{location.href="/auth/logout";}catch(e){}
-  $("mlGateLimit").style.display="none";$("mlGateLogin").style.display="block"; }
+  try{location.href="/auth/logout";}catch(e){} }
 async function mlLogin(tok){
-  // tok passed in = automatic postMessage flow (field stays empty).
-  // No arg = manual paste, read from the box.
-  // The key box was removed with the hosted-page gate, so $("mlKey") is
-  // null here — read it defensively rather than dereferencing .value on
-  // nothing, which would throw inside a click handler and leave the
-  // button stuck on its disabled state.
-  const _k=$("mlKey");
-  const key=(typeof tok==="string"?tok:(_k?_k.value:"")).trim();
-  // Both of these belonged to the removed key-paste row; guard so a
-  // stray call can't throw before the sign-in redirect fires.
-  const b=$("mlLoginBtn");if(b){b.disabled=true;b.textContent="\u2026";}
-  const ge=$("mlGateErr");if(ge)ge.style.display="none";
+  /* Kept because the postMessage listener still calls it. There is no
+     key box and no gate any more, so this just re-reads the session and
+     applies it — or starts sign-in if there isn't one. */
   try{
-    // Hosted studio: identity is the studio JWT from Google sign-in, the
-    // same session the rest of missinglink.build uses. There is no key to
-    // paste, so an empty box means "take me to sign-in".
-    // The code-paste box is gone on the hosted page — there is no key to
-    // paste, only a session. Treat any call here as "start sign-in".
-    if(!key){_signIn();return;}
     const j=await(await fetch("/api/videostudio/me")).json();
-    if(j.unlocked||j.member||(j.authed&&j.remaining!==0)){
-      const k=$("mlKey");if(k)k.value="";   // clear so nothing is offered to save
+    if(j&&j.authed){
       _mlApply(j);
-      toast(j.member?("Welcome"+(j.email?", "+j.email:"")+" \u2014 unlimited access.")
-        :("Signed in \u2014 "+j.remaining+" free renders left."));
+      toast(j.member?("Welcome"+(j.email?", "+j.email:"")+" \u2014 subscribed.")
+        :("Signed in"+(j.email?" as "+j.email:"")+"."));
       refreshLoras();restoreJobs();
-    }else if(j.authed){ const k=$("mlKey");if(k)k.value=""; _mlApply(j); }
-    else{$("mlGateErr").textContent=j.error||"that code didn't work \u2014 try again";
-      $("mlGateErr").style.color="var(--red)";
-      $("mlGateErr").style.display="block";}
-  }catch(e){$("mlGateErr").textContent="Error: "+e;
-    $("mlGateErr").style.color="var(--red)";$("mlGateErr").style.display="block";}
-  if(b){b.disabled=false;b.textContent="Unlock";}
+    }else if(!tok){_signIn();}
+  }catch(e){toast("Sign-in check failed: "+e,true);}
 }
 async function mlRecheck(){
   try{const j=await(await fetch("/api/videostudio/me")).json();
@@ -5964,11 +5892,12 @@ function renderHistoryModal(){
       ? "<img src='"+(it.thumb||it.url||"")+"'>"
       : "<video src='"+(it.url||"")+"' muted preload='metadata' "
         +"poster='"+(it.thumb||"")+"'></video>";
-    const acts=isImg
-      ? "<button data-a='first'>FIRST FRAME</button>"
-        +"<button data-a='last'>LAST FRAME</button>"
+    const acts=(isImg
+      ? "<button data-a='first'>FIRST</button>"
+        +"<button data-a='last'>LAST</button>"
       : "<button data-a='stage'>OPEN</button>"
-        +"<button data-a='control'>USE AS CONTROL</button>";
+        +"<button data-a='control'>CONTROL</button>")
+      +"<button data-a='del' title='Delete'>&#10005;</button>";
     card.innerHTML="<div class='hcard-thumb'>"+media
       +"<div class='hcard-badge'>"+(isImg?"IMG":"VIDEO")+"</div>"
       +"<div class='hcard-acts'>"+acts+"</div></div>"
@@ -5983,6 +5912,7 @@ function renderHistoryModal(){
         else if(a==="last")_useAsFrame(it,"end");
         else if(a==="stage"){showVideo(it);closeHistoryModal();}
         else if(a==="control")_setControlVideo(it);
+        else if(a==="del")deleteHistoryItem(it,ev);
       });
     });
     g.appendChild(card);
@@ -6205,15 +6135,19 @@ function renderHistory(){
       +(isImg?"<div class='h-use'>"
         +"<button data-w='start' title='Use as the first frame'>FIRST</button>"
         +"<button data-w='end' title='Use as the last frame'>LAST</button>"
-        +"</div>":"")
+        +"<button data-w='del' title='Delete'>&#10005;</button>"
+        +"</div>"
+        :"<div class='h-use'><button data-w='del' title='Delete this clip'>&#10005; DELETE</button></div>")
       +"</div>";
     // Click the card body -> stage. Click a FIRST/LAST chip -> assign,
     // and stop it bubbling so assigning doesn't also swap the stage.
     c.onclick=()=>{isImg?showImage(h):showVideo(h);};
-    if(isImg)c.querySelectorAll(".h-use button").forEach(b=>{
+    c.querySelectorAll(".h-use button").forEach(b=>{
       b.addEventListener("click",ev=>{
         ev.stopPropagation();
-        _useAsFrame(h,b.getAttribute("data-w"));
+        const w=b.getAttribute("data-w");
+        if(w==="del")deleteHistoryItem(h,ev);
+        else _useAsFrame(h,w);
       });
     });
     g.appendChild(c);
@@ -6222,6 +6156,45 @@ function renderHistory(){
   // Keep the full modal in sync when it happens to be open.
   if(($("vsHistoryModal")||{}).style && $("vsHistoryModal").style.display==="flex")
     renderHistoryModal();
+}
+
+
+/* Delete a history entry.
+
+   Two kinds live in this list and they delete differently. A VIDEO is a
+   server-side job with R2 objects behind it, so it goes through the
+   Worker. An IMAGE is either a local upload or a last frame belonging to
+   a clip — there is no separate server record, so removing it is a local
+   operation. Deleting a last frame does NOT delete its clip; they are
+   independent entries and people prune the frames far more often. */
+async function deleteHistoryItem(item,ev){
+  if(ev)ev.stopPropagation();
+  if(!item)return;
+  const isImg=_histKind(item)==="image";
+  const label=isImg?"this image":"this clip and its files";
+  if(!confirm("Delete "+label+"? This cannot be undone."))return;
+
+  if(!isImg){
+    try{
+      const r=await fetch("/api/videostudio/delete/"+item.id,{method:"POST"});
+      const j=await r.json();
+      if(!j.ok){
+        toast(j.message||("Couldn't delete: "+(j.error||"failed")),true);
+        return;
+      }
+    }catch(e){toast("Couldn't delete: "+e,true);return;}
+    try{doneIds.delete(item.id);}catch(e){}
+  }
+
+  const i=history.findIndex(x=>x===item||(x.id&&x.id===item.id&&_histKind(x)===_histKind(item)));
+  if(i>=0)history.splice(i,1);
+  // If the deleted item was on the stage, clear it rather than leave a
+  // dead <video src> pointing at an object that no longer exists.
+  if(_stageItem&&_stageItem.id===item.id)clearStage();
+  renderHistory();
+  if($("vsHistoryModal")&&$("vsHistoryModal").style.display==="flex")
+    renderHistoryModal();
+  toast(isImg?"Image removed.":"Clip deleted.");
 }
 
 /* Route a history image into the first/last frame slot. Goes through the
@@ -6846,13 +6819,24 @@ async function restoreJobs(){
       if(it.status==="done"&&it.has_result){
         if(!doneIds.has(it.id)){
           doneIds.add(it.id);
-          history.unshift({id:it.id,prompt:it.prompt,thumb:it.thumb,
-            url:null,ts:it.ts});   // video fetched lazily on click
+          // Use the Worker's real field names. This block previously read
+          // has_result/thumb/ts, none of which /jobs returned, so after a
+          // refresh the history came back empty even though the clips
+          // were all still there.
+          history.unshift({id:it.id,prompt:it.prompt||"clip",
+            thumb:it.poster_url||"",url:it.video_url||null,
+            ts:(it.finished_at||it.created_at||0)*1000});
+          // Restore the last frame as an image too, so a reload doesn't
+          // lose the thing you continue the next clip from.
+          if(it.last_frame_url)
+            _addImageToHistory(it.last_frame_url,
+              "Last frame \u2014 "+(it.prompt||"clip"));
         }
       }else if(it.status==="queued"||it.status==="running"
         ||it.status==="cancelling"){
         if(!queue.some(q=>q.id===it.id))
-          queue.unshift({id:it.id,prompt:it.prompt,thumb:it.thumb,
+          queue.unshift({id:it.id,prompt:it.prompt||"clip",
+            thumb:it.poster_url||"",
             status:it.status,progress:it.progress||0,stage:it.stage||""});
       }
     });
