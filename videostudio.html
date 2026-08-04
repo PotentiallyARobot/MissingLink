@@ -1383,7 +1383,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         <div class="sec-label"><span class="icon">&#10022;</span> <span id="promptLbl">Prompt</span>
           <button class="spk-gear" id="autoCfgGear" style="margin-left:auto" onclick="openAutoCfg()" title="Auto Prompt settings: standing instructions &amp; extra context">&#9881;</button>
           <button class="q-clear" id="autoBtn" style="margin-left:8px" onclick="autoPrompt()" title="Look at the image with GPT and write the prompt (and dialogue on LTX)">&#10024; Auto Prompt</button></div>
-        <textarea class="ta" id="prompt" oninput="if(currentEngine==='ltx'){renderDialog();_updateSceneRoleHint();}updateDur();">a calm ocean at golden hour, gentle waves rolling, cinematic slow push-in, the water shimmering</textarea>
+        <textarea class="ta" id="prompt" oninput="if(currentEngine==='ltx'){renderDialog();_updateSceneRoleHint();}updateDur();_syncGenerateEnabled();">a calm ocean at golden hour, gentle waves rolling, cinematic slow push-in, the water shimmering</textarea>
         <div class="hintline" id="promptRoleHint" style="display:none"></div>
         <div class="sec-label" style="margin:12px 0 8px" id="negLabel"><span class="icon">&#8856;</span> Negative</div>
         <textarea class="ta neg" id="neg">overexposed, static, blurred details, subtitles, worst quality, low quality, JPEG artifacts, ugly, deformed, disfigured, messy background, still picture</textarea>
@@ -1407,11 +1407,31 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         <div class="sec-label"><span class="icon">&#128172;</span> Dialogue
           <span class="c">spoken in order, lip-synced</span></div>
         <div id="clipDlgList"></div>
+        <!-- Dialogue generation settings. These ride along with Auto
+             Prompt too, so one set of controls governs both. -->
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+          <label class="sl" style="flex:0 0 auto">Lines</label>
+          <select class="model-select" id="dlgCount" style="flex:0 0 74px;padding:7px" onchange="updateDur()">
+            <option value="auto" selected>auto</option>
+            <option value="1">1</option><option value="2">2</option>
+            <option value="3">3</option><option value="4">4</option>
+            <option value="5">5</option><option value="6">6</option>
+          </select>
+          <select class="model-select" id="dlgTone" style="flex:1;padding:7px">
+            <option value="">natural</option>
+            <option value="terse, clipped, few words">terse</option>
+            <option value="warm and conversational">warm</option>
+            <option value="tense and urgent">tense</option>
+            <option value="funny, light, playful">funny</option>
+            <option value="formal and precise">formal</option>
+          </select>
+        </div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="gen-btn gen-btn-secondary" style="flex:1;padding:9px;font-size:11px"
             onclick="clipModalAddLine()">+ Add line</button>
-          <button class="gen-btn gen-btn-secondary" style="flex:1;padding:9px;font-size:11px"
-            onclick="clipModalAutoDialog()" title="AI writes this clip's scene and dialogue">&#10024; Auto-write</button>
+          <button class="gen-btn" style="flex:1.4;padding:9px;font-size:11px"
+            id="autoDlgBtn" onclick="autoDialogueOnly()"
+            title="AI reads the scene, decides who is speaking, and writes their lines">&#10024; Auto dialogue</button>
         </div>
         <button class="gen-btn gen-btn-secondary" style="width:100%;margin-top:8px;padding:9px;font-size:11px"
           onclick="openSpeakerModal()">&#127908; Speakers &amp; voices</button>
@@ -1427,12 +1447,12 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
           </label>
         </div>
         <div class="lenbox"><span>&#9202;</span> <span id="durHint">Auto &mdash; from your scene</span></div>
-        <!-- Manual override, hidden while auto is on. -->
-        <div id="lenManual" style="display:none">
-          <div class="slider-row" style="margin-top:10px"><span class="sl">Seconds</span>
-            <input type="range" id="clipSecs" min="2" max="20" step="0.5" value="5"><input class="sv" id="clipSecsV" value="5"></div>
-        </div>
-        <div class="hintline" id="autoLenHint">Length is worked out from your scene &mdash; how much dialogue there is, and how much has to happen. Untick <b>auto</b> to set it yourself.</div>
+        <!-- Always visible. Auto is a suggestion, not a lock: the slider
+             tracks the computed value while auto is on, and touching it
+             takes over. Hiding it made the length feel unchangeable. -->
+        <div class="slider-row" style="margin-top:10px"><span class="sl">Seconds</span>
+          <input type="range" id="clipSecs" min="2" max="20" step="0.5" value="5"><input class="sv" id="clipSecsV" value="5"></div>
+        <div class="hintline" id="autoLenHint">Worked out from your scene &mdash; how much dialogue there is, and how much has to happen. Drag <b>Seconds</b> to override.</div>
         <!-- The multi-clip chaining slider went with the timeline. Kept
              hidden because updateDur() and the submit path still read it. -->
         <input type="range" id="segments" min="1" max="12" value="1" style="display:none">
@@ -2501,9 +2521,18 @@ function updateDur(){
   const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
   const f=_clipFrames(), secs=f/fps;
   const auto=$("autoLen"), isAuto=!auto||auto.checked;
+  // Keep the slider showing the derived length while auto is on, so the
+  // control never contradicts the readout above it.
+  if(isAuto){
+    const sl=$("clipSecs"),nv=$("clipSecsV");
+    if(sl&&document.activeElement!==sl)sl.value=Math.min(20,Math.max(2,secs)).toFixed(1);
+    if(nv&&document.activeElement!==nv)nv.value=secs.toFixed(1);
+  }
   const d=$("durHint");
-  if(d)d.innerHTML=(isAuto?"Auto \u2014 ":"")+"~"+secs.toFixed(1)+" s"
-    +" <span style='opacity:.6'>&middot; "+f+" frames</span>";
+  if(d)d.innerHTML=(isAuto?"Auto \u2014 ":"Set \u2014 ")+"~"+secs.toFixed(1)+" s"
+    +" <span style='opacity:.6'>&middot; "+f+" frames"
+    +(isAuto?"":" &middot; <a href=\'#\' onclick=\'event.preventDefault();$(\"autoLen\").checked=true;_autoLenChange();\' style=\'color:var(--gold)\'>back to auto</a>")
+    +"</span>";
 }
 
 /* speed modes ─────────────────────────────────────────────────────────
@@ -2536,8 +2565,11 @@ $("profile").addEventListener("change",e=>{setSL("shift",e.target.value==="720P"
 (function(){
   const sl=$("clipSecs"),nv=$("clipSecsV");
   if(!sl||!nv)return;
-  sl.addEventListener("input",()=>{nv.value=(+sl.value).toFixed(1);updateDur();});
-  nv.addEventListener("change",()=>{sl.value=nv.value;updateDur();});
+  // Touching the slider IS the override — no separate "manual" mode to
+  // discover. The auto tickbox just switches back to the derived value.
+  const take=()=>{const a=$("autoLen");if(a&&a.checked){a.checked=false;_autoLenChange();}};
+  sl.addEventListener("input",()=>{take();nv.value=(+sl.value).toFixed(1);updateDur();});
+  nv.addEventListener("change",()=>{take();sl.value=nv.value;updateDur();});
 })();
 
 /* advanced toggle */
@@ -2681,7 +2713,7 @@ $("file").addEventListener("change",e=>{
     $("drop").className="dropzone has";
     $("drop").innerHTML="<img src='"+r.result+"'>";
     if(currentEngine==="ltx"){clipStartImages[1]=r.result;_renderC1Frames();renderClipOverview();}
-    _addImageToHistory(r.result,"Uploaded \u2014 first frame");};
+    _addImageToHistory(r.result,"Uploaded \u2014 first frame");_syncGenerateEnabled();};
   r.readAsDataURL(f);
 });
 $("fileLast").addEventListener("change",e=>{
@@ -2979,6 +3011,8 @@ function nextReplaceManual(){
 // Route an image into the start-frame slot (imgData + the drop preview),
 // matching how a manual upload sets it.
 function _setStartImage(dataUrl){
+  // Setting the first frame is the main thing that unblocks Generate.
+  setTimeout(()=>{try{_syncGenerateEnabled();}catch(e){}},0);
   imgData=dataUrl;
   const d=$("drop");
   if(d){d.className="dropzone has";d.innerHTML="<img src='"+dataUrl+"'>";}
@@ -3515,6 +3549,9 @@ function renderSpeakers(){
       const old=s.name,v=(nm.value.trim()||"SPEAKER").toUpperCase();
       s.name=v;dialog.forEach(l=>{if(l.speaker===old)l.speaker=v;});
       renderSpeakers();renderDialog();
+    // New dialogue changes the derived length; refresh the readout and,
+    // while auto is on, the slider with it.
+    try{updateDur();_syncGenerateEnabled();}catch(e){}
     };
     const x=document.createElement("button");x.className="lora-x";
     x.innerHTML="&#10005;";x.title="Remove speaker";
@@ -3528,6 +3565,9 @@ function renderSpeakers(){
         dialog=[];
       }
       renderSpeakers();renderDialog();
+    // New dialogue changes the derived length; refresh the readout and,
+    // while auto is on, the slider with it.
+    try{updateDur();_syncGenerateEnabled();}catch(e){}
     };
     top.append(nm,x);
     const lk=document.createElement("textarea");lk.className="spk-voice";
@@ -4291,6 +4331,9 @@ async function addClipExtend(){
     }
     delete clipFrameOverrides[nc];
     renderSpeakers();renderDialog();
+    // New dialogue changes the derived length; refresh the readout and,
+    // while auto is on, the slider with it.
+    try{updateDur();_syncGenerateEnabled();}catch(e){}
     const nl=dialog.filter(l=>(l.clip||1)===nc&&(l.text||"").trim()).length;
     toast("Clip "+nc+" continues the shot"
       +(nl?(" with "+nl+" line"+(nl===1?"":"s")):" (action continues, no dialogue)")
@@ -4406,10 +4449,19 @@ function _autoSplitControl(scene,ctrlUrl,dur,segS,stagedImg){
 // Enable/disable Generate based on whether any clip is committed (LTX only).
 function _syncGenerateEnabled(){
   const gb=$("genBtn");if(!gb)return;
-  if(currentEngine!=="ltx"){gb.disabled=false;gb.style.opacity="";gb.title="";return;}
-  const ready=_committedClips>0;
+  /* Was: LTX required _committedClips > 0 — clips committed to the
+     timeline. The timeline is gone, nothing increments that counter any
+     more, and Generate could never enable on LTX no matter what you did.
+
+     The real precondition is the same for every engine now: a starting
+     frame and something to render from. */
+  const hasImg=!!(imgData||(typeof clipStartImages!=="undefined"&&clipStartImages[1]));
+  const hasPrompt=!!(($("prompt")&&$("prompt").value)||"").trim();
+  const ready=hasImg&&hasPrompt;
   gb.disabled=!ready;gb.style.opacity=ready?"":"0.5";
-  gb.title=ready?"":"Add at least one clip to the timeline first.";
+  gb.title=ready?""
+    :(!hasImg?"Add a starting frame first."
+             :"Write a scene prompt first.");
 }
 // NEW SCENE: generate a fresh starting image with gpt-image-2 from the
 // previous clip's context, review it, then it becomes this clip's start.
@@ -5008,7 +5060,10 @@ function uploadClipJSON(files){
     try{msg=applyClipScript(c,JSON.parse(rd.result));}
     catch(e){toast("Couldn't load that clip JSON: "+e,true);return;}
     try{
-      renderSpeakers();renderDialog();_syncGenerateEnabled();
+      renderSpeakers();renderDialog();
+    // New dialogue changes the derived length; refresh the readout and,
+    // while auto is on, the slider with it.
+    try{updateDur();_syncGenerateEnabled();}catch(e){}_syncGenerateEnabled();
       openClipModal(c);        // repaint + rebind every field from state
     }catch(e){}
     toast(msg);
@@ -5417,6 +5472,38 @@ function _placeholderFrame(c){
   x.fillText("(continues the previous clip)",cv.width/2,cv.height/2+38);
   return cv.toDataURL("image/png");
 }
+
+/* ── auto dialogue ─────────────────────────────────────────────────────
+   Same endpoint as Auto Prompt — it already returns {scene, camera,
+   speakers, lines}, so the model has always been capable of casting the
+   scene and writing for it. What was missing was a way to ask for ONLY
+   the dialogue: clipModalAutoDialog() delegated to autoPromptForClip(),
+   which rewrites your scene text as a side effect.
+
+   dialogueOnly keeps the scene you wrote and applies just the speakers
+   and lines. The Lines and tone selectors steer it, and they are the same
+   controls Auto Prompt reads, so both routes obey them. */
+function _dlgInstructions(){
+  const n=($("dlgCount")||{}).value||"auto";
+  const tone=($("dlgTone")||{}).value||"";
+  let s="";
+  if(n!=="auto")s+="Write EXACTLY "+n+" line"+(n==="1"?"":"s")+" of dialogue. ";
+  else s+="Write as many lines as the moment needs \u2014 usually 1 to 3. ";
+  if(tone)s+="Delivery should be "+tone+". ";
+  // Length is derived from the dialogue, so runaway lines cost render time.
+  s+="Keep each line short enough to be spoken naturally in a few seconds.";
+  return s;
+}
+async function autoDialogueOnly(){
+  const b=$("autoDlgBtn");
+  if(b){b.disabled=true;b._o=b.innerHTML;b.innerHTML="\u2728 Writing dialogue\u2026";}
+  try{
+    await autoPromptForClip(1,{keepOpen:true,dialogueOnly:true});
+  }finally{
+    if(b){b.disabled=false;b.innerHTML=b._o||"\u2728 Auto dialogue";}
+  }
+}
+
 async function autoPromptForClip(c,opts){
   opts=opts||{};
   // Start image: clip 1 = the uploaded image; later clips = their set
@@ -5442,8 +5529,18 @@ async function autoPromptForClip(c,opts){
     if(story)ctx+="\n\nSTORY SO FAR (continue it naturally, keep the same characters and voices, do not repeat lines):\n"+story;
     if(placeholder)ctx+="\n\nNOTE: the attached image is a PLACEHOLDER — this clip's real starting frame hasn't been generated yet. It continues the previous clip. Write the scene and dialogue for what happens next based on the story, not the placeholder image.";
     if(endImg)ctx+="\n\nAn END FRAME is attached separately — the clip should LAND on it. Write the scene/motion so it plausibly arrives at that end frame.";
+    // The dialogue selectors steer BOTH routes, so Auto Prompt and Auto
+    // dialogue can't disagree about line count or tone.
+    let instr=(autoCfg.instructions||"").trim();
+    instr=(instr?instr+"\n\n":"")+_dlgInstructions();
+    if(opts.dialogueOnly){
+      instr+="\n\nDo NOT rewrite the scene. Return the scene text you were "
+        +"given unchanged, and focus entirely on the speakers and their lines.";
+      if(curScene)ctx+="\n\nKEEP THIS SCENE EXACTLY AS WRITTEN \u2014 you are only "
+        +"adding dialogue to it:\n"+curScene;
+    }
     const payload={image:startImg,engine:"ltx",
-      instructions:(autoCfg.instructions||"").trim(),
+      instructions:instr,
       context:ctx.trim()};
     if(endImg)payload.end_image=endImg;
     const r=await fetch("/api/videostudio/autoprompt",{method:"POST",
@@ -5452,7 +5549,8 @@ async function autoPromptForClip(c,opts){
     const j=await r.json();
     if(!j.ok){toast(j.error||"Auto prompt failed.",true);return;}
     // Update this clip's scene, and add its speakers/lines (tagged to c).
-    if(j.scene)clipPromptOverrides[c]=(j.scene||"").trim()
+    // dialogueOnly leaves the user's scene text alone.
+    if(j.scene&&!opts.dialogueOnly)clipPromptOverrides[c]=(j.scene||"").trim()
       +(j.camera?" Camera: "+j.camera.trim():"");
     (Array.isArray(j.speakers)?j.speakers:[]).forEach(s=>{
       const nm=(s.name||"SPEAKER").toUpperCase().slice(0,24);
@@ -5470,6 +5568,9 @@ async function autoPromptForClip(c,opts){
       });
     delete clipFrameOverrides[c];   // re-estimate length from new dialogue
     renderSpeakers();renderDialog();
+    // New dialogue changes the derived length; refresh the readout and,
+    // while auto is on, the slider with it.
+    try{updateDur();_syncGenerateEnabled();}catch(e){}
     const nl=dialog.filter(l=>(l.clip||1)===c).length;
     toast(nl?("Clip "+c+": scene + "+nl+" line"+(nl===1?"":"s")+" written from the story."):"Clip "+c+" scene written (add dialogue or Auto-write again).");
     // Refresh the editor in place if it's open, else open it.
@@ -5517,6 +5618,9 @@ async function autoPrompt(){
             voice:"a natural adult voice, medium pitch, calm pace"});
       });
       renderSpeakers();renderDialog();
+    // New dialogue changes the derived length; refresh the readout and,
+    // while auto is on, the slider with it.
+    try{updateDur();_syncGenerateEnabled();}catch(e){}
       const ns=speakers.length,nl=dialog.length;
       toast(nl
         ? ("Scene + "+ns+" speaker"+(ns===1?"":"s")+", "+nl+" line"+(nl===1?"":"s")+" \u2014 edit anything, then Generate.")
@@ -6427,6 +6531,7 @@ async function _useAsFrame(h,which){
     _stagedEnd=src;
   }
   try{_renderC1Frames();renderClipOverview();}catch(e){}
+  _syncGenerateEnabled();
   toast("Set as the "+(which==="end"?"last":"first")+" frame.");
 }
 // Add a generated image to History (shown alongside videos).
