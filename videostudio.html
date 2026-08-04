@@ -2429,24 +2429,30 @@ function updateDur(){
   $("durHint").innerHTML="~"+total.toFixed(1)+" s &middot; "+clips+(clips>1?" clips":" clip");
 }
 
-/* speed modes */
-async function setLoraScale(name,scale){
-  try{await fetch("/api/videostudio/loras/update",{method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name:name,scale:scale})});}catch(e){}
-  refreshLoras();
+/* speed modes ─────────────────────────────────────────────────────────
+   These used to flip a user LoRA row called "lightning_4step" — a
+   notebook-era arrangement where the distill LoRA lived in the same list
+   as everything else. In the hosted studio it is baked into the Modal
+   image and selected by the job's `lightning` flag, so there is no such
+   row to toggle. (Worse: that call keyed on name, which the Worker
+   rejects, so it had been failing silently in both directions.)
+
+   Now the buttons drive the real flag the submit path reads. */
+function _setLightning(on){
+  const cb=$("wan22Lightning");
+  if(cb)cb.checked=!!on;
 }
 async function lightningMode(){
   setSL("steps",4);setSL("guid",1.0);setSL("shift",5.0);updateDur();
   $("segFast").classList.add("active");$("segQual").classList.remove("active");
-  await setLoraScale("lightning_4step",1.0);
+  _setLightning(true);
   toast("Lightning 4-step on \u2014 best for long videos.");
 }
 async function qualityMode(){
   setSL("steps",30);setSL("guid",5.0);setSL("shift",3.0);updateDur();
   $("segQual").classList.add("active");$("segFast").classList.remove("active");
-  await setLoraScale("lightning_4step",0.0);
-  toast("Quality mode on.");
+  _setLightning(false);
+  toast("Quality mode on \u2014 slower, higher fidelity.");
 }
 $("profile").addEventListener("change",e=>{setSL("shift",e.target.value==="720P"?"5.0":"3.0");});
 
@@ -2622,39 +2628,80 @@ async function refreshLoras(){
   // 4-step speed LoRA) does nothing on LTX and vice versa.
   const wantLtx=(typeof currentEngine!=="undefined"&&currentEngine==="ltx");
   const all=j.loras||[];
-  const vis=all.filter(L=>wantLtx?(L.engine==="ltx"):(L.engine!=="ltx"));
+  // Filtering by engine keeps the list relevant, but it also made the
+  // other engine's LoRAs unreachable — you couldn't delete something you
+  // couldn't see. _loraShowAll reveals them, tagged, so an old library
+  // can actually be cleaned out.
+  const vis=window._loraShowAll?all
+    :all.filter(L=>wantLtx?(L.engine==="ltx"):(L.engine!=="ltx"));
   const hidden=all.length-vis.length;
   if(!vis.length){
     box.innerHTML="<div class='hintline' style='margin-top:10px'>No LoRAs added"+
       (hidden?" for this engine ("+hidden+" hidden \u2014 they belong to "+(wantLtx?"Wan":"LTX")+")":"")+".</div>";
+    if(hidden)box.appendChild(_loraShowAllBtn(hidden));
     return;}
   vis.forEach(L=>{
     const d=document.createElement("div");d.className="lora-card";
-    d.innerHTML="<div class='lora-card-top'><span class='lora-card-name'>"+esc(L.name)+
+    const tag=window._loraShowAll
+      ? "<span style='font-size:8px;color:var(--text-muted);border:1px solid var(--border);"
+        +"border-radius:3px;padding:1px 4px;margin-right:5px'>"
+        +(L.engine==="ltx"?"LTX":"WAN")+"</span>" : "";
+    d.innerHTML="<div class='lora-card-top'>"+tag+"<span class='lora-card-name'>"+esc(L.name)+
       (L.attached?"":" (not attached)")+"</span>"+
-      "<button class='lora-x'>&#10005;</button></div>"+
+      "<button class='lora-x' title='Remove from your library'>&#10005;</button></div>"+
       "<div class='slider-row' style='margin:8px 0 0'><span class='sl'>strength</span>"+
       "<input type='range' min='0' max='2' step='0.05' value='"+L.scale+"'>"+
       "<input class='sv' value='"+(+L.scale).toFixed(2)+"'></div>";
     const sl=d.querySelector("input[type=range]"),nm=d.querySelector(".sv"),xb=d.querySelector(".lora-x");
-    async function push(v){await fetch("/api/videostudio/loras/update",{method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({name:L.name,scale:parseFloat(v)})});}
+    /* url, NOT name. The LoRA table is keyed (user_id, url) and both
+       routes reject a body without one — so sending {name} meant every
+       remove and every strength change returned missing_url and silently
+       did nothing. The page then re-fetched and re-drew the unchanged
+       row, which looks exactly like "it worked and reverted".
+
+       These also report failures now instead of swallowing them. */
+    async function push(v){
+      try{
+        const r=await fetch("/api/videostudio/loras/update",{method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({url:L.url,scale:parseFloat(v)})});
+        const j=await r.json();
+        if(!j.ok)toast("Couldn't save strength: "+(j.error||"failed"),true);
+      }catch(e){toast("Couldn't save strength: "+e,true);}
+    }
     sl.addEventListener("input",()=>nm.value=(+sl.value).toFixed(2));
     sl.addEventListener("change",()=>push(sl.value));
     nm.addEventListener("change",()=>{sl.value=nm.value;push(nm.value);});
     xb.addEventListener("click",async()=>{
-      await fetch("/api/videostudio/loras/remove",{method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({name:L.name})});refreshLoras();});
+      if(!confirm("Remove \u201c"+(L.name||"this LoRA")+"\u201d from your library?"))return;
+      xb.disabled=true;
+      try{
+        const r=await fetch("/api/videostudio/loras/remove",{method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({url:L.url})});
+        const j=await r.json();
+        if(!j.ok){toast("Couldn't remove: "+(j.error||"failed"),true);xb.disabled=false;return;}
+        toast("Removed "+(L.name||"LoRA")+".");
+      }catch(e){toast("Couldn't remove: "+e,true);xb.disabled=false;return;}
+      refreshLoras();});
     box.appendChild(d);
   });
-  if(hidden>0){
-    const h=document.createElement("div");h.className="hintline";
-    h.style.marginTop="8px";
-    h.textContent=hidden+" LoRA"+(hidden>1?"s":"")+" hidden \u2014 belong"+(hidden>1?"":"s")+" to "+(wantLtx?"Wan":"LTX")+".";
-    box.appendChild(h);
-  }
+  if(hidden>0)box.appendChild(_loraShowAllBtn(hidden));
+  else if(window._loraShowAll)box.appendChild(_loraShowAllBtn(0));
+}
+
+/* Toggle between "this engine only" and the full library. Rendered as a
+   button rather than a note because the whole point is to reach LoRAs the
+   filter is hiding. */
+function _loraShowAllBtn(hidden){
+  const b=document.createElement("button");
+  b.className="gen-btn gen-btn-secondary";
+  b.style.cssText="width:100%;margin-top:8px;padding:8px;font-size:10px";
+  b.textContent=window._loraShowAll
+    ? "Show only this engine's LoRAs"
+    : "Show all "+(hidden?hidden+" other ":"")+"LoRAs (manage / remove)";
+  b.onclick=()=>{window._loraShowAll=!window._loraShowAll;refreshLoras();};
+  return b;
 }
 async function addLora(){
   const url=$("loraUrl").value.trim();
