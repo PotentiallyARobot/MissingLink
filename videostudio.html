@@ -2279,6 +2279,8 @@ function _mlApply(s){
   mlState.unlocked=!!(s.unlocked||mlState.member||
     (mlState.authed&&(mlState.remaining>0||mlState.remaining===-1)));
   _mlLinks();_mlBadge();
+  // The image library needs a session; pull it as soon as we have one.
+  if(mlState.authed&&!_libLoaded)loadImageLibrary();
 }
 
 /* ── the blocking sign-in gate is gone ─────────────────────────────────
@@ -6990,12 +6992,20 @@ async function pollConsole(){
    video's opening frame. */
 let _libLoaded=false,_libOffset=0,_libMore=true,_libBusy=false;
 async function loadImageLibrary(limit){
-  if(!mlState.authed||_libBusy||!_libMore)return;
+  /* Deliberately NOT gated on mlState.authed. At boot mlBoot() and
+     restoreJobs() fire in parallel, so authed is usually still false when
+     this first runs — the guard skipped the load and nothing ever retried,
+     which looked exactly like "my images aren't there".
+
+     The session is a cookie, so the request authenticates itself; a 401
+     is handled below and simply leaves the library empty until sign-in
+     calls this again. */
+  if(_libBusy||!_libMore)return;
   _libBusy=true;
   const take=limit||30;
   try{
     const r=await fetch("/api/studio/history?limit="+take+"&offset="+_libOffset);
-    if(!r.ok)return;                       // signed out or endpoint absent
+    if(!r.ok){_libBusy=false;return;}      // signed out: retried after sign-in
     const j=await r.json();
     const items=(j&&(j.items||j.jobs))||[];
     const add=[];
