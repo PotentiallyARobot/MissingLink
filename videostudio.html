@@ -33,6 +33,13 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);
 .app-header h1{font-family:var(--font-display);font-size:12px;font-weight:700;
   letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);white-space:nowrap}
 .app-header h1 span{color:var(--gold)}
+.hdr-back{display:inline-flex;align-items:center;gap:7px;margin-left:16px;
+  background:var(--surface-2);border:1px solid var(--border);
+  color:var(--text-muted);text-decoration:none;
+  font-family:var(--font-mono);font-size:10px;font-weight:700;
+  letter-spacing:1px;text-transform:uppercase;
+  padding:8px 13px;border-radius:8px;transition:all .15s;white-space:nowrap}
+.hdr-back:hover{color:var(--gold);border-color:var(--gold);background:var(--surface-3)}
 .stage-tabs{display:inline-flex;gap:2px;align-items:center;margin-left:16px}
 .stage-tab{display:inline-flex;align-items:center;gap:6px;background:transparent;
   border:none;color:var(--text-muted);cursor:pointer;padding:7px 14px;border-radius:8px;
@@ -153,6 +160,7 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);
   .app-header h1{display:none}
   .stage-tabs{margin-left:4px}
   .stage-tab{padding:8px 10px;font-size:9px;gap:4px}
+  .hdr-back{margin-left:6px;padding:8px 10px;font-size:9px}
   .hdr-right{gap:6px}
   .hdr-badge{padding:6px 8px;font-size:9px}
   /* Email is the widest thing in the chip and the avatar already says
@@ -245,6 +253,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);
   .vs-history-grid{grid-template-columns:repeat(2,1fr)}
   .stage-tab span:not(.stage-tab-icon){display:none}
   .stage-tab{padding:8px}
+  /* Arrow only under 400px — it still reads as "back". */
+  .hdr-back{font-size:0;padding:8px 10px}
+  .hdr-back span{font-size:13px}
 }
 
 /* ── Account chip + dropdown ───────────────────────────────────────────
@@ -1121,12 +1132,13 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
          src="..." value below with your data:image/png;base64,... URI. -->
     <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='30' fill='%2318181B' stroke='%23E8A917' stroke-width='4'/><path d='M17 42 V23 l15 14 15-14 v19' fill='none' stroke='%23E8A917' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/></svg>" alt="MissingLink">
     <h1>MISSINGLINK <span>VIDEO STUDIO</span></h1>
-    <div class="stage-tabs">
-      <button class="stage-tab" onclick="openGallery()" title="Session gallery">
-        <span class="stage-tab-icon">&#127760;</span> Gallery</button>
-      <button class="stage-tab active" id="tabStudio" onclick="closeEditor()" title="Workspace">
-        <span class="stage-tab-icon">&#127909;</span> Studio</button>
-    </div>
+    <!-- Gallery/Studio tabs removed: "Studio" only ever pointed at the
+         view you were already looking at, and the session gallery is now
+         covered by the History modal. What replaces them is the one
+         navigation people actually need — a way back to the image studio,
+         which shares this account and this token balance. -->
+    <a class="hdr-back" href="https://missinglink.build/studio" title="Back to the image studio">
+      <span aria-hidden="true">&larr;</span> Studio</a>
     <div class="hdr-right">
       <!-- Signed out: a single obvious CTA, same as studio's header. -->
       <div id="authOut"><button class="auth-btn" onclick="_signIn()">&#128273; SIGN IN</button></div>
@@ -2270,9 +2282,9 @@ function showGate(reason){
 function showGateIfLocked(){ if(!mlState.unlocked)showGate(
   (mlState.authed&&mlState.remaining===0)?"free_limit_reached":"no_session"); }
 function mlBadgeClick(){
-  // Locked -> sign-in gate. Signed in (the "N free left" badge or a
-  // member) -> open the pricing/upgrade page in a new tab.
-  if(!mlState.authed){location.href="/auth/google";return;}
+  // Signed out -> sign in (via _signIn so the return path is carried).
+  // Signed in -> the balance badge is a buy-tokens affordance.
+  if(!mlState.authed){_signIn();return;}
   try{buyTokens();return;}catch(e){}
   window.open(mlState.signup||"https://www.missinglink.build/","_blank");
 }
@@ -2848,11 +2860,13 @@ function openEditor(){
   toast("The timeline editor isn\u2019t part of the hosted studio.",true);
 }
 function closeEditor(){
+  // The editor and the stage tabs are both gone; this survives only
+  // because a few handlers still call it. Guarded throughout so it is a
+  // no-op rather than a throw.
   const t=$("editorTab");if(t)t.style.display="none";
-  const s=$("tabStudio"),e=$("tabEditor");
-  if(e)e.classList.remove("active");if(s)s.classList.add("active");
-  const fab=$("agentFab");if(fab&&$("agentPanel").style.display==="none")fab.style.display="";
-  edStop();
+  const fab=$("agentFab"),ap=$("agentPanel");
+  if(fab&&ap&&ap.style.display==="none")fab.style.display="";
+  try{edStop();}catch(e){}
 }
 // Probe a media file's duration (cached).
 function _edProbe(url){
@@ -5762,9 +5776,19 @@ async function _submitOne(body,prompt,thumb){
    Hosted at missinglink.build we are a normal top-level page, and a
    redirect survives popup blockers. */
 function _signIn(){
-  try{sessionStorage.setItem("vs_after_signin",location.pathname+location.search);}
-  catch(e){}
-  location.href="/auth/google";
+  /* ?return= is what index.ts reads: /auth/google puts it in the OAuth
+     `state`, and /auth/callback redirects to `${STUDIO_APP_URL}${state}`
+     when it comes back. Without it the default is /studio.html — which is
+     why signing in from here dropped you into the image studio.
+
+     Sent as the CURRENT path so a deep link returns to itself, falling
+     back to /videostudio. Path-only, never an absolute URL: `state` is
+     attacker-influenceable in an OAuth flow, and a bare path can't be
+     turned into an open redirect off-site. */
+  let back=location.pathname+location.search;
+  if(!back||back.indexOf("/")!==0||back.indexOf("//")===0)back="/videostudio";
+  try{sessionStorage.setItem("vs_after_signin",back);}catch(e){}
+  location.href="/auth/google?return="+encodeURIComponent(back);
 }
 
 async function _submitJobs(payload,prompt,thumb){
