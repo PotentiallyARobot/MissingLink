@@ -1490,6 +1490,25 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
           title="AI reads the scene, decides who is speaking, and writes their lines">&#10024; Auto dialogue</button>
       </div>
 
+
+      <div class="sec" id="lengthSec">
+        <div class="sec-label"><span class="icon">&#9201;</span> Clip length
+          <label class="c" style="margin-left:auto;display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;letter-spacing:0">
+            <input type="checkbox" id="autoLen" checked onchange="_autoLenChange()"> auto
+          </label>
+        </div>
+        <div class="lenbox"><span>&#9202;</span> <span id="durHint">Auto &mdash; from your scene</span></div>
+        <!-- Always visible. Auto is a suggestion, not a lock: the slider
+             tracks the derived value while auto is on, and touching it
+             takes over. -->
+        <div class="slider-row" style="margin-top:10px"><span class="sl">Seconds</span>
+          <input type="range" id="clipSecs" min="2" max="20" step="0.5" value="5"><input class="sv" id="clipSecsV" value="5"></div>
+        <div class="hintline" id="autoLenHint">Worked out from your scene &mdash; how much dialogue there is, and how much has to happen. Drag <b>Seconds</b> to override.</div>
+        <!-- The multi-clip chaining slider went with the timeline, but
+             updateDur() and the submit path still read these. -->
+        <input type="range" id="segments" min="1" max="12" value="1" style="display:none">
+        <input id="segmentsV" value="1" type="hidden">
+      </div>
       <div class="sec">
         <div id="profileWrap">
           <div class="sec-label"><span class="icon">&#9638;</span> Resolution</div>
@@ -2470,8 +2489,14 @@ function esc(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replac
 [["steps","stepsV"],["guid","guidV"],["shift","shiftV"],
  ["frames","framesV"],["fps","fpsV"],["segments","segmentsV"],
  ["ltxStrength","ltxStrengthV"],["ltxCrf","ltxCrfV"]].forEach(([s,v])=>{
-  $(s).addEventListener("input",()=>{$(v).value=$(s).value;updateDur();});
-  $(v).addEventListener("change",()=>{$(s).value=$(v).value;updateDur();});
+  // Skip pairs whose markup isn't present. This loop is top level, so a
+  // single missing slider threw here and killed EVERY line of script
+  // after it — auth, panels, engine switching, the lot. A removed control
+  // must never be able to take the page down with it.
+  const _s=$(s),_v=$(v);
+  if(!_s||!_v)return;
+  _s.addEventListener("input",()=>{_v.value=_s.value;updateDur();});
+  _v.addEventListener("change",()=>{_s.value=_v.value;updateDur();});
 });
 function setSL(id,val){$(id).value=val;$(id+"V").value=val;}
 function randSeed(){$("seed").value=Math.floor(Math.random()*2e9);}
@@ -2503,7 +2528,10 @@ function _autoClipSeconds(){
   // Dialogue first, if this scene has any.
   let dlg=0,lines=0;
   try{
-    (clipDialog&&clipDialog[1]||[]).forEach(l=>{
+    // The dialogue lives in `dialog`, tagged by clip — `clipDialog` was a
+    // name I invented, so this silently found nothing and auto-length
+    // ignored speech entirely.
+    dialog.filter(l=>(l.clip||1)===_dlgClip()).forEach(l=>{
       const s=_spokenSeconds(l&&l.text);
       if(s>0){dlg+=s;lines++;}
     });
@@ -3194,7 +3222,7 @@ function edRenderTimeline(){
     at.ondblclick=()=>_edAudioUploadFor(ti);
     tracks.appendChild(at);
   });
-  $("edTime").textContent=_fmtT(0)+" / "+_fmtT(edTotalDur());
+  {const t=$("edTime");if(t)t.textContent=_fmtT(0)+" / "+_fmtT(edTotalDur());}
   // preview empty state
   $("edPreviewEmpty").style.display=edState.video.length?"none":"block";
 }
@@ -3252,13 +3280,13 @@ function edPlayPause(){
   if(!edState.video.length){toast("Add clips to the timeline first.");return;}
   const v=$("edPreview");
   if(_edPlay.on){v.pause();_edPlay.on=false;$("edPlayBtn").innerHTML="&#9654;";return;}
-  _edPlay.on=true;$("edPlayBtn").innerHTML="&#10073;&#10073;";
+  _edPlay.on=true;{const b=$("edPlayBtn");if(b)b.innerHTML="&#10073;&#10073;";}
   if(v.style.display==="none"||!v.src)_edPlayFrom(0);else v.play();
 }
 function _edPlayFrom(i){
   const v=$("edPreview");const c=edState.video[i];
   if(!c){edStop();return;}
-  _edPlay.i=i;$("edPreviewEmpty").style.display="none";v.style.display="block";
+  _edPlay.i=i;{const pe=$("edPreviewEmpty");if(pe)pe.style.display="none";}v.style.display="block";
   v.src=c.url;v.currentTime=c.in||0;
   v.onloadeddata=()=>{v.currentTime=c.in||0;v.play();};
   v.ontimeupdate=()=>{
