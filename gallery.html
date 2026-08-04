@@ -69,46 +69,36 @@ img,video{display:block;max-width:100%}
 /* Feature screenshots must be seen WHOLE — contain, never crop. */
 .hero-img{position:relative;background:#08080a;display:grid;place-items:center;padding:10px;
   overflow:hidden;min-width:0}
-/* Two layers stacked in the same grid cell. The outgoing shot fades and
-   settles back while the incoming one rises — a real crossfade instead
-   of a blank gap while the next file loads. */
+/* Two layers stacked in the same grid cell so one screenshot dissolves
+   into the next, rather than the panel going blank while the next file
+   loads. Opacity only — no movement, no scale. */
 .hero-img .hl{grid-area:1/1;width:100%;height:100%;display:grid;place-items:center;
-  opacity:0;transform:scale(1.03);transition:opacity .62s ease,transform .62s ease}
-.hero-img .hl.on{opacity:1;transform:scale(1)}
+  opacity:0;transition:opacity .5s ease}
+.hero-img .hl.on{opacity:1}
 .hero-img img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;
   border-radius:6px}
 /* Screenshots are captured with browser chrome — clip 10px off every
    edge so the white window frame/scrollbar never shows. */
 .hero-img img,.shot img{clip-path:inset(10px);margin:-10px}
-.hero-side{padding:22px 24px;display:flex;flex-direction:column;justify-content:center;gap:11px;
-  overflow:hidden;min-width:0;transition:opacity .38s ease}
+.hero-side{padding:20px 24px;display:flex;flex-direction:column;justify-content:center;gap:9px;
+  overflow:hidden;min-width:0}
 .hero-tag{font-family:var(--font-mono);font-size:10px;letter-spacing:2.2px;color:var(--gold);
-  display:flex;align-items:center;gap:7px;height:14px}
+  display:flex;align-items:center;gap:7px;height:14px;flex-shrink:0}
 /* Two fixed lines. A short title sits in the same box a long one does. */
 .hero-title{font-family:var(--font-display);font-size:27px;line-height:1.15;font-weight:700;margin:0;
-  height:2.3em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.hero-desc{color:var(--text-dim);font-size:14px;line-height:1.6;margin:0;height:3.2em;
+  height:2.3em;flex-shrink:0;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.hero-act{display:flex;gap:9px;flex-wrap:nowrap;margin-top:2px}
-.hero-dots{display:flex;gap:4px;margin-top:12px;flex-wrap:wrap}
+.hero-desc{color:var(--text-dim);font-size:14px;line-height:1.6;margin:0;height:3.2em;flex-shrink:0;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hero-act{display:flex;gap:9px;flex-wrap:nowrap;margin-top:0;flex-shrink:0}
+.hero-dots{display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;flex-shrink:0}
 .hero-dots i{width:13px;height:3px;border-radius:2px;background:var(--surface-3);cursor:pointer;
   transition:.25s;position:relative;overflow:hidden;flex-shrink:0}
 .hero-dots i:hover{background:var(--text-mute)}
 /* The active dot doubles as the timer — the gold fill runs out just as
    the next slide arrives, so the rotation never feels arbitrary. */
-.hero-dots i.on{width:32px;background:var(--gold-dim)}
-.hero-dots i.on::after{content:"";position:absolute;inset:0;width:0;background:var(--gold);
-  animation:dotfill var(--slide-ms,5500ms) linear forwards}
-.hero:hover .hero-dots i.on::after{animation-play-state:paused}
-/* Manual mode: the dot is simply full, not counting down to a tick that
-   is never coming. */
-.hero.manual .hero-dots i.on::after{animation:none;width:100%}
-@keyframes dotfill{to{width:100%}}
-@media(prefers-reduced-motion:reduce){
-  .hero-dots i.on::after{animation:none;width:100%}
-  .hero-img .hl{transition:none;transform:none}
-}
-.hero.fade .hero-side{opacity:0}
+.hero-dots i.on{width:32px;background:var(--gold)}
+@media(prefers-reduced-motion:reduce){.hero-img .hl{transition:none}}
 .hero-x{position:absolute;top:10px;right:11px;z-index:3;background:rgba(10,10,12,.6);border:1px solid var(--border);
   color:var(--text-mute);font-size:12px;line-height:1;border-radius:6px;padding:5px 7px}
 .hero-x:hover{color:var(--text);border-color:var(--text-mute)}
@@ -528,7 +518,10 @@ img,video{display:block;max-width:100%}
   .hero-img{height:150px}
   .hero-side{padding:16px 17px;gap:9px}
   .hero-title{font-size:20px}
-  .hero-desc{font-size:12.5px}
+  /* Three lines on a narrow column. The box is still fixed, so height
+     stays identical across slides — it just has headroom for the longer
+     descriptions instead of shaving their last line. */
+  .hero-desc{font-size:12.5px;height:4.8em;-webkit-line-clamp:3}
   .cwgrid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:9px}
   .cp-body{padding:0 16px 20px}
   .cp-name{font-size:24px}
@@ -937,6 +930,12 @@ function avatar(el, handle, cls){ const h=String(handle||'@?').replace(/^@/,'');
   el.textContent=h.slice(0,2).toUpperCase(); if(cls) el.className='av '+cls; }
 function avHtml(handle, cls){ const h=String(handle||'@?').replace(/^@/,'');
   return '<div class="av '+(cls||'')+'" style="background:linear-gradient(140deg,'+tint(h)+','+tint(h+'x')+')">'+esc(h.slice(0,2).toUpperCase())+'</div>'; }
+/* What to call a creator on screen: the name they chose, falling back to
+   the @hash handle when they never set one. The handle stays the identity
+   used for profile links and author filters — it's stable and the name
+   isn't — so the two are deliberately kept separate. */
+function nameOf(x){ return (x && x.author_name) ? x.author_name : ((x && x.author) || '@?'); }
+
 /* Title for a piece: creator-set share title, else first words of prompt. */
 function titleOf(it){ if(it.share_title) return it.share_title;
   const p=(it.prompt||'').trim(); if(!p) return 'Untitled';
@@ -1187,8 +1186,8 @@ function paint(grid, items, offsetIndex){
       (it.mine ? '<div class="badge">YOURS</div>' : '') +
       (it.is_nsfw ? '<div class="reveal"><span>18+ · tap to view</span></div>' : '') +
       '<div class="veil">'+
-        '<div class="row">'+avHtml(it.author,'sm')+
-          '<span class="handle">'+esc(it.author)+'</span>'+stats+
+        '<div class="row">'+avHtml(nameOf(it),'sm')+
+          '<span class="handle">'+esc(nameOf(it))+'</span>'+stats+
         '</div>'+
         (it.mine ? '' :
           '<div class="acts">'+
@@ -1264,7 +1263,7 @@ async function quickTip(it, btn){
     body: JSON.stringify({ idempotency_key: 'w_'+it.id+'_'+Date.now() }) });
   btn.disabled = false;
   if (data && data.ok){ btn.textContent = '◈ Tipped'; btn.style.borderColor='var(--gold)';
-    toast('Sent 10 tokens to '+it.author+' ✦');
+    toast('Sent 10 tokens to '+nameOf(it)+' ✦');
     statCache.delete(it.id); hydrateStats(it, btn.closest('.card')); }
   else if (status === 402){ btn.textContent = '◈ Tip 10'; toast('Not enough tokens to tip.'); }
   else { btn.textContent = '◈ Tip 10'; toast('Tip failed'+((data&&data.error)?': '+data.error:'')); }
@@ -1296,8 +1295,8 @@ async function buildWatch(){
   $('watchEmpty').style.display='none';
   $('watchGrid').innerHTML = top.map(([handle, list]) =>
     '<div class="cr" onclick="openCreator(\''+esc(handle)+'\')">'+
-      avHtml(handle)+
-      '<div class="cr-h">'+esc(handle)+'</div>'+
+      avHtml(nameOf(list[0]))+
+      '<div class="cr-h">'+esc(nameOf(list[0]))+'</div>'+
       '<div class="cr-n">'+list.length+' piece'+(list.length===1?'':'s')+'</div>'+
       '<div class="cr-strip">'+list.slice(0,3).filter(x=>x.poster||x.url).map(x=>
         '<div style="background-image:'+cssUrl(x.poster||x.url)+'"></div>').join('')+
@@ -1314,8 +1313,8 @@ async function openLb(idx){
     ? '<video src="'+esc(it.video_url)+'" poster="'+esc(it.poster||it.url)+'" controls autoplay loop playsinline></video>'
     : '<img src="'+esc(it.url)+'" alt="">';
   $('lbTitle').textContent = titleOf(it);
-  $('lbBy').textContent = it.author;
-  avatar($('lbAv'), it.author);
+  $('lbBy').textContent = nameOf(it);
+  avatar($('lbAv'), nameOf(it));
   $('lbWhen').textContent = when(it.published_at);
   $('lbPrompt').textContent = it.prompt || '(no prompt recorded)';
   $('lbBy').onclick = $('lbProfile').onclick = () => { closeLb(); openCreator(it.author); };
@@ -1341,8 +1340,8 @@ async function loadSocial(id){
   $('lbLike').innerHTML = data.viewer_liked ? '♥ Liked' : '♥ Like';
   const cs = data.comments || [];
   $('lbCmts').innerHTML = cs.length ? cs.map(c =>
-    '<div class="cmt">'+avHtml(c.author||'@?','sm')+
-      '<div class="b"><div class="who">'+esc(c.author||'')+'</div>'+esc(c.body||c.text||'')+'</div>'+
+    '<div class="cmt">'+avHtml(nameOf(c),'sm')+
+      '<div class="b"><div class="who">'+esc(nameOf(c))+'</div>'+esc(c.body||c.text||'')+'</div>'+
     '</div>').join('')
     : '<div class="sub">No comments yet — say something first.</div>';
 }
@@ -1359,7 +1358,7 @@ $('lbTip').onclick = async () => {
   const { status, data } = await api('/api/studio/job/'+encodeURIComponent(state.cur.id)+'/tip', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ idempotency_key: 'g_'+state.cur.id+'_'+Date.now() }) });
-  if (data && data.ok){ toast('Sent 10 tokens to '+state.cur.author+' ✦'); loadSocial(state.cur.id); }
+  if (data && data.ok){ toast('Sent 10 tokens to '+nameOf(state.cur)+' ✦'); loadSocial(state.cur.id); }
   else if (status===402) toast('Not enough tokens to tip.');
   else toast('Tip failed'+((data&&data.error)?': '+data.error:''));
 };
@@ -1402,6 +1401,12 @@ async function openCreator(handle){
   const { data } = await api('/api/studio/gallery?'+p.toString());
   $('cpLoader').style.display='none';
   const items = (data && data.items) || [];
+  /* The profile opens by handle (from the deep link) but reads as the
+     creator's name once their work arrives. */
+  if (items.length){
+    $('cpName').textContent = nameOf(items[0]);
+    avatar($('cpAv'), nameOf(items[0]), 'lg');
+  }
   if (items.length && (items[0].poster||items[0].url))
     $('cpCover').style.backgroundImage = cssUrl(items[0].poster||items[0].url);
   $('cpCount').textContent = items.length+' creation'+(items.length===1?'':'s');
@@ -1461,7 +1466,7 @@ async function buildYou(force){
     tips  += data.tips_total||0;
     const cs = data.comments||[];
     comments += cs.length;
-    cs.forEach(c => events.push({ it, who:c.author||'@?', body:c.body||c.text||'' }));
+    cs.forEach(c => events.push({ it, who:nameOf(c), body:c.body||c.text||'' }));
     if (data.likes_count) events.push({ it, likes:data.likes_count });
   }));
   $('ywLoader').style.display='none';
@@ -1664,7 +1669,7 @@ const PITCHES = [
     shot:'feat_batch.png', cta:'Try Batch', href:'https://missinglink.build/studio.html#batch',
     learn:'/learn.html#batch' },
   { tag:'\u25C6 LORAS', title:'Style adapters, stacked to taste.',
-    desc:'Small add-ons that push a model toward a style, subject, or skill. Stack several and dial each one in.',
+    desc:'Stack the built-ins, or load any LoRA from Civitai. Older ones still excel at fine detail and focused fixes.',
     shot:'feat_loras.png', cta:'Browse LoRAs', href:'/gallery.html#models',
     learn:'/learn.html#loras' },
   { tag:'\u2318 SEQUENCES', title:'Continue the story, shot by shot.',
@@ -1713,7 +1718,6 @@ function paintHero(i, instant){
   const p = PITCHES[heroIx];
   const el = $('hero');
   el.style.display = 'block';
-  el.style.setProperty('--slide-ms', SLIDE_MS + 'ms');
 
   /* Image: paint into the hidden layer, then swap which one is visible. */
   const layers = el.querySelectorAll('.hl');
@@ -1727,8 +1731,8 @@ function paintHero(i, instant){
   layers[next].classList.add('on');
   heroLayer = next;
 
-  /* Text: swap at the midpoint of its own fade so the change reads as
-     deliberate rather than as a flicker. */
+  /* Text changes immediately — only the screenshot dissolves. Fading
+     the copy out and back in read as a blink at this cadence. */
   const apply = function(){
     $('heroTag').textContent = p.tag;
     $('heroTitle').textContent = p.title;
@@ -1750,11 +1754,8 @@ function paintHero(i, instant){
       d.onclick = go;
       d.onkeydown = function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } };
     });
-    el.classList.remove('fade');
   };
-  if (instant) return apply();
-  el.classList.add('fade');
-  setTimeout(apply, 190);
+  apply();
 }
 function restartHero(){
   if (heroManual || heroOff) return;
