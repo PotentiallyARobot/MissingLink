@@ -1516,7 +1516,11 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     <div class="float" id="historyPanel" data-float="history">
       <div class="float-head float-drag" id="historyHandle" data-float="history">
         <span class="float-grip">&#8942;&#8942;</span>
-        <span class="float-title"><span class="icon">&#9638;</span> History <span class="q-count" id="hCount">0</span></span>
+        <!-- No count here: the ALL/VIDEO/IMAGES tabs directly below already
+             carry counts, and a second total in the title bar just
+             disagreed with them at a glance. hCount is kept as a hidden
+             span so renderHistory() has something to write to. -->
+        <span class="float-title"><span class="icon">&#9638;</span> History<span id="hCount" style="display:none"></span></span>
         <div class="float-btns"><button class="float-min" onclick="event.stopPropagation();openHistoryModal()" title="Open the full history">&#9974;</button><button class="float-min" onclick="toggleMin(event,'historyPanel')" title="Minimize">&ndash;</button></div>
       </div>
       <div class="float-inner">
@@ -6838,35 +6842,52 @@ async function pollConsole(){
 
 /* ── restore queue + history from the server after a page reload ── */
 async function restoreJobs(){
+  let j;
   try{
-    const j=await(await fetch("/api/videostudio/jobs")).json();
-    (j.jobs||[]).forEach(it=>{
-      if(it.status==="done"&&it.has_result){
-        if(!doneIds.has(it.id)){
-          doneIds.add(it.id);
-          // Use the Worker's real field names. This block previously read
-          // has_result/thumb/ts, none of which /jobs returned, so after a
-          // refresh the history came back empty even though the clips
-          // were all still there.
-          history.unshift({id:it.id,prompt:it.prompt||"clip",
-            thumb:it.poster_url||"",url:it.video_url||null,
-            ts:(it.finished_at||it.created_at||0)*1000});
-          // Restore the last frame as an image too, so a reload doesn't
-          // lose the thing you continue the next clip from.
-          if(it.last_frame_url)
-            _addImageToHistory(it.last_frame_url,
-              "Last frame \u2014 "+(it.prompt||"clip"));
-        }
-      }else if(it.status==="queued"||it.status==="running"
-        ||it.status==="cancelling"){
-        if(!queue.some(q=>q.id===it.id))
-          queue.unshift({id:it.id,prompt:it.prompt||"clip",
-            thumb:it.poster_url||"",
-            status:it.status,progress:it.progress||0,stage:it.stage||""});
-      }
-    });
-    renderQueue();renderHistory();
-  }catch(e){}
+    const r=await fetch("/api/videostudio/jobs");
+    j=await r.json();
+    if(!j||!j.ok){
+      // This used to be a bare catch that swallowed everything, so a 401
+      // or a stale Worker looked identical to "you have no history".
+      if(r.status===401)return;          // signed out: nothing to restore
+      toast("Couldn't load your history: "+((j&&j.error)||r.status),true);
+      return;
+    }
+  }catch(e){toast("Couldn't load your history: "+e,true);return;}
+
+  // /jobs comes back newest-first. unshift()-ing each one in that order
+  // reversed it, so the oldest clip ended up at the top of History and
+  // the newest at the bottom. Collect in order, then prepend once.
+  const add=[];
+  (j.jobs||[]).forEach(it=>{
+    if(it.status==="done"&&it.has_result){
+      if(doneIds.has(it.id))return;
+      doneIds.add(it.id);
+      add.push({id:it.id,prompt:it.prompt||"clip",
+        thumb:it.poster_url||"",url:it.video_url||null,
+        ts:(it.finished_at||it.created_at||0)*1000});
+      // The clip's last frame, so a reload doesn't lose the thing you
+      // continue the next clip from.
+      if(it.last_frame_url&&!history.some(x=>x.url===it.last_frame_url))
+        add.push({id:"lf_"+it.id,kind:"image",
+          prompt:"Last frame \u2014 "+(it.prompt||"clip"),
+          thumb:it.last_frame_url,url:it.last_frame_url,
+          ts:(it.finished_at||it.created_at||0)*1000});
+    }else if(it.status==="queued"||it.status==="running"
+      ||it.status==="cancelling"){
+      if(!queue.some(q=>q.id===it.id))
+        queue.unshift({id:it.id,prompt:it.prompt||"clip",
+          thumb:it.poster_url||"",
+          status:it.status,progress:it.progress||0,stage:it.stage||""});
+    }
+  });
+  if(add.length)history.unshift(...add);
+  renderQueue();renderHistory();
+
+  // The Worker caps /jobs at 60 rows. Say so rather than let the list
+  // just stop — "where did my older clips go" is the obvious next question.
+  if((j.jobs||[]).length>=60)
+    console.log("[history] showing the 60 most recent jobs");
 }
 
 updateDur();
