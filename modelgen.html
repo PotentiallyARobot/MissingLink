@@ -267,6 +267,10 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
   background-position:calc(100% - 12px) 52%, calc(100% - 8px) 52%;
   background-size:4px 4px, 4px 4px;background-repeat:no-repeat}
 .tt-panel select:focus{outline:none;border-color:var(--gold)}
+.tt-panel input[type=text]{width:100%;background:var(--surface-2);color:var(--text);
+  border:1px solid var(--border);border-radius:4px;padding:6px;
+  font-family:var(--font-mono);font-size:10px}
+.tt-panel input[type=text]:focus{outline:none;border-color:var(--gold)}
 /* Range inputs need explicit styling per-engine or they render as the
    OS default (bright blue on Windows Chrome). */
 .tt-panel input[type=range]{width:100%;height:3px;-webkit-appearance:none;appearance:none;
@@ -375,7 +379,8 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
 .history-item.failed{border-left:3px solid var(--red)}
 
 .history-item .h-thumb-wrap{position:relative;flex:none;width:56px;height:56px}
-.history-item .h-thumb{width:100%;height:100%;border-radius:6px;object-fit:cover;background:var(--surface-3);display:block}
+.history-item .h-thumb-sprite{background-repeat:no-repeat;background-position:0 0;background-color:var(--surface-3)}
+.h-thumb{width:100%;height:100%;border-radius:6px;object-fit:cover;background:var(--surface-3);display:block}
 .history-item .h-thumb-empty{display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:6px;background:var(--surface-3);font-size:20px;color:var(--text-muted)}
 .history-item .h-vid-badge{position:absolute;bottom:3px;left:3px;font-size:10px;line-height:1;
   background:rgba(9,9,11,.85);border-radius:3px;padding:2px 3px}
@@ -2361,6 +2366,7 @@ function showGlbViewer(glbUrl){
         <button class="tb-btn" id="glbBgBtn" title="Show environment as backdrop" onclick="_glbViewer && _glbViewer.toggleEnvBackground()">BG</button>
         <button class="tb-btn" id="glbRecBtn" title="Record a 360° turntable video" onclick="_glbViewer && _glbViewer.showTurntableOptions()">VID</button>
         <button class="tb-btn" id="glbPbrBtn" title="Render on the GPU with TRELLIS's own PBR renderer" onclick="showPbrRenderOptions()">PBR VID</button>
+        <button class="tb-btn" title="Capture this view to your Studio history or the gallery" onclick="showCaptureDialog()">SNAP</button>
         <button class="tb-btn" title="View texture maps" onclick="_glbViewer && _glbViewer.showTextures()">MAPS</button>
       </div>
     </div>
@@ -3078,6 +3084,53 @@ async function initThreeViewer(glbUrl){
     document.getElementById('ttGo').onclick = () => { el.remove(); recordTurntable(); };
   }
 
+  // ── Still capture → Studio ───────────────────────────────
+  // Grabs the current framing off the WebGL canvas and pushes it into
+  // Studio's image pipeline, so a model render becomes an editable
+  // image: upload → save-output (history row) → optional /share
+  // (community gallery). Same two-step Studio itself uses for its 360°
+  // "use view as input" capture.
+  async function captureStill(opts = {}){
+    if (!modelGroup) { toast('Nothing to capture yet', 'error'); return null; }
+    const longEdge = opts.size || 1536;
+
+    // Render at capture resolution, read the pixels, restore. The read
+    // MUST happen in the same synchronous block as the render: without
+    // preserveDrawingBuffer the drawing buffer is cleared as soon as the
+    // browser composites, and toBlob would hand back a blank image.
+    // (preserveDrawingBuffer:true would also work but costs a copy on
+    // every frame, and this viewer renders on demand.)
+    const prevW = container.clientWidth, prevH = container.clientHeight;
+    const prevPR = renderer.getPixelRatio();
+    const aspect = prevW / prevH;
+    const [cw, ch] = aspect >= 1
+      ? [longEdge, Math.round(longEdge / aspect)]
+      : [Math.round(longEdge * aspect), longEdge];
+
+    let blob;
+    try {
+      renderer.setPixelRatio(1);
+      renderer.setSize(cw, ch, false);
+      camera.aspect = cw / ch;
+      camera.updateProjectionMatrix();
+      // Full PBR for the capture even if a proxy mode is active — the
+      // point is a presentable image, not the interaction preview.
+      const restoreMode = currentMode;
+      if (pbrMeshes.length > 0) applyMode('pbr');
+      renderer.render(scene, camera);
+      blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      if (restoreMode !== 'pbr') applyMode(restoreMode);
+    } finally {
+      renderer.setPixelRatio(prevPR);
+      renderer.setSize(prevW, prevH, false);
+      camera.aspect = aspect;
+      camera.updateProjectionMatrix();
+      _invalidate();
+    }
+    if (!blob) { toast('Capture failed — canvas returned no data', 'error'); return null; }
+    return { blob, w: cw, h: ch };
+  }
+
   // ── Turntable video capture ──────────────────────────────
   // Records straight off the live WebGL canvas via captureStream, so the
   // output matches the viewport exactly — same HDRI, same tone mapping,
@@ -3314,6 +3367,7 @@ async function initThreeViewer(glbUrl){
     pickCustomEnv,
     recordTurntable,
     showTurntableOptions,
+    captureStill,
     resetCamera,
     zoomIn,
     zoomOut,
@@ -3790,6 +3844,130 @@ window.showRenderResult = function showRenderResult(url, jobId){
     </div>
   `;
   host.appendChild(el);
+};
+
+// ────────────────────────────────────────────────────────────
+// Capture → Studio (history + optional gallery share)
+// ────────────────────────────────────────────────────────────
+// Studio and modelgen share an origin and an auth cookie, so a captured
+// render can be pushed straight into Studio's image pipeline. Two steps,
+// mirroring what Studio does for its own 360° capture:
+//   1. POST /api/studio/upload      (multipart 'image')  → { id }
+//   2. POST /api/studio/save-output { upload_id, ... }   → { id, url }
+// Step 2 is what creates the Studio history row; without it the upload
+// is an orphan blob the user can't find.
+//
+// Sharing to the community gallery is a separate, explicit third call
+// against the row from step 2 — publishing should never be a side effect
+// of saving.
+async function pushCaptureToStudio(blob, meta, { share = false, title = '' } = {}){
+  const fd = new FormData();
+  fd.append('image', blob, `modelgen_${(meta.jobId || 'render').slice(0, 8)}.png`);
+  const up = await fetch('/api/studio/upload', {
+    method: 'POST', body: fd, credentials: 'include',
+  });
+  const ud = await up.json().catch(() => ({}));
+  // Studio's uploader returns an error CODE for moderation blocks rather
+  // than an HTTP error, so check for the id explicitly.
+  if (!ud || !ud.id) {
+    throw new Error(ud && (ud.message || ud.error) || 'upload rejected');
+  }
+
+  const sr = await fetch('/api/studio/save-output', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      upload_id: ud.id,
+      mode: 'image',
+      prompt: title || `3D render — ${(meta.jobId || '').slice(0, 8)}`,
+      w: meta.w, h: meta.h,
+    }),
+  });
+  const sd = await sr.json().catch(() => ({}));
+  if (!sd || !sd.ok || !sd.id) {
+    throw new Error((sd && sd.error) || 'could not save to history');
+  }
+
+  if (share) {
+    const shr = await fetch(`/api/studio/job/${encodeURIComponent(sd.id)}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        title: title || null,
+        caption: null, description: null,
+        tags: ['3d', 'modelgen'],
+        links: null, orientation: null, include_inputs: false,
+      }),
+    });
+    const shd = await shr.json().catch(() => ({}));
+    // A failed share is not a failed capture — the image is already in
+    // history and can be shared from Studio.
+    if (!shd || !shd.ok) {
+      return { id: sd.id, url: sd.url, shared: false,
+               shareError: (shd && shd.error) || 'unknown' };
+    }
+  }
+  return { id: sd.id, url: sd.url, shared: share };
+}
+
+window.showCaptureDialog = function showCaptureDialog(){
+  if (!STATE.user) { toast('Sign in to save captures', 'error'); return; }
+  if (!_glbViewer || !_glbViewer.captureStill) { toast('No model loaded', 'error'); return; }
+  const existing = document.getElementById('capPanel');
+  if (existing) { existing.remove(); return; }
+  const host = document.getElementById('glbViewer') || document.getElementById('mainViewport');
+  const el = document.createElement('div');
+  el.className = 'tt-panel';
+  el.id = 'capPanel';
+  el.innerHTML = `
+    <div class="tt-title"><span>Capture render</span>
+      <button class="tt-close" onclick="document.getElementById('capPanel').remove()">×</button></div>
+    <label class="wide">Title
+      <input type="text" id="capTitle" placeholder="Optional"
+             style="width:100%;background:var(--surface-2);color:var(--text);
+                    border:1px solid var(--border);border-radius:4px;padding:6px;
+                    font-family:var(--font-mono);font-size:10px"></label>
+    <label>Resolution
+      <select id="capSize">
+        <option value="1024">1024px</option>
+        <option value="1536" selected>1536px</option>
+        <option value="2048">2048px</option>
+      </select></label>
+    <label>Destination
+      <select id="capDest">
+        <option value="history" selected>My history</option>
+        <option value="gallery">History + gallery</option>
+      </select></label>
+    <div class="tt-note" style="display:block">Captures the current camera framing at full PBR.</div>
+    <div class="tt-actions"><button class="tb-btn primary" id="capGo">Capture</button></div>
+  `;
+  host.appendChild(el);
+
+  document.getElementById('capGo').onclick = async () => {
+    const btn = document.getElementById('capGo');
+    const size = +document.getElementById('capSize').value;
+    const share = document.getElementById('capDest').value === 'gallery';
+    const title = document.getElementById('capTitle').value.trim();
+    btn.disabled = true; btn.textContent = 'Capturing…';
+    try {
+      const shot = await _glbViewer.captureStill({ size });
+      if (!shot) { btn.disabled = false; btn.textContent = 'Capture'; return; }
+      btn.textContent = 'Uploading…';
+      const res = await pushCaptureToStudio(shot.blob, {
+        w: shot.w, h: shot.h, jobId: STATE.currentJobId,
+      }, { share, title });
+      el.remove();
+      if (share && res.shared) toast('Saved and shared to the gallery', 'success');
+      else if (share) toast(`Saved to history — share failed (${res.shareError})`, 'error');
+      else toast('Saved to your Studio history', 'success');
+    } catch (e) {
+      console.error('[capture]', e);
+      toast('Capture failed: ' + e.message, 'error');
+      btn.disabled = false; btn.textContent = 'Capture';
+    }
+  };
 };
 
 // ────────────────────────────────────────────────────────────
@@ -4319,9 +4497,26 @@ function renderHistory(){
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
 
-    const thumb = j.thumb_url
-      ? `<img class="h-thumb" src="${j.thumb_url}" alt="" onerror="this.outerHTML='<div class=&quot;h-thumb-empty&quot;>?</div>'">`
-      : `<div class="h-thumb-empty">?</div>`;
+    // Prefer a frame of the generated turntable atlas over the input
+    // image. History is a record of what came OUT, and the input thumb
+    // was showing "?" anyway — its R2 object doesn't necessarily outlive
+    // the job. The atlas is one sheet of cols x rows frames, so showing
+    // frame 0 is just a background crop: no extra request, no backend
+    // change, and it is a real render of the finished model.
+    let thumb;
+    const sm = j.sprite_meta;
+    if (j.preview_url && sm && sm.cols > 0 && sm.rows > 0) {
+      // Scale the sheet so one frame fills the box: N frames across
+      // means N x 100% background width.
+      const bw = sm.cols * 100, bh = sm.rows * 100;
+      thumb = `<div class="h-thumb h-thumb-sprite" role="img" aria-label="Generated model"
+        style="background-image:url('${j.preview_url}');background-size:${bw}% ${bh}%"></div>`;
+    } else if (j.thumb_url) {
+      thumb = `<img class="h-thumb" src="${j.thumb_url}" alt=""
+        onerror="this.outerHTML='<div class=&quot;h-thumb-empty&quot;>—</div>'">`;
+    } else {
+      thumb = `<div class="h-thumb-empty">—</div>`;
+    }
 
     // The "6×" badge in the reference shows view count; for us, the most
     // analogous thing is the gen's vertex target as a quick label.
