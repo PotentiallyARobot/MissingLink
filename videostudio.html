@@ -258,6 +258,40 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);
   .hdr-back span{font-size:13px}
 }
 
+
+/* ── Dialogue rows in the left rail ────────────────────────────────────
+   .cd-row was built for the 680px clip modal: speaker select fixed at
+   130px, textarea flex:1 beside it. In a ~300px rail that leaves the
+   textarea a narrow column, so any real line wraps into a tall thin
+   ribbon — which is exactly what "not working for the amount of dialog"
+   looks like.
+
+   In the rail the row stacks instead: speaker full width, text full
+   width beneath it, actions on their own line. Same markup, same JS —
+   only the arrangement changes. */
+#dlgLeftSec .cd-row{
+  display:grid;
+  grid-template-columns:1fr auto auto;
+  grid-template-areas:"spk ai x" "txt txt txt";
+  gap:6px;align-items:center;
+  background:var(--surface-2);border:1px solid var(--border);
+  border-radius:8px;padding:8px;margin-bottom:8px;
+}
+#dlgLeftSec .cd-row .dlg-spk{grid-area:spk;flex:1 1 auto;width:100%;min-width:0}
+#dlgLeftSec .cd-row .cd-ai{grid-area:ai;margin:0}
+#dlgLeftSec .cd-row .lora-x{grid-area:x;margin:0;font-size:16px;padding:0 4px}
+#dlgLeftSec .cd-row textarea{
+  grid-area:txt;width:100%;min-width:0;box-sizing:border-box;
+  min-height:58px;max-height:200px;resize:vertical;
+  font-size:13px;line-height:1.45;padding:8px 10px;
+}
+/* The empty state shouldn't look like a broken row. */
+#dlgLeftSec .clip-empty{padding:10px 2px;text-align:left}
+@media (max-width:900px){
+  /* 16px stops iOS zooming the page when a line is focused. */
+  #dlgLeftSec .cd-row textarea{font-size:16px}
+}
+
 /* ── Account chip + dropdown ───────────────────────────────────────────
    Lifted from studio.html so the two apps read as one product. The chip
    lives at the far right of the header because that is where people look
@@ -5154,7 +5188,12 @@ function renderClipModalDialog(){
     };
     const ta=document.createElement("textarea");
     ta.value=l.text;ta.placeholder="What they say in this clip\u2026";
-    ta.oninput=()=>{l.text=ta.value;_autoRecalcClipLen(c);renderClipModalLen();};
+    // Grow to fit the line rather than making the user drag the handle;
+    // capped so a monologue can't push Generate off the bottom of the rail.
+    const _fit=()=>{ta.style.height="auto";
+      ta.style.height=Math.min(200,Math.max(58,ta.scrollHeight))+"px";};
+    ta.oninput=()=>{l.text=ta.value;_fit();_autoRecalcClipLen(c);renderClipModalLen();};
+    requestAnimationFrame(_fit);
     // Per-line ✨ auto-write: fill THIS line (for its chosen speaker) from
     // the story so far. Useful after manually adding an empty line.
     const ai=document.createElement("button");ai.className="cd-ai";
