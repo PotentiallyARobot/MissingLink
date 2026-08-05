@@ -5597,6 +5597,35 @@ async function autoPromptForClip(c,opts){
     // dialogue can't disagree about line count or tone.
     let instr=(autoCfg.instructions||"").trim();
     instr=(instr?instr+"\n\n":"")+_dlgInstructions();
+
+    /* Tell the model how long the clip is. Without this it writes to no
+       particular duration and the dialogue either overruns the shot or
+       leaves it half empty — and when length is on auto, the lines it
+       writes then move the target, so the two chase each other.
+
+       Two different instructions depending on who is in charge:
+         auto   — length follows the writing, so just keep it sane.
+         manual — the duration is fixed, so the writing must fit it. */
+    const _auto=$("autoLen"), _isAuto=!_auto||_auto.checked;
+    const _secs=_clipSeconds();
+    if(_isAuto){
+      instr+="\n\nThis is a single continuous shot of roughly "
+        +_secs.toFixed(1)+" seconds. Write for about that long; a little "
+        +"either way is fine.";
+    }else{
+      instr+="\n\nHARD CONSTRAINT: this shot is EXACTLY "+_secs.toFixed(1)
+        +" seconds long and cannot be extended. All dialogue must be "
+        +"comfortably speakable within that, at a natural pace, with a "
+        +"beat of silence at each end. Cut or shorten lines to fit rather "
+        +"than writing lines that would be rushed or clipped.";
+    }
+    // The rest of the user's configuration, so the writing matches the
+    // render it will actually get.
+    const _q=($("profile")&&$("profile").value)||"480P";
+    const _fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
+    instr+="\n\nTechnical context: "+_q+" at "+_fps+" fps"
+      +(currentEngine==="ltx"?"" : ", Wan image-to-video")
+      +". One continuous take \u2014 no cuts, no scene changes.";
     if(opts.dialogueOnly){
       instr+="\n\nDo NOT rewrite the scene. Return the scene text you were "
         +"given unchanged, and focus entirely on the speakers and their lines.";
