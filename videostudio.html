@@ -3773,6 +3773,21 @@ function clipPlan(){
     const lines=dialog.filter(l=>(l.clip||1)===c&&(l.text||"").trim());
     const words=lines.reduce((s,l)=>s+l.text.trim().split(/\s+/).length,0);
     let auto=_clipAutoFrames(words,fps);
+    /* A duration the model suggested for this shot. It knows the pacing it
+       actually wrote for; the word-count heuristic only counts words and
+       has nothing to say about a silent shot at all.
+
+       With dialogue we take the LONGER of the two, so a short suggestion
+       can never clip lines mid-sentence. With no dialogue the suggestion
+       stands alone — it is the only real signal available.
+
+       This feeds `auto`, which clipFrameOverrides[c] overrides below, so a
+       length the user typed always wins. */
+    const _sug=Number(clipAutoSeconds[c])||0;
+    if(_sug>0){
+      const _sf=Math.max(9,Math.round((Math.round(_sug*fps)-1)/8)*8+1);
+      auto=lines.length?Math.max(auto,_sf):_sf;
+    }
     // v2v: the length comes from the CONTROL VIDEO, not the dialogue.
     if(clipControlVideos[c]&&clipControlDur[c]){
       let f=Math.round(clipControlDur[c]*fps);
@@ -3790,6 +3805,10 @@ function clipPlan(){
   return plan;
 }
 let clipFrameOverrides={};   // {clipNumber: frames} — user length edits
+/* {clipNumber: seconds} — a duration the MODEL suggested for that clip
+   (auto prompt / auto-write). Always outranked by clipFrameOverrides, so a
+   suggestion can never overwrite a length the user set by hand. */
+let clipAutoSeconds={};
 let clipPromptOverrides={};  // {clipNumber: sceneText} — per-clip scene edits
 let clipStartImages={};      // {clipNumber: dataURL} — start frame per clip (Auto Next Scene / manual)
 let clipEndImages={};        // {clipNumber: dataURL} — optional END frame per clip (LTX lands on it)
@@ -5275,7 +5294,11 @@ function renderClipModalLen(){
   const overridden=clipFrameOverrides[c]!==undefined;
   $("clipLenReset").style.display=overridden?"inline-block":"none";
   const auto=pl?pl.auto:_clipAutoFrames(0,fps);
-  const _src=(clipControlVideos[c]&&clipControlDur[c])?"control video":"dialogue";
+  const _src=(clipControlVideos[c]&&clipControlDur[c])?"control video"
+    :(Number(clipAutoSeconds[c])>0
+        ?(dialog.some(l=>(l.clip||1)===c&&(l.text||"").trim())
+            ?"scene + dialogue":"the scene")
+        :"dialogue");
   $("clipLenHint").textContent="auto from "+_src+" \u2248 "+(auto/fps).toFixed(1)+"s"
     +(overridden?" (overridden)":"");
 }
@@ -5798,6 +5821,11 @@ async function autoPromptForClip(c,opts){
        clipPlan() derives it from the new dialogue's word count. Nothing
        needs to be deleted for that to happen. */
     if(_committedClips<c)_committedClips=c;   // scene-only writes still render
+    /* Same suggestion mechanism as the top-level Auto Prompt, scoped to
+       this clip. Cleared when the model returns nothing usable, so a stale
+       suggestion from an earlier write can't linger. */
+    const _sugC=Number(j.seconds)||0;
+    if(_sugC>0)clipAutoSeconds[c]=_sugC; else delete clipAutoSeconds[c];
     renderSpeakers();renderDialog();
     // New dialogue changes the derived length; refresh the readout and,
     // while auto is on, the slider with it.
@@ -5820,8 +5848,14 @@ async function autoPrompt(){
   try{
     const r=await fetch("/api/videostudio/autoprompt",{method:"POST",
       headers:{"Content-Type":"application/json"},
+      /* _dlgInstructions() carries the Lines/Delivery selectors AND the
+         "decide the cast from the image" guidance. Only the clip-scoped
+         auto-write was sending it, so the top-level Auto Prompt — the
+         button most people press first — asked for a scene with no
+         guidance on how many people should speak. */
       body:JSON.stringify({image:imgData,engine:currentEngine,
-        instructions:(autoCfg.instructions||"").trim(),
+        instructions:((autoCfg.instructions||"").trim()
+          +"\n\n"+_dlgInstructions()).trim(),
         context:(autoCfg.context||"").trim()})});
     const j=await r.json();
     if(!j.ok){toast(j.error||"Auto prompt failed.",true);}
@@ -5839,7 +5873,20 @@ async function autoPrompt(){
         .filter(l=>l&&(l.text||"").trim()).map(l=>({
           speaker:(l.speaker||((speakers[0]||{}).name)||"SPEAKER").toUpperCase(),
           text:String(l.text).trim(),clip:(parseInt(l.clip,10)||1)}));
-      clipFrameOverrides={};   // fresh auto lengths for the new dialogue
+      /* Was: `clipFrameOverrides={}` — a blanket wipe that threw away every
+         length the user had pinned. A pinned length is an explicit choice
+         and has to survive a re-write; only drop pins for clips that no
+         longer exist after it. Clips without a pin re-estimate on their own
+         from the new dialogue and the model's suggested duration. */
+      const _live=new Set(dialog.map(l=>l.clip||1));
+      if(!_live.size)_live.add(1);
+      Object.keys(clipFrameOverrides).forEach(k=>{
+        if(!_live.has(parseInt(k,10)))delete clipFrameOverrides[k];
+      });
+      // Record the model's suggested duration for each clip it just wrote.
+      clipAutoSeconds={};
+      const _sugS=Number(j.seconds)||0;
+      if(_sugS>0)_live.forEach(cn=>{clipAutoSeconds[cn]=_sugS;});
       clipPromptOverrides={};  // scenes revert to the fresh base prompt
       // Any line naming a speaker not in the roster gets one added, so a
       // 3-speaker scene works even if only 2 were listed in "speakers".
