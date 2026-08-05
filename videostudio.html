@@ -3708,9 +3708,21 @@ function _ltxMaxFrames(fps){
 let _committedClips=0;   // how many clips have been added to the timeline
 function clipPlan(){
   const fps=parseInt($("fpsV").value,10)||24;
-  if(!_committedClips) return [];      // nothing committed yet
+  /* Was: `if(!_committedClips) return [];`
+
+     _committedClips is a leftover of the removed timeline. addDlgLine()
+     pushes a dialogue line but never increments it — only
+     addClipNewScene() does — so adding dialogue left the plan empty,
+     buildLtxClips() returned [], and every line was dropped before it
+     could reach the prompt. (_syncGenerateEnabled already carries the
+     same note: "nothing increments that counter any more.")
+
+     Dialogue now counts as a committed clip in its own right. The seed
+     of the reduce is 0, not 1: with no clips AND no dialogue the plan
+     must still come back empty, which the guard below relies on. */
   const maxClip=Math.max(_committedClips,
-    dialog.reduce((m,l)=>Math.max(m,l.clip||1),1));
+    dialog.reduce((m,l)=>Math.max(m,l.clip||1),0));
+  if(!maxClip) return [];      // genuinely nothing to render
   const plan=[];
   for(let c=1;c<=maxClip;c++){
     const lines=dialog.filter(l=>(l.clip||1)===c&&(l.text||"").trim());
@@ -5473,7 +5485,8 @@ function buildLtxClips(){
         });
     }
     const cv=clipControlVideos[pl.clip]||null;
-    return {prompt:out,frames:pl.frames,frames_overridden:!!pl.overridden,
+    return {prompt:out,scene:(clipSceneText(pl.clip)||"").trim(),
+            frames:pl.frames,frames_overridden:!!pl.overridden,
             start_image:(clipStartImages[pl.clip]||null),
             end_image:(clipEndImages[pl.clip]||null),
             control_split:(clipControlSplit[pl.clip]||null),
@@ -6307,7 +6320,7 @@ async function _submitJobs(payload,prompt,thumb){
           prompt:cl.prompt||prompt,
           image_r2_key:key, end_image_r2_key:endKey||"",
           frames:cl.frames||payload.frames||_clipFrames(),
-        }),cl.prompt||prompt,cl.start_image||thumb);
+        }),cl.scene||prompt,cl.start_image||thumb);
         if(id)queued++; else break;   // stop the batch on a hard failure
       }
       if(queued)toast("Queued "+queued+" clip"+(queued>1?"s":"")+".");
@@ -6315,8 +6328,18 @@ async function _submitJobs(payload,prompt,thumb){
       const key=await _uploadImage(payload.image);
       if(!key){toast("Add a starting image first.",true);return;}
       const endKey=payload.last_image?await _uploadImage(payload.last_image):"";  // staged LAST frame
+      /* payload.prompt is the BUILT prompt — scene header, character
+         block, dialogue storyboard and the audio rule. `prompt` is the
+         raw textarea. Submitting the raw one discarded every dialogue
+         line AND shipped the no-dialogue audio rule, which explicitly
+         instructs the model "NO dialogue" — so the clip came back
+         silent even when the lines were there.
+
+         Body gets the built prompt; the history card keeps the short
+         readable scene text as its label. */
       const id=await _submitOne(Object.assign({},common,{
-        prompt:prompt, image_r2_key:key, end_image_r2_key:endKey||"",
+        prompt:payload.prompt||prompt, image_r2_key:key,
+        end_image_r2_key:endKey||"",
         frames:payload.frames||_clipFrames(),
       }),prompt,thumb);
       if(id)toast("Queued for generation.");
