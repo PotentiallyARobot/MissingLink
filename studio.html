@@ -7277,6 +7277,71 @@ let _historyReqId = 0;
 // instead of leaving the previous user's items up for the duration of
 // the fetch.
 let _historyUserId = null;
+
+// ── Stage ownership ─────────────────────────────────────────────
+// The "stage" (camera input, edit slots, Create refs, SDXL setup) is
+// persisted to localStorage so a refresh doesn't wipe the user's work.
+// Those keys were browser-global and NOT scoped to an account, and
+// restorePersistedInputs() replayed them on DOMContentLoaded with no
+// auth check — so on a shared browser the next person to sign in
+// inherited the previous user's stage, complete with their image URLs.
+//
+// doLogout() cleared two of the keys, but only on an explicit sign-out
+// click: it never ran when the session cookie expired, when the tab was
+// just closed, or when a second account signed in over the first.
+//
+// Fix: stamp the stage with its owner and verify on restore.
+const _STAGE_KEYS = [
+    'studio_input',
+    'studio_slots',
+    'studio_generate_state',
+    'sdxl_studio_state_v1',
+    'pendingRemix',
+    'studio_stage_view',
+];
+const _STAGE_OWNER_KEY = 'studio_stage_owner';
+// Set once the stage has been reconciled against the resolved identity,
+// so later checkAuth() polls don't replay a stale snapshot over live work.
+let _stageRestored = false;
+
+function stageOwnerId(){
+    return (_user && _user.id) ? String(_user.id) : 'anon';
+}
+function clearStagePersistence(){
+    for (const k of _STAGE_KEYS) { try { localStorage.removeItem(k); } catch (e) {} }
+    try { localStorage.removeItem(_STAGE_OWNER_KEY); } catch (e) {}
+}
+function markStageOwner(){
+    try { localStorage.setItem(_STAGE_OWNER_KEY, stageOwnerId()); } catch (e) {}
+}
+// True when the persisted stage belongs to somebody else. An ABSENT
+// stamp is treated as foreign: storage written before this check existed
+// has unknown provenance, and silently adopting it is the exact failure
+// we're closing.
+function stageIsForeign(){
+    let owner = null;
+    try { owner = localStorage.getItem(_STAGE_OWNER_KEY); } catch (e) {}
+    return owner !== stageOwnerId();
+}
+// Wipe the in-memory stage as well as storage. Used when an account
+// change is detected mid-session (another tab signed in/out).
+function resetStageForAccountChange(){
+    clearStagePersistence();
+    try { if (typeof clearInput === 'function') clearInput(); } catch (e) {}
+    try {
+        for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
+    } catch (e) {}
+    try {
+        if (typeof _generateRefs !== 'undefined' && Array.isArray(_generateRefs)) {
+            for (let i = 0; i < _generateRefs.length; i++) {
+                _generateRefs[i] = null;
+                if (typeof renderGenSlot === 'function') renderGenSlot(i);
+            }
+            if (typeof genUpdateCounter === 'function') genUpdateCounter();
+        }
+    } catch (e) {}
+    try { if (typeof updateGenButton === 'function') updateGenButton(); } catch (e) {}
+}
 let _historyTotal = 0;
 // Group cursor: how many history GROUPS (batches + singles) we've fetched so
 // far. The server pages history by group, not by raw row, so we can't derive
@@ -7591,7 +7656,34 @@ async function checkAuth(){
             // Preserve any acknowledgement we already knew about before we
             // overwrite _user with the fresh response (see sticky logic below).
             const _prevAgeAck = (_user && _user.age_ack_at) ? _user.age_ack_at : 0;
+            const _prevUserId = (_user && _user.id) ? String(_user.id) : null;
             _user=d;
+            // ── Stage ownership reconciliation ──────────────────────
+            // This is the first point at which the real identity is
+            // known. Three cases:
+            //   • A DIFFERENT account than the one this tab was showing
+            //     (signed in elsewhere, session swapped) → hard reset,
+            //     so no part of the previous user's stage survives.
+            //   • Storage stamped by somebody else (or unstamped) →
+            //     drop it; it isn't ours to display.
+            //   • Ours → replay it now. restorePersistedInputs() ran at
+            //     DOMContentLoaded as 'anon' and deliberately declined,
+            //     so this is where a signed-in user's stage comes back.
+            if (_prevUserId && _prevUserId !== String(d.id)) {
+                resetStageForAccountChange();
+                _stageRestored = true;
+            } else if (stageIsForeign()) {
+                clearStagePersistence();
+                _stageRestored = true;
+            } else if (!_stageRestored) {
+                // Once per page load only. checkAuth() also runs after
+                // every finished job, and re-running the restore there
+                // would clobber whatever the user has since put on the
+                // stage with the snapshot from page load.
+                _stageRestored = true;
+                if (typeof restorePersistedInputs === 'function') restorePersistedInputs();
+                if (typeof restoreGenerateState === 'function') restoreGenerateState();
+            }
             if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
             $('authIn').style.display='flex';
             $('authOut').style.display='none';
@@ -7684,7 +7776,18 @@ async function checkAuth(){
                 // users alike on first visit, then stays dismissed.
             }
         } else {
+            const _wasUserId = (_user && _user.id) ? String(_user.id) : null;
             _user=null;
+            // Session is gone (expired, revoked, or signed out in another
+            // tab). doLogout() never ran in those paths, so the stage was
+            // left on screen and in localStorage for whoever signs in
+            // next. Tear it down here as well.
+            if (_wasUserId) {
+                resetStageForAccountChange();
+            } else if (stageIsForeign()) {
+                clearStagePersistence();
+            }
+            _stageRestored = true;
             $('authIn').style.display='none';
             $('authOut').style.display='block';
             $('userMenuTrigger').style.display='none';
@@ -8251,10 +8354,11 @@ async function doLogout(){
     // Clear any input images — they're tied to the previous user's uploads
     clearInput();
     for (let i = 0; i < 3; i++) { slots[i] = null; renderSlot(i); }
-    try {
-        localStorage.removeItem('studio_input');
-        localStorage.removeItem('studio_slots');
-    } catch (e) {}
+    // Was: removeItem('studio_input') + removeItem('studio_slots') only.
+    // That left studio_generate_state (Create refs), sdxl_studio_state_v1,
+    // pendingRemix and studio_stage_view behind for the next account.
+    resetStageForAccountChange();
+    _stageRestored = true;
     updateGenButton();
     // Re-paint the agent lock veil — anonymous users see the sign-in
     // nudge variant rather than the subscribe variant.
@@ -10411,6 +10515,7 @@ function setInputImage(id,url,w,h){
             if (ph && !$('inpHeight').value) $('inpHeight').value = ph;
             // Persist the now-known dimensions
             try {
+                markStageOwner();
                 localStorage.setItem('studio_input', JSON.stringify({
                     id, url, w: pw || null, h: ph || null,
                 }));
@@ -10420,6 +10525,7 @@ function setInputImage(id,url,w,h){
     }
     // Persist so a page refresh doesn't erase the user's upload
     try {
+        markStageOwner();
         localStorage.setItem('studio_input', JSON.stringify({
             id, url, w: w || null, h: h || null,
         }));
@@ -11228,6 +11334,7 @@ function genGetEffectiveSize(){
 function persistGenerateState(){
     try {
         // Persist only the R2 refs — image bytes stay in R2, no localStorage bloat.
+        markStageOwner();
         localStorage.setItem('studio_generate_state', JSON.stringify({
             refs: _generateRefs,
             model: _generateModel,
@@ -12949,6 +13056,7 @@ function persistSlots(){
             const { _markupThumbUrl, ...rest } = s;
             return rest;
         });
+        markStageOwner();
         localStorage.setItem('studio_slots', JSON.stringify(nonEmpty));
     } catch (e) {}
 }
@@ -17457,6 +17565,7 @@ async function sendBatchInputToCreate(inp, opts){
     // the actual bytes when it isn't. That guarantees the image the user is
     // looking at is what gets sent.
     let _needsReupload = false;
+    let _foreignRef = false;   // id belongs to a DIFFERENT account — never copy it
     if (!inp._reuploaded && inp.url) {
         if (!inp.id) {
             _needsReupload = true;
@@ -17468,8 +17577,30 @@ async function sendBatchInputToCreate(inp, opts){
                     body: JSON.stringify({ ids: [inp.id] }),
                 }, 5000);
                 const od = await oR.json();
-                if (od && od.ok && Array.isArray(od.missing) && od.missing.includes(inp.id)) {
-                    _needsReupload = true;
+                if (od && od.ok) {
+                    // The server now separates "an owned studio_jobs row"
+                    // (history tile / fresh result — safe to re-upload) from
+                    // "foreign" (an id this account does not own at all).
+                    //
+                    // Previously both landed in `missing` and BOTH were
+                    // re-uploaded, which meant a stale id left in localStorage
+                    // by a previous account caused this account to fetch that
+                    // image's bytes and mint its own upload row — copying one
+                    // user's image into another user's library for good.
+                    const ownedJobs = Array.isArray(od.owned_jobs) ? od.owned_jobs : null;
+                    const foreign = Array.isArray(od.foreign) ? od.foreign : null;
+                    if (foreign && foreign.includes(inp.id)) {
+                        _foreignRef = true;
+                    } else if (ownedJobs && ownedJobs.includes(inp.id)) {
+                        _needsReupload = true;
+                    } else if (!ownedJobs && !foreign && Array.isArray(od.missing) && od.missing.includes(inp.id)) {
+                        // Older worker without the split. Fall back to the
+                        // conservative signal rather than the old blanket
+                        // re-upload: only tiles we know came from THIS
+                        // session's history get copied.
+                        _needsReupload = !!inp._fromHistory;
+                        _foreignRef = !_needsReupload;
+                    }
                 }
             } catch (e) {
                 // Ownership check unreachable (network blip / 401). Fall back
@@ -17479,6 +17610,11 @@ async function sendBatchInputToCreate(inp, opts){
                 _needsReupload = !!inp._fromHistory;
             }
         }
+    }
+    if (_foreignRef) {
+        showNotif("That image belongs to a different account and can't be reused here. It's been removed.", 'error');
+        try { clearStagePersistence(); } catch (e) {}
+        return;
     }
     if (_needsReupload) {
         try {
@@ -26403,6 +26539,7 @@ let _sdxlLoras = [];   // [{url, name, scale, base_model?, triggers?}]
 const _SDXL_STATE_KEY = 'sdxl_studio_state_v1';
 function _sdxlSaveState(){
     try {
+        markStageOwner();
         localStorage.setItem(_SDXL_STATE_KEY, JSON.stringify({
             loras: _sdxlLoras,
             baseUrl: (typeof _sdxlSelectedBaseUrl !== 'undefined') ? _sdxlSelectedBaseUrl : '',
@@ -29839,7 +29976,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     initDrop();
     initSlots();
     restorePersistedInputs();
-    restoreGenerateState();
+    // Same ownership gate as restorePersistedInputs: Create's reference
+    // slots are upload ids too, so an unstamped/foreign stage must not
+    // repopulate them before checkAuth() has established who we are.
+    if (!stageIsForeign()) restoreGenerateState();
     // Force the sidebar into Create-mode state on every fresh load.
     // currentMode is initialized to 'generate' at the top of the file
     // and the Create button is the one marked .active in HTML, but the
@@ -30044,6 +30184,20 @@ document.addEventListener('DOMContentLoaded',()=>{
 // uploaded images survive a page refresh. Only references (R2 id + url) are
 // stored locally — the actual image bytes live in R2.
 function restorePersistedInputs(){
+    // OWNERSHIP GATE. Only replay the stage if it was stamped by the
+    // account that is signed in right now. A missing or mismatched stamp
+    // means this storage came from someone else (shared browser, expired
+    // session, account switch) — drop it rather than render their images.
+    //
+    // This runs on DOMContentLoaded, before /auth/me has resolved, so at
+    // this point stageOwnerId() is 'anon'. A signed-in user's stage will
+    // therefore not restore here; checkAuth() calls this again once the
+    // real identity is known. That ordering is deliberate: it fails
+    // closed, showing an empty stage briefly rather than the wrong one.
+    if (stageIsForeign()) {
+        clearStagePersistence();
+        return;
+    }
     try {
         const raw = localStorage.getItem('studio_input');
         if (raw) {
