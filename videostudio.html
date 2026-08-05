@@ -6214,10 +6214,14 @@ async function _submitJobs(payload,prompt,thumb){
       // travels so the wiring is done, and the warning below is what
       // stops it silently doing nothing.
       control_video_url:(controlVideo&&controlVideo.url)||"",
+      control_offset_sec:(controlVideo&&controlVideo.offset)||0,
+      control_kind:"union",
     };
     if(controlVideo){
-      toast("Control video is staged but the video-to-video lane isn\u2019t "
-        +"deployed yet \u2014 this render will ignore it.",true);
+      // Control renders go to their own container (bf16 + IC-LoRA, CPU
+      // streaming), which is slower and cold more often than the i2v lane.
+      toast("Control render \u2014 this uses a separate GPU and takes "
+        +"longer to start.");
     }
     if(clips){
       let queued=0;
@@ -6340,7 +6344,8 @@ function renderHistoryModal(){
 let controlVideo=null;
 function _setControlVideo(item){
   if(!item||!item.url){toast("That clip is no longer available.",true);return;}
-  controlVideo={id:item.id,url:item.url,thumb:item.thumb||"",prompt:item.prompt||""};
+  controlVideo={id:item.id,url:item.url,thumb:item.thumb||"",
+    prompt:item.prompt||"",offset:0};
   renderControlVideo();
   closeHistoryModal();
   toast("Set as control video for the next render.");
@@ -6353,7 +6358,18 @@ function renderControlVideo(){
     +"<video src='"+controlVideo.url+"' muted preload='metadata'></video>"
     +"<span>Control video<br><span style='color:var(--text-muted)'>"
     +esc((controlVideo.prompt||"clip").slice(0,40))+"</span></span>"
-    +"<button onclick='clearControlVideo()' title='Remove'>&times;</button></div>";
+    +"<button onclick='clearControlVideo()' title='Remove'>&times;</button></div>"
+    // Which slice of the control clip to use. Replaces the notebook's
+    // auto-clip: one render takes ONE window equal to the clip length,
+    // starting here — no splitting, no timeline to split against.
+    +"<div class='slider-row' style='margin-top:8px'><span class='sl'>Start at</span>"
+    +"<input type='range' id='ctrlOffset' min='0' max='60' step='0.5' value='"
+    +(controlVideo.offset||0)+"' oninput=\"controlVideo.offset=+this.value;"
+    +"$('ctrlOffsetV').value=(+this.value).toFixed(1)\">"
+    +"<input class='sv' id='ctrlOffsetV' value='"
+    +(controlVideo.offset||0).toFixed(1)+"'></div>"
+    +"<div class='hintline' style='margin-top:4px'>Takes a window equal to "
+    +"the clip length, starting at this point.</div>";
 }
 
 /* ── GPU boot status ───────────────────────────────────────────────────
@@ -6372,6 +6388,12 @@ function _activeLane(){
   // L40S lane.
   return (typeof currentEngine!=="undefined"&&currentEngine==="ltx")?"ltx":"wan";
 }
+/* Mid-render stages reported by the container. Anything not listed falls
+   through to the raw value, which is better than hiding it. */
+const _JOB_STAGE_TXT={
+  claimed:"Starting", loading_control:"Reading the control video",
+  loading_model:"Loading the model", rendering:"Rendering",
+  uploading:"Saving", done:"Done"};
 const _BOOT_STAGE_TXT={
   // 'waking' covers the image pull, during which our code isn't running
   // and nothing can report — so it is inferred from "work queued, no
