@@ -2871,7 +2871,7 @@ function _loraShowAllBtn(hidden){
 async function addLora(){
   const url=$("loraUrl").value.trim();
   if(!url){toast("Paste a LoRA URL first.",true);return;}
-  const b=$("addLoraBtn");b.disabled=true;b.textContent="Downloading...";
+  const b=$("addLoraBtn");b.disabled=true;b.textContent="Adding\u2026";
   try{
     const r=await fetch("/api/videostudio/loras/add",{method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -5839,7 +5839,9 @@ async function loraDetailAdd(){
 
      Now it reports what actually happened. */
   const b=$("loraDetailAdd");
-  if(b){b.disabled=true;b.textContent="\u2026 Downloading";}
+  // Not "Downloading" — this validates the URL and records it against
+  // your account. The file is fetched by the GPU at render time.
+  if(b){b.disabled=true;b.textContent="\u2026 Adding";}
   const ok=await civPickLora(_loraDetailDl);
   if(!b)return;
   b.disabled=!!ok;
@@ -5953,13 +5955,17 @@ async function civPickLora(url){
   const it=(window._civResultMap&&window._civResultMap[url])||{};
   const card=document.querySelector("#civSearchGrid .civ-result[data-url=\""+url+"\"]");
   const btn=card?card.querySelector(".add"):null;
-  if(btn){btn.disabled=true;btn.textContent="Downloading\u2026";}
+  if(btn){btn.disabled=true;btn.textContent="Adding\u2026";}
   try{
     // No fetchT timeout here — Wan LoRAs can be hundreds of MB and the
     // add endpoint blocks until the download + attach finish.
     const r=await fetch("/api/videostudio/loras/add",{method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url:url,name:it.name||"",scale:1.0,engine:currentEngine})});
+      // The Worker derives a name when this is blank, but sending the
+      // Civitai model name gives a far better label.
+      body:JSON.stringify({url:url,name:it.name||it.title||"",
+        scale:1.0,engine:currentEngine,
+        base_model:it.base_model||"",thumb:it.thumb||""})});
     const j=await r.json();
     if(j.ok){
       toast("LoRA added"+((it.triggers||[]).length?" \u2014 trigger words appended to prompt.":"."));
@@ -6162,7 +6168,7 @@ async function _submitOne(body,prompt,thumb){
   // also wakes the lane on submit; this one covers the case where the
   // browser gets there first.
   wakeGpu(_l);
-  pollGpu();
+  pollNow();
   return o.job_id;
 }
 
@@ -6500,6 +6506,7 @@ async function pollGpu(){
     if(wasReady!==(gpuLanes[_activeLane()]||{}).ready)renderQueue();
     else _paintBoot();
     paintConn();
+    _schedulePoll();
   }catch(e){}
 }
 
@@ -7331,9 +7338,34 @@ async function restoreJobs(){
 
 updateDur();
 setEngine("ltx");   // LTX-2.3 is the default engine
-setInterval(pollHw,3000);pollHw();
+/* Adaptive polling. 3s is right while something is happening and wasteful
+   when nothing is — an idle tab was asking the Worker for status twenty
+   times a minute, forever. Fast while a job is queued/running or a lane is
+   booting, slow otherwise, and paused entirely when the tab is hidden.
+   Any user action that could change state kicks it back to fast. */
+let _pollFast=true,_pollTimer=null;
+function _pollBusy(){
+  if(queue.some(q=>q.status==="queued"||q.status==="running"))return true;
+  const L=gpuLanes[_activeLane()]||{};
+  return !!(L.stage||(L.queue_depth||0)>0);
+}
+function _schedulePoll(){
+  const hidden=(typeof document!=="undefined"&&document.hidden);
+  const want=hidden?0:(_pollBusy()?3000:20000);
+  if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}
+  if(want)_pollTimer=setInterval(()=>{pollGpu();pollHw();},want);
+  _pollFast=(want===3000);
+}
+function pollNow(){pollGpu();pollHw();_schedulePoll();}
+if(typeof document!=="undefined")
+  document.addEventListener("visibilitychange",()=>{
+    // Coming back to the tab should show current state immediately, not
+    // after the next slow tick.
+    if(!document.hidden)pollNow(); else _schedulePoll();
+  });
+pollHw();
 _mobileInitSheets();
-setInterval(pollGpu,3000);pollGpu();
+pollGpu();_schedulePoll();
 // Deliberately NOT waking the GPU here. Opening the page is not intent to
 // render, and an L40S spun up by a sign-in bills for its whole idle
 // window whether or not anything is generated. The wake happens on
