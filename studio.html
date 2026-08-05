@@ -7266,6 +7266,17 @@ const _GPU_READY_FRESH_S = 12;
 // Separate from myJobs (which tracks in-flight + ephemeral state) so history
 // survives page reloads and is authoritative per user.
 let _historyItems = [];
+// Monotonic request counter for syncHistory. A response whose id no longer
+// matches is stale (the account changed, or a newer page was requested
+// while it was in flight) and must not repaint. Without this, a slow
+// response from a previous context can land AFTER a newer one and put the
+// wrong account's items on screen.
+let _historyReqId = 0;
+// The user id _historyItems currently belongs to. Compared on every
+// syncHistory call so an account switch clears the array immediately
+// instead of leaving the previous user's items up for the duration of
+// the fetch.
+let _historyUserId = null;
 let _historyTotal = 0;
 // Group cursor: how many history GROUPS (batches + singles) we've fetched so
 // far. The server pages history by group, not by raw row, so we can't derive
@@ -10149,6 +10160,23 @@ let _totalGlobalActive = 0;
 async function syncHistory(opts){
     opts = opts || {};
     if(!_user) return false;
+    const reqId = ++_historyReqId;
+    // ACCOUNT-SWITCH SCRUB. If the signed-in user changed since the items
+    // currently in _historyItems were loaded, drop them and repaint NOW.
+    // Previously the array was only replaced after the fetch resolved, so
+    // for the whole in-flight window (up to the 20s timeout below) the
+    // sidebar kept rendering the previous account's images under the new
+    // account. That reads as a data leak even though the server response
+    // was correct.
+    if (_historyUserId !== _user.id) {
+        _historyUserId = _user.id;
+        _historyItems = [];
+        _historyGroupOffset = 0;
+        _historyTotal = 0;
+        _historyHasMore = true;
+        renderHistorySidebar();
+        if($('historyModal').style.display !== 'none') renderHistoryModal();
+    }
     const limit = opts.limit || 20;
     // offset is in GROUPS (batches + singles), matching the server. On a fresh
     // load (offset 0) we reset the running group cursor; otherwise the caller
@@ -10161,6 +10189,10 @@ async function syncHistory(opts){
         // be fast, but the headroom prevents a spurious stall.
         const r = await fetchT(`${API}/api/studio/history?limit=${limit}&offset=${offset}`, null, 20000);
         const d = await r.json();
+        // Stale-response guard: a newer syncHistory (or an account switch)
+        // superseded us while this was in flight. Discard rather than
+        // repaint — the newer request owns the surface now.
+        if (reqId !== _historyReqId) return false;
         if(!d.ok) return false;
         const items = d.items || [];
         if(offset === 0){
@@ -13405,6 +13437,22 @@ function openModal(src, filename, ctx){
     // swaps in an inline notice instead of an invisible zero-size <img>.
     if (_mi) {
         if (_me) _me.style.display = 'none';
+        // STALE-FRAME SCRUB. #modalImg is a single element reused for every
+        // open, and assigning .src does NOT clear the currently decoded
+        // bitmap — the browser keeps painting the OLD image until the new
+        // one finishes loading. Opening image B right after image A shows A
+        // in B's frame for as long as B takes to arrive, which looks exactly
+        // like one account's image surfacing under another's.
+        //
+        // Detach handlers before blanking so the teardown can't fire a
+        // spurious onerror and flip in the "image unavailable" notice, then
+        // rewire below. Skip the blank when the src is unchanged (reopening
+        // the same image) to avoid a pointless flicker.
+        _mi.onerror = null;
+        _mi.onload = null;
+        if (_mi.getAttribute('src') !== src) _mi.removeAttribute('src');
+        // Reset visibility in case a previous open ended in the error state.
+        _mi.style.display = '';
         _mi.onerror = () => {
             _mi.style.display = 'none';
             if (_me) _me.style.display = 'block';
