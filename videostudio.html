@@ -5786,7 +5786,7 @@ function _renderLoraDetail(j){
   _loraDetailDl=v.download_url||"";
   const applied=_civIsApplied(_loraDetailDl);
   $("loraDetailAdd").disabled=applied;
-  $("loraDetailAdd").textContent=applied?"\u2713 Loaded":"+ Add LoRA";
+  $("loraDetailAdd").textContent=applied?"\u2713 Added":"+ Add LoRA";
   const st=j.stats||{};
   $("loraDetailMeta").innerHTML="by "+esc(j.creator||"?")+" \u00b7 "
     +(st.downloads||0).toLocaleString()+" downloads \u00b7 "
@@ -5830,10 +5830,20 @@ function _renderLoraDetail(j){
     :"";
   $("loraDetailBody").innerHTML=sampHtml+trigHtml+info+descHtml;
 }
-function loraDetailAdd(){
+async function loraDetailAdd(){
   if(!_loraDetailDl){toast("No downloadable file for this LoRA.",true);return;}
-  civPickLora(_loraDetailDl);
-  $("loraDetailAdd").disabled=true;$("loraDetailAdd").textContent="\u2713 Loaded";
+  /* This used to fire civPickLora WITHOUT awaiting it and immediately
+     write "Loaded" — before the request had even been sent. Any failure
+     (bad URL, unauthorised, Civitai error) left the button claiming
+     success for a LoRA that was never added.
+
+     Now it reports what actually happened. */
+  const b=$("loraDetailAdd");
+  if(b){b.disabled=true;b.textContent="\u2026 Downloading";}
+  const ok=await civPickLora(_loraDetailDl);
+  if(!b)return;
+  b.disabled=!!ok;
+  b.textContent=ok?"\u2713 Added":"+ Add LoRA";
 }
 async function _civLoadTags(){
   const box=$("civSearchTags");
@@ -5930,14 +5940,14 @@ function _civResultHtml(it){
   }else{
     mediaHtml="<div class='noimg'>no preview</div>";
   }
-  const appliedTag=applied?" <span style='color:var(--gold);font-weight:700'>\u2713 loaded</span>":"";
+  const appliedTag=applied?" <span style='color:var(--gold);font-weight:700'>\u2713 added</span>":"";
   const mid=it.model_id||"";
   return "<div class='civ-result"+(applied?" applied":"")+"' data-url=\""+dl+"\" data-mid=\""+mid+"\">"+
     "<div class='thumbwrap' data-info='1'>"+mediaHtml+"<span class='info-badge' data-info='1'>\u24d8 info</span></div>"+
     "<div class='meta'><div class='nm' data-info='1'>"+nm+"</div>"+
     "<div class='bm'>"+esc(it.base_model||"")+(it.nsfw?" \u00b7 NSFW":"")+appliedTag+"</div></div>"+
     "<button class='add'"+(applied?" disabled":" onclick=\"civPickLora('"+dl+"')\"")+">"+
-    (applied?"\u2713 Loaded":"+ Add LoRA")+"</button></div>";
+    (applied?"\u2713 Added":"+ Add LoRA")+"</button></div>";
 }
 async function civPickLora(url){
   const it=(window._civResultMap&&window._civResultMap[url])||{};
@@ -5964,13 +5974,18 @@ async function civPickLora(url){
       }
       await refreshLoras();
       _civRefreshApplied();
+      return true;
     }else{
-      toast("LoRA failed: "+(j.error||"unknown"),true);
+      // Surface the Worker's reason verbatim — "not_a_download_url" and
+      // "host_not_allowed" are actionable, "unknown" is not.
+      toast("LoRA failed: "+(j.message||j.error||"unknown"),true);
       if(btn){btn.disabled=false;btn.textContent="+ Add LoRA";}
+      return false;
     }
   }catch(e){
     toast("Error: "+e,true);
     if(btn){btn.disabled=false;btn.textContent="+ Add LoRA";}
+    return false;
   }
 }
 // Re-evaluate applied state of visible cards in place — keeps scroll
@@ -5983,7 +5998,9 @@ function _civRefreshApplied(){
     card.classList.toggle("applied",applied);
     const b=card.querySelector(".add");
     if(b&&applied){b.disabled=true;b.removeAttribute("onclick");
-      b.textContent="\u2713 Loaded";}
+      // _civIsApplied reads the list the Worker just returned, so this
+      // reflects a LoRA that really is in the library.
+      b.textContent="\u2713 Added";}
   });
 }
 
