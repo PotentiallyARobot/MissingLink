@@ -2124,6 +2124,12 @@ const $=id=>document.getElementById(id);
 let mlState={authed:false,member:false,email:null,used:0,remaining:25,
   tokens:null,tokens_per_gen:300,picture:null,subscription_status:null,
   free_limit:25,unlocked:false,reason:"no_session",
+  /* Video Studio is subscription-gated. Defaults TRUE so the first paint
+     — before /me answers — already treats the studio as locked.
+
+     Defaulting false would flash the full UI to a non-subscriber and let
+     them fire a doomed request before the gate loads. */
+  subRequired:true,
   signup:"https://www.missinglink.build/",
   login:"https://missinglink.build/notebook-signin"};
 // Intercept every API response: any 401 login_required — from any feature,
@@ -2166,10 +2172,21 @@ window.fetch=async function(u,o){
       {status:501,headers:{"Content-Type":"application/json"}});
   }
   const r=await _fetch(u,o);
-  if(r.status===401&&typeof u==="string"&&u.indexOf("/api/")===0
-     &&u.indexOf("/auth/")!==0){
+  if((r.status===401||r.status===402)&&typeof u==="string"
+     &&u.indexOf("/api/")===0&&u.indexOf("/auth/")!==0){
     try{const j=await r.clone().json();
       if(j&&j.error==="login_required"){mlState.unlocked=false;_mlApply(j);}
+      /* Any subscription-gated route, from any feature, relocks the UI
+         and offers the plan. Handled here so a route added later is
+         covered without touching its own error handling. */
+      else if(j&&j.error==="subscription_required"){
+        mlState.member=false;mlState.unlocked=false;
+        mlState.subRequired=true;
+        if(typeof j.subscription_status!=="undefined")
+          mlState.subscription_status=j.subscription_status;
+        try{_mlBadge();}catch(e){}
+        showGate("subscription_required");
+      }
     }catch(e){}
   }
   return r;
@@ -2359,8 +2376,16 @@ function _mlApply(s){
   if(typeof s.tokens_per_gen!=="undefined")mlState.tokens_per_gen=s.tokens_per_gen;
   if(s.signup_url)mlState.signup=s.signup_url;
   if(s.login_url)mlState.login=s.login_url;
-  mlState.unlocked=!!(s.unlocked||mlState.member||
-    (mlState.authed&&(mlState.remaining>0||mlState.remaining===-1)));
+  if(typeof s.subscription_required!=="undefined")
+    mlState.subRequired=!!s.subscription_required;
+  /* When the studio is subscription-gated, membership is the ONLY key.
+     The legacy expression below ORs in "has tokens / has free renders
+     left", which would unlock a paying-but-not-subscribed token holder
+     and hand them a UI whose every button 402s. */
+  mlState.unlocked=mlState.subRequired
+    ? !!(mlState.authed&&mlState.member)
+    : !!(s.unlocked||mlState.member||
+        (mlState.authed&&(mlState.remaining>0||mlState.remaining===-1)));
   _mlLinks();_mlBadge();
   // The image library needs a session; pull it as soon as we have one.
   if(mlState.authed&&!_libLoaded)loadImageLibrary();
@@ -2378,6 +2403,24 @@ function _mlApply(s){
    deleted, because a dozen features still call them defensively and a
    missing function would throw inside a click handler. */
 function showGate(reason){
+  if(!mlState.authed){_signIn();return;}
+  /* Subscription gate comes FIRST: a locked non-subscriber must be sent
+     to the $20/mo checkout, never to buyTokens(). Selling tokens to
+     someone who still could not render would be taking money for
+     nothing. 'past_due' is a live-but-failing card, so route those users
+     to the billing portal to fix payment, not to a second checkout. */
+  if(reason==="subscription_required"||
+     (mlState.subRequired&&!mlState.member)){
+    if(mlState.subscription_status==="past_due"){
+      toast("Your payment needs attention \u2014 update your card to "
+        +"keep using Video Studio.",true);
+      try{doManageSubscription();}catch(e){}
+      return;
+    }
+    toast("Video Studio is available on the subscription plan.",true);
+    try{doSubscribe();}catch(e){}
+    return;
+  }
   if(reason==="free_limit_reached"||
      (mlState.authed&&mlState.remaining===0)){
     toast("Out of tokens \u2014 a video render costs "
@@ -2385,10 +2428,13 @@ function showGate(reason){
     try{buyTokens();}catch(e){}
     return;
   }
-  if(!mlState.authed){_signIn();return;}
 }
-function showGateIfLocked(){ if(!mlState.unlocked)showGate(
-  (mlState.authed&&mlState.remaining===0)?"free_limit_reached":"no_session"); }
+function showGateIfLocked(){
+  if(mlState.unlocked)return;
+  showGate(!mlState.authed?"no_session"
+    :(mlState.subRequired&&!mlState.member)?"subscription_required"
+    :(mlState.remaining===0)?"free_limit_reached":"no_session");
+}
 function mlBadgeClick(){
   // Signed out -> sign in (via _signIn so the return path is carried).
   // Signed in -> the balance badge is a buy-tokens affordance.
@@ -6142,6 +6188,10 @@ async function _submitOne(body,prompt,thumb){
       toast("Not enough tokens \u2014 a video render costs "+
         (o.tokens_per_gen||300)+".",true);
       try{buyTokens();}catch(e){}
+    }else if(o.error==="subscription_required"){
+      /* The fetch interceptor already relocked the UI and opened the
+         plan. Saying anything here would give two toasts and a raw
+         error string for a single refusal. */
     }else if(o.error==="free_limit_reached"){
       mlState.remaining=0;showGate("free_limit_reached");
       toast("That was your last free render.",true);
