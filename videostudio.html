@@ -6942,6 +6942,70 @@ async function _useAsFrame(h,which){
   _syncGenerateEnabled();
   toast("Set as the "+(which==="end"?"last":"first")+" frame.");
 }
+
+/* ── Inbound first-frame handoff from the image studio ──────────────
+   The stage "Video" button in studio.html now navigates here instead of
+   opening its own modal, passing ?firstFrame=<https-url | stash:KEY>.
+   A finished render arrives as a plain URL; a data:/blob: stage image is
+   too long for a query string, so it comes through a one-shot
+   localStorage key that we delete on read.
+
+   Everything lands via _useAsFrame(...,"start"), the same path the
+   history "use as first frame" chip uses — so the URL→data-URL fetch,
+   the drop preview, clip 1 frames and the clip overview all behave
+   exactly as they do for an in-app assignment. */
+const _VS_HANDOFF_PREFIX="vs_first_frame_";
+async function _consumeFirstFrameParam(){
+  let raw=null;
+  try{raw=new URLSearchParams(location.search).get("firstFrame");}catch(e){}
+  if(!raw)return;
+
+  /* Strip the param before doing anything else. A refresh must not
+     re-import (the user may have since replaced the frame), and once a
+     stash payload is deleted a replay would only produce an error. */
+  try{
+    const u=new URL(location.href);
+    u.searchParams.delete("firstFrame");
+    history.replaceState(null,"",u.pathname+u.search+u.hash);
+  }catch(e){}
+
+  let src=null;
+  if(raw.indexOf("stash:")===0){
+    const key=raw.slice(6);
+    /* Only ever read our own handoff keys — the param is user-editable,
+       so without this prefix check it would be a read primitive for any
+       localStorage key on this origin. */
+    if(key.indexOf(_VS_HANDOFF_PREFIX)!==0)return;
+    try{src=localStorage.getItem(key);localStorage.removeItem(key);}catch(e){}
+    if(!src){
+      toast("That image didn't carry over \u2014 upload it here instead.",true);
+      return;
+    }
+  }else{
+    /* Same-origin only. The param is attacker-influenceable via a crafted
+       link, and handing an arbitrary remote URL to fetch() would make this
+       page a request proxy. Relative paths are fine; anything resolving
+       off-origin is dropped. */
+    let u=null;
+    try{u=new URL(raw,location.href);}catch(e){}
+    if(!u||u.origin!==location.origin){
+      toast("That image link isn't supported here.",true);
+      return;
+    }
+    src=u.href;
+  }
+
+  try{
+    await _useAsFrame({url:src},"start");
+  }catch(e){
+    toast("Couldn't load that image: "+e,true);
+  }
+}
+/* Runs last so any load-time init that resets the dropzone has already
+   finished. _useAsFrame is async anyway, so the assignment settles after
+   the synchronous bootstrap regardless. */
+document.addEventListener("DOMContentLoaded",_consumeFirstFrameParam);
+
 // Add a generated image to History (shown alongside videos).
 function _addImageToHistory(dataUrl,label){
   if(!dataUrl)return;

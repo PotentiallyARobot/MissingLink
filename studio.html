@@ -5905,7 +5905,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <div class="main">
     <div class="output-area" id="outputArea" style="position:relative">
         <button class="stage-clear-btn" id="stageClearBtn" onclick="clearStage()" title="Clear the stage" aria-label="Clear the stage" style="display:none">🗑</button>
-        <button class="stage-video-btn" id="stageVideoBtn" onclick="openVideoModal()" title="Animate this image into a video (SeeDance 2.0, with audio)" aria-label="Generate video from this image">🎬 Video</button>
+        <button class="stage-video-btn" id="stageVideoBtn" onclick="sendStageToVideoStudio()" title="Open this image in Video Studio as the first frame" aria-label="Open this image in Video Studio as the first frame">🎬 Video</button>
         <!-- SDXL-only: send the staged image into Edit / Camera as their input
              image and switch to that workspace. Shown by updateStageClearBtn()
              only on the SDXL tab with a still image staged (SDXL's own
@@ -12213,6 +12213,67 @@ function _vmSetProgress(pct, label, hide){
     wrap.style.display = '';
     if (fill) { fill.style.width = Math.max(0, Math.min(100, pct)) + '%'; if (pct >= 100) fill.classList.add('done'); else fill.classList.remove('done'); }
     if (lab && label != null) lab.textContent = label;
+}
+
+// ── Hand the stage image to Video Studio as its first frame ──────────
+// This is what the stage "🎬 Video" button does now, replacing the in-page
+// video modal. The modal itself is NOT removed — _showVideoResult and the
+// history "play" path still open it to deliver videos that were generated
+// here before the switch, and to re-attach to a job the user walked away
+// from. Only the entry point moved.
+const VIDEOSTUDIO_URL   = 'videostudio.html';
+const VS_HANDOFF_PREFIX = 'vs_first_frame_';
+
+// Clear any stranded handoff payloads. One is written just before we
+// navigate; if that navigation never happened (blocked, back button) the
+// key would otherwise sit in localStorage forever eating quota.
+function _vsPruneHandoffs(){
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && k.indexOf(VS_HANDOFF_PREFIX) === 0) localStorage.removeItem(k);
+        }
+    } catch (e) {}
+}
+
+async function sendStageToVideoStudio(){
+    const img = $('outImg');
+    if (!img || !img.src || img.src.endsWith('#')) {
+        showNotif('No image on the stage to animate.', 'error');
+        return;
+    }
+    const src = img.src;
+    let param;
+
+    if (/^https?:/i.test(src)) {
+        // A finished render is a normal same-origin URL — just pass it and let
+        // Video Studio fetch it. Keeps the URL short, survives a refresh, and
+        // means nothing has to be stashed client-side.
+        param = encodeURIComponent(src);
+    } else {
+        // data: / blob: — orders of magnitude too long for a query string, so
+        // hand off through localStorage under a one-shot key that Video Studio
+        // deletes as soon as it reads it.
+        let payload = src;
+        if (src.indexOf('blob:') === 0) {
+            // blob: URLs are scoped to THIS document and die the instant we
+            // navigate, so they have to be resolved to bytes first.
+            payload = await _vmCaptureSource();
+            if (!payload) { showNotif('Could not read the stage image.', 'error'); return; }
+        }
+        _vsPruneHandoffs();
+        const key = VS_HANDOFF_PREFIX + Date.now().toString(36);
+        try {
+            localStorage.setItem(key, payload);
+        } catch (e) {
+            // Almost always QuotaExceededError on a very large image.
+            showNotif('That image is too large to carry over. Download it, then upload it in Video Studio.', 'error');
+            return;
+        }
+        param = 'stash:' + key;
+    }
+
+    window.location.href = VIDEOSTUDIO_URL + '?firstFrame=' + param;
 }
 
 async function openVideoModal(){
