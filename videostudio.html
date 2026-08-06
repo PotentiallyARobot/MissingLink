@@ -2643,8 +2643,10 @@ function _clipFrames(){
   const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
   const want=Math.round(_clipSeconds()*fps);
   if(currentEngine==="ltx")
-    return Math.max(9,Math.min(481,Math.round((want-1)/8)*8+1));   // 8n+1
-  return Math.max(17,Math.min(129,Math.round((want-1)/4)*4+1));    // 4n+1
+    // No upper bound — snap to the 8n+1 grid the engine requires and
+    // pass through whatever length was asked for.
+    return Math.max(9,Math.round((want-1)/8)*8+1);                 // 8n+1
+  return Math.max(17,Math.round((want-1)/4)*4+1);                  // 4n+1
 }
 function _autoLenChange(){
   const auto=$("autoLen"),man=$("lenManual"),hint=$("autoLenHint");
@@ -2909,8 +2911,33 @@ async function refreshLoras(){
       ? "<span style='font-size:8px;color:var(--text-muted);border:1px solid var(--border);"
         +"border-radius:3px;padding:1px 4px;margin-right:5px'>"
         +(L.engine==="ltx"?"LTX":"WAN")+"</span>" : "";
+    /* Was: `(L.attached?"":" (not attached)")`.
+
+       Nothing has ever set `attached`. GET /api/videostudio/loras returns
+       name, url, scale, engine, base_model, thumb — there is no such
+       column and no code path that adds one, so L.attached was ALWAYS
+       undefined and EVERY LoRA read "(not attached)", including ones
+       being applied correctly. A permanent false alarm.
+
+       Report the two conditions the server actually acts on, both of
+       which really do exclude a LoRA from a render:
+         • scale <= 0  — /submit filters on `scale > 0`, so a 0-strength
+           LoRA is genuinely inert (this is how the Wan lightning preset
+           is parked).
+         • engine mismatch — /submit selects only the active engine
+           family, so a Wan LoRA cannot affect an LTX render.
+       Anything else is attached, and says nothing rather than crying
+       wolf. */
+    const _lsc=+L.scale;
+    const _engOk=wantLtx?(L.engine==="ltx"):(L.engine!=="ltx");
+    const _note=!(_lsc>0)
+      ? " <span style='color:var(--text-muted)'>(off \u2014 strength 0)</span>"
+      : (!_engOk
+          ? " <span style='color:var(--text-muted)'>(for "
+            +(L.engine==="ltx"?"LTX":"Wan")+", not this engine)</span>"
+          : "");
     d.innerHTML="<div class='lora-card-top'>"+tag+"<span class='lora-card-name'>"+esc(L.name)+
-      (L.attached?"":" (not attached)")+"</span>"+
+      _note+"</span>"+
       "<button class='lora-x' title='Remove from your library'>&#10005;</button></div>"+
       "<div class='slider-row' style='margin:8px 0 0'><span class='sl'>strength</span>"+
       "<input type='range' min='0' max='2' step='0.05' value='"+L.scale+"'>"+
@@ -3744,14 +3771,20 @@ function _clipAutoFrames(words,fps){
   const secs = words>0 ? Math.max(3.0, words/2.3 + 1.2) : 6.0;
   let f=Math.round(secs*fps);
   f=Math.max(9,((f-1)/8|0)*8+1);      // snap to 8k+1
-  return Math.min(_ltxMaxFrames(fps),f);
+  // Uncapped: auto follows the dialogue/scene however long that runs.
+  // _ltxMaxFrames() is now only a RECOMMENDATION used for the warning
+  // text, never a ceiling.
+  return f;
 }
 // LTX-2.3 supports up to ~20s per clip (≈480 frames at 24fps). Keep it
 // under the 8k+1 grid and clamp to the model's real limit for the fps.
+/* The length LTX-2.3 was TRAINED for (~20s). Kept only to drive the
+   advisory notice — it is no longer enforced anywhere. Past it the model
+   drifts and VRAM climbs, but that is the user's call to make, not the
+   UI's to prevent. */
 function _ltxMaxFrames(fps){
-  const cap=Math.floor(20*fps);       // 20 seconds
-  let f=((cap-1)/8|0)*8+1;
-  return Math.min(f, 481);            // hard ceiling near the 480-frame max
+  const cap=Math.floor(20*fps);       // 20 seconds — advisory only
+  return ((cap-1)/8|0)*8+1;
 }
 // Build the clip plan from the dialogue: one entry per clip number in
 // use (min 1 clip), each with its assigned lines and a frame count.
@@ -3958,8 +3991,10 @@ function uploadScriptFile(files){
 // on what changed (echoed back to the agent + shown to the user).
 function _snapFrames(sec,fps){
   let f=Math.round(sec*fps);
-  if(currentEngine==="ltx"){f=Math.max(9,((f-1)/8|0)*8+1);f=Math.min(_ltxMaxFrames(fps),f);}
-  else{f=Math.max(17,Math.round((f-1)/4)*4+1);f=Math.min(81,f);}
+  // Grid-snap only. No ceiling: a length set here (clip JSON, agent
+  // action) is an explicit instruction and is honoured as given.
+  if(currentEngine==="ltx"){f=Math.max(9,((f-1)/8|0)*8+1);}
+  else{f=Math.max(17,Math.round((f-1)/4)*4+1);}
   return f;
 }
 function applyAgentActions(actions){
@@ -5279,24 +5314,31 @@ function renderClipModalLen(){
     :_clipAutoFrames(0,fps));
   const inp=$("clipLenInp");inp.value=(frames/fps).toFixed(1);
   inp.onchange=()=>{
-    let secs=Math.max(1,parseFloat(inp.value)||1);
-    const recMax=_ltxMaxFrames(fps)/fps;   // ~20s recommended ceiling
-    // Allow going past the recommended max, but be honest: LTX-2.3 was
-    // trained for up to ~20s per clip. Beyond that it drifts badly and may
-    // run out of VRAM. We warn, cap at a hard 60s safety limit, and proceed.
+    /* Whatever length is typed here is honoured. The only transformation
+       is snapping to the engine's frame grid (8n+1 / 4n+1), which is a
+       correctness requirement rather than a limit — an off-grid count
+       errors instead of producing a longer clip.
+
+       The old code capped at a hard 60s. That is gone: past the trained
+       range the model drifts and VRAM climbs, and the honest thing is to
+       say so once and let the choice be made, not to silently rewrite the
+       number to something else. A render that runs out of memory fails
+       the job and refunds the tokens. */
+    const secs=Math.max(0.5,parseFloat(inp.value)||0.5);
+    const recMax=_ltxMaxFrames(fps)/fps;      // advisory only
     if(secs>recMax){
       if(!inp._warned){
-        toast("Heads up: LTX-2.3 is trained for ~"+recMax.toFixed(0)+"s per clip. "
-          +"Longer single clips drift and may run out of memory \u2014 for long, "
-          +"consistent video, chain several shorter clips instead.",true);
+        toast("Note: LTX-2.3 is trained for ~"+recMax.toFixed(0)+"s per clip. "
+          +"Rendering "+secs.toFixed(1)+"s anyway \u2014 expect drift and higher "
+          +"VRAM. If it runs out of memory the job fails and refunds. For long, "
+          +"consistent video, chaining shorter clips holds together better.");
         inp._warned=true;
       }
-      secs=Math.min(secs,60);              // don't let it go absurd (OOM guard)
     }else{inp._warned=false;}
-    let f=Math.round(secs*fps);f=Math.max(9,((f-1)/8|0)*8+1);
-    // snap to grid but DON'T clamp to the recommended max when the user
-    // explicitly asked for longer.
-    if(secs<=recMax)f=Math.min(_ltxMaxFrames(fps),f);
+    const grid=currentEngine==="ltx"?8:4;
+    const floorF=currentEngine==="ltx"?9:17;
+    let f=Math.round(secs*fps);
+    f=Math.max(floorF,Math.round((f-1)/grid)*grid+1);
     clipFrameOverrides[c]=f;renderClipModalLen();
   };
   const overridden=clipFrameOverrides[c]!==undefined;
