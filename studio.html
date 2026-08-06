@@ -6841,6 +6841,34 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
+<!-- ── NSFW ATTESTATION MODAL ───────────────────────────────────────
+     Shown when the classifier detects NSFW intent and the user hasn't
+     yet both (a) acknowledged 18+ and (b) enabled NSFW content. Its CTA
+     does BOTH in one step.
+
+     Deliberately separate from #ageGateModal. That gate is a hard,
+     undismissable block fired from ~8 server routes that reject with
+     age_ack_required; folding "and enable NSFW" into it would silently
+     flip a content preference on paths where the user never asked for
+     it. This one is dismissible — declining just means the generation
+     doesn't run. -->
+<div class="popup-modal" id="nsfwAttestModal" onclick="if(event.target===this) declineNsfwAttestation()">
+    <div class="age-gate-card" onclick="event.stopPropagation()">
+        <div class="age-gate-icon">🔞</div>
+        <h2 class="age-gate-title">Enable adult content?</h2>
+        <p class="age-gate-body">
+            What you're generating looks like <b>adult content</b>. To continue you must be <b>18 years or older</b> and turn on adult content for your account.
+        </p>
+        <p class="age-gate-note">
+            By continuing you confirm you meet the age requirement, you consent to seeing adult content, and you take responsibility for using this service in compliance with the laws that apply where you are. You can turn this back off at any time from the user menu.
+        </p>
+        <button class="age-gate-cta" id="nsfwAttestAckBtn" onclick="acknowledgeNsfwAttestation()">
+            I am 18+ — enable adult content
+        </button>
+        <button class="age-gate-signout" onclick="declineNsfwAttestation()">Not now</button>
+    </div>
+</div>
+
 <!-- ── WORKFLOW PRIMER MODAL ────────────────────────────────────────
      Shown once per user account on first sign-in (and not again on
      subsequent sessions). Centered image-only modal that walks users
@@ -8966,6 +8994,17 @@ async function toggleNsfwPref(checked){
         }, 6000);
         const d = await r.json();
         if (!d.ok) {
+            // The server now refuses nsfw_enabled=1 without an 18+ ack on
+            // record. Route the user through the same attestation modal the
+            // generate path uses instead of showing a bare error — it does
+            // the ack and the enable together.
+            if (d.error === 'age_ack_required') {
+                const tog = $('prefNsfwToggle');
+                if (tog) tog.checked = false;
+                if (typeof openNsfwAttestation === 'function') openNsfwAttestation();
+                else if (typeof openAgeGate === 'function') openAgeGate();
+                return;
+            }
             log(`Preference save failed: ${d.error || 'unknown'}`, 'error');
             const tog = $('prefNsfwToggle');
             if (tog) tog.checked = !!_user.nsfw_enabled;  // revert
@@ -10886,13 +10925,25 @@ async function genUploadToSlot(i, file){
 // of "yes I know NSFW goes to Edit/Camera." Cleared on signout below.
 let _nsfwAdvisoryDismissed = false;
 
+// True when the user still owes us an attestation before they can
+// generate adult content: either they've never confirmed 18+, or they
+// have but haven't switched adult content on for their account.
+// Both are required — age_ack_at is the legal acknowledgement,
+// nsfw_enabled is the content opt-in, and the server enforces the first
+// as a precondition of the second.
+function _needsNsfwAttestation(){
+    return !!_user && (!_user.age_ack_at || !_user.nsfw_enabled);
+}
+
 async function _checkNsfwBeforeCreate(prompt){
     if (!_user) return false;
-    const sub = _user.subscription_status;
-    if (sub === 'active' || sub === 'past_due') return false;
-    // User has already seen and dismissed the advisory this session —
-    // don't re-interrupt them on every generation. They know.
-    if (_nsfwAdvisoryDismissed) return false;
+    const sub = (typeof isSubscriber === 'function') ? isSubscriber() : false;
+    const needsAttest = _needsNsfwAttestation();
+    // Nothing left to ask this user:
+    //   - subscribers who have already attested generate freely
+    //   - non-subscribers who have attested AND already dismissed the
+    //     advisory this session shouldn't be re-interrupted every time
+    if (!needsAttest && (sub || _nsfwAdvisoryDismissed)) return false;
     const refUrls = _generateRefs
         .map((r) => r && r.url ? r.url : null)
         .filter(Boolean);
@@ -10904,18 +10955,16 @@ async function _checkNsfwBeforeCreate(prompt){
         }, 15000);
         const d = await r.json();
         if (d && d.ok && d.nsfw) {
-            // NSFW intent detected. Two-stage gate:
-            //   1. If the user has never acknowledged they're 18+, show
-            //      the age gate FIRST. We need that acknowledgement on
-            //      record before exposing them to anything NSFW-adjacent.
-            //   2. Once age-ack'd, show the NSFW advisory (routes to
-            //      Camera/Edit or the subscribe upsell).
-            // The age gate's CTA handler is wired to re-trigger the
-            // advisory after a successful ack so the user lands on the
-            // same flow they would have gotten if they'd already ack'd.
-            if (!_user.age_ack_at) {
-                _ageGateThenNsfwAdvisory = true;
-                openAgeGate();
+            // NSFW intent detected.
+            //   1. If they still owe an attestation, that comes first —
+            //      one modal that confirms 18+ AND enables adult content.
+            //      Non-subscribers get routed onward to the advisory
+            //      afterwards, so they land on the same upsell they'd
+            //      have seen if they'd already attested.
+            //   2. Otherwise (attested, non-subscriber) show the advisory.
+            if (needsAttest) {
+                _nsfwAttestThenAdvisory = !sub;
+                openNsfwAttestation();
             } else {
                 openNsfwAdvisoryModal();
             }
@@ -10925,6 +10974,92 @@ async function _checkNsfwBeforeCreate(prompt){
         // Silent — classifier unavailable doesn't block generation.
     }
     return false;
+}
+
+// ── NSFW attestation (18+ ack + enable adult content) ──────────────
+// Set when a non-subscriber reaches attestation via the classifier, so
+// the advisory/upsell still fires once they've attested.
+let _nsfwAttestThenAdvisory = false;
+
+function openNsfwAttestation(){
+    const m = document.getElementById('nsfwAttestModal');
+    if (m) m.classList.add('open');
+}
+
+function closeNsfwAttestation(){
+    const m = document.getElementById('nsfwAttestModal');
+    if (m) m.classList.remove('open');
+}
+
+// "Not now" / backdrop / Escape. Declining is not a failure — it just
+// means this generation doesn't run. Nothing is enabled, and we don't
+// mark the advisory dismissed, so a later attempt asks again.
+function declineNsfwAttestation(){
+    closeNsfwAttestation();
+    _nsfwAttestThenAdvisory = false;
+    showNotif('Adult content stays off — that generation was not run.', 'info');
+}
+
+// CTA: record the 18+ acknowledgement (if not already on record) and
+// switch adult content on, in that order. The server rejects
+// nsfw_enabled=1 without an ack, so the order matters.
+async function acknowledgeNsfwAttestation(){
+    if (!_user) { closeNsfwAttestation(); return; }
+    const btn = document.getElementById('nsfwAttestAckBtn');
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+        // 1. Age acknowledgement — skip the round-trip if already recorded.
+        if (!_user.age_ack_at) {
+            const ra = await fetchT(`${API}/api/studio/age-ack`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+            }, 8000);
+            const da = await ra.json();
+            if (!da || !da.ok) {
+                // Don't dismiss — we want a recorded ack, not a best-effort
+                // click. Same posture as the age gate itself.
+                showNotif("Couldn't save acknowledgement. Try again.", 'error');
+                return;
+            }
+            _user.age_ack_at = da.age_ack_at;
+            try { if (da.age_ack_at) localStorage.setItem('studio_age_ack_' + _user.id, String(da.age_ack_at)); } catch (e) {}
+        }
+        // 2. Enable adult content.
+        const rp = await fetchT(`${API}/api/studio/preferences`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nsfw_enabled: 1 }),
+        }, 8000);
+        const dp = await rp.json();
+        if (!dp || !dp.ok || !dp.nsfw_enabled) {
+            showNotif("Couldn't enable adult content. Try again.", 'error');
+            return;
+        }
+        _user.nsfw_enabled = 1;
+        // Keep the user-menu checkbox honest — it's the same preference.
+        const tog = $('prefNsfwToggle');
+        if (tog) tog.checked = true;
+        // The Unchained LoRA row is gated on this preference; reveal it now
+        // rather than waiting for a mode change or the next /auth/me.
+        if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
+        closeNsfwAttestation();
+        showNotif('Adult content enabled — run that again to generate.', 'success');
+        // Non-subscribers still get the advisory (routes them to
+        // Camera/Edit or the subscribe upsell). Deferred so the close
+        // transition runs first.
+        if (_nsfwAttestThenAdvisory) {
+            _nsfwAttestThenAdvisory = false;
+            setTimeout(() => {
+                if (typeof openNsfwAdvisoryModal === 'function') openNsfwAdvisoryModal();
+            }, 120);
+        }
+    } catch (e) {
+        showNotif('Network error — please try again.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = label || 'I am 18+ — enable adult content'; }
+    }
 }
 
 // Flag set by _checkNsfwBeforeCreate when it has to route through the
@@ -15176,6 +15311,13 @@ document.addEventListener('keydown',e=>{
         if (typeof closeProfileDialog === 'function') closeProfileDialog();
         if (typeof closeWorkflowModal === 'function') closeWorkflowModal();
         if (typeof closeNsfwAdvisoryModal === 'function') closeNsfwAdvisoryModal();
+        // Escape on the attestation modal is a decline, not a silent close —
+        // it must not leave the caller thinking the user opted in.
+        if (typeof declineNsfwAttestation === 'function'
+            && document.getElementById('nsfwAttestModal')
+            && document.getElementById('nsfwAttestModal').classList.contains('open')) {
+            declineNsfwAttestation();
+        }
         if (typeof closeFilterPopover === 'function') closeFilterPopover();
         if (typeof closeReactionPicker === 'function') closeReactionPicker();
         if (typeof closeRemixMenu === 'function') closeRemixMenu();
