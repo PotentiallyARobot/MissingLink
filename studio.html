@@ -3433,6 +3433,27 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 /* Engine-not-applicable: the selected batch engine (GPT/SDXL) ignores
    the Qwen LoRA stack — sliders gray out and stop accepting input. */
 .slider-row.engine-na{opacity:.35;pointer-events:none;filter:grayscale(1)}
+/* Subscriber-gated LoRA row (Unchained). The row STAYS in the DOM and stays
+   clickable — clicking it is how the user discovers the paywall — so we can't
+   reuse .engine-na's pointer-events:none on the whole row. Instead only the
+   two inputs go inert, which lets the click fall through to the row wrapper
+   where the paywall handler lives. The info button keeps working. */
+.slider-row.sub-locked{cursor:pointer}
+.slider-row.sub-locked input[type=range],
+.slider-row.sub-locked .sv{opacity:.3;filter:grayscale(1);pointer-events:none}
+.slider-row.sub-locked .sl{opacity:.55}
+.slider-row.sub-locked .sl::after{content:" \1F512";font-size:10px;opacity:.9;margin-left:2px;filter:none}
+.slider-row.sub-locked .lora-info-btn{pointer-events:auto;opacity:1}
+/* Paywall modal — mirrors .lora-info-panel so the gate reads as part of the
+   same LoRA surface rather than a bolted-on dialog. */
+.eval-lock-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(440px,92vw);display:flex;flex-direction:column;overflow:hidden;position:relative}
+.eval-lock-body{padding:16px 18px 18px;font-size:12px;line-height:1.6;color:var(--text)}
+.eval-lock-body .el-sub{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px}
+.eval-lock-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.eval-lock-actions .el-btn{font-family:var(--font-mono);font-size:11px;border-radius:5px;padding:8px 12px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)}
+.eval-lock-actions .el-btn:hover{border-color:var(--gold);color:var(--text)}
+.eval-lock-actions .el-btn.primary{background:var(--gold);border-color:var(--gold);color:#111;font-weight:700}
+.eval-lock-actions .el-btn.primary:hover{opacity:.9;color:#111}
 /* Pony quality-tag editors: match the app's dark inputs, hide the
    scrollbar chrome (content still scrolls), kill spell-check noise via
    the spellcheck attribute on the elements. */
@@ -3445,8 +3466,11 @@ body.has-clear-toolbar .queue-overlay:not(.q-positioned){top:56px}
 body.batch-sdxl-engine .qwen-pipeline-ctl{display:none !important}
 body.batch-gpt-engine .qwen-pipeline-ctl,body.batch-gpt-engine .gpt-na-ctl{display:none !important}
 /* Qwen engine in Batch: reveal every Qwen LoRA row regardless of its
-   camera/edit mode gating — batch edits can use them all. The eval rows
-   (Unchained, NSFW) are excluded — entitlement-controlled. */
+   camera/edit mode gating — batch edits can use them all. BOTH eval rows are
+   excluded: their inline display is owned by _applyUnchainedGate (NSFW pref
+   for Unchained, account allowlist for NSFW), and a display:flex !important
+   here would override that inline hide and force a row visible to a user who
+   has NSFW turned off. Inline stays authoritative for these two. */
 body.batch-qwen-engine .slider-row.qwen-pipeline-ctl:not(#rowUnchained):not(#rowNsfwEval){display:flex !important}
 .slider-row .sl{font-family:var(--font-mono);font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.3px;min-width:65px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .slider-row input[type=range]{flex:1;height:4px;accent-color:var(--gold);cursor:pointer;-webkit-appearance:none;background:var(--surface-3);border-radius:2px}
@@ -5825,7 +5849,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <div class="slider-row" id="rowNextScene" title="Next Scene (lovis93) — cinematic 'next shot in the sequence' scene/camera progression. Prompt with 'Next scene:' plus what the following shot shows. Keep at 0 to disable."><span class="sl">Next Scene <button type="button" class="lora-info-btn" onclick="openLoraInfo('next_scene')" title="How to use this LoRA" aria-label="How to use the Next Scene LoRA">i</button></span><input type="range" id="rngLoraNextScene" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraNextScene" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowSkin" title="Skin Detail (tlennon-ie) — adds natural skin texture to smooth/plastic-looking subjects. Upstream recommends 1.0–1.5; try prompting 'make the subjects skin details more prominent and natural'. Keep at 0 to disable."><span class="sl">Skin Detail <button type="button" class="lora-info-btn" onclick="openLoraInfo('skin')" title="How to use this LoRA" aria-label="How to use the Skin Detail LoRA">i</button></span><input type="range" id="rngLoraSkin" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraSkin" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row edit-only" id="rowFaceSwap" style="display:none" title="Face/Head Swap (BFS Head V5, Alissonerdx) — transfers a face/head onto another photo with consistent lighting and skin tone. Needs TWO images: slot 1 = body/target scene, slot 2 = face source (order matters!). Start the prompt with 'head_swap: start with Picture 1 as the base image, keeping its lighting, environment, and background. remove the head from Picture 1 completely and replace it with the head from Picture 2, strictly preserving the hair, eye color, and nose structure of Picture 2. copy the eye direction, head rotation, and micro-expressions from Picture 1.' Try 1.0; keep at 0 to disable."><span class="sl">Face Swap <button type="button" class="lora-info-btn" onclick="openLoraInfo('faceswap')" title="How to use this LoRA" aria-label="How to use the Face Swap LoRA">i</button></span><input type="range" id="rngLoraFaceSwap" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraFaceSwap" value="0" min="0" max="1.5" step="0.05"></div>
-        <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation. Available in Edit, Camera & Batch. Default 0 (off)."><span class="sl">Unchained (eval) <button type="button" class="lora-info-btn" onclick="openLoraInfo('unchained')" title="How to use this LoRA" aria-label="How to use the Unchained (eval) LoRA">i</button></span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
+        <div class="slider-row" id="rowUnchained" style="display:none" title="Unchained (eval) — CivitAI LoRA under evaluation. Available in Edit, Camera &amp; Batch. Default 0 (off)."><span class="sl">Unchained (eval) <button type="button" class="lora-info-btn" onclick="event.stopPropagation();openLoraInfo('unchained')" title="How to use this LoRA" aria-label="How to use the Unchained (eval) LoRA">i</button></span><input type="range" id="rngLoraUnchained" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraUnchained" value="0" min="0" max="1.5" step="0.05"></div>
         <div class="slider-row" id="rowNsfwEval" style="display:none" title="NSFW (eval) — CivitAI LoRA under evaluation. Available in Edit, Camera &amp; Batch. Default 0 (off)."><span class="sl">NSFW (eval) <button type="button" class="lora-info-btn" onclick="openLoraInfo('nsfw')" title="How to use this LoRA" aria-label="How to use the NSFW (eval) LoRA">i</button></span><input type="range" id="rngLoraNsfw" min="0" max="1.5" value="0" step="0.05"><input type="number" class="sv" id="vLoraNsfw" value="0" min="0" max="1.5" step="0.05"></div>
     </div>
 
@@ -6259,6 +6283,28 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <button class="modal-close" onclick="closeLoraInfo()">×</button>
         </div>
         <div class="lora-info-body" id="loraInfoBody"></div>
+    </div>
+</div>
+
+<!-- Subscriber paywall for the Unchained LoRA. The slider itself renders for
+     everyone (locked); this is what a non-subscriber gets when they click it.
+     The primary CTA routes through doSubscribe(), which mints a fresh Stripe
+     Checkout session server-side — that redirect IS the subscription link, so
+     there's no static URL to drift out of date here. -->
+<div id="evalLoraLockModal" class="modal" style="display:none" onclick="if(event.target===this) closeUnchainedPaywall()">
+    <div class="eval-lock-panel" onclick="event.stopPropagation()">
+        <div class="history-modal-head">
+            <div class="history-modal-title" id="evalLoraLockTitle">Unchained (eval) is a Pro feature</div>
+            <button class="modal-close" onclick="closeUnchainedPaywall()">×</button>
+        </div>
+        <div class="eval-lock-body">
+            <div class="el-sub" id="evalLoraLockSub">Subscription required</div>
+            <div id="evalLoraLockBlurb">You must subscribe to access this feature. A subscription unlocks the Unchained (eval) LoRA on Edit, Camera, and Batch jobs, plus the rest of the Pro tools, and includes a monthly token grant.</div>
+            <div class="eval-lock-actions">
+                <button type="button" class="el-btn primary" id="evalLoraLockCta" onclick="unchainedPaywallCta()">Subscribe — $20/month</button>
+                <button type="button" class="el-btn" onclick="closeUnchainedPaywall()">Not now</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -7723,6 +7769,13 @@ async function checkAuth(){
             // gates (blur logic in renderGallery).
             _user.nsfw_enabled = d.nsfw_enabled ? 1 : 0;
             _user.violence_enabled = d.violence_enabled ? 1 : 0;
+            // Re-run the Unchained gate NOW. The earlier call above (and the
+            // one inside updateUserMenuSubState) both ran before this
+            // assignment, when _user.nsfw_enabled was still undefined — they
+            // would have read it as "off" and hidden the row permanently for
+            // a user who actually has NSFW on. This is the first point where
+            // the preference is known, so it's the one that decides.
+            if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
             // Display name from /auth/me — null when user is anonymous.
             // Used by the Profile dialog (prefill) and by the user-menu
             // subtitle so users see their current name at a glance.
@@ -8193,6 +8246,9 @@ function updateUserMenuSubState(){
     if (typeof syncSdxlSubscriptionLock === 'function') {
         syncSdxlSubscriptionLock();
     }
+    // And the Unchained LoRA lock — unlock the slider the moment a
+    // subscription goes live, re-lock (and zero it) when one lapses.
+    if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
     if (statusLine) {
         if (status === 'active') {
             statusLine.textContent = '👑 Pro · active';
@@ -8366,6 +8422,9 @@ async function doLogout(){
     // Same for the SDXL Pro lock — signing out re-veils SDXL Studio with
     // the "Sign in to continue" variant.
     if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
+    // Re-lock the Unchained slider and clear any weight the signed-out
+    // subscriber had dialled in, so it doesn't carry into the next session.
+    if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
     // Clear the per-session NSFW dismissal so the next user who signs
     // in on this tab gets a fresh screen.
     _nsfwAdvisoryDismissed = false;
@@ -8914,6 +8973,11 @@ async function toggleNsfwPref(checked){
         }
         _user.nsfw_enabled = d.nsfw_enabled ? 1 : 0;
         log(d.nsfw_enabled ? 'NSFW content shown unblurred' : 'NSFW content will be blurred', 'success');
+        // The Unchained LoRA row is gated on this preference — reveal or
+        // remove it immediately rather than waiting for the next mode change
+        // or /auth/me. Switching NSFW off also zeroes any weight the user had
+        // dialled in, via the gate's own cleanup.
+        if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
         // When NSFW gets turned off, an orientation filter would
         // otherwise stay applied but invisible (the popover section
         // hides itself). Clear it on both surfaces so the user doesn't
@@ -15308,9 +15372,10 @@ const LORA_INFO = {
     unchained: {
         name: 'Unchained (eval)',
         author: 'CivitAI — under evaluation',
-        what: 'A CivitAI LoRA currently under evaluation, gated to a single account. Available in Edit, Camera, and Batch.',
+        what: 'A CivitAI LoRA currently under evaluation. This is a subscriber-only feature — the slider is visible to everyone, but you must subscribe to set it above 0. Available in Edit, Camera, and Batch.',
         how: [
-            'Default 0 (off). Raise to engage on Edit, Camera, or Batch jobs.',
+            'Requires an active subscription. Click the locked slider to subscribe.',
+            'Default 0 (off). Once unlocked, raise to engage on Edit, Camera, or Batch jobs.',
         ],
         weight: '0 (off) unless evaluating',
         url: 'https://civitai.com/model-versions/2435942',
@@ -15405,11 +15470,12 @@ function loraPayload(mode){
     const faceswap = (mode === 'edit')
         ? (parseFloat($('rngLoraFaceSwap').value) || 0)
         : 0;
-    // EVAL-ONLY Unchained LoRA: sent on EDIT and CAMERA jobs (Batch edits
-    // call loraPayload('edit'), so they're covered by the same branch).
-    // The worker further gates it to a single account, so it's 0 for
-    // everyone else regardless.
-    const unchained = (mode === 'edit' || mode === 'camera')
+    // SUBSCRIBER-ONLY Unchained LoRA: sent on EDIT and CAMERA jobs (Batch
+    // edits call loraPayload('edit'), so they're covered by the same branch).
+    // Zeroed here for non-subscribers as well — the worker enforces this
+    // authoritatively, but sending a weight we know will be discarded would
+    // make the request misrepresent the job that actually runs.
+    const unchained = ((mode === 'edit' || mode === 'camera') && canUseUnchained())
         ? (parseFloat($('rngLoraUnchained').value) || 0) : 0;
     // EVAL-ONLY NSFW LoRA: same surfaces and same server-side account gate
     // as Unchained. Null-guarded on the element so an older cached shell
@@ -15429,22 +15495,167 @@ function loraPayload(mode){
     };
 }
 
-// EVAL-ONLY: the eval LoRA sliders (Unchained, NSFW) are visible to a
-// single account, in Edit, Camera, and Batch modes (the evals cover all
-// three edit-family surfaces). The worker enforces the same email gate
-// server-side, so this is purely about not showing the controls to anyone
-// else; it isn't a security boundary on its own.
+// LoRA row gating for the two special adapters, in Edit, Camera, and Batch
+// modes (the three edit-family surfaces they apply to).
+//
+// The two rows are gated DIFFERENTLY:
+//
+//   Unchained — a PAID feature. The row renders for EVERY user so the
+//     capability is discoverable; non-subscribers get it visually locked
+//     (.sub-locked) and clicking it opens the subscribe paywall. The worker
+//     zeroes lora_unchained for non-subscribers regardless of what's sent,
+//     so this is presentation only, not a security boundary.
+//
+//   NSFW — still single-account eval. Hidden outright for everyone else,
+//     matching the unchanged server-side email gate.
+//
 // Name kept as _applyUnchainedGate for the existing call sites in
-// checkAuth() and setMode().
+// checkAuth(), setMode(), updateUserMenuSubState() and doLogout().
 const EVAL_LORA_EMAIL = 'ace0278@gmail.com';
-const EVAL_LORA_ROWS = ['rowUnchained', 'rowNsfwEval'];
+const EVAL_LORA_ROWS = ['rowNsfwEval'];
+
+// Mirrors the worker's canUseUnchainedLora(). TWO independent requirements:
+//   1. nsfw_enabled — the age-gated content opt-in. Applies to EVERYONE,
+//      including the eval account: it's a preference the user controls and
+//      can flip on themselves, so a special case would just be noise.
+//   2. an active subscription (or the eval account).
+// Requirement 1 controls VISIBILITY, requirement 2 controls the lock.
+function _unchainedNsfwOn(){
+    return !!(_user && _user.nsfw_enabled);
+}
+
+function canUseUnchained(){
+    if (!_user) return false;
+    if (!_unchainedNsfwOn()) return false;
+    if ((_user.email || '').toLowerCase() === EVAL_LORA_EMAIL) return true;
+    return (typeof isSubscriber === 'function') ? isSubscriber() : false;
+}
+
 function _applyUnchainedGate(){
-    const okEmail = !!(_user && (_user.email || '').toLowerCase() === EVAL_LORA_EMAIL);
-    const show = okEmail && (typeof currentMode === 'string')
+    const modeOk = (typeof currentMode === 'string')
         && (currentMode === 'edit' || currentMode === 'camera' || currentMode === 'batch');
+
+    // ── Unchained ──
+    // NSFW preference OFF (or signed out) → the row isn't rendered at all.
+    // Not locked, not greyed — absent. Showing a padlocked adapter to someone
+    // who has opted out of this content class would still be advertising it.
+    // NSFW ON → visible to all, locked for non-subscribers.
+    const unch = document.getElementById('rowUnchained');
+    if (unch){
+        const visible = modeOk && _unchainedNsfwOn();
+        unch.style.display = visible ? '' : 'none';
+        const entitled = canUseUnchained();
+        // Hold the lock styling until the first /auth/me resolves, so a
+        // subscriber reloading the page doesn't see their own slider flash
+        // as locked before auth lands.
+        const locked = !entitled && (_authResolved || !!_user);
+        unch.classList.toggle('sub-locked', locked);
+        if (locked){
+            if (!unch.dataset.unlockedTitle) unch.dataset.unlockedTitle = unch.title || '';
+            unch.title = 'Unchained (eval) requires a subscription — click to subscribe.';
+        } else if (unch.dataset.unlockedTitle !== undefined){
+            unch.title = unch.dataset.unlockedTitle;
+            delete unch.dataset.unlockedTitle;
+        }
+        // Losing entitlement (logout, cancellation, NSFW switched off) must
+        // not leave a stale non-zero weight sitting in the control — the
+        // worker would zero it anyway, but the UI would be lying about what
+        // the job will run.
+        if (!entitled) _zeroUnchainedSlider();
+        // Keyboard reachability follows the lock: a locked slider is inert
+        // to pointer input via CSS, and this keeps it off the tab order too
+        // so it can't be nudged with arrow keys.
+        ['rngLoraUnchained', 'vLoraUnchained'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { if (locked) el.tabIndex = -1; else el.removeAttribute('tabindex'); }
+        });
+    }
+
+    // ── NSFW: unchanged single-account eval gate ──
+    const okEmail = !!(_user && (_user.email || '').toLowerCase() === EVAL_LORA_EMAIL);
+    const showEval = okEmail && modeOk;
     EVAL_LORA_ROWS.forEach(id => {
         const row = document.getElementById(id);
-        if (row) row.style.display = show ? '' : 'none';
+        if (row) row.style.display = showEval ? '' : 'none';
+    });
+}
+
+function _zeroUnchainedSlider(){
+    const r = document.getElementById('rngLoraUnchained');
+    const n = document.getElementById('vLoraUnchained');
+    if (r) r.value = 0;
+    if (n) n.value = 0;
+}
+
+// ── Unchained paywall ──────────────────────────────────────────────
+// Opened when a non-subscriber clicks the locked row. Anonymous users are
+// sent to sign-in first (they can't be given a checkout session without an
+// account to attach it to).
+function showUnchainedPaywall(){
+    _zeroUnchainedSlider();
+    const m     = document.getElementById('evalLoraLockModal');
+    const title = document.getElementById('evalLoraLockTitle');
+    const sub   = document.getElementById('evalLoraLockSub');
+    const blurb = document.getElementById('evalLoraLockBlurb');
+    const cta   = document.getElementById('evalLoraLockCta');
+    if (!m){
+        // Fallback for an older cached shell without the modal markup —
+        // still tell them, and still get them to checkout.
+        showNotif('Unchained (eval) requires a subscription.', 'error');
+        if (typeof doSubscribe === 'function') doSubscribe();
+        return;
+    }
+    if (!_user){
+        if (title) title.textContent = 'Sign in to use Unchained (eval)';
+        if (sub)   sub.textContent   = 'Account + subscription required';
+        if (blurb) blurb.textContent = 'Unchained (eval) is a subscriber feature. Sign in, then subscribe to unlock it on Edit, Camera, and Batch jobs.';
+        if (cta)   cta.textContent   = 'Sign in to continue';
+    } else {
+        if (title) title.textContent = 'Unchained (eval) is a Pro feature';
+        if (sub)   sub.textContent   = 'Subscription required';
+        if (blurb) blurb.textContent = 'You must subscribe to access this feature. A subscription unlocks the Unchained (eval) LoRA on Edit, Camera, and Batch jobs, plus the rest of the Pro tools, and includes a monthly token grant.';
+        if (cta)   cta.textContent   = 'Subscribe — $20/month';
+    }
+    m.style.display = 'flex';
+}
+
+function closeUnchainedPaywall(){
+    const m = document.getElementById('evalLoraLockModal');
+    if (m) m.style.display = 'none';
+}
+
+// CTA handler — anonymous → sign-in modal; signed-in → Stripe Checkout.
+// Same routing as agentLockClick(), so all paywalls in the app converge on
+// one subscribe path.
+function unchainedPaywallCta(){
+    closeUnchainedPaywall();
+    if (!_user){
+        const lm = document.getElementById('loginModal');
+        if (lm) lm.classList.add('open');
+        return;
+    }
+    if (typeof doSubscribe === 'function') doSubscribe();
+    else showNotif('Subscription is unavailable right now. Please try again.', 'error');
+}
+
+// Intercept every interaction with the locked row. Bound in the CAPTURE
+// phase so it fires before any slider handler, and covering keyboard as
+// well as pointer input for the case where a browser still focuses the
+// control despite tabIndex=-1.
+function _bindUnchainedPaywall(){
+    const row = document.getElementById('rowUnchained');
+    if (!row || row.dataset.paywallBound) return;
+    row.dataset.paywallBound = '1';
+    const intercept = (e) => {
+        if (canUseUnchained()) return;
+        // The info button is exempt — reading about the LoRA is free.
+        if (e.target && e.target.closest && e.target.closest('.lora-info-btn')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        showUnchainedPaywall();
+    };
+    ['pointerdown', 'mousedown', 'click', 'keydown', 'input', 'change'].forEach(evt => {
+        row.addEventListener(evt, intercept, true);
     });
 }
 
@@ -29601,7 +29812,12 @@ function restoreJobState(jobId){
     // field, and 0 (off) is the correct neutral for a user who never opted in.
     const fsVal = (s.lora_faceswap != null) ? s.lora_faceswap : 0;
     if ($('rngLoraFaceSwap')) { $('rngLoraFaceSwap').value = fsVal; $('vLoraFaceSwap').value = fsVal; }
-    const unchVal = (s.lora_unchained != null) ? s.lora_unchained : 0;
+    // Unchained is subscriber-gated: a snapshot taken while subscribed (or
+    // one copied from another user's job) must not repopulate the slider for
+    // someone who can't use it — the worker would zero it anyway and the UI
+    // would be showing a weight that never applies.
+    const unchEntitled = (typeof canUseUnchained === 'function') ? canUseUnchained() : false;
+    const unchVal = (unchEntitled && s.lora_unchained != null) ? s.lora_unchained : 0;
     if ($('rngLoraUnchained')) { $('rngLoraUnchained').value = unchVal; $('vLoraUnchained').value = unchVal; }
     const nsfwVal = (s.lora_nsfw != null) ? s.lora_nsfw : 0;
     if ($('rngLoraNsfw')) { $('rngLoraNsfw').value = nsfwVal; $('vLoraNsfw').value = nsfwVal; }
@@ -30076,6 +30292,12 @@ document.addEventListener('DOMContentLoaded',()=>{
     bindSliderPair('rngLoraSkin', 'vLoraSkin');
     bindSliderPair('rngLoraFaceSwap', 'vLoraFaceSwap');
     bindSliderPair('rngLoraUnchained', 'vLoraUnchained');
+    // Capture-phase paywall interceptor on the Unchained row. Bound after
+    // bindSliderPair so it sits in front of the slider's own handlers.
+    _bindUnchainedPaywall();
+    // Paint the initial lock state — checkAuth() will repaint once /auth/me
+    // resolves, but this covers the pre-auth frame.
+    _applyUnchainedGate();
     bindSliderPair('rngLoraNsfw', 'vLoraNsfw');
     initOverlayDragging();
     initModalDragging();
