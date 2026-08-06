@@ -679,6 +679,14 @@ to{opacity:1;transform:translateY(0)}}
   overflow:hidden;cursor:pointer;transition:all .15s}
 .ov-card:hover{border-color:var(--gold);transform:translateY(-2px)}
 .ov-card video{width:100%;display:block;background:#000;aspect-ratio:1/1;object-fit:cover}
+/* Image cards get the same 1:1 framing as video cards. No border-radius
+   and no background here: a rounded/filled box behind a transparent PNG
+   (cut-outs from the image studio) is exactly what reads as a dark ring
+   around the picture. */
+.ov-card .history-card-thumb{width:100%;aspect-ratio:1/1;position:relative;
+  overflow:hidden;background:transparent;border:0;border-radius:0}
+.ov-card .history-card-thumb img{width:100%;height:100%;object-fit:cover;
+  display:block;border:0;border-radius:0}
 .ov-card .cap{padding:8px 10px;font-family:var(--font-mono);font-size:9px;
   color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
@@ -6486,6 +6494,9 @@ let modalKind="all";
 function openHistoryModal(){
   const m=$("vsHistoryModal");if(!m)return;
   m.style.display="flex";renderHistoryModal();
+  // Opening the history is an explicit "show me everything" — always
+  // re-read page 0 so newly generated images are there, then repaint.
+  _maybeRefreshLibrary(true);
   _histEsc=e=>{if(e.key==="Escape")closeHistoryModal();};
   document.addEventListener("keydown",_histEsc);
 }
@@ -6496,6 +6507,7 @@ function closeHistoryModal(){
 }
 function setModalKind(k,btn){
   modalKind=k;
+  if(modalKind==="image"||modalKind==="all")_maybeRefreshLibrary(false);
   document.querySelectorAll("#vsHistoryModal .hk-tab").forEach(b=>
     b.classList.toggle("active",b===btn));
   renderHistoryModal();
@@ -7183,17 +7195,28 @@ setInterval(async()=>{
 function renderGallery(){
   const g=$("ovGrid");if(!g)return;
   $("ovCount").textContent=history.length;
-  if(!history.length){g.innerHTML="<div class='empty'>No videos yet this session.</div>";return;}
+  if(!history.length){g.innerHTML="<div class='empty'>Nothing here yet \u2014 "
+    +"finished clips and your generated images appear here.</div>";return;}
   g.innerHTML="";
   history.forEach(h=>{
     const c=document.createElement("div");c.className="ov-card";
-    c.innerHTML=(h.url
-      ?"<video src='"+h.url+"' muted loop playsinline "+
-       "onmouseover='this.play()' onmouseout='this.pause()'></video>"
-      :"<div class='history-card-thumb'><img src='"+h.thumb+"'>"+
-       "<div class='play'>&#9654;</div></div>")+
+    /* Branch on the item's KIND, not on whether it happens to have a url.
+       Images have urls too, and the old test handed every one of them to
+       a <video> element pointed at a JPEG — which cannot decode, so the
+       browser painted a black tile with its circular broken-media glyph
+       on top. That is where the black circles on images came from. */
+    const isImg=_histKind(h)==="image";
+    c.innerHTML=(isImg
+      ?"<div class='history-card-thumb'><img src='"+(h.thumb||h.url||"")+"'>"+
+       "<div class='h-imgtag'>IMG</div></div>"
+      :(h.url
+        ?"<video src='"+h.url+"' muted loop playsinline "+
+         "onmouseover='this.play()' onmouseout='this.pause()'></video>"
+        :"<div class='history-card-thumb'><img src='"+(h.thumb||"")+"'>"+
+         "<div class='play'>&#9654;</div></div>"))+
       "<div class='cap'>"+esc(h.prompt)+"</div>";
-    c.onclick=()=>{showVideo(h);closeGallery();};
+    // ...and open it with the right viewer.
+    c.onclick=()=>{isImg?showImage(h):showVideo(h);closeGallery();};
     g.appendChild(c);
   });
 }
@@ -7482,6 +7505,64 @@ async function loadImageLibrary(limit){
   }catch(e){/* the library is a bonus; never block the studio on it */}
   finally{_libBusy=false;}
 }
+
+/* Re-read the FIRST page and merge anything new.
+
+   loadImageLibrary() pages forward and never returns to offset 0, so an
+   image generated in the image studio after this tab loaded could not
+   appear — the cursor had already moved past where it would land. This is
+   the other half: paging goes deeper, refreshing goes newer.
+
+   Deduped on url, so re-reading a page already seen adds nothing. Cheap
+   enough to run whenever the history is actually looked at. */
+async function refreshImageLibrary(){
+  if(_libBusy)return 0;
+  _libBusy=true;
+  try{
+    const r=await fetch("/api/studio/history?limit=30&offset=0");
+    if(!r.ok)return 0;                    // signed out: try again later
+    const j=await r.json();
+    const items=(j&&(j.items||j.jobs))||[];
+    const add=[];
+    items.forEach(it=>{
+      if(it.media_type==="video"||it.mode==="video")return;
+      const u=it.url||it.poster;
+      if(!u)return;
+      if(history.some(x=>x.url===u))return;
+      add.push({id:"lib_"+it.id,kind:"image",
+        prompt:it.prompt||it.mode||"image",
+        thumb:it.poster||u,url:u,
+        ts:(it.finished_at||it.created_at||0)*1000});
+    });
+    if(add.length){
+      add.sort((a,b)=>(b.ts||0)-(a.ts||0));   // newest first
+      history.unshift(...add);
+      _libLoaded=true;
+      renderHistory();
+      if($("vsHistoryModal")&&$("vsHistoryModal").style.display==="flex")
+        renderHistoryModal();
+    }
+    return add.length;
+  }catch(e){return 0;}                    // the library is a bonus, never fatal
+  finally{_libBusy=false;}
+}
+
+/* Refresh when the tab regains focus — the usual shape of "generate in the
+   image studio, come back here". Throttled so alt-tabbing doesn't hammer
+   the endpoint. */
+let _libLastRefresh=0;
+function _maybeRefreshLibrary(force){
+  const now=Date.now();
+  if(!force&&now-_libLastRefresh<20000)return;
+  _libLastRefresh=now;
+  refreshImageLibrary();
+}
+try{
+  window.addEventListener("focus",()=>_maybeRefreshLibrary(false));
+  document.addEventListener("visibilitychange",()=>{
+    if(!document.hidden)_maybeRefreshLibrary(false);
+  });
+}catch(e){}
 
 async function restoreJobs(){
   let j;
