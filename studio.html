@@ -6747,71 +6747,21 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 </div>
 
 <!-- LOGIN MODAL (full landing) -->
+<!-- Login is Google-only. This element is intentionally KEPT (rather than
+     deleted) because ~60 call sites and closeLoginModal() reference it by id;
+     removing it would turn each of those into a null dereference. It no longer
+     contains a form — requireLogin() redirects straight to Google, and this
+     card is only ever visible for the instant before the navigation commits.
+     The MutationObserver below is a backstop: if any code path still adds
+     .open directly, it fires the redirect anyway. -->
 <div class="popup-modal" id="loginModal">
-    <div class="popup-card" style="max-width:440px;padding:24px 32px">
-        <div style="text-align:center;margin-bottom:14px">
-            <div style="font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:2px;color:var(--text);margin-bottom:6px">MISSINGLINK <span style="color:var(--gold)">STUDIO</span></div>
-            <h1 style="font-family:var(--font-body);font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;line-height:1.2;letter-spacing:-.3px">
-                Edit Any Image, <span style="color:var(--gold)">Free</span>
-            </h1>
-            <p style="font-size:11px;color:var(--text-dim);line-height:1.45;max-width:380px;margin:0 auto 8px">
-                Change camera angles, swap outfits, and edit anything with simple prompts. Get high-quality results in seconds.
-            </p>
-            <!-- FREE offer — highlighted badge, not a button (a solid gold
-                 block reads as clickable and competes with the real CTAs). -->
-            <div style="display:inline-block;padding:4px 13px;background:var(--gold-dim);border:1px solid var(--gold);border-radius:20px;font-family:var(--font-mono);font-size:11px;font-weight:800;color:var(--gold);letter-spacing:.4px">
-                🎁 50 FREE GENERATIONS AT SIGNUP
-            </div>
-            <div style="font-family:var(--font-mono);font-size:9.5px;margin-top:6px;white-space:nowrap">
-                <span style="color:var(--gold);font-weight:700">✓ 5 free daily</span>
-                <span style="color:var(--text-muted)"> · </span>
-                <span style="color:var(--green);font-weight:700">✓ Share to earn credits</span>
-                <span style="color:var(--text-muted)"> · </span>
-                <span style="color:var(--text);font-weight:700">✓ No card required</span>
-            </div>
-            <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);margin-top:4px">
-                ⭐ Members get access to additional features
-            </div>
-        </div>
-
-        <!-- Google button -->
-        <button onclick="loginGoogle()" style="width:100%;padding:10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-family:var(--font-body);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all .15s" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border)'">
+    <div class="popup-card" style="max-width:340px;padding:28px 32px;text-align:center">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:2px;color:var(--text);margin-bottom:10px">MISSINGLINK <span style="color:var(--gold)">STUDIO</span></div>
+        <div style="font-size:12px;color:var(--text-dim);line-height:1.5">Taking you to Google to sign in…</div>
+        <button onclick="loginGoogle()" style="margin-top:16px;width:100%;padding:10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-family:var(--font-body);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px">
             <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
             <span>Continue with Google</span>
         </button>
-
-        <!-- OR divider -->
-        <div style="display:flex;align-items:center;gap:12px;margin:12px 0 10px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:1px">
-            <div style="flex:1;height:1px;background:var(--border)"></div>
-            <span>OR</span>
-            <div style="flex:1;height:1px;background:var(--border)"></div>
-        </div>
-
-        <!-- Email/password form -->
-        <form id="authForm" onsubmit="submitAuthForm(event)" style="text-align:left">
-            <div style="margin-bottom:8px">
-                <label style="display:block;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);margin-bottom:4px;letter-spacing:.5px">EMAIL</label>
-                <input type="email" id="authEmail" required placeholder="you@company.com" style="width:100%;padding:9px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:var(--font-body);font-size:12px;outline:none;transition:border-color .15s" onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
-            </div>
-            <div id="nameFieldWrap" style="margin-bottom:8px;display:none">
-                <label style="display:block;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);margin-bottom:4px;letter-spacing:.5px">NAME (OPTIONAL)</label>
-                <input type="text" id="authName" placeholder="Your name" style="width:100%;padding:9px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:var(--font-body);font-size:12px;outline:none" onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
-            </div>
-            <div style="margin-bottom:10px">
-                <label style="display:block;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);margin-bottom:4px;letter-spacing:.5px">PASSWORD</label>
-                <input type="password" id="authPassword" required minlength="8" placeholder="Enter password (min 8 chars)" style="width:100%;padding:9px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:var(--font-body);font-size:12px;outline:none;transition:border-color .15s" onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border)'">
-            </div>
-            <div id="authError" style="display:none;padding:8px 10px;background:rgba(239,68,68,.1);border:1px solid var(--red);border-radius:6px;color:var(--red);font-size:11px;margin-bottom:10px"></div>
-            <button type="submit" id="authSubmitBtn" style="width:100%;padding:10px;background:var(--gold);color:var(--black);border:none;border-radius:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;transition:all .15s" onmouseover="this.style.background='var(--gold-light)'" onmouseout="this.style.background='var(--gold)'">Sign In</button>
-        </form>
-
-        <div style="text-align:center;margin-top:10px;font-size:11px;color:var(--text-muted)">
-            <span id="authSwitchText">Don't have an account?</span>
-            <a id="authSwitchLink" onclick="toggleAuthMode()" style="color:var(--gold);cursor:pointer;font-weight:600;margin-left:4px">Sign up</a>
-        </div>
-        <div style="text-align:right;margin-top:14px;font-family:var(--font-mono);font-size:9px;color:var(--text-muted);letter-spacing:.3px">
-            powered by <a href="https://missinglink.build" target="_blank" style="color:var(--gold);text-decoration:none">MissingLink</a> Triton kernels
-        </div>
     </div>
 </div>
 
@@ -7255,6 +7205,20 @@ let _authResolved=false;
 // Admin-controlled: whether SDXL Studio requires a subscription. Hydrated from
 // /auth/me (sent for both logged-in and anonymous). Default false = open to all.
 let _sdxlRequireSub=false;
+// Admin-controlled: whether NSFW generation requires payment (an active
+// subscription OR a past token purchase). Hydrated from /auth/me on both the
+// logged-in and anonymous responses. Default false = open to anyone who has
+// cleared the 18+ gate, matching the server default.
+let _nsfwRequirePaid=false;
+// This user's resolved answer to "are you entitled to NSFW?". Computed
+// SERVER-side and sent down, so the client never reimplements the
+// subscriber-or-purchaser rule and can't drift from the backend's version.
+let _hasNsfwEntitlement=false;
+// Platform lockdown. _lockedOut is resolved SERVER-side for this specific
+// user (mode + subscription + account age all folded in), so the client never
+// reimplements the rule. Used to warn early; the backend is authoritative.
+let _lockdownMode='off';
+let _lockedOut=false;
 let imageId=null,imageUrl=null;
 let hwOpen=true;
 let currentMode='generate';
@@ -7569,6 +7533,10 @@ function showNotif(message, type){
 // reads sensibly instead of surfacing the raw error code. Returns nothing;
 // callers `return` after invoking it.
 function notifyUploadError(code, data){
+    // Lockdown first. It ships a `message`, so the admin-debug branch below
+    // would otherwise show the text without arming the banner or updating
+    // _lockedOut — the user would get one toast and no standing explanation.
+    if(handleLockdown(data)) return;
     // If the server returned an admin-only debug message (moderation
     // scores for threshold tuning), show that verbatim — it's only ever
     // populated for the admin account. Falls back to the friendly copy.
@@ -7726,6 +7694,13 @@ async function checkAuth(){
         // Global SDXL access policy — carried on both logged-in and anonymous
         // responses so the lock veil renders correctly before any login.
         _sdxlRequireSub = !!d.sdxl_require_subscription;
+        // NSFW paywall — carried on anonymous responses too, so the upsell
+        // copy is correct before the user has signed in.
+        _nsfwRequirePaid = !!d.nsfw_require_paid;
+        _hasNsfwEntitlement = !!d.has_nsfw_entitlement;
+        _lockdownMode = d.lockdown_mode || 'off';
+        _lockedOut = !!d.locked_out;
+        if (typeof syncLockdownUi === 'function') syncLockdownUi();
         if(d.logged_in){
             // Preserve any acknowledgement we already knew about before we
             // overwrite _user with the fresh response (see sticky logic below).
@@ -7949,6 +7924,34 @@ async function checkAuth(){
 }
 
 function loginGoogle(){ window.location.href=`${API}/auth/google?return=/studio.html`; }
+
+// ── Sign-in entry point ─────────────────────────────────────────────
+// Google is the ONLY login method, so there is nothing to choose between and
+// no reason to interrupt with a modal — every "you need to be signed in" path
+// calls this and goes straight to the Google consent screen.
+//
+// Guarded against double-firing: several call sites can trip on the same tick
+// (e.g. a 401 handler plus the caller's own !_user check), and issuing two
+// navigations races the browser for which one lands.
+let _loginRedirecting = false;
+function requireLogin(){
+    if (_loginRedirecting) return;
+    _loginRedirecting = true;
+    try { loginGoogle(); }
+    catch (e) { _loginRedirecting = false; }
+}
+
+// Backstop for any path that still adds .open to the modal element directly
+// (including code added later that copies the old pattern). Watching the class
+// attribute means those paths still end up at Google instead of showing a card
+// with no form in it.
+(function watchLoginModal(){
+    const el = document.getElementById('loginModal');
+    if (!el || typeof MutationObserver === 'undefined') return;
+    new MutationObserver(() => {
+        if (el.classList.contains('open')) requireLogin();
+    }).observe(el, { attributes: true, attributeFilter: ['class'] });
+})();
 
 // Pre-warm the Modal GPU container so cold-start happens in the background
 // while the user is uploading and picking a pose, not after they click
@@ -8350,6 +8353,86 @@ function isSubscriber(){
     return s === 'active' || s === 'past_due';
 }
 
+// ── Platform lockdown ──────────────────────────────────────────────
+// Central handler for the server's 403 platform_locked. Same contract as
+// handleNsfwPaywall: pass the parsed body, returns true if it handled it.
+function handleLockdown(d){
+    if (!d || d.error !== 'platform_locked') return false;
+    // Trust the server over our cached copy — the lockdown may have been
+    // armed since this tab's last /auth/me poll.
+    _lockedOut = true;
+    showNotif(d.message || 'Uploads and generation are temporarily unavailable.', 'error');
+    syncLockdownUi();
+    return true;
+}
+
+// Persistent banner while locked out. A toast alone isn't enough here: the
+// user would hit the same wall on every action with no standing explanation
+// of why. Reuses no existing modal so it can't trap them — everything else
+// (browsing, gallery, billing) stays usable, which matters because
+// subscribing is how they get out of a paid-only lockdown.
+function syncLockdownUi(){
+    let bar = document.getElementById('lockdownBar');
+    if (!_lockedOut){
+        if (bar) bar.remove();
+        return;
+    }
+    if (!bar){
+        bar = document.createElement('div');
+        bar.id = 'lockdownBar';
+        bar.style.cssText =
+            'position:fixed;left:0;right:0;bottom:0;z-index:9998;padding:9px 14px;' +
+            'background:rgba(127,29,29,.97);color:#FEE2E2;font-size:12px;text-align:center;' +
+            'border-top:1px solid #DC2626;font-family:var(--font-body)';
+        document.body.appendChild(bar);
+    }
+    bar.textContent = (_lockdownMode === 'new')
+        ? 'New accounts can\u2019t upload or generate right now. Please check back shortly.'
+        : 'Uploads and generation are temporarily limited to subscribers.';
+}
+
+// ── NSFW paywall ───────────────────────────────────────────────────
+// True when the admin switch is ON and this user hasn't paid. Used only to
+// pre-empt a doomed request and to label controls — the SERVER is
+// authoritative and will return error="nsfw_requires_paid" (402) regardless
+// of what the client believes.
+function nsfwNeedsPurchase(){
+    return _nsfwRequirePaid && !_hasNsfwEntitlement;
+}
+
+// Central handler for the server's 402. Call it with the parsed response body
+// from any generate endpoint; returns true if it recognised and handled the
+// error, so callers can `if (handleNsfwPaywall(d)) return;` and bail.
+//
+// Deliberately mirrors the age_ack_required pattern (surface the blocker, let
+// the user resolve it, they retry) rather than auto-opening checkout — an
+// unrequested redirect to Stripe mid-generate is hostile.
+function handleNsfwPaywall(d){
+    if (!d || d.error !== 'nsfw_requires_paid') return false;
+    // Re-sync so the flag flips immediately if the admin just turned it on
+    // mid-session (our cached copy could be up to one poll stale).
+    _nsfwRequirePaid = true;
+    _hasNsfwEntitlement = false;
+    showNotif(
+        d.message || 'Adult content requires a subscription or a token purchase.',
+        'error'
+    );
+    if (typeof syncNsfwPaywallUi === 'function') syncNsfwPaywallUi();
+    return true;
+}
+
+// Reflects the paywall in the UI: tags the NSFW preference toggle so the user
+// can see WHY it won't take effect, without hiding the control (hiding it just
+// makes the product look broken). Safe to call before the elements exist.
+function syncNsfwPaywallUi(){
+    const blocked = nsfwNeedsPurchase();
+    document.querySelectorAll('[data-nsfw-gated]').forEach(el => {
+        el.classList.toggle('nsfw-paywalled', blocked);
+        if (blocked) el.setAttribute('title', 'Adult content requires a subscription or a token purchase.');
+        else el.removeAttribute('title');
+    });
+}
+
 // Shows / hides the SDXL Pro lock. Mirrors syncAgentSubscriptionLock but keys
 // off the STAGE VIEW — SDXL lives in the stage + sidebar via
 // setStageView('sdxl'), not in currentMode. Called whenever:
@@ -8421,8 +8504,7 @@ function syncSdxlSubscriptionLock(){
 // unsubscribed → Stripe checkout via doSubscribe.
 function agentLockClick(){
     if (!_user) {
-        const m = document.getElementById('loginModal');
-        if (m) m.classList.add('open');
+        requireLogin();
         return;
     }
     if (typeof doSubscribe === 'function') doSubscribe();
@@ -8518,7 +8600,7 @@ function closeApiKeyModal(){
     const v = $('apiKeyValue'); if (v) v.textContent = '';
 }
 async function rotateApiKey(){
-    if (!_user) { closeApiKeyModal(); $('loginModal').classList.add('open'); return; }
+    if (!_user) { closeApiKeyModal(); requireLogin(); return; }
     const btn = $('apiKeyGenBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
     try {
@@ -9120,7 +9202,7 @@ async function doBuyTokens(){
 // Same redirect pattern as doBuyTokens — Stripe-hosted page, then
 // success_url back to /studio.html?subscription=success.
 async function doSubscribe(){
-    if (!_user) { closeBuyModal(); $('loginModal').classList.add('open'); return; }
+    if (!_user) { closeBuyModal(); requireLogin(); return; }
     try {
         const r = await fetchT(`${API}/api/studio/subscribe`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -9139,7 +9221,7 @@ async function doSubscribe(){
 // the authenticated user — no email entry needed (unlike the
 // /create-portal-session endpoint which serves email-only customers).
 async function doManageSubscription(){
-    if (!_user) { closeBuyModal(); $('loginModal').classList.add('open'); return; }
+    if (!_user) { closeBuyModal(); requireLogin(); return; }
     try {
         const r = await fetchT(`${API}/api/studio/subscription/portal`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10570,15 +10652,16 @@ function initDrop(){
 }
 
 async function uploadFile(file){
-    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(!_user){ requireLogin(); return; }
     // Read dimensions client-side so Width/Height populate immediately
     const dims = await readImageDimensions(file);
     const fd=new FormData(); fd.append('image',file); await attachScreenCopy(fd, file);
     try{
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
-        if(r.status===401){ $('loginModal').classList.add('open'); return; }
+        if(r.status===401){ requireLogin(); return; }
         const d=await r.json();
         if(d.error){
+            if(handleLockdown(d)){ return; }
             if(d.error==='content_blocked'){
                 showNotif('This image can\u2019t be uploaded: it was flagged as involving a minor. Images depicting people under 18 are not allowed.', 'error');
             } else if(d.error==='moderation_unavailable'){
@@ -10872,12 +10955,12 @@ function genSlotFileChange(i){
 }
 
 async function genUploadToSlot(i, file){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const dims = await readImageDimensions(file);
     const fd = new FormData(); fd.append('image', file); await attachScreenCopy(fd, file);
     try {
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { notifyUploadError(d.error, d); return; }
         const w = d.w || dims.w, h = d.h || dims.h;
@@ -11692,7 +11775,7 @@ function restoreGenerateState(){
 // with the result on success. Same UX as agent generate_new_images:
 // elapsed-time + ETA on the placeholder, history insertion, etc.
 async function doGenerateMode(_autoRetried){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const promptEl = $('generatePrompt');
     const prompt = (promptEl && promptEl.value || '').trim();
     if (!prompt) {
@@ -12296,7 +12379,7 @@ async function _vmAutoPrompt(){
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         }, 40000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json().catch(() => ({}));
         if (d && d.ok && d.prompt) {
             ta.value = d.prompt;
@@ -12504,7 +12587,7 @@ async function submitVideo(){
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         }, 60000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); go.disabled = false; go.textContent = 'Generate video'; _vmSetProgress(0, '', true); return; }
+        if (r.status === 401) { requireLogin(); go.disabled = false; go.textContent = 'Generate video'; _vmSetProgress(0, '', true); return; }
         const d = await r.json().catch(() => ({}));
         if (!d || d.error) {
             go.disabled = false; go.textContent = 'Generate video';
@@ -13278,13 +13361,13 @@ function slotFileChange(i){
 }
 
 async function uploadToSlot(i,file){
-    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(!_user){ requireLogin(); return; }
     // Read dimensions client-side before upload so Width/Height populate right away
     const dims = await readImageDimensions(file);
     const fd=new FormData(); fd.append('image',file); await attachScreenCopy(fd, file);
     try{
         const r=await fetchT(`${API}/api/studio/upload`,{method:'POST',body:fd},30000);
-        if(r.status===401){ $('loginModal').classList.add('open'); return; }
+        if(r.status===401){ requireLogin(); return; }
         const d=await r.json();
         if(d.error){ notifyUploadError(d.error, d); return; }
         const w = d.w || dims.w, h = d.h || dims.h;
@@ -13743,7 +13826,7 @@ async function _compositeSlotWithStrokes(slotIdx){
     // this into slots[i] — the original stays the source of truth.
     const fd = new FormData(); fd.append('image', file); await attachScreenCopy(fd, file);
     const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
-    if (r.status === 401) { $('loginModal').classList.add('open'); throw new Error('auth'); }
+    if (r.status === 401) { requireLogin(); throw new Error('auth'); }
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     return { id: d.id, url: d.url, filename: d.filename, w: d.w || slot.w, h: d.h || slot.h };
@@ -15833,8 +15916,7 @@ function closeUnchainedPaywall(){
 function unchainedPaywallCta(){
     closeUnchainedPaywall();
     if (!_user){
-        const lm = document.getElementById('loginModal');
-        if (lm) lm.classList.add('open');
+        requireLogin();
         return;
     }
     if (typeof doSubscribe === 'function') doSubscribe();
@@ -15863,7 +15945,7 @@ function _bindUnchainedPaywall(){
 }
 
 async function doGenerate(){
-    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(!_user){ requireLogin(); return; }
     // Camera mode routes by the GENERATION TYPE selector. Multi and 360° each
     // run their own preflight + submission, so dispatch to them BEFORE this
     // function's single-shot preflight to avoid double-charging/checks.
@@ -16035,7 +16117,10 @@ async function doGenerate(){
         const d = await r.json();
 
         if (!d.ok) {
-            if (r.status === 401) { $('loginModal').classList.add('open'); }
+            if (r.status === 401) { requireLogin(); }
+            else if (handleLockdown(d)) { /* locked down — notified above */ }
+            // Before the generic 402 — see note on error-code collision.
+            else if (handleNsfwPaywall(d)) { /* paywalled — notified above */ }
             else if (r.status === 402) { showBuyModal(); }
             else if (r.status === 429) { showNotif('Max 3 jobs queued. Wait for one to finish or cancel one.'); }
             else if (d.error === 'content_blocked') {
@@ -16312,7 +16397,7 @@ async function autoPanoPrompt(opts){
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ image_id: id }),
         }, 30000);
-        if (r.status === 401) { _restore(); $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { _restore(); requireLogin(); return; }
         const d = await r.json().catch(() => ({ error: 'bad_response' }));
         if (d && !d.error) {
             _panoAutoCache[id] = { prompt: d.prompt || '', negative_prompt: d.negative_prompt || '' };
@@ -16336,7 +16421,7 @@ async function autoPanoPrompt(opts){
 }
 
 async function generatePanorama(){
-    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(!_user){ requireLogin(); return; }
     if(currentMode!=='camera'){ showNotif('Switch to Camera mode to make a panorama.', 'error'); return; }
     if(!imageId){ showNotif('Upload an image first.', 'error'); return; }
     if(_user.tokens<100){ showBuyModal(); return; }
@@ -16410,7 +16495,10 @@ async function generatePanorama(){
         }, 30000);
         const d = await r.json();
         if (!d.ok) {
-            if (r.status === 401) { $('loginModal').classList.add('open'); }
+            if (r.status === 401) { requireLogin(); }
+            else if (handleLockdown(d)) { /* locked down — notified above */ }
+            // Before the generic 402 — see note on error-code collision.
+            else if (handleNsfwPaywall(d)) { /* paywalled — notified above */ }
             else if (r.status === 402) { showBuyModal(); }
             else if (r.status === 429) { showNotif('Max jobs queued. Wait for one to finish or cancel one.'); }
             else if (d.error === 'content_blocked') {
@@ -16981,7 +17069,7 @@ async function generateAnglePrompts(){
             // the endpoint degrades to text-only when absent.
             body: JSON.stringify({ instructions, views, image_id: imageId || undefined }),
         }, 60000);
-        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         if (r.status === 402) { showNotif('Not enough tokens for AI prompt generation.', 'error'); return; }
         const d = await r.json();
         if (!d || !d.ok) throw new Error((d && d.error) || 'generation_failed');
@@ -17105,14 +17193,14 @@ let _batchContext = { 1: null, 2: null };
 
 // Upload a file into a shared-context slot.
 async function batchContextUpload(slotIdx, file){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const dims = await readImageDimensions(file);
     const fd = new FormData();
     fd.append('image', file);
     await attachScreenCopy(fd, file);
     try {
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { notifyUploadError(d.error, d); return; }
         _batchContext[slotIdx] = {
@@ -18043,7 +18131,7 @@ async function sendBatchInputToCreate(inp, opts){
                 method: 'POST', body: fd,
             }, 30000);
             if (upR.status === 401) {
-                $('loginModal').classList.add('open');
+                requireLogin();
                 return;
             }
             const d = await upR.json();
@@ -18148,7 +18236,7 @@ function _issuesSignature(issues){
 
 async function findIssuesOnTile(inp, btn){
     if (!inp || inp._placeholder) return;
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     if (btn) { btn.classList.add('busy'); btn.disabled = true; }
     // While running, mark the inp so renderBatchInputs paints the
     // progress overlay on the tile + focus stage. Cleared in finally.
@@ -18215,14 +18303,14 @@ async function findIssuesOnTile(inp, btn){
 // Upload one file to the batch inputs list. Uses the same /api/studio/upload
 // endpoint as the camera + edit modes so we get a stable R2-backed image_id.
 async function batchUploadFile(file){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const dims = await readImageDimensions(file);
     const fd = new FormData();
     fd.append('image', file);
     await attachScreenCopy(fd, file);
     try {
         const r = await fetchT(`${API}/api/studio/upload`, { method: 'POST', body: fd }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { notifyUploadError(d.error, d); return; }
         _batchInputs.push({
@@ -18256,7 +18344,7 @@ let _imgSearchSize = 'any';   // resolution bucket: any | large | medium | small
 let _imgSearchSort = 'relevance';   // relevance | largest | smallest
 
 function openImageSearch(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     $('imageSearchModal').style.display = 'flex';
     if (typeof _applySavedModalPosition === 'function') _applySavedModalPosition('imagesearch');
     const input = $('imageSearchInput');
@@ -18472,7 +18560,7 @@ async function addSearchImageToStage(idx, btn){
     const res = _imgSearchResults[idx];
     if (!res || !res.full) return;
     if (_imgSearchAdded.has(res.full)) return;  // already added
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
 
     const origText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
@@ -18481,7 +18569,7 @@ async function addSearchImageToStage(idx, btn){
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({ url: res.full })
         }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (!d.ok) {
             const map = {
@@ -18575,7 +18663,7 @@ let _lastAuditResult = null;
 // findings into _batchPerImagePrompts and populates the EDIT INSTRUCTION
 // with a synthesized shared prompt.
 async function auditBatchConsistency(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const selected = _batchInputs.filter(b => b.selected);
     if (selected.length < 2) {
         showNotif('Select at least 2 images to audit consistency.', 'error');
@@ -18596,7 +18684,7 @@ async function auditBatchConsistency(){
                 context_ids: _aiContextIds(),
             }),
         }, 90000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { showNotif(d.error, 'error'); if (status) status.textContent = ''; return; }
         // Server returns:
@@ -18676,7 +18764,7 @@ function applyAuditFixes(){
 // buildings, no weapons, no signature"). Replaces the current Negative
 // Prompt textarea content on success.
 async function suggestBatchNegatives(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const selected = _batchInputs.filter(b => b.selected);
     if (selected.length === 0) {
         showNotif('Select at least one image first.', 'error');
@@ -18695,7 +18783,7 @@ async function suggestBatchNegatives(){
                 current_prompt: $('batchPrompt').value.trim(),
             }),
         }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { showNotif(d.error, 'error'); return; }
         if (d.negative_prompt) {
@@ -18720,7 +18808,7 @@ async function suggestBatchNegatives(){
 // a zip of "<original-stem>.txt" files, the format kohya_ss / sd-scripts
 // expect for LoRA training. JSON is also dropped in for non-LoRA users.
 async function aiCaptionSelected(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const selected = _batchInputs.filter(b => b.selected);
     if (selected.length === 0) {
         showNotif('Select at least one image first.', 'error');
@@ -18741,7 +18829,7 @@ async function aiCaptionSelected(){
                 style: 'natural',  // 'natural' | 'tags' | 'booru' — server decides
             }),
         }, 120000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { showNotif(d.error, 'error'); if (status) status.textContent = ''; return; }
         // d.captions is { [image_id]: "caption text" }
@@ -18796,7 +18884,7 @@ async function aiCaptionSelected(){
 //   opts.force  — regenerate even if a saved prompt exists (re-charges).
 async function aiReverseInputTile(inp, btnEl, opts){
     opts = opts || {};
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     // Cache-first: if we already have the saved prompt in this session,
     // open the modal immediately with no network round-trip.
     if (!opts.force && typeof inp._reversePrompt === 'string' && inp._reversePrompt.trim()) {
@@ -18810,7 +18898,7 @@ async function aiReverseInputTile(inp, btnEl, opts){
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ image_id: inp.id, force: !!opts.force }),
         }, 30000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { showNotif(d.error, 'error'); return; }
         // Persist in-session so the tile lights up + future opens are instant.
@@ -18927,7 +19015,7 @@ async function hydrateReversePrompts(){
 // Modal shows score, list of issues, and a "Retry with refined prompt"
 // action that re-queues just that one slot.
 async function aiCritiqueOutputTile(slotIdx, btnEl){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     if (!_activeBatch || !_activeBatch.shots[slotIdx]) return;
     const shot = _activeBatch.shots[slotIdx];
     if (!shot.url) return;
@@ -18943,7 +19031,7 @@ async function aiCritiqueOutputTile(slotIdx, btnEl){
                 criteria: (typeof _autoQaCfg !== 'undefined' && _autoQaCfg.criteria) || undefined,
             }),
         }, 60000);
-        if (r.status === 401) { $('loginModal').classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d.error) { showNotif(d.error, 'error'); return; }
         // d: { score: 0-100, bucket: 'good'|'ok'|'bad', issues: [str],
@@ -19001,7 +19089,7 @@ async function retryBatchSlot(slotIdx, refinedPrompt){
         showNotif('Cannot retry — no submission params stored for this shot.', 'error');
         return;
     }
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     // GPT-engine shots: apply the refined prompt to the stored payload
     // and re-run the direct gpt-image-2 call — the queue path below
     // doesn't apply (and the <sks> pose rebuild is Qwen-only).
@@ -19386,7 +19474,9 @@ async function _runGptEditShot(slotIdx){
         } else {
             shot.status = 'error';
             const err = (d && (d.error || d.detail)) || `HTTP ${r.status}`;
-            if (r.status === 402) showNotif('Not enough tokens for a GPT edit — top up and retry the tile.', 'error');
+            if (handleLockdown(d)) { /* locked down — notified above */ }
+            else if (handleNsfwPaywall(d)) { /* paywalled — notified above */ }
+            else if (r.status === 402) showNotif('Not enough tokens for a GPT edit — top up and retry the tile.', 'error');
             log(`GPT batch edit ${slotIdx + 1} failed: ${err}`, 'error');
         }
     } catch (e) {
@@ -19416,7 +19506,7 @@ async function generateBatchEdits(){
     finally { _batchSubmitInFlight = false; }
 }
 async function _generateBatchEditsInner(){
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     const selected = _batchInputs.filter(b => b.selected);
     if (selected.length === 0) {
         showNotif('Select at least one image to edit.', 'error');
@@ -19651,7 +19741,11 @@ async function _generateBatchEditsInner(){
             const r = await _batchSubmitShot(payload);
             const d = await r.json();
             if (!d.ok) {
-                if (r.status === 401) { $('loginModal').classList.add('open'); break; }
+                if (r.status === 401) { requireLogin(); break; }
+                if (handleLockdown(d)) { break; }
+                // Before the generic 402 — a purchase prompt is the wrong
+                // response to the adult-content gate.
+                if (handleNsfwPaywall(d)) { break; }
                 if (r.status === 402) { showBuyModal(); break; }
                 if (r.status === 429) {
                     // Server says full even though we thought we had room —
@@ -19814,7 +19908,7 @@ async function prepareBatchShotForReuse(shot, slotIdx){
             method: 'POST', body: fd,
         }, 30000);
         if (upR.status === 401) {
-            $('loginModal').classList.add('open');
+            requireLogin();
             return null;
         }
         const d = await upR.json();
@@ -19970,6 +20064,8 @@ async function _runNextSceneChain(angles){
             const r = await fetchT(`${API}/api/studio/generate`, { method: 'POST',
                 headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 30000);
             const d = await r.json().catch(() => null);
+            if (handleLockdown(d)) { shot.status = 'error'; return; }
+            if (handleNsfwPaywall(d)) { shot.status = 'error'; return; }
             if (d && d.error === 'age_ack_required') { openAgeGate(true); shot.status = 'waiting'; showNotif('Confirm 18+ then run again \u2014 chain paused.', 'error'); return; }
             if (!d || !d.ok || !d.job_id) { shot.status = 'error'; shot.errorCode = (d && d.error) || `http_${r.status}`; renderBatchGrid(); showNotif('Chain stopped \u2014 scene ' + (i+1) + ' failed to submit.', 'error'); return; }
             jobId = d.job_id;
@@ -20008,7 +20104,7 @@ async function _runNextSceneChain(angles){
     showNotif('\u{1F3AC} Next Scene chain complete \u2014 ' + N + ' scenes.', 'success');
 }
 async function _generateAngleBatchInner(angles, btnDefaultText, btn){
-    if(!_user){ $('loginModal').classList.add('open'); return; }
+    if(!_user){ requireLogin(); return; }
     if(currentMode !== 'camera' || !imageId){ return; }
     // Hard cap: never more than MAX_BATCH_IMAGES views in one pass,
     // whatever the caller or a tampered preset hands us.
@@ -20168,7 +20264,11 @@ async function _generateAngleBatchInner(angles, btnDefaultText, btn){
             }, 30000);
             const d = await r.json();
             if (!d.ok) {
-                if (r.status === 401) { $('loginModal').classList.add('open'); break; }
+                if (r.status === 401) { requireLogin(); break; }
+                if (handleLockdown(d)) { break; }
+                // Before the generic 402 — a purchase prompt is the wrong
+                // response to the adult-content gate.
+                if (handleNsfwPaywall(d)) { break; }
                 if (r.status === 402) { showBuyModal(); break; }
                 if (r.status === 429) {
                     // Queue full mid-submission — stash this shot AND any
@@ -20282,7 +20382,10 @@ async function submitNextPendingAngle(){
                 _pendingAngleShots.unshift(next);
                 return false;
             }
-            if (r.status === 401) { $('loginModal').classList.add('open'); return false; }
+            if (r.status === 401) { requireLogin(); return false; }
+            if (handleLockdown(d)) { _pendingAngleShots = []; return false; }
+            // Before the generic 402 — see note on error-code collision.
+            if (handleNsfwPaywall(d)) { _pendingAngleShots = []; return false; }
             if (r.status === 402) {
                 // Out of tokens mid-batch. Keep what we have, drop the
                 // rest, surface the buy modal.
@@ -20370,7 +20473,7 @@ async function retryFailedShot(slotIdx, btnEl){
         showNotif('Cannot retry — no submission params stored for this shot.', 'error');
         return;
     }
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     // GPT-engine shots don't use the GPU queue — re-run the direct
     // gpt-image-2 call with the stored params instead.
     if (shot.payload._gptEdit) {
@@ -20440,7 +20543,7 @@ async function retryAllFailedShots(){
         showNotif('No failed shots to retry.');
         return;
     }
-    if (!_user) { $('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     // Sanity check tokens up front. 100 / shot.
     const needed = failed.length * 100;
     if (_user.tokens < needed) {
@@ -21481,7 +21584,7 @@ async function shareCharacterSheet(){
             }),
         }, 20000);
         if (r.status === 401) {
-            const lm = $('loginModal'); if (lm) lm.classList.add('open');
+            requireLogin();
             return;
         }
         const d = await r.json();
@@ -21541,7 +21644,7 @@ async function maybeStartRemixImport(){
     await new Promise(res => setTimeout(res, 800));
     if (!_user) {
         showNotif(`Sign in to remix "${d.title || 'this character'}" — the views will import automatically once you're in.`);
-        const lm = $('loginModal'); if (lm) lm.classList.add('open');
+        requireLogin();
         const signedIn = await new Promise(res => {
             const started = Date.now();
             const t = setInterval(() => {
@@ -23269,7 +23372,7 @@ async function runWebImageSearchJob(query, count){
     query = String(query || '').trim().slice(0, 200);
     count = Math.min(10, Math.max(1, parseInt(count) || 10));
     if (!query) return { ok: false, error: 'empty_query' };
-    if (!_user) { $('loginModal').classList.add('open'); return { ok: false, error: 'not_logged_in' }; }
+    if (!_user) { requireLogin(); return { ok: false, error: 'not_logged_in' }; }
     const jobId = 'wsearch_' + Date.now();
     myJobs.unshift({ id: jobId, kind: 'websearch', status: 'running', mode: 'search', query, submittedAt: Date.now() });
     renderQueue();
@@ -23283,7 +23386,7 @@ async function runWebImageSearchJob(query, count){
     try {
         const r = await fetchT(`${API}/api/studio/image-search?q=${encodeURIComponent(query)}&page=1&size=any`, null, 30000);
         const d = await r.json().catch(() => null);
-        if (r.status === 401) { $('loginModal').classList.add('open'); finish(); return { ok: false, error: 'not_logged_in' }; }
+        if (r.status === 401) { requireLogin(); finish(); return { ok: false, error: 'not_logged_in' }; }
         if (d && d.error === 'age_ack_required') {
             openAgeGate(true); finish();
             return { ok: false, error: 'age_ack_required', message: '18+ acknowledgement required — gate opened; acknowledge and ask again.' };
@@ -24568,7 +24671,7 @@ function runSceneSequence(){
 
 async function sendAgentMessage(){
     if (_agentRunning) return;
-    if (!_user) { document.getElementById('loginModal').classList.add('open'); return; }
+    if (!_user) { requireLogin(); return; }
     // Agent is a Pro feature — non-subscribers see the lock veil
     // covering the agent UI. If they somehow bypass the veil (e.g.
     // via the DOM inspector) we still refuse here. Past-due
@@ -27511,7 +27614,7 @@ function _sdxlCollectLoras(){
 }
 
 async function sdxlGenerate(){
-    if (!_user){ $('loginModal').classList.add('open'); return; }
+    if (!_user){ requireLogin(); return; }
     // When SDXL is subscriber-gated (admin switch on), block non-subscribers
     // early. The backend is authoritative; this just gives immediate feedback
     // and re-asserts the veil.
@@ -27520,6 +27623,9 @@ async function sdxlGenerate(){
         if (typeof syncSdxlSubscriptionLock === 'function') syncSdxlSubscriptionLock();
         return;
     }
+    // Adult content may also be paid-only (separate admin switch). We can't
+    // tell from here whether THIS prompt is adult — that's the server's call —
+    // so we don't pre-block; the 402 is handled where the response lands.
     const prompt = $('sdxlPrompt').value.trim();
     if (!prompt){ showNotif('Enter a prompt first.', 'error'); return; }
     if ((_sdxlMode === 'img2img' || _sdxlMode === 'inpaint') && !_sdxlSrcDataUrl){
@@ -27580,7 +27686,14 @@ async function sdxlGenerate(){
             }, 60000);
             const d = await r.json();
             if (!d.ok){
-                if (r.status === 401){ $('loginModal').classList.add('open'); }
+                if (r.status === 401){ requireLogin(); }
+                // Must precede the generic 402 branch: the NSFW paywall also
+                // returns 402, but showBuyModal() would tell the user to buy
+                // TOKENS when a subscription satisfies the gate just as well —
+                // and they may already have plenty of tokens, which makes a
+                // token-purchase prompt read as a bug.
+                else if (handleLockdown(d)){ /* locked down — notified above */ }
+                else if (handleNsfwPaywall(d)){ /* paywalled — notified above */ }
                 else if (r.status === 402){ showBuyModal(); }
                 else if (r.status === 403 && d.error === 'subscription_required'){
                     showNotif('SDXL Studio is a Pro feature — subscribe to unlock it.', 'error');
@@ -29066,7 +29179,7 @@ async function resolveHistoryUpload(j, what){
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ job_ids: [j.id] }),
         }, 20000);
-        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return null; }
+        if (r.status === 401) { requireLogin(); return null; }
         const d = await r.json().catch(() => null);
         const inp = d && d.ok && Array.isArray(d.inputs) && d.inputs[0];
         if (inp) return inp;
@@ -29518,7 +29631,7 @@ async function loadBatchToInputs(items){
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ job_ids: done.map(it => it.id) }),
         }, 30000);
-        if (r.status === 401) { const lm = $('loginModal'); if (lm) lm.classList.add('open'); return; }
+        if (r.status === 401) { requireLogin(); return; }
         const d = await r.json();
         if (d && d.ok && Array.isArray(d.inputs) && d.inputs.length) inputs = d.inputs;
     } catch (e) { /* handled below */ }
@@ -31467,7 +31580,7 @@ window.PanoViewer = (function(){
 
   async function captureViewAsInput(btn){
     if(!renderer){ return; }
-    if(typeof _user!=='undefined' && !_user){ const lm=document.getElementById('loginModal'); if(lm) lm.classList.add('open'); return; }
+    if(typeof _user!=='undefined' && !_user){ requireLogin(); return; }
     const orig=btn?btn.textContent:'';
     try{
       renderer.render(scene, camera); // ensure the latest frame is in the buffer
