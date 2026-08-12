@@ -1037,7 +1037,17 @@ img,video{display:block;max-width:100%}
    comments, challenges, chat, LoRA browsing — is deliberately not
    here. This page has no session and needs none.
    ══════════════════════════════════════════════════════════════ */
-const API  = '';
+/* Relative in production, where the Worker owns /api/*. Anywhere else —
+   local preview, staging, file:// — that path resolves to a host with no
+   API and every wall load fails, which is exactly the "couldn't load the
+   wall" symptom with a perfectly healthy backend. */
+const PROD_ORIGIN = 'https://www.missinglink.build';
+const SAME_ORIGIN  = /(^|\.)missinglink\.build$/.test(location.hostname);
+const API  = SAME_ORIGIN ? '' : PROD_ORIGIN;
+/* Cookies only same-origin: a cross-origin credentialed request needs the
+   server to name this exact origin in CORS, which it won't for a local
+   file. The wall is a public read, so omitting them costs nothing. */
+const API_CREDS = SAME_ORIGIN ? 'include' : 'omit';
 const PAGE = 24;          // one wall page
 const MAX_PAGES = 3;      // then send them to /gallery.html
 /* 8s looked generous but wasn't: a cold Worker isolate + the likes-sort
@@ -1051,7 +1061,7 @@ const WALL_TIMEOUT_MS = 15000;
 const WALL_RETRY_MS   = [1200, 3000];  // pauses before each silent retry
 const canHover = window.matchMedia('(hover:hover)').matches;
 
-let state = { offset:0, done:false, loading:false, failed:false, pages:0, items:[], cur:null };
+let state = { offset:0, done:false, loading:false, failed:false, pages:0, items:[], cur:null, lastError:null };
 
 const $ = id => document.getElementById(id);
 function toast(m){ const t=$('toast'); t.textContent=m; t.style.opacity='1';
@@ -1141,7 +1151,7 @@ async function fetchWall(offset){
   const timer = ctl ? setTimeout(() => ctl.abort(), WALL_TIMEOUT_MS) : null;
   try {
     const r = await fetch(API+'/api/studio/gallery?'+p.toString(),
-      { credentials:'include', signal: ctl ? ctl.signal : undefined });
+      { credentials: API_CREDS, signal: ctl ? ctl.signal : undefined });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     if (!data || data.ok === false || !Array.isArray(data.items)) {
@@ -1179,6 +1189,7 @@ async function loadWall(){
   if (err){
     console.warn('[wall] feed unavailable:', err && err.message || err);
     state.failed = true;
+    state.lastError = (err && err.message) || String(err);
     if (!state.items.length) showError();
     else { $('wallMore').style.display = 'flex'; $('moreBtn').style.display = ''; }
     return;
@@ -1222,7 +1233,15 @@ function showEmpty(data){
    implying nobody has ever posted anything. */
 function showError(){
   $('empty').style.display = 'block';
+  /* Print the reason. A bare "couldn't load" sends you hunting through the
+     backend when the answer is usually right here — wrong origin, CORS, a
+     timeout, or an HTTP status the server already told us. */
+  const why = state.lastError ? esc(state.lastError) : 'unknown error';
+  const host = esc(location.hostname || 'file://');
   $('empty').innerHTML = "Couldn't load the wall just now.<br>" +
+    '<span style="display:block;margin-top:8px;font-size:11px;opacity:.55">' +
+      'reason: ' + why + ' · feed: ' + esc((API || location.origin) + '/api/studio/gallery') +
+      ' · page: ' + host + '</span>' +
     '<button class="btn gold" style="margin-top:14px" id="wallRetry">↻ Try again</button>' +
     '<a class="btn ghost" style="margin-top:14px;margin-left:8px" href="/gallery.html">Open the full wall →</a>';
   const b = $('wallRetry');
