@@ -4518,7 +4518,10 @@ async function addClipExtend(){
         story:_storySoFar(nc),
         instructions:(nextCfg.instructions||"").trim(),
         want_dialogue:true,          // suggest dialogue but don't force it
-        image:prevCtxImg})});
+        image:prevCtxImg,
+        /* Destination pin: if the user already set THIS new clip's end
+           frame, the continuation is written to arrive at it. */
+        end_image:clipEndImages[nc]||null})});
     const j=await r.json();
     if(!j.ok){
       toast(j.error||"Couldn't write the continuation \u2014 edit the clip manually.",true);
@@ -5530,6 +5533,9 @@ async function autoWriteLine(c,i){
     const r=await fetch("/api/videostudio/autoline",{method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({image:startImg,speaker:speaker,
+        /* The clip's pinned end frame, when set — the line gets paced to
+           the start-to-end arc instead of just the opening frame. */
+        end_image:clipEndImages[c]||null,
         scene:(clipSceneText(c)||"").trim(),
         lines_here:here,story:story,
         instructions:(autoCfg.instructions||"").trim(),
@@ -5903,7 +5909,11 @@ async function autoPrompt(){
          auto-write was sending it, so the top-level Auto Prompt — the
          button most people press first — asked for a scene with no
          guidance on how many people should speak. */
+      /* If the user pinned an end frame (clip 1 in the timeline model),
+         send it too — the server writes the scene as the motion from
+         first frame to last instead of inventing its own ending. */
       body:JSON.stringify({image:imgData,engine:currentEngine,
+        end_image:(typeof clipEndImages==="object"&&clipEndImages[1])?clipEndImages[1]:null,
         instructions:((autoCfg.instructions||"").trim()
           +"\n\n"+_dlgInstructions()).trim(),
         context:(autoCfg.context||"").trim()})});
