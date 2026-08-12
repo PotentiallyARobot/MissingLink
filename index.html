@@ -1164,7 +1164,12 @@ async function fetchWall(offset){
   try {
     const r = await fetch(API+'/api/studio/gallery?'+p.toString(),
       { credentials:'include', signal: ctl ? ctl.signal : undefined });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) {
+      // Pull the server's sanitized detail through, so the error screen
+      // names the actual failure instead of a featureless status code.
+      let d = ''; try { const b = await r.json(); d = (b && (b.detail || b.error)) || ''; } catch {}
+      throw new Error('HTTP ' + r.status + (d ? ' — ' + d : ''));
+    }
     const data = await r.json();
     if (!data || data.ok === false || !Array.isArray(data.items)) {
       throw new Error('malformed payload');
@@ -1201,7 +1206,7 @@ async function loadWall(){
   if (err){
     console.warn('[wall] feed unavailable:', err && err.message || err);
     state.failed = true;
-    if (!state.items.length) showError();
+    if (!state.items.length) showError(err && err.message || '');
     // With items already painted, a failed (never-happening) second page
     // is a non-event for a clipped preview — nothing to show.
     return;
@@ -1248,9 +1253,11 @@ function showEmpty(data){
 
 /* The request failed. Say so honestly and offer a retry rather than
    implying nobody has ever posted anything. */
-function showError(){
+function showError(reason){
   $('empty').style.display = 'block';
   $('empty').innerHTML = "Couldn't load the wall just now.<br>" +
+    (reason ? '<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-mute);display:block;margin-top:8px">' +
+      String(reason).replace(/[<>&]/g, '') + '</span>' : '') +
     '<button class="btn gold" style="margin-top:14px" id="wallRetry">↻ Try again</button>' +
     '<a class="btn ghost" style="margin-top:14px;margin-left:8px" href="/gallery.html">Open the full wall →</a>';
   const b = $('wallRetry');
