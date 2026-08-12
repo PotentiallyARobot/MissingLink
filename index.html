@@ -1029,9 +1029,11 @@ img,video{display:block;max-width:100%}
 const API  = '';
 const PAGE = 24;          // one wall page
 const MAX_PAGES = 3;      // then send them to /gallery.html
+const WALL_TIMEOUT_MS = 8000;  // a cold isolate is slow, but not this slow
+const WALL_RETRY_MS   = 1200;  // pause before the single silent retry
 const canHover = window.matchMedia('(hover:hover)').matches;
 
-let state = { offset:0, done:false, loading:false, pages:0, items:[], cur:null };
+let state = { offset:0, done:false, loading:false, failed:false, pages:0, items:[], cur:null };
 
 const $ = id => document.getElementById(id);
 function toast(m){ const t=$('toast'); t.textContent=m; t.style.opacity='1';
@@ -1108,24 +1110,63 @@ function ensureCols(grid){
   cards.forEach(c => shortestCol(grid).appendChild(c));
 }
 
-async function loadWall(){
-  if (state.loading || state.done) return;
-  state.loading = true; $('loader').style.display = 'block';
-
+/* One attempt at the feed. Resolves to the parsed payload, or throws.
+   Kept separate from loadWall so the retry path is a plain re-call
+   rather than a duplicated fetch block. */
+async function fetchWall(offset){
   const p = new URLSearchParams({
-    limit: String(PAGE), offset: String(state.offset),
+    limit: String(PAGE), offset: String(offset),
     sort: 'likes',            // the homepage shows the best, not the newest
     nsfw: '0', violence: '0'  // never mature content on the front door
   });
-
-  let data = null;
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), WALL_TIMEOUT_MS) : null;
   try {
-    const r = await fetch(API+'/api/studio/gallery?'+p.toString(), { credentials:'include' });
-    data = await r.json().catch(()=>null);
-  } catch(e){ /* offline or endpoint down — fall through to the empty state */ }
+    const r = await fetch(API+'/api/studio/gallery?'+p.toString(),
+      { credentials:'include', signal: ctl ? ctl.signal : undefined });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data || data.ok === false || !Array.isArray(data.items)) {
+      throw new Error('malformed payload');
+    }
+    return data;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function loadWall(){
+  if (state.loading || state.done) return;
+  state.loading = true; state.failed = false;
+  $('loader').style.display = 'block';
+  $('empty').style.display = 'none';
+
+  /* A cold Worker isolate can make the first call slow enough to trip
+     the timeout. One quiet retry covers that without the visitor ever
+     seeing it; anything past that is a real outage and says so. */
+  let data = null, err = null;
+  for (let attempt = 0; attempt < 2; attempt++){
+    try { data = await fetchWall(state.offset); err = null; break; }
+    catch(e){
+      err = e;
+      if (attempt === 0) await new Promise(r => setTimeout(r, WALL_RETRY_MS));
+    }
+  }
 
   state.loading = false; $('loader').style.display = 'none';
-  const items = (data && data.items) || [];
+
+  /* A failed request is NOT an empty wall. Conflating the two is what
+     made "the wall is quiet" show up as the error message for every
+     500, timeout, and dropped connection. */
+  if (err){
+    console.warn('[wall] feed unavailable:', err && err.message || err);
+    state.failed = true;
+    if (!state.items.length) showError();
+    else { $('wallMore').style.display = 'flex'; $('moreBtn').style.display = ''; }
+    return;
+  }
+
+  const items = data.items;
   if (items.length < PAGE) state.done = true;
   state.offset += items.length;
   state.pages++;
@@ -1134,16 +1175,44 @@ async function loadWall(){
   state.items.push(...items);
   paint($('grid'), items, start);
 
-  if (!state.items.length){ showEmpty(); return; }
+  if (!state.items.length){ showEmpty(data); return; }
   if (state.pages >= MAX_PAGES) state.done = true;
   $('wallMore').style.display = 'flex';
   $('moreBtn').style.display = state.done ? 'none' : '';
 }
 
-function showEmpty(){
+/* The wall really is empty — the request succeeded and returned nothing.
+   Two flavours: work EXISTS but is queued behind enrichment/review (the
+   server says so via awaiting_review), versus genuinely nothing has ever
+   been shared. Conflating them made the wall look dead while a batch of
+   fresh shares sat in the review queue — the exact "keeps happening, no
+   issue anywhere" symptom. */
+function showEmpty(data){
   $('empty').style.display = 'block';
-  $('empty').innerHTML = 'The wall is quiet right now.<br>' +
-    '<a class="btn gold" style="margin-top:14px" href="https://missinglink.build/studio">✦ Create the first piece</a>';
+  const waiting = data && Number(data.awaiting_review) > 0 ? Number(data.awaiting_review) : 0;
+  if (waiting > 0){
+    $('empty').innerHTML = waiting + ' new piece' + (waiting === 1 ? ' is' : 's are') +
+      ' awaiting review and will appear here once approved.<br>' +
+      '<a class="btn gold" style="margin-top:14px" href="https://missinglink.build/studio">✦ Create something too</a>';
+  } else {
+    $('empty').innerHTML = 'The wall is quiet right now.<br>' +
+      '<a class="btn gold" style="margin-top:14px" href="https://missinglink.build/studio">✦ Create the first piece</a>';
+  }
+}
+
+/* The request failed. Say so honestly and offer a retry rather than
+   implying nobody has ever posted anything. */
+function showError(){
+  $('empty').style.display = 'block';
+  $('empty').innerHTML = "Couldn't load the wall just now.<br>" +
+    '<button class="btn gold" style="margin-top:14px" id="wallRetry">↻ Try again</button>' +
+    '<a class="btn ghost" style="margin-top:14px;margin-left:8px" href="/gallery.html">Open the full wall →</a>';
+  const b = $('wallRetry');
+  if (b) b.onclick = () => {
+    $('empty').style.display = 'none';
+    state.done = false; state.failed = false;
+    loadWall();
+  };
 }
 
 function paint(grid, items, offsetIndex){
@@ -1171,7 +1240,11 @@ function paint(grid, items, offsetIndex){
        reservation is dropped once the file reports its true size. */
     const el = c.querySelector('img,video');
     if (el){
-      el.style.aspectRatio = (it.width && it.height) ? (it.width+'/'+it.height) : '3/4';
+      /* The feed emits w/h; width/height was never populated, so every
+         tile silently fell back to 3/4 and the masonry picked its
+         shortest column from wrong geometry. Accept both spellings. */
+      const iw = it.w || it.width, ih = it.h || it.height;
+      el.style.aspectRatio = (iw && ih) ? (iw+'/'+ih) : '3/4';
       const settle = () => { el.style.aspectRatio = ''; };
       el.addEventListener(el.tagName === 'VIDEO' ? 'loadedmetadata' : 'load', settle, { once:true });
       el.addEventListener('error', settle, { once:true });
