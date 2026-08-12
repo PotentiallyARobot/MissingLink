@@ -1606,6 +1606,17 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     </div>
     <div class="stage-tools" id="stageTools"><a class="chip" id="dlBtn" download="missinglink_video.mp4">&#11015; Download</a><button class="chip" id="vr180Btn" onclick="convertVR180()" title="Convert this clip to 180&deg; VR (mono, headset-ready)">&#129488; 180&deg; VR</button><button class="chip" id="faceKfBtn" onclick="extractFaceKeyframes()" title="Find the first face every 10s and download the frames + timestamps">&#128100; Face frames</button><button class="chip" id="autoClipBtn" onclick="faceAutoClip()" title="Auto-cut into clips at face boundaries; download each clip + its first/last frames for consistent-character reskinning">&#9986; Auto-clip</button><button class="chip" id="nextSceneBtn" onclick="autoNextScene()" title="Look at the last clip and build the next scene's starting image">&#127916; Auto Next Scene</button><button class="chip" id="nextCfgBtn" onclick="openNextCfg()" title="Auto Next Scene settings: story context &amp; instructions">&#9881;</button><button class="chip" id="useFirstBtn" onclick="_stageUseAs('start')" title="Use this image as the first frame" style="display:none">&#11015; First frame</button><button class="chip" id="useLastBtn" onclick="_stageUseAs('end')" title="Use this image as the last frame" style="display:none">&#11015; Last frame</button><button class="chip" id="clearBtn" onclick="clearStage()" title="Clear the stage">&#128465; Clear</button></div>
     <div class="stage-status" id="stage_status"></div>
+    <!-- TIMELINE (restored). The whole clip system — renderClipOverview's
+         tiles, the per-clip editor, the add/extend chooser, delete — was
+         alive the entire time, but this container was removed in a
+         cleanup, so renderClipOverview() hit `if(!box)return` and
+         silently painted nothing while the scene hint kept telling
+         people to use "the timeline below". Docked to the stage bottom
+         (the .stage-timeline CSS never left). LTX-only, like every other
+         clip control — setEngine toggles it. -->
+    <div class="stage-timeline" id="stageTimeline" style="display:none">
+      <div class="stl-strip" id="clipOverview"></div>
+    </div>
     <div class="progrow"><div class="prog"><div class="fill" id="fill"></div></div></div>
     <!-- Timeline removed. This studio makes one clip at a time; the
          strip only ever mirrored the left panel, and its "add clip"
@@ -2795,7 +2806,9 @@ function setEngine(e){
   $("lengthSec").style.display="block";
   $("ltxResHint").style.display=ltx?"block":"none";
   // Dialogue builder is an LTX feature; Wan (both) uses plain prompt.
-  {const d=$("dlgSec");if(d)d.style.display=ltx?"flex":"none";}  // timeline removed
+  {const d=$("dlgSec");if(d)d.style.display=ltx?"flex":"none";}
+  {const t=$("stageTimeline");if(t)t.style.display=ltx?"":"none";}
+  if(ltx){try{renderClipOverview();}catch(e){}}
   // Dialogue is LTX-only — Wan has no speech synthesis.
   {const dl=$("dlgLeftSec");if(dl){dl.style.display=ltx?"block":"none";
     // Populate on reveal — the rail containers are empty until something
@@ -3893,9 +3906,9 @@ function _updateSceneRoleHint(){
   const nClips=plan.length;
   let msg;
   if(nClips<=1){
-    msg="This is <b>Clip 1</b>\u2019s scene \u2014 your movie's opening shot. Edit it here anytime. Add more clips in the timeline below; each gets its own scene.";
+    msg="This is <b>Clip 1</b>\u2019s scene \u2014 your movie's opening shot. Edit it here anytime. Add more clips with \u2795 in the timeline at the bottom of the video stage; each gets its own scene.";
   }else{
-    msg="This is <b>Clip 1</b>\u2019s scene. Your other "+(nClips-1)+" clip"+(nClips-1===1?"":"s")+" each have their own scene \u2014 tap any clip in the timeline below to edit it.";
+    msg="This is <b>Clip 1</b>\u2019s scene. Your other "+(nClips-1)+" clip"+(nClips-1===1?"":"s")+" each have their own scene \u2014 tap any clip in the timeline at the bottom of the video stage to edit it.";
   }
   h.innerHTML=msg;
 }
@@ -4477,13 +4490,17 @@ function renderClipOverview(){
   const fps=parseInt($("fpsV").value,10)||24;
   const plan=clipPlan();
   if(!plan.length){
+    // No committed clips yet: the scene prompt + staged frames still
+    // render as Clip 1 (the payload builder falls back to them), so say
+    // that instead of the old "Create clip from the left" — that button
+    // left with the previous layout.
     const empty=document.createElement("div");empty.className="clip-empty";
-    empty.innerHTML="Timeline empty \u2014 <b style='color:var(--gold)'>\u2795 Create clip</b> from the left";
+    empty.innerHTML="Your scene renders as <b>Clip 1</b> \u2014 press \u2795 to grow it into a multi-clip movie";
     box.appendChild(empty);
     const add=document.createElement("button");add.className="chip";
     add.style.cssText="flex:0 0 auto;align-self:center";
-    add.innerHTML="\u2795";add.title="Add an empty clip";
-    add.onclick=()=>addClipNewScene();
+    add.innerHTML="\u2795";add.title="Add a clip \u2014 extend this scene or start a new one";
+    add.onclick=()=>addClip();
     box.appendChild(add);
     return;
   }
