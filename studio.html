@@ -12522,6 +12522,64 @@ async function openVideoModal(){
     _vmCaptureSource().then(d => { _videoState.sourceDataUri = d; });
 }
 
+// 18+ / US-law attestation modal for NSFW video. Built lazily; same
+// /api/studio/age-ack endpoint as the image gate, but with the video
+// wording version so the server records exactly what was agreed to.
+// Mirrors acknowledgeAgeGate's bookkeeping (in-memory + localStorage)
+// so the image gate doesn't re-prompt after a video attestation.
+let _videoAttestEl = null;
+function _videoAttest(){
+    return new Promise(function(resolve){
+        if (!_videoAttestEl) {
+            const d = document.createElement('div');
+            d.id = 'videoAttestModal';
+            d.style.cssText = 'display:none;position:fixed;inset:0;z-index:12500;background:rgba(0,0,0,.82)';
+            d.innerHTML =
+                '<div style="max-width:460px;margin:14vh auto 0;background:var(--surface,#141417);' +
+                'border:1px solid var(--border,#2a2a30);border-radius:12px;padding:22px 24px;color:#eee">' +
+                '<div style="font-size:17px;font-weight:700;margin-bottom:10px">Adult content — confirmation required</div>' +
+                '<div style="font-size:13px;line-height:1.55;color:#c9c9cf">This video request looks like it contains ' +
+                '<b>adult (NSFW) content</b>. To continue you must confirm <b>both</b> of the following:</div>' +
+                '<ul style="font-size:13px;line-height:1.6;color:#e6e6ea;margin:12px 0 14px 18px;padding:0">' +
+                '<li>I am <b>18 years of age or older</b>.</li>' +
+                '<li>I agree to <b>comply with all applicable United States laws</b>, and the laws of my ' +
+                'jurisdiction, when creating and using this content.</li></ul>' +
+                '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+                '<button id="videoAttestNo" style="background:transparent;border:1px solid var(--border,#2a2a30);' +
+                'color:#bbb;border-radius:8px;padding:9px 14px;cursor:pointer">Cancel</button>' +
+                '<button id="videoAttestYes" style="background:var(--gold,#d4af37);border:0;color:#111;font-weight:700;' +
+                'border-radius:8px;padding:9px 16px;cursor:pointer">Yes — I confirm and agree</button>' +
+                '</div></div>';
+            document.body.appendChild(d);
+            _videoAttestEl = d;
+        }
+        const m = _videoAttestEl; m.style.display = 'block';
+        const yes = m.querySelector('#videoAttestYes'), no = m.querySelector('#videoAttestNo');
+        function done(v){ m.style.display = 'none'; yes.onclick = no.onclick = null;
+            yes.disabled = false; yes.textContent = 'Yes — I confirm and agree'; resolve(v); }
+        no.onclick = function(){ done(false); };
+        yes.onclick = async function(){
+            yes.disabled = true; yes.textContent = 'Saving…';
+            try {
+                const r = await fetchT(`${API}/api/studio/age-ack`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ version: '18plus_uslaw_v1' }),
+                }, 8000);
+                const d2 = await r.json().catch(function(){ return {}; });
+                if (d2 && d2.ok) {
+                    if (_user) {
+                        _user.age_ack_at = d2.age_ack_at;
+                        try { if (d2.age_ack_at) localStorage.setItem('studio_age_ack_' + _user.id, String(d2.age_ack_at)); } catch (e) {}
+                    }
+                    done(true); return;
+                }
+            } catch (e) {}
+            yes.disabled = false; yes.textContent = 'Yes — I confirm and agree';
+            if (typeof showNotif === 'function') showNotif("Couldn't save your confirmation — try again.", 'error');
+        };
+    });
+}
+
 function closeVideoModal(){
     $('videoModal').classList.remove('open');
     _videoState.polling = false;
@@ -12542,7 +12600,15 @@ function _vmReadFile(file){
     });
 }
 
-async function submitVideo(){
+async function submitVideo(_attested){
+    // ── 18+ / US-law attestation (NSFW video) ──
+    // When the server's AI classifier judges this request adult and the
+    // account has no recorded attestation, /video/create answers 403
+    // age_ack_required. We then show a blocking confirmation with BOTH
+    // statements — 18 or older, and compliance with all applicable US
+    // law — and only an explicit "Yes" click records the attestation
+    // (age_ack_at + version) and re-submits. One retry, no loops.
+
     if (_videoState.polling || _videoState.generating) return;
     const go = $('vmGenerate');
     // Ensure the source frame is captured (open() kicks this off; await if needed).
@@ -12594,6 +12660,17 @@ async function submitVideo(){
             _vmSetProgress(0, '', true);
             if (d && d.error === 'insufficient_tokens') $('vmStatus').textContent = `Not enough tokens — need ${((d.need != null ? d.need : quoted) || 0).toLocaleString()}.`;
             else if (d && d.error === 'video_unavailable') $('vmStatus').textContent = 'Video generation isn’t configured on the server (missing FAL_KEY).';
+            else if (d && d.error === 'age_ack_required') {
+                if (_attested) { $('vmStatus').textContent = 'Confirmation didn’t register — please try again.'; return; }
+                $('vmStatus').textContent = 'Confirmation required for adult content.';
+                const ok = await _videoAttest();
+                if (ok) { submitVideo(true); }
+                else { $('vmStatus').textContent = 'Cancelled — the video was not generated.'; }
+            }
+            else if (d && d.error === 'nsfw_video_disabled') $('vmStatus').textContent = 'Adult video generation is currently disabled on this site.';
+            else if (d && d.error === 'content_blocked') $('vmStatus').textContent = 'This request isn’t permitted.';
+            else if (d && d.error === 'nsfw_requires_paid') $('vmStatus').textContent = (d.message || 'Adult content requires an active subscription or a token purchase.');
+            else if (d && d.error === 'moderation_unavailable') $('vmStatus').textContent = 'Content screening is temporarily unavailable — please try again shortly.';
             else $('vmStatus').textContent = 'Submit failed' + (d && d.detail ? `: ${d.detail}` : '.');
             return;
         }
