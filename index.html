@@ -1029,8 +1029,15 @@ img,video{display:block;max-width:100%}
 const API  = '';
 const PAGE = 24;          // one wall page
 const MAX_PAGES = 3;      // then send them to /gallery.html
-const WALL_TIMEOUT_MS = 8000;  // a cold isolate is slow, but not this slow
-const WALL_RETRY_MS   = 1200;  // pause before the single silent retry
+/* 8s looked generous but wasn't: a cold Worker isolate + the likes-sort
+   + a page of author lookups could legitimately exceed it, and the one
+   quick retry usually landed on the SAME cold path — so a healthy feed
+   showed "Couldn't load the wall" over and over. The server side got
+   faster (author names are now one batched query), the budget here got
+   honest, and the retries got patient: by the second retry the isolate
+   is warm and the edge cache is primed, so it succeeds. */
+const WALL_TIMEOUT_MS = 15000;
+const WALL_RETRY_MS   = [1200, 3000];  // pauses before each silent retry
 const canHover = window.matchMedia('(hover:hover)').matches;
 
 let state = { offset:0, done:false, loading:false, failed:false, pages:0, items:[], cur:null };
@@ -1145,11 +1152,11 @@ async function loadWall(){
      the timeout. One quiet retry covers that without the visitor ever
      seeing it; anything past that is a real outage and says so. */
   let data = null, err = null;
-  for (let attempt = 0; attempt < 2; attempt++){
+  for (let attempt = 0; attempt <= WALL_RETRY_MS.length; attempt++){
     try { data = await fetchWall(state.offset); err = null; break; }
     catch(e){
       err = e;
-      if (attempt === 0) await new Promise(r => setTimeout(r, WALL_RETRY_MS));
+      if (attempt < WALL_RETRY_MS.length) await new Promise(r => setTimeout(r, WALL_RETRY_MS[attempt]));
     }
   }
 
