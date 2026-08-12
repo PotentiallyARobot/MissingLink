@@ -1406,6 +1406,14 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
           <button class="q-clear" id="autoBtn" style="margin-left:8px" onclick="autoPrompt()" title="Look at the image with GPT and write the prompt (and dialogue on LTX)">&#10024; Auto Prompt</button></div>
         <textarea class="ta" id="prompt" oninput="if(currentEngine==='ltx'){renderDialog();_updateSceneRoleHint();}updateDur();_syncGenerateEnabled();">a calm ocean at golden hour, gentle waves rolling, cinematic slow push-in, the water shimmering</textarea>
         <div class="hintline" id="promptRoleHint" style="display:none"></div>
+        <!-- Scene JSON: the full storyboard + render configuration as one
+             editable file. Same buildScript()/applyScript() pair the agent
+             sidebar uses — these buttons just make it findable from the
+             prompt, where people actually look for it. -->
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="q-clear" onclick="downloadScript()" title="Download the scene prompt + full configuration (engine, quality, seed, steps, negative prompt, speakers, dialogue, clips, frames, control videos) as an editable .json">&#8681; Scene JSON</button>
+          <label class="q-clear" style="cursor:pointer" title="Load a scene .json back &mdash; restores the prompt and every setting it carries">&#8679; Load JSON<input type="file" accept="application/json,.json" style="display:none" onchange="uploadScriptFile(this.files);this.value=''"></label>
+        </div>
         <div class="sec-label" style="margin:12px 0 8px" id="negLabel"><span class="icon">&#8856;</span> Negative</div>
         <textarea class="ta neg" id="neg">overexposed, static, blurred details, subtitles, worst quality, low quality, JPEG artifacts, ugly, deformed, disfigured, messy background, still picture</textarea>
         <!-- "Create clip" / "Append" belonged to the timeline. One clip
@@ -3914,14 +3922,54 @@ function buildScript(){
     lines:dialog.filter(l=>(l.clip||1)===p.clip)
       .map(l=>({speaker:l.speaker,text:l.text||""}))
   }));
+  // v2 additions: per-clip control-video settings (v1 silently DROPPED
+  // them, so a script round-trip lost every v2v setup), the full render
+  // configuration (quality, seed, steps, guidance, negative prompt, …),
+  // and the auto-prompt steering. Same _CLIP_JSON_MAX_VIDEO cap as the
+  // per-clip export so a large control video marks itself omitted
+  // instead of producing a 100MB file.
+  clips.forEach(cl=>{
+    const c=cl.clip,cv=clipControlVideos[c]||null;
+    if(!cv)return;
+    const big=cv.length>_CLIP_JSON_MAX_VIDEO;
+    cl.control_video={
+      type:clipControlType[c]||"raw",
+      strength:(clipControlStrength[c]!=null?+clipControlStrength[c]:1),
+      copy_source_audio:!!clipCopySrcAudio[c],
+      duration_seconds:(clipControlDur[c]!=null?+(+clipControlDur[c]).toFixed(2):null),
+      video:(big?null:cv),
+      video_omitted:big
+    };
+  });
+  const _v=id=>{const el=$(id);return el?el.value:null;};
+  const _c=id=>{const el=$(id);return !!(el&&el.checked);};
   return {
-    version:1,
+    version:2,
+    kind:"missinglink_script",
     engine:currentEngine,
     fps:fps,
     base_scene:$("prompt").value||"",
     first_image:imgData||null,
     speakers:speakers.map(s=>({name:s.name,voice:s.voice||"",look:s.look||""})),
-    clips:clips
+    clips:clips,
+    settings:{
+      profile:_v("profile"),
+      negative_prompt:_v("neg")||"",
+      steps:+_v("stepsV")||null,
+      guidance:(_v("guidV")!=null?+_v("guidV"):null),
+      flow_shift:(_v("shiftV")!=null?+_v("shiftV"):null),
+      frames:+_v("framesV")||null,
+      seed:(_v("seed")!=null?+_v("seed"):null),
+      segments:+_v("segmentsV")||1,
+      vary_seed:_c("varySeed"),
+      wan22_lightning:_c("wan22Lightning"),
+      vace_size:_v("vaceSize")
+    },
+    auto:{
+      instructions:(autoCfg&&autoCfg.instructions)||"",
+      context:(autoCfg&&autoCfg.context)||"",
+      next_instructions:(typeof nextCfg==="object"&&nextCfg&&nextCfg.instructions)||""
+    }
   };
 }
 // Apply a script object to the live state (replacing it). Tolerant of
@@ -3958,19 +4006,68 @@ function applyScript(sc){
       });
     });
   }
+  // v2: per-clip control videos (order matters — AFTER the reset above,
+  // which clears them all, and independent of scene/lines so a partial
+  // script still restores what it carries).
+  if(Array.isArray(sc.clips)){
+    sc.clips.forEach(cl=>{
+      const c=cl.clip||1,cvj=cl.control_video;
+      if(!cvj)return;
+      if(cvj.video){
+        clipControlVideos[c]=cvj.video;
+        clipControlType[c]=cvj.type||"raw";
+        clipControlStrength[c]=(cvj.strength!=null?+cvj.strength:1);
+        clipCopySrcAudio[c]=!!cvj.copy_source_audio;
+        if(cvj.duration_seconds!=null)clipControlDur[c]=+cvj.duration_seconds;
+      }else if(cvj.video_omitted){
+        toast("Clip "+c+" lists a control video that was too big for the file \u2014 re-upload it in the clip editor.",true);
+      }
+    });
+  }
+  // v2: render settings. Applied AFTER setEngine/fps above because the
+  // engine switch resets the slider ranges — settings written first
+  // would be clobbered. Every field is optional; setSL keeps the
+  // range+number pairs in sync, plain assignment covers the rest.
+  if(sc.settings&&typeof sc.settings==="object"){
+    const st=sc.settings;
+    try{
+      if(st.profile&&$("profile"))$("profile").value=st.profile;
+      if(typeof st.negative_prompt==="string"&&$("neg"))$("neg").value=st.negative_prompt;
+      if(st.steps!=null)setSL("steps",+st.steps);
+      if(st.guidance!=null)setSL("guid",+st.guidance);
+      if(st.flow_shift!=null)setSL("shift",+st.flow_shift);
+      if(st.frames!=null)setSL("frames",+st.frames);
+      if(st.seed!=null&&$("seed"))$("seed").value=+st.seed;
+      if(st.segments!=null&&$("segmentsV"))setSL("segments",+st.segments);
+      if($("varySeed"))$("varySeed").checked=!!st.vary_seed;
+      if($("wan22Lightning"))$("wan22Lightning").checked=!!st.wan22_lightning;
+      if(st.vace_size&&$("vaceSize"))$("vaceSize").value=st.vace_size;
+    }catch(e){/* a missing control on this engine's UI is not an error */}
+  }
+  // v2: auto-prompt steering.
+  if(sc.auto&&typeof sc.auto==="object"){
+    if(typeof sc.auto.instructions==="string")autoCfg.instructions=sc.auto.instructions;
+    if(typeof sc.auto.context==="string")autoCfg.context=sc.auto.context;
+    if(typeof sc.auto.next_instructions==="string"&&typeof nextCfg==="object"&&nextCfg)
+      nextCfg.instructions=sc.auto.next_instructions;
+  }
+  try{updateDur();}catch(e){}
   _committedClips=Array.isArray(sc.clips)?sc.clips.length:0;
   renderSpeakers();renderDialog();_syncGenerateEnabled();
   return "Loaded "+(sc.clips?sc.clips.length:0)+" clip(s), "
-    +(speakers.length)+" speaker(s).";
+    +(speakers.length)+" speaker(s)"
+    +(sc.settings?", render settings":"")
+    +(sc.clips&&sc.clips.some(cl=>cl&&cl.control_video&&cl.control_video.video)?", control video(s)":"")
+    +".";
 }
 // Download the current script as a .json file.
 function downloadScript(){
   const sc=buildScript();
   const blob=new Blob([JSON.stringify(sc,null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-  a.download="missinglink_script.json";a.click();
+  a.download="missinglink_scene.json";a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),2000);
-  toast("Script downloaded.");
+  toast("Scene + configuration downloaded \u2014 edit the .json and load it back any time.");
 }
 // Upload a script .json and apply it.
 function uploadScriptFile(files){
@@ -4518,7 +4615,10 @@ async function addClipExtend(){
         story:_storySoFar(nc),
         instructions:(nextCfg.instructions||"").trim(),
         want_dialogue:true,          // suggest dialogue but don't force it
-        image:prevCtxImg})});
+        image:prevCtxImg,
+        /* Destination pin: if the user already set THIS new clip's end
+           frame, the continuation is written to arrive at it. */
+        end_image:clipEndImages[nc]||null})});
     const j=await r.json();
     if(!j.ok){
       toast(j.error||"Couldn't write the continuation \u2014 edit the clip manually.",true);
@@ -5530,6 +5630,9 @@ async function autoWriteLine(c,i){
     const r=await fetch("/api/videostudio/autoline",{method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({image:startImg,speaker:speaker,
+        /* The clip's pinned end frame, when set — the line gets paced to
+           the start-to-end arc instead of just the opening frame. */
+        end_image:clipEndImages[c]||null,
         scene:(clipSceneText(c)||"").trim(),
         lines_here:here,story:story,
         instructions:(autoCfg.instructions||"").trim(),
@@ -5903,7 +6006,11 @@ async function autoPrompt(){
          auto-write was sending it, so the top-level Auto Prompt — the
          button most people press first — asked for a scene with no
          guidance on how many people should speak. */
+      /* If the user pinned an end frame (clip 1 in the timeline model),
+         send it too — the server writes the scene as the motion from
+         first frame to last instead of inventing its own ending. */
       body:JSON.stringify({image:imgData,engine:currentEngine,
+        end_image:(typeof clipEndImages==="object"&&clipEndImages[1])?clipEndImages[1]:null,
         instructions:((autoCfg.instructions||"").trim()
           +"\n\n"+_dlgInstructions()).trim(),
         context:(autoCfg.context||"").trim()})});
@@ -6342,6 +6449,33 @@ function generate(){
    NOTE: the server does not stitch them into a single movie — each clip
    comes back as its own mp4 in the history strip. Concatenation is the
    one timeline feature that did not survive the move off the notebook.  */
+/* Downscale a data-URL image to ≤maxDim px on its longest side, as a
+   JPEG blob. Used ONLY for the child-safety screen: inlining a full
+   8-12MB frame into the moderation request fails outright, and because
+   the gate fails closed that surfaced as "moderation_unavailable" on
+   every large upload. A ~1024px copy screens identically and reliably;
+   the full-quality original is still what gets stored and rendered. */
+function _screenCopyBlob(dataUrl,maxDim){
+  return new Promise(function(resolve){
+    try{
+      const img=new Image();
+      img.onload=function(){
+        try{
+          const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+          if(!w||!h)return resolve(null);
+          const sc=Math.min(1,(maxDim||1024)/Math.max(w,h));
+          const cw=Math.max(1,Math.round(w*sc)),ch=Math.max(1,Math.round(h*sc));
+          const cv=document.createElement("canvas");cv.width=cw;cv.height=ch;
+          cv.getContext("2d").drawImage(img,0,0,cw,ch);
+          cv.toBlob(function(b){resolve(b||null);},"image/jpeg",0.85);
+        }catch(e){resolve(null);}
+      };
+      img.onerror=function(){resolve(null);};
+      img.src=dataUrl;
+    }catch(e){resolve(null);}
+  });
+}
+
 async function _uploadImage(dataUrl){
   if(!dataUrl||typeof dataUrl!=="string")return null;
   if(dataUrl.indexOf("data:")!==0)return null;
@@ -6351,14 +6485,88 @@ async function _uploadImage(dataUrl){
   const bin=atob(dataUrl.slice(comma+1));
   const bytes=new Uint8Array(bin.length);
   for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-  const r=await fetch("/api/videostudio/upload",
-    {method:"POST",headers:{"Content-Type":ct},body:bytes});
+  // Multipart: full-quality original + downscaled screen copy. The
+  // server screens the small copy and stores the original (plus the
+  // copy as <key>.screen so submit's re-screen stays cheap). If the
+  // downscale fails for any reason, the raw-body path still works.
+  const scr=await _screenCopyBlob(dataUrl,1024);
+  let r;
+  if(scr){
+    const fd=new FormData();
+    fd.append("image",new Blob([bytes],{type:ct}),"frame."+(ct.includes("png")?"png":ct.includes("webp")?"webp":"jpg"));
+    fd.append("screen_image",scr,"screen.jpg");
+    r=await fetch("/api/videostudio/upload",{method:"POST",body:fd});
+  }else{
+    r=await fetch("/api/videostudio/upload",
+      {method:"POST",headers:{"Content-Type":ct},body:bytes});
+  }
   const j=await r.json();
-  if(!j.ok)throw new Error(j.error||"upload failed");
+  if(!j.ok){
+    if(j.error==="content_blocked")
+      throw new Error("This image isn\u2019t permitted.");
+    if(j.error==="moderation_unavailable")
+      throw new Error("Content screening is temporarily unavailable"
+        +(j.reason?" ("+j.reason+")":"")+" \u2014 please try again shortly.");
+    throw new Error(j.error||"upload failed");
+  }
   return j.r2_key;
 }
 
-async function _submitOne(body,prompt,thumb){
+
+/* ── 18+ / US-law attestation for NSFW video ─────────────────────────
+   Shown when /submit answers age_ack_required: the server's AI
+   classifier judged this request adult, and this account has no
+   recorded attestation. The user must explicitly click Yes to BOTH
+   statements (18+, and compliance with all applicable US law) before
+   the render is re-submitted; Cancel abandons the request. The click
+   is recorded server-side (age_ack_at + the attestation version), so
+   this prompts once per account, not per render.                     */
+let _vsAttestEl=null;
+function _vsAttest(){
+  return new Promise(function(resolve){
+    if(!_vsAttestEl){
+      const d=document.createElement("div");
+      d.className="vsmodal";d.id="vsAttestModal";d.style.display="none";
+      d.innerHTML=
+        '<div style="max-width:460px;margin:14vh auto 0;background:var(--surface,#141417);'+
+        'border:1px solid var(--border,#2a2a30);border-radius:12px;padding:22px 24px;color:#eee">'+
+        '<div style="font-size:17px;font-weight:700;margin-bottom:10px">Adult content \u2014 confirmation required</div>'+
+        '<div style="font-size:13px;line-height:1.55;color:#c9c9cf">This video request looks like it contains '+
+        '<b>adult (NSFW) content</b>. To continue you must confirm <b>both</b> of the following:</div>'+
+        '<ul style="font-size:13px;line-height:1.6;color:#e6e6ea;margin:12px 0 14px 18px;padding:0">'+
+        '<li>I am <b>18 years of age or older</b>.</li>'+
+        '<li>I agree to <b>comply with all applicable United States laws</b>, and the laws of my '+
+        'jurisdiction, when creating and using this content.</li></ul>'+
+        '<div style="display:flex;gap:10px;justify-content:flex-end">'+
+        '<button id="vsAttestNo" style="background:transparent;border:1px solid var(--border,#2a2a30);'+
+        'color:#bbb;border-radius:8px;padding:9px 14px;cursor:pointer">Cancel</button>'+
+        '<button id="vsAttestYes" style="background:var(--gold,#d4af37);border:0;color:#111;font-weight:700;'+
+        'border-radius:8px;padding:9px 16px;cursor:pointer">Yes \u2014 I confirm and agree</button>'+
+        '</div></div>';
+      document.body.appendChild(d);
+      _vsAttestEl=d;
+    }
+    const m=_vsAttestEl;m.style.display="block";
+    const yes=m.querySelector("#vsAttestYes"),no=m.querySelector("#vsAttestNo");
+    function done(v){m.style.display="none";yes.onclick=no.onclick=null;
+      yes.disabled=false;yes.textContent="Yes \u2014 I confirm and agree";resolve(v);}
+    no.onclick=function(){done(false);};
+    yes.onclick=async function(){
+      yes.disabled=true;yes.textContent="Saving\u2026";
+      try{
+        const r=await fetch("/api/studio/age-ack",{method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({version:"18plus_uslaw_v1"})});
+        const j=await r.json().catch(function(){return{}});
+        if(j&&j.ok){done(true);return;}
+      }catch(e){}
+      yes.disabled=false;yes.textContent="Yes \u2014 I confirm and agree";
+      toast("Couldn\u2019t save your confirmation \u2014 try again.",true);
+    };
+  });
+}
+
+async function _submitOne(body,prompt,thumb,_attested){
   const r=await fetch("/api/videostudio/submit",{method:"POST",
     headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const o=await r.json();
@@ -6384,6 +6592,24 @@ async function _submitOne(body,prompt,thumb){
     }else if(o.error==="free_limit_reached"){
       mlState.remaining=0;showGate("free_limit_reached");
       toast("That was your last free render.",true);
+    }else if(o.error==="age_ack_required"){
+      // The AI classified this request as adult and the account has no
+      // recorded attestation. One retry after an affirmative Yes; if
+      // the server still refuses, don\u2019t loop \u2014 something else is wrong.
+      if(_attested){toast("Confirmation didn\u2019t register \u2014 please try again.",true);return null;}
+      const ok=await _vsAttest();
+      if(!ok)return null;
+      return _submitOne(body,prompt,thumb,true);
+    }else if(o.error==="nsfw_video_disabled"){
+      toast("Adult video generation is currently disabled on this site.",true);
+    }else if(o.error==="content_blocked"){
+      toast("This request isn\u2019t permitted.",true);
+    }else if(o.error==="nsfw_requires_paid"){
+      toast("Adult content requires an active subscription or a token purchase.",true);
+      try{buyTokens();}catch(e){}
+    }else if(o.error==="moderation_unavailable"){
+      toast("Content screening is temporarily unavailable"
+        +(o.reason?" ("+o.reason+")":"")+" \u2014 please try again shortly.",true);
     }else toast("Error: "+(o.error||"submit failed"),true);
     return null;
   }
