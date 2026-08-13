@@ -151,6 +151,8 @@ select.inline-sel{width:auto;background:var(--surface);border:1px solid var(--bo
 .tchip.donec .tdot{background:var(--green);animation:none}
 .tchip.memc{border-color:var(--gold-dark);color:var(--gold)}
 .tchip.memc .tdot{background:var(--gold);animation:none}
+.tchip.errc{border-color:var(--red);color:var(--red)}
+.tchip.errc .tdot{background:var(--red);animation:none}
 .think{margin:0 0 8px}
 .think summary{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);cursor:pointer;letter-spacing:.6px}
 .think .tk{white-space:pre-wrap;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-top:6px;max-height:220px;overflow-y:auto}
@@ -795,6 +797,45 @@ function assistantMsgFromBlocks(blocks){
   if (!trace.children.length) trace.remove();
   return d;
 }
+// Pull hosted media URLs out of a persisted tool_result turn so
+// replayed runs show their images/clips (live runs get 'media' events;
+// finished runs reconstruct from the transcript).
+function mediaFromToolResults(blocks){
+  const out = [];
+  for (const b of blocks){
+    if (!b || b.type !== 'tool_result' || !Array.isArray(b.content)) continue;
+    for (const c of b.content){
+      const txt = (c && c.type === 'text') ? String(c.text||'') : '';
+      let m;
+      if ((m = txt.match(/"image_url"\s*:\s*"(https?:\/\/[^"]+)"/))) out.push({url:m[1], kind:'image'});
+      if ((m = txt.match(/"video_url"\s*:\s*"(https?:\/\/[^"]+)"/))) out.push({url:m[1], kind:'video'});
+      const fm = txt.match(/"frames"\s*:\s*\{[^}]*\}/);
+      if (fm) for (const fu of fm[0].matchAll(/"(https?:\/\/[^"]+)"/g)) out.push({url:fu[1], kind:'image'});
+    }
+  }
+  return out;
+}
+function isToolResultTurn(content){
+  return Array.isArray(content) && content.length > 0 &&
+    content.every(b => b && b.type === 'tool_result');
+}
+function mediaRowEl(items){
+  const row = document.createElement('div');
+  row.className = 'mediarow';
+  for (const it of items){
+    if (it.kind === 'video'){
+      const v = document.createElement('video');
+      v.src = it.url; v.controls = true; v.muted = true; v.preload = 'metadata';
+      row.appendChild(v);
+    } else {
+      const a = document.createElement('a');
+      a.className = 'mthumb'; a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
+      const im = document.createElement('img'); im.src = it.url; im.loading = 'lazy';
+      a.appendChild(im); row.appendChild(a);
+    }
+  }
+  return row;
+}
 function filePill(id, name){
   const a = document.createElement('a');
   a.className = 'fpill';
@@ -866,8 +907,21 @@ function makeRenderer(shell, inner){
         break;
       }
       case 'tool_done':
-        if (liveChip){ liveChip.classList.add('donec'); liveChip = null; }
+        if (liveChip){
+          liveChip.classList.add(ev.ok === 0 ? 'errc' : 'donec');
+          liveChip = null;
+        }
         break;
+      case 'tool_err': {
+        if (liveChip){ liveChip.classList.add('errc'); liveChip = null; }
+        const c = document.createElement('span');
+        c.className = 'tchip errc';
+        c.title = ev.msg || '';
+        c.innerHTML = `<span class="tdot"></span>${esc(ev.name||'tool')} failed: ${esc(String(ev.msg||'').slice(7, 90))}`;
+        trace.appendChild(c);
+        scrollThread();
+        break;
+      }
       case 'file':
         frow.appendChild(filePill(ev.id, ev.name));
         scrollThread();
@@ -918,6 +972,7 @@ async function openRun(id){
     for (const m of (d.messages||[])){
       if (m.role !== 'user') continue;
       let c; try{ c = JSON.parse(m.content_json); }catch(e){ c = String(m.content_json); }
+      if (isToolResultTurn(c)) continue; // plumbing, not a prompt
       inner.appendChild(userMsgEl(typeof c === 'string' ? c : JSON.stringify(c)));
     }
     const shell = assistantShell();
@@ -928,8 +983,18 @@ async function openRun(id){
   }
   for (const m of (d.messages||[])){
     let content; try{ content = JSON.parse(m.content_json); }catch(e){ content = String(m.content_json); }
-    if (m.role === 'user') inner.appendChild(userMsgEl(typeof content === 'string' ? content : JSON.stringify(content)));
-    else inner.appendChild(assistantMsgFromBlocks(content));
+    if (m.role === 'user'){
+      // Tool-result turns are plumbing, not something you typed — show
+      // the media they carried instead of a JSON blob in a gold bubble.
+      if (isToolResultTurn(content)){
+        const media = mediaFromToolResults(content);
+        if (media.length) inner.appendChild(mediaRowEl(media));
+        continue;
+      }
+      inner.appendChild(userMsgEl(typeof content === 'string' ? content : JSON.stringify(content)));
+    } else {
+      inner.appendChild(assistantMsgFromBlocks(content));
+    }
   }
   if ((d.files||[]).length){
     const row = document.createElement('div'); row.className = 'filerow';
