@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MissingLink Agents</title>
+<link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png?v=2">
+<style>
+/* MissingLink Agents — same design system as studio.html */
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --gold:#E8A917;--gold-light:#F5C842;--gold-dark:#C48E0E;--gold-dim:rgba(232,169,23,.08);
+  --black:#09090B;--surface:#111113;--surface-2:#18181B;--surface-3:#1F1F23;
+  --border:#27272A;--border-light:#3F3F46;
+  --white:#FAFAF9;--text:#E4E4E7;--text-dim:#A1A1AA;--text-muted:#71717A;
+  --red:#EF4444;--green:#22C55E;--blue:#3B82F6;
+  --font-display:'Space Mono','JetBrains Mono',monospace;
+  --font-mono:'JetBrains Mono','Fira Code',monospace;
+  --font-body:'DM Sans','Segoe UI',sans-serif;
+  --sidebar-w:300px;--header-h:48px;
+}
+html,body{height:100%}
+body{background:var(--black);color:var(--text);font-family:var(--font-body);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font-family:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ── Veils ── */
+.veil{position:fixed;inset:0;background:var(--black);display:flex;align-items:center;justify-content:center;z-index:500}
+.veil-card{width:min(380px,92vw);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:36px 32px;text-align:center}
+.veil-card img{height:44px;margin-bottom:16px}
+.veil-card h1{font-family:var(--font-display);font-size:15px;letter-spacing:2px;text-transform:uppercase;color:var(--text);margin-bottom:6px}
+.veil-card h1 span{color:var(--gold)}
+.veil-card p{color:var(--text-dim);font-size:12.5px;margin-bottom:22px;line-height:1.6}
+.gbtn{display:inline-flex;align-items:center;gap:9px;background:var(--gold);color:var(--black);border:none;font-family:var(--font-mono);font-size:12px;font-weight:700;letter-spacing:.5px;padding:11px 22px;border-radius:6px;cursor:pointer;transition:background .15s}
+.gbtn:hover{background:var(--gold-light)}
+.veil-sub{margin-top:16px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+.spin{width:26px;height:26px;border:2px solid var(--surface-3);border-top-color:var(--gold);border-radius:50%;animation:sp 1s linear infinite;margin:0 auto}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ── App shell ── */
+.app{display:none;grid-template-columns:var(--sidebar-w) 1fr;grid-template-rows:var(--header-h) 1fr;grid-template-areas:"header header""sidebar main";height:100vh;width:100vw}
+body.ready .app{display:grid}
+.app-header{grid-area:header;display:flex;align-items:center;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);gap:10px}
+.app-header img{height:22px}
+.app-header h1{font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim)}
+.app-header h1 span{color:var(--gold)}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.hdr-badge{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:3px 8px;border:1px solid var(--border);border-radius:4px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.hdr-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--text-muted)}
+.hdr-badge .dot.busy{background:var(--gold);animation:pulse 1.1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.user-avatar{width:24px;height:24px;border-radius:50%;border:1px solid var(--border);object-fit:cover}
+.hdr-btn{background:none;border:1px solid var(--border);color:var(--text-muted);font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:4px;cursor:pointer;transition:all .15s}
+.hdr-btn:hover{border-color:var(--gold);color:var(--gold)}
+
+/* ── Sidebar ── */
+.sidebar{grid-area:sidebar;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.side-sec{padding:12px 12px 4px}
+.side-title{display:flex;align-items:center;justify-content:space-between;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px}
+.mini-btn{background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer}
+.mini-btn:hover{border-color:var(--gold);color:var(--gold)}
+.agent-list,.run-list{overflow-y:auto;padding:0 8px 8px}
+.agent-list{max-height:40vh;flex:0 0 auto}
+.run-list{flex:1 1 auto;border-top:1px solid var(--border);margin-top:6px;padding-top:8px}
+.agent-item,.run-item{padding:9px 10px;border-radius:7px;cursor:pointer;border:1px solid transparent;margin:0 4px 4px;transition:background .12s}
+.agent-item:hover,.run-item:hover{background:var(--surface-2)}
+.agent-item.sel{background:var(--gold-dim);border-color:var(--gold)}
+.run-item.sel{background:var(--surface-3);border-color:var(--border-light)}
+.agent-item .nm{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:7px}
+.pwr{width:7px;height:7px;border-radius:50%;background:var(--text-muted);flex:0 0 auto}
+.pwr.on{background:var(--green);animation:pulse 2s infinite}
+.pwr.paused{background:var(--gold)}
+.agent-item .caps{margin-top:3px;display:flex;gap:4px;flex-wrap:wrap}
+.cap{font-family:var(--font-mono);font-size:8.5px;letter-spacing:.4px;padding:1px 5px;border-radius:3px;border:1px solid var(--border);color:var(--text-muted);text-transform:uppercase}
+.cap.on{border-color:var(--gold-dark);color:var(--gold)}
+.run-item .rt{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.run-item .rm{font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);margin-top:2px;display:flex;gap:6px;align-items:center}
+.st{width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--text-muted)}
+.st.done{background:var(--green)}
+.st.running,.st.stopping{background:var(--gold);animation:pulse 1.1s infinite}
+.st.error{background:var(--red)}
+.st.paused,.st.stopped{background:var(--gold-dark)}
+.empty-note{font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);padding:14px 12px;line-height:1.7}
+
+/* ── Main ── */
+.main{grid-area:main;display:flex;flex-direction:column;overflow:hidden;background:var(--black)}
+.panel{display:none;flex:1;flex-direction:column;overflow:hidden}
+.panel.on{display:flex}
+
+/* Agent control bar — the autonomy cockpit */
+.ctlbar{display:none;align-items:center;gap:8px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.ctlbar.on{display:flex}
+.ctl-name{font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text);margin-right:4px}
+.ctl-status{font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+.ctl-right{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.cbtn{background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:.4px;padding:6px 13px;border-radius:5px;cursor:pointer;transition:all .15s}
+.cbtn:hover{border-color:var(--gold);color:var(--gold)}
+.cbtn.power.on{border-color:var(--green);color:var(--green);background:rgba(34,197,94,.07)}
+.cbtn.pausebtn.on{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.cbtn.stopbtn{display:none}
+.cbtn.stopbtn.on{display:inline-block;border-color:var(--red);color:var(--red)}
+
+/* Agent editor */
+.editor{overflow-y:auto;padding:28px;max-width:760px;width:100%;margin:0 auto}
+.editor h2{font-family:var(--font-display);font-size:14px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text);margin-bottom:18px}
+.editor h2 span{color:var(--gold)}
+.frow{margin-bottom:16px}
+.frow label{display:block;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+.frow input[type=text],.frow textarea,.frow select{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:12px;padding:9px 11px;outline:none}
+.frow input:focus,.frow textarea:focus,.frow select:focus{border-color:var(--gold)}
+.frow textarea{min-height:100px;resize:vertical;line-height:1.6}
+.frow .hint{font-size:11px;color:var(--text-muted);margin-top:5px}
+.togglerow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.tog{display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);user-select:none}
+.tog.on{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.skillchips{display:flex;gap:8px;flex-wrap:wrap}
+.mcp-row{display:grid;grid-template-columns:120px 1fr 1fr 30px;gap:8px;margin-bottom:8px}
+.mcp-row input{background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;padding:8px 10px;outline:none}
+.mcp-row input:focus{border-color:var(--gold)}
+.mcp-x{background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:6px;cursor:pointer}
+.mcp-x:hover{border-color:var(--red);color:var(--red)}
+.ebtns{display:flex;gap:10px;margin-top:22px}
+.btn{background:var(--gold);color:var(--black);border:none;font-family:var(--font-mono);font-size:11.5px;font-weight:700;letter-spacing:.5px;padding:10px 20px;border-radius:6px;cursor:pointer}
+.btn:hover{background:var(--gold-light)}
+.btn.ghost{background:none;border:1px solid var(--border);color:var(--text-dim)}
+.btn.ghost:hover{border-color:var(--gold);color:var(--gold)}
+.btn.danger{background:none;border:1px solid var(--border);color:var(--text-muted)}
+.btn.danger:hover{border-color:var(--red);color:var(--red)}
+select.inline-sel{width:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:11px;padding:8px 10px;outline:none}
+
+/* Thread */
+.thread{flex:1;overflow-y:auto;padding:24px 24px 8px}
+.thread-inner{max-width:820px;margin:0 auto}
+.msg{margin-bottom:18px}
+.msg .who{font-family:var(--font-mono);font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+.msg.user .who{color:var(--gold)}
+.msg .bubble{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:13px 15px;font-size:13.5px;line-height:1.65;word-wrap:break-word}
+.msg.user .bubble{background:var(--gold-dim);border-color:var(--gold-dark)}
+.bubble pre{background:var(--black);border:1px solid var(--border);border-radius:7px;padding:11px 13px;margin:9px 0;overflow-x:auto;font-family:var(--font-mono);font-size:11.5px;line-height:1.55}
+.bubble code{font-family:var(--font-mono);font-size:.92em;background:var(--surface-3);padding:1px 5px;border-radius:4px}
+.bubble pre code{background:none;padding:0}
+.bubble a{color:var(--gold);text-decoration:none}
+.bubble a:hover{text-decoration:underline}
+/* Signature: the live agent trace rail */
+.trace{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.tchip{font-family:var(--font-mono);font-size:10px;letter-spacing:.4px;padding:3px 9px;border-radius:12px;border:1px solid var(--border-light);color:var(--text-dim);display:inline-flex;align-items:center;gap:6px;animation:chipin .18s ease-out}
+@keyframes chipin{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.tchip .tdot{width:5px;height:5px;border-radius:50%;background:var(--gold);animation:pulse 1s infinite}
+.tchip.donec .tdot{background:var(--green);animation:none}
+.tchip.memc{border-color:var(--gold-dark);color:var(--gold)}
+.tchip.memc .tdot{background:var(--gold);animation:none}
+.think{margin:0 0 8px}
+.think summary{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);cursor:pointer;letter-spacing:.6px}
+.think .tk{white-space:pre-wrap;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-top:6px;max-height:220px;overflow-y:auto}
+.filerow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.mediarow{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.mediarow img,.mediarow video{max-width:220px;max-height:150px;border:1px solid var(--border);border-radius:8px;background:var(--surface);object-fit:cover}
+.mediarow video{max-width:300px;max-height:200px}
+.mediarow a.mthumb{display:block;line-height:0}
+.fpill{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--gold);border:1px solid var(--gold);background:var(--gold-dim);padding:5px 12px;border-radius:14px;text-decoration:none}
+.fpill:hover{background:var(--gold);color:var(--black)}
+.errline{font-family:var(--font-mono);font-size:11px;color:var(--red);border:1px solid var(--red);background:rgba(239,68,68,.07);border-radius:7px;padding:9px 12px;margin-bottom:14px}
+.doneline{font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);margin:-8px 0 16px}
+
+/* Composer */
+.composer{border-top:1px solid var(--border);background:var(--surface);padding:14px}
+.composer-inner{max-width:820px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+.composer textarea{flex:1;background:var(--black);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:13px;padding:11px 13px;min-height:46px;max-height:180px;resize:vertical;outline:none;line-height:1.55}
+.composer textarea:focus{border-color:var(--gold)}
+.runbtn{background:var(--gold);color:var(--black);border:none;font-family:var(--font-mono);font-size:11.5px;font-weight:700;letter-spacing:.6px;padding:0 22px;height:46px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.runbtn:hover{background:var(--gold-light)}
+.runbtn:disabled{background:var(--surface-3);color:var(--text-muted);cursor:not-allowed}
+.compose-meta{max-width:820px;margin:8px auto 0;font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);display:flex;gap:14px;flex-wrap:wrap}
+.blank{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:.6px;text-align:center;line-height:2}
+
+/* Memory modal */
+.modal-veil{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:400}
+.modal-veil.on{display:flex}
+.modal{width:min(680px,94vw);max-height:84vh;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;flex-direction:column}
+.modal h3{font-family:var(--font-display);font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text);margin-bottom:4px}
+.modal h3 span{color:var(--gold)}
+.modal .sub{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:12px}
+.modal textarea{flex:1;min-height:300px;background:var(--black);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-mono);font-size:11.5px;line-height:1.65;padding:12px;resize:vertical;outline:none}
+.modal textarea:focus{border-color:var(--gold)}
+.modal .ebtns{margin-top:14px}
+@media (max-width:820px){:root{--sidebar-w:230px}.editor{padding:18px}}
+</style>
+</head>
+<body>
+
+<!-- Loading veil -->
+<div class="veil" id="veilLoading"><div class="veil-card"><div class="spin"></div></div></div>
+
+<!-- Login veil -->
+<div class="veil" id="veilLogin" style="display:none"><div class="veil-card">
+  <img src="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png?v=2" alt="" onerror="this.style.display='none'">
+  <h1>MissingLink <span>Agents</span></h1>
+  <p>Private agent console. Sign in to continue.</p>
+  <button class="gbtn" onclick="loginGoogle()">
+    <svg width="15" height="15" viewBox="0 0 24 24"><path fill="currentColor" d="M21.35 11.1H12v2.9h5.35c-.5 2.55-2.65 4.1-5.35 4.1a6 6 0 1 1 0-12c1.5 0 2.87.55 3.93 1.45l2.15-2.15A9 9 0 1 0 12 21c4.65 0 8.85-3.35 8.85-9 0-.3-.02-.6-.05-.9z"/></svg>
+    Sign in with Google
+  </button>
+  <div class="veil-sub">restricted access</div>
+</div></div>
+
+<!-- Restricted veil (wrong account) -->
+<div class="veil" id="veilDenied" style="display:none"><div class="veil-card">
+  <img src="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png?v=2" alt="" onerror="this.style.display='none'">
+  <h1>Access <span>Restricted</span></h1>
+  <p id="deniedMsg">This console is limited to a single account.</p>
+  <button class="gbtn" onclick="logout()">Sign out</button>
+</div></div>
+
+<!-- Memory modal -->
+<div class="modal-veil" id="memModal"><div class="modal">
+  <h3>Agent <span>Memory</span></h3>
+  <div class="sub">Injected into every run. The agent rewrites it each run via its &lt;memory_update&gt; block — you can edit or wipe it here.</div>
+  <textarea id="memText" spellcheck="false"></textarea>
+  <div class="ebtns">
+    <button class="btn" onclick="saveMemory()">Save memory</button>
+    <button class="btn ghost" onclick="closeMemory()">Close</button>
+    <button class="btn danger" style="margin-left:auto" onclick="$('#memText').value=''">Wipe</button>
+  </div>
+</div></div>
+
+<div class="app" id="app">
+  <header class="app-header">
+    <img src="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png?v=2" alt="" onerror="this.style.display='none'">
+    <h1>MissingLink <span>Agents</span></h1>
+    <div class="hdr-right">
+      <div class="hdr-badge"><span class="dot" id="engineDot"></span><span id="engineLbl">fable-5 · high</span></div>
+      <img class="user-avatar" id="avatar" src="" alt="" style="display:none">
+      <button class="hdr-btn" onclick="logout()">Sign out</button>
+    </div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-sec">
+      <div class="side-title">Agents
+        <span style="display:flex;gap:5px">
+          <button class="mini-btn" title="Create the YouTube Producer preset agent" onclick="createYtPreset()">★YT</button>
+          <button class="mini-btn" title="Export all agents as JSON" onclick="exportAgents()">⤓</button>
+          <button class="mini-btn" title="Import agents JSON" onclick="$('#importFile').click()">⤒</button>
+          <button class="mini-btn" onclick="newAgent()">+ New</button>
+        </span>
+      </div>
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importAgents(this.files[0])">
+    </div>
+    <div class="agent-list" id="agentList"></div>
+    <div class="side-sec" style="padding-top:8px">
+      <div class="side-title">Runs <button class="mini-btn" id="newRunBtn" onclick="newRun()" style="display:none">+ New</button></div>
+    </div>
+    <div class="run-list" id="runList"><div class="empty-note">Select an agent to see its runs.</div></div>
+  </aside>
+
+  <main class="main">
+    <!-- Autonomy cockpit -->
+    <div class="ctlbar" id="ctlbar">
+      <span class="ctl-name" id="ctlName"></span>
+      <span class="ctl-status" id="ctlStatus"></span>
+      <div class="ctl-right">
+        <button class="cbtn power" id="btnPower" onclick="togglePower()">⏻ OFF</button>
+        <button class="cbtn pausebtn" id="btnPause" onclick="togglePause()">⏸ PAUSE</button>
+        <button class="cbtn" onclick="runCycleNow()">⟳ RUN CYCLE NOW</button>
+        <button class="cbtn" onclick="openMemory()">🧠 MEMORY</button>
+        <button class="cbtn" onclick="editAgent(selAgent.id)">✎ EDIT</button>
+        <button class="cbtn stopbtn" id="btnStop" onclick="stopRun()">■ STOP RUN</button>
+      </div>
+    </div>
+
+    <!-- Blank state -->
+    <div class="panel on" id="panelBlank"><div class="blank">CREATE AN AGENT<br>THEN GIVE IT A TASK OR A STANDING GOAL</div></div>
+
+    <!-- Agent editor -->
+    <div class="panel" id="panelEditor">
+      <div class="editor">
+        <h2 id="editorTitle">New <span>Agent</span></h2>
+        <div class="frow"><label>Name</label><input type="text" id="fName" maxlength="80" placeholder="Research Analyst"></div>
+        <div class="frow"><label>Instructions</label>
+          <textarea id="fInstr" placeholder="What this agent is for, how it should work, tone, output format…"></textarea>
+          <div class="hint">Becomes the agent's system prompt on every run. Edits apply live — a running cycle picks them up at its next round.</div>
+        </div>
+        <div class="frow"><label>Memory</label>
+          <textarea id="fMemory" placeholder="(empty — the agent fills this in as it works)"></textarea>
+          <div class="hint">The agent's persistent memory. It rewrites this itself each run; edit or wipe it here to steer or reset it. Memory edits apply from the next run.</div>
+        </div>
+        <div class="frow"><label>Standing goal (for autonomous cycles)</label>
+          <textarea id="fGoal" placeholder="What this agent should continuously work toward when running on its own…"></textarea>
+          <div class="hint">Each scheduled cycle: the agent reads its memory, does one round of real work toward this goal, and updates its memory.</div>
+        </div>
+        <div class="frow"><label>Autonomy</label>
+          <div class="togglerow">
+            <div class="tog" id="togAuto" onclick="this.classList.toggle('on')">⟳ Autonomous (runs on a schedule)</div>
+            <select class="inline-sel" id="fInterval">
+              <option value="5">every 5 min</option>
+              <option value="15">every 15 min</option>
+              <option value="30">every 30 min</option>
+              <option value="60" selected>every hour</option>
+              <option value="180">every 3 hours</option>
+              <option value="720">every 12 hours</option>
+              <option value="1440">daily</option>
+            </select>
+          </div>
+          <div class="hint">Save, then use the ⏻ power switch to start it. ⏸ Pause halts scheduling and aborts a cycle mid-flight.</div>
+        </div>
+        <div class="frow"><label>Capabilities</label>
+          <div class="togglerow">
+            <div class="tog" id="togWeb" onclick="this.classList.toggle('on')">🔍 Web search</div>
+            <div class="tog" id="togCode" onclick="toggleCode()">⚙ Code execution</div>
+            <div class="tog" id="togMl" onclick="this.classList.toggle('on')">🎬 Production tools (image · video · vision audit)</div>
+          </div>
+        </div>
+        <div class="frow" id="skillsRow"><label>Skills (need code execution)</label>
+          <div class="skillchips">
+            <div class="tog skl" data-s="xlsx" onclick="this.classList.toggle('on')">xlsx</div>
+            <div class="tog skl" data-s="pptx" onclick="this.classList.toggle('on')">pptx</div>
+            <div class="tog skl" data-s="docx" onclick="this.classList.toggle('on')">docx</div>
+            <div class="tog skl" data-s="pdf" onclick="this.classList.toggle('on')">pdf</div>
+          </div>
+          <div class="hint">Anthropic document skills. Generated files show up as downloads in the run.</div>
+        </div>
+        <div class="frow"><label>MCP servers</label>
+          <div id="mcpRows"></div>
+          <button class="mini-btn" onclick="addMcpRow()">+ Add server</button>
+          <div class="hint">Remote HTTPS MCP servers (Streamable HTTP or SSE). Token = OAuth bearer token if the server needs one. The agent gets every tool the server exposes — this is how you grant it the access it needs (email, calendar, GitHub, Zapier, your own APIs…).</div>
+        </div>
+        <div class="frow"><label>Effort</label>
+          <select id="fEffort">
+            <option value="low">low — fast, cheap</option>
+            <option value="medium">medium</option>
+            <option value="high" selected>high — default</option>
+            <option value="xhigh">xhigh — deep agentic work</option>
+            <option value="max">max — no constraints</option>
+          </select>
+        </div>
+        <div class="ebtns">
+          <button class="btn" onclick="saveAgent()">Save agent</button>
+          <button class="btn ghost" onclick="closeEditor()">Cancel</button>
+          <button class="btn ghost" id="dupAgentBtn" onclick="duplicateAgent()" style="display:none">⧉ Duplicate</button>
+          <button class="btn danger" id="delAgentBtn" onclick="deleteAgent()" style="display:none;margin-left:auto">Delete agent</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Run thread -->
+    <div class="panel" id="panelRun">
+      <div class="thread" id="thread"><div class="thread-inner" id="threadInner"></div></div>
+      <div class="composer">
+        <div class="composer-inner">
+          <textarea id="taskBox" placeholder="Give the agent a one-off task… (Ctrl/⌘+Enter to run)"></textarea>
+          <button class="runbtn" id="runBtn" onclick="sendTask()">RUN ▸</button>
+        </div>
+        <div class="compose-meta"><span id="metaAgent"></span><span id="metaCaps"></span></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = ''; // same origin
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ── State ─────────────────────────────────────────────────────────
+let agents = [], selAgent = null, runs = [], selRun = null;
+let streaming = false;          // our own SSE task in flight
+let watchTimer = null;          // polling a background/cron run
+let watchRunId = null, watchLastEv = 0;
+let serverOffset = 0;           // serverNow - Date.now(), for countdowns
+
+// ── Auth ──────────────────────────────────────────────────────────
+function loginGoogle(){ location.href = API + '/auth/google?return=/agents.html'; }
+async function logout(){ try{ await fetch(API+'/auth/logout',{method:'POST'}); }catch(e){} location.reload(); }
+
+async function boot(){
+  try{
+    const r = await fetch(API + '/api/agents/whoami');
+    if (r.status === 401){ show('veilLogin'); return; }
+    if (r.status === 403){
+      try{ const m = await (await fetch(API+'/auth/me')).json();
+        if (m && m.email) $('#deniedMsg').textContent = 'Signed in as ' + m.email + ' — this console is limited to a single account.';
+      }catch(e){}
+      show('veilDenied'); return;
+    }
+    const d = await r.json();
+    if (!d.ok){ show('veilLogin'); return; }
+    if (d.picture){ $('#avatar').src = d.picture; $('#avatar').style.display = ''; }
+    hideVeils();
+    document.body.classList.add('ready');
+    await loadAgents();
+    // Background refresh: countdowns, power state, run statuses.
+    setInterval(refreshTick, 12000);
+    setInterval(updateCtl, 1000);
+  }catch(e){ show('veilLogin'); }
+}
+function show(id){ hideVeils(); $('#'+id).style.display = 'flex'; }
+function hideVeils(){ for (const v of ['veilLoading','veilLogin','veilDenied']) $('#'+v).style.display = 'none'; }
+async function refreshTick(){
+  if (streaming) return;
+  await loadAgents(true);
+  if (selAgent) await loadRuns();
+}
+
+// ── Panels ────────────────────────────────────────────────────────
+function panel(id){
+  for (const p of ['panelBlank','panelEditor','panelRun']) $('#'+p).classList.toggle('on', p===id);
+  $('#ctlbar').classList.toggle('on', !!selAgent && id !== 'panelEditor');
+}
+
+// ── Agents ────────────────────────────────────────────────────────
+async function loadAgents(silent){
+  const d = await (await fetch(API + '/api/agents/agents')).json();
+  agents = d.agents || [];
+  if (typeof d.now === 'number') serverOffset = d.now - Date.now();
+  if (selAgent){
+    const fresh = agents.find(a => a.id === selAgent.id);
+    if (fresh) selAgent = fresh; else selAgent = null;
+  }
+  renderAgents();
+  updateCtl();
+  if (!silent) updateMeta();
+}
+function agentCaps(a){
+  const caps = [];
+  if (a.autonomous) caps.push(`<span class="cap on">auto·${a.interval_min}m</span>`);
+  caps.push(`<span class="cap ${a.web_search?'on':''}">web</span>`);
+  caps.push(`<span class="cap ${a.code_exec?'on':''}">code</span>`);
+  if (a.ml_tools !== 0) caps.push(`<span class="cap on">studio</span>`);
+  let sk = []; try{ sk = JSON.parse(a.skills_json||'[]'); }catch(e){}
+  for (const s of sk) caps.push(`<span class="cap on">${esc(s)}</span>`);
+  let mc = []; try{ mc = JSON.parse(a.mcp_json||'[]'); }catch(e){}
+  if (mc.length) caps.push(`<span class="cap on">mcp×${mc.length}</span>`);
+  caps.push(`<span class="cap on">${esc(a.effort||'high')}</span>`);
+  return caps.join('');
+}
+function pwrClass(a){
+  if (!a.autonomous || !a.enabled) return '';
+  return a.paused ? 'paused' : 'on';
+}
+function renderAgents(){
+  const el = $('#agentList');
+  if (!agents.length){ el.innerHTML = '<div class="empty-note">No agents yet — create one.</div>'; return; }
+  el.innerHTML = agents.map(a =>
+    `<div class="agent-item ${selAgent&&selAgent.id===a.id?'sel':''}" onclick="selectAgent('${a.id}')" ondblclick="editAgent('${a.id}')">
+       <div class="nm"><span class="pwr ${pwrClass(a)}"></span>${esc(a.name)}</div>
+       <div class="caps">${agentCaps(a)}</div>
+     </div>`).join('');
+}
+async function selectAgent(id){
+  if (selAgent && selAgent.id === id && $('#panelRun').classList.contains('on')) return;
+  selAgent = agents.find(a => a.id === id) || null;
+  selRun = null;
+  stopWatch();
+  renderAgents();
+  $('#newRunBtn').style.display = selAgent ? '' : 'none';
+  updateMeta(); updateCtl();
+  await loadRuns();
+  newRun();
+}
+function updateMeta(){
+  if (!selAgent) return;
+  $('#metaAgent').textContent = 'agent: ' + selAgent.name;
+  const bits = [];
+  if (selAgent.web_search) bits.push('web');
+  if (selAgent.code_exec) bits.push('code');
+  try{ const sk = JSON.parse(selAgent.skills_json||'[]'); if (sk.length) bits.push('skills:'+sk.join(',')); }catch(e){}
+  try{ const mc = JSON.parse(selAgent.mcp_json||'[]'); if (mc.length) bits.push('mcp:'+mc.length); }catch(e){}
+  bits.push('effort:'+(selAgent.effort||'high'));
+  if ((selAgent.memory||'').length) bits.push('memory:'+selAgent.memory.length+'ch');
+  $('#metaCaps').textContent = bits.join(' · ');
+}
+
+// ── Autonomy cockpit ──────────────────────────────────────────────
+function updateCtl(){
+  if (!selAgent){ $('#ctlbar').classList.remove('on'); return; }
+  $('#ctlName').textContent = selAgent.name;
+  const p = $('#btnPower'), z = $('#btnPause');
+  p.classList.toggle('on', !!selAgent.enabled);
+  p.textContent = selAgent.enabled ? '⏻ ON' : '⏻ OFF';
+  z.classList.toggle('on', !!selAgent.paused);
+  z.textContent = selAgent.paused ? '▶ RESUME' : '⏸ PAUSE';
+  let st = '';
+  if (!selAgent.autonomous) st = 'manual only — enable autonomy in ✎ EDIT to run continuously';
+  else if (selAgent.paused) st = 'PAUSED — scheduling halted; in-flight work aborts';
+  else if (!selAgent.enabled) st = 'off — flip ⏻ to start the schedule';
+  else {
+    const ms = (selAgent.next_run_at||0) - (Date.now() + serverOffset);
+    st = ms <= 0 ? 'next cycle: due now (waiting for tick)' :
+      'next cycle in ' + (ms > 90000 ? Math.round(ms/60000) + 'm' : Math.max(1,Math.round(ms/1000)) + 's');
+  }
+  $('#ctlStatus').textContent = st;
+  const watching = !!watchRunId || streaming;
+  $('#engineDot').classList.toggle('busy', watching);
+  $('#btnStop').classList.toggle('on', !!watchRunId || streaming);
+}
+async function togglePower(){
+  if (!selAgent) return;
+  if (!selAgent.autonomous){ alert('Enable "Autonomous" in ✎ EDIT (and set a goal) first.'); return; }
+  if (!String(selAgent.goal||'').trim()){ alert('Set a standing goal in ✎ EDIT first.'); return; }
+  const d = await (await fetch(API + '/api/agents/power', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ id: selAgent.id, enabled: !selAgent.enabled }),
+  })).json();
+  if (d.ok) await loadAgents();
+}
+async function togglePause(){
+  if (!selAgent) return;
+  const d = await (await fetch(API + '/api/agents/pause', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ id: selAgent.id, paused: !selAgent.paused }),
+  })).json();
+  if (d.ok) await loadAgents();
+}
+async function runCycleNow(){
+  if (!selAgent) return;
+  const d = await (await fetch(API + '/api/agents/cycle', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ agent_id: selAgent.id }),
+  })).json();
+  if (!d.ok){ alert('Cycle not started: ' + (d.error||'')); return; }
+  await loadRuns();
+  openRun(d.run_id);
+}
+async function stopRun(){
+  const id = watchRunId || selRun;
+  if (!id) return;
+  await fetch(API + '/api/agents/runs/stop', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ id }),
+  });
+}
+
+// ── Memory modal ──────────────────────────────────────────────────
+function openMemory(){
+  if (!selAgent) return;
+  $('#memText').value = selAgent.memory || '';
+  $('#memModal').classList.add('on');
+}
+function closeMemory(){ $('#memModal').classList.remove('on'); }
+async function saveMemory(){
+  if (!selAgent) return;
+  const d = await (await fetch(API + '/api/agents/memory', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ id: selAgent.id, memory: $('#memText').value }),
+  })).json();
+  if (d.ok){ closeMemory(); await loadAgents(); }
+}
+
+// ── Agent editor ──────────────────────────────────────────────────
+let editingId = null;
+function newAgent(){ editingId = null; fillEditor(null); panel('panelEditor'); }
+function editAgent(id){
+  const a = agents.find(x => x.id === id); if (!a) return;
+  editingId = id; fillEditor(a); panel('panelEditor');
+}
+function fillEditor(a){
+  $('#editorTitle').innerHTML = a ? 'Edit <span>Agent</span>' : 'New <span>Agent</span>';
+  $('#fName').value = a ? a.name : '';
+  $('#fInstr').value = a ? a.instructions : '';
+  $('#fGoal').value = a ? (a.goal||'') : '';
+  $('#fMemory').value = a ? (a.memory||'') : '';
+  $('#dupAgentBtn').style.display = a ? '' : 'none';
+  $('#togAuto').classList.toggle('on', a ? !!a.autonomous : false);
+  $('#fInterval').value = a ? String(a.interval_min||60) : '60';
+  $('#togWeb').classList.toggle('on', a ? !!a.web_search : true);
+  $('#togCode').classList.toggle('on', a ? !!a.code_exec : true);
+  $('#togMl').classList.toggle('on', a ? a.ml_tools !== 0 : true);
+  let sk = [];
+  if (a){ try{ sk = JSON.parse(a.skills_json||'[]'); }catch(e){} }
+  document.querySelectorAll('.skl').forEach(el => el.classList.toggle('on', sk.includes(el.dataset.s)));
+  $('#fEffort').value = a ? (a.effort||'high') : 'high';
+  $('#mcpRows').innerHTML = '';
+  let mc = []; if (a){ try{ mc = JSON.parse(a.mcp_json||'[]'); }catch(e){} }
+  for (const m of mc) addMcpRow(m);
+  $('#delAgentBtn').style.display = a ? '' : 'none';
+  syncSkillsRow();
+}
+function toggleCode(){ $('#togCode').classList.toggle('on'); syncSkillsRow(); }
+function syncSkillsRow(){ $('#skillsRow').style.opacity = $('#togCode').classList.contains('on') ? '1' : '.35'; }
+function addMcpRow(m){
+  const div = document.createElement('div');
+  div.className = 'mcp-row';
+  div.innerHTML =
+    `<input placeholder="name" class="m-name" value="${m?esc(m.name||''):''}">`+
+    `<input placeholder="https://server.example.com/mcp" class="m-url" value="${m?esc(m.url||''):''}">`+
+    `<input placeholder="token (optional)" class="m-token" value="${m?esc(m.token||''):''}">`+
+    `<button class="mcp-x" onclick="this.parentElement.remove()">✕</button>`;
+  $('#mcpRows').appendChild(div);
+}
+function readEditor(){
+  const skills = [...document.querySelectorAll('.skl.on')].map(el => el.dataset.s);
+  const mcp = [...document.querySelectorAll('.mcp-row')].map(r => ({
+    name: r.querySelector('.m-name').value.trim(),
+    url: r.querySelector('.m-url').value.trim(),
+    token: r.querySelector('.m-token').value.trim() || undefined,
+  })).filter(m => m.url);
+  return {
+    id: editingId || undefined,
+    name: $('#fName').value.trim(),
+    instructions: $('#fInstr').value,
+    goal: $('#fGoal').value,
+    memory: $('#fMemory').value,
+    autonomous: $('#togAuto').classList.contains('on'),
+    interval_min: parseInt($('#fInterval').value)||60,
+    web_search: $('#togWeb').classList.contains('on'),
+    code_exec: $('#togCode').classList.contains('on'),
+    ml_tools: $('#togMl').classList.contains('on'),
+    skills, mcp,
+    effort: $('#fEffort').value,
+  };
+}
+async function duplicateAgent(){
+  const b = readEditor();
+  b.id = undefined;
+  b.name = (b.name || 'agent') + ' copy';
+  const d = await (await fetch(API + '/api/agents/agents', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b),
+  })).json();
+  if (!d.ok){ alert('Duplicate failed: ' + (d.error||'')); return; }
+  await loadAgents();
+  await selectAgent(d.id);
+}
+function exportAgents(){
+  const a = document.createElement('a');
+  a.href = API + '/api/agents/export';
+  a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function importAgents(file){
+  if (!file) return;
+  let payload;
+  try{ payload = JSON.parse(await file.text()); }
+  catch(e){ alert('Not valid JSON.'); return; }
+  const d = await (await fetch(API + '/api/agents/import', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload),
+  })).json();
+  $('#importFile').value = '';
+  if (!d.ok){ alert('Import failed: ' + (d.error||'')); return; }
+  await loadAgents();
+  alert('Imported ' + (d.imported||[]).length + ' agent(s).');
+}
+
+// ── YT Producer preset ────────────────────────────────────────────
+// One click creates the research → keyframes → clips → audit →
+// assemble agent, ready to power on. Edit it afterwards like any other.
+async function createYtPreset(){
+  const preset = {
+    name: 'YT Producer',
+    autonomous: true,
+    interval_min: 30,
+    web_search: true,
+    code_exec: false,
+    ml_tools: true,
+    effort: 'high',
+    goal:
+      'Make a popular 1-minute YouTube video with the MissingLink production tools, ' +
+      'then keep improving it. Research what is currently working in 60-second YouTube ' +
+      'formats, choose ONE concept our tools can execute exceptionally well (strong ' +
+      'first-2-seconds hook, clear payoff, works without complex character continuity), ' +
+      'produce it shot by shot, quality-gate everything with vision audits, assemble the ' +
+      'final ~60s cut, and iterate: after a full cut exists, audit it end-to-end, find ' +
+      'the weakest shots, and replace them with better ones.',
+    instructions:
+      'You are a short-form video producer running a continuous production pipeline.\n\n' +
+      'EACH CYCLE:\n' +
+      '1. Read your memory for the production state (concept, beat sheet, per-shot asset ' +
+      'URLs and audit verdicts). Continue where you left off — NEVER restart a production ' +
+      'in progress unless audits show the concept itself is failing.\n' +
+      '2. No concept yet? web_search current YouTube Shorts / 1-minute trends, score 3-5 ' +
+      'candidate concepts for hook strength, watch-time retention, and feasibility with ' +
+      'still-image + ~5s-clip tools, pick the winner, and write a ~12-shot beat sheet ' +
+      '(shot number, visual, motion, on-screen text if any, seconds).\n' +
+      '3. Advance a few shots per cycle. Per shot: generate_image (1536x1024, richly ' +
+      'specified) → vision_audit the frame against the beat sheet (hook value, composition, ' +
+      'artifacts, text legibility) and REGENERATE until it passes → animate_image ' +
+      '(ltx-2-19b default; step up to seedance-2.0 for hero shots) → extract_frames → ' +
+      'vision_audit the first/middle/last keyframes for motion quality, artifacts, and ' +
+      'continuity with neighboring shots. A clip ships only when its audit passes.\n' +
+      '4. When all shots pass, merge_videos in beat-sheet order, extract_frames on the ' +
+      'merged cut, and run a final end-to-end audit. Also write the title, description, ' +
+      'and which frame is the thumbnail.\n' +
+      '5. IMPROVE: with a full cut done, rank the shots by audit score, regenerate the ' +
+      'weakest one better, and re-merge.\n\n' +
+      'MEMORY DISCIPLINE: record the concept, the full beat sheet, and for every shot its ' +
+      'image URL, clip URL, audit verdict/score, plus the latest merged cut URL. ' +
+      'Generation is slow — a cycle that completes 2-3 shots cleanly beats one that ' +
+      'rushes 6. Be decisive and concrete; no filler.',
+    mcp: [], skills: [],
+  };
+  const d = await (await fetch(API + '/api/agents/agents', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(preset),
+  })).json();
+  if (!d.ok){ alert('Preset failed: ' + (d.error||'')); return; }
+  await loadAgents();
+  await selectAgent(d.id);
+}
+async function saveAgent(){
+  const b = readEditor();
+  if (!b.name){ alert('Name required'); return; }
+  if (b.autonomous && !b.goal.trim()){ alert('Autonomous agents need a standing goal.'); return; }
+  const d = await (await fetch(API + '/api/agents/agents', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b),
+  })).json();
+  if (!d.ok){ alert('Save failed: ' + (d.error||'')); return; }
+  await loadAgents();
+  await selectAgent(d.id);
+}
+async function deleteAgent(){
+  if (!editingId || !confirm('Delete this agent and all its runs?')) return;
+  await fetch(API + '/api/agents/agents/delete', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({id: editingId}),
+  });
+  selAgent = null; editingId = null;
+  stopWatch();
+  await loadAgents();
+  $('#runList').innerHTML = '<div class="empty-note">Select an agent to see its runs.</div>';
+  panel('panelBlank');
+}
+function closeEditor(){ panel(selAgent ? 'panelRun' : 'panelBlank'); }
+
+// ── Runs ──────────────────────────────────────────────────────────
+async function loadRuns(){
+  if (!selAgent) return;
+  const d = await (await fetch(API + '/api/agents/runs?agent_id=' + encodeURIComponent(selAgent.id))).json();
+  runs = d.runs || [];
+  renderRuns();
+}
+function renderRuns(){
+  const el = $('#runList');
+  if (!runs.length){ el.innerHTML = '<div class="empty-note">No runs yet. Give the agent a task, or power it on.</div>'; return; }
+  el.innerHTML = runs.map(r =>
+    `<div class="run-item ${selRun===r.id?'sel':''}" onclick="openRun('${r.id}')">
+       <div class="rt">${esc(r.title||'(untitled)')}</div>
+       <div class="rm"><span class="st ${esc(r.status)}"></span>${esc(r.status)} · ${new Date(r.updated_at).toLocaleString()}</div>
+     </div>`).join('');
+}
+function newRun(){
+  if (streaming) return;
+  selRun = null; stopWatch(); renderRuns();
+  $('#threadInner').innerHTML = '';
+  panel('panelRun');
+  $('#taskBox').focus();
+}
+
+// ── Message rendering ─────────────────────────────────────────────
+function stripMem(s){ return s.replace(/<memory_update>[\s\S]*?(<\/memory_update>|$)/g, ''); }
+function md(s){
+  // Minimal, safe markdown: fences, inline code, bold, links, newlines.
+  let h = esc(s);
+  h = h.replace(/```([\s\S]*?)```/g, (m, c) => '<pre><code>' + c.replace(/^\w*\n/, '') + '</code></pre>');
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  h = h.replace(/(https?:\/\/[^\s<)"']+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  return h.replace(/\n/g, '<br>');
+}
+function userMsgEl(text){
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.innerHTML = `<div class="who">You</div><div class="bubble">${md(text)}</div>`;
+  return d;
+}
+function assistantShell(){
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.innerHTML = `<div class="who">Agent</div><div class="trace"></div>
+    <details class="think" style="display:none"><summary>thinking</summary><div class="tk"></div></details>
+    <div class="bubble" style="display:none"></div><div class="filerow"></div>`;
+  return d;
+}
+function assistantMsgFromBlocks(blocks){
+  const d = assistantShell();
+  if (!Array.isArray(blocks)) blocks = [];
+  let text = '', think = '';
+  const trace = d.querySelector('.trace');
+  for (const b of blocks){
+    if (!b) continue;
+    if (b.type === 'text') text += b.text || '';
+    else if (b.type === 'thinking') think += b.thinking || '';
+    else if (b.type === 'server_tool_use' || b.type === 'mcp_tool_use' || b.type === 'tool_use'){
+      const c = document.createElement('span'); c.className = 'tchip donec';
+      c.innerHTML = `<span class="tdot"></span>${esc(b.name||'tool')}${b.server_name?' @'+esc(b.server_name):''}`;
+      trace.appendChild(c);
+    }
+  }
+  if (think){ d.querySelector('.think').style.display=''; d.querySelector('.tk').textContent = think; }
+  if (/<memory_update>/.test(text)){
+    const c = document.createElement('span'); c.className = 'tchip memc';
+    c.innerHTML = '<span class="tdot"></span>memory updated';
+    trace.appendChild(c);
+  }
+  const clean = stripMem(text).trim();
+  if (clean){ const bb = d.querySelector('.bubble'); bb.style.display=''; bb.innerHTML = md(clean); }
+  if (!trace.children.length) trace.remove();
+  return d;
+}
+function filePill(id, name){
+  const a = document.createElement('a');
+  a.className = 'fpill';
+  a.href = API + '/api/agents/file?id=' + encodeURIComponent(id);
+  a.innerHTML = '⬇ ' + esc(name || id);
+  return a;
+}
+function scrollThread(){ const t = $('#thread'); t.scrollTop = t.scrollHeight; }
+
+// A live renderer bound to one assistant shell: shared by the SSE
+// stream (manual tasks) and the event-feed watcher (cron cycles).
+function makeRenderer(shell, inner){
+  const trace = shell.querySelector('.trace');
+  const bubble = shell.querySelector('.bubble');
+  const thinkBox = shell.querySelector('.think');
+  const tk = shell.querySelector('.tk');
+  const frow = shell.querySelector('.filerow');
+  let text = '', liveChip = null, mediaRow = null;
+  function ensureMediaRow(){
+    if (!mediaRow){
+      mediaRow = document.createElement('div');
+      mediaRow.className = 'mediarow';
+      shell.insertBefore(mediaRow, frow);
+    }
+    return mediaRow;
+  }
+  return function handleEvent(ev){
+    switch(ev.t){
+      case 'media': {
+        const row = ensureMediaRow();
+        if (ev.kind === 'video'){
+          const v = document.createElement('video');
+          v.src = ev.url; v.controls = true; v.muted = true; v.preload = 'metadata';
+          row.appendChild(v);
+        } else {
+          const a = document.createElement('a');
+          a.className = 'mthumb'; a.href = ev.url; a.target = '_blank'; a.rel = 'noopener';
+          const im = document.createElement('img'); im.src = ev.url; im.loading = 'lazy';
+          a.appendChild(im); row.appendChild(a);
+        }
+        scrollThread();
+        break;
+      }
+      case 'text': {
+        if (liveChip){ liveChip.classList.add('donec'); liveChip = null; }
+        text += ev.d;
+        if (/<memory_update>/.test(ev.d) && !trace.querySelector('.memc')){
+          const c = document.createElement('span'); c.className = 'tchip memc';
+          c.innerHTML = '<span class="tdot"></span>memory updated';
+          trace.appendChild(c);
+        }
+        const clean = stripMem(text);
+        bubble.style.display = '';
+        bubble.innerHTML = md(clean);
+        scrollThread();
+        break;
+      }
+      case 'think':
+        thinkBox.style.display = '';
+        tk.textContent += ev.d;
+        break;
+      case 'tool': {
+        if (liveChip) liveChip.classList.add('donec');
+        liveChip = document.createElement('span');
+        liveChip.className = 'tchip';
+        liveChip.innerHTML = `<span class="tdot"></span>${esc(ev.name||'tool')}${ev.server?' @'+esc(ev.server):''}`;
+        trace.appendChild(liveChip);
+        scrollThread();
+        break;
+      }
+      case 'tool_done':
+        if (liveChip){ liveChip.classList.add('donec'); liveChip = null; }
+        break;
+      case 'file':
+        frow.appendChild(filePill(ev.id, ev.name));
+        scrollThread();
+        break;
+      case 'memory': {
+        if (!trace.querySelector('.memc')){
+          const c = document.createElement('span'); c.className = 'tchip memc';
+          c.innerHTML = '<span class="tdot"></span>memory updated';
+          trace.appendChild(c);
+        }
+        break;
+      }
+      case 'done': {
+        if (liveChip){ liveChip.classList.add('donec'); liveChip = null; }
+        const el = document.createElement('div'); el.className = 'doneline';
+        el.textContent = '■ ' + (ev.stop_reason||'done') + ' · ' + (ev.output_tokens||0) + ' out-tokens · ' + Math.round((ev.ms||0)/1000) + 's';
+        inner.appendChild(el);
+        break;
+      }
+      case 'aborted': {
+        if (liveChip){ liveChip.classList.add('donec'); liveChip = null; }
+        const el = document.createElement('div'); el.className = 'doneline';
+        el.textContent = '⏸ run ' + (ev.reason === 'paused' ? 'paused' : ev.reason === 'deadline' ? 'hit time limit' : 'stopped');
+        inner.appendChild(el);
+        break;
+      }
+      case 'error': {
+        const el = document.createElement('div'); el.className = 'errline';
+        el.textContent = '⚠ ' + (ev.msg||'error');
+        inner.appendChild(el);
+        break;
+      }
+    }
+  };
+}
+
+// ── Open a run: replay finished runs, WATCH live ones ─────────────
+async function openRun(id){
+  if (streaming) return;
+  selRun = id; stopWatch(); renderRuns(); panel('panelRun');
+  const inner = $('#threadInner'); inner.innerHTML = '';
+  const d = await (await fetch(API + '/api/agents/runs/messages?run_id=' + encodeURIComponent(id))).json();
+  const live = d.run && (d.run.status === 'running' || d.run.status === 'stopping');
+  if (live){
+    // Live run (cron cycle or a task started elsewhere): show the user
+    // prompt(s), then tail the event feed — it replays everything the
+    // run has emitted since it started, then keeps streaming.
+    for (const m of (d.messages||[])){
+      if (m.role !== 'user') continue;
+      let c; try{ c = JSON.parse(m.content_json); }catch(e){ c = String(m.content_json); }
+      inner.appendChild(userMsgEl(typeof c === 'string' ? c : JSON.stringify(c)));
+    }
+    const shell = assistantShell();
+    inner.appendChild(shell);
+    startWatch(id, makeRenderer(shell, inner));
+    scrollThread();
+    return;
+  }
+  for (const m of (d.messages||[])){
+    let content; try{ content = JSON.parse(m.content_json); }catch(e){ content = String(m.content_json); }
+    if (m.role === 'user') inner.appendChild(userMsgEl(typeof content === 'string' ? content : JSON.stringify(content)));
+    else inner.appendChild(assistantMsgFromBlocks(content));
+  }
+  if ((d.files||[]).length){
+    const row = document.createElement('div'); row.className = 'filerow';
+    for (const f of d.files) row.appendChild(filePill(f.file_id, f.filename));
+    inner.appendChild(row);
+  }
+  scrollThread();
+}
+function startWatch(runId, handle){
+  watchRunId = runId; watchLastEv = 0;
+  updateCtl();
+  const poll = async () => {
+    if (watchRunId !== runId) return;
+    try{
+      const d = await (await fetch(API + '/api/agents/runs/events?run_id=' + encodeURIComponent(runId) + '&after=' + watchLastEv)).json();
+      for (const e of (d.events||[])){ watchLastEv = e.id; handle(e.ev||{}); }
+      if (['running','stopping'].includes(d.status)){
+        watchTimer = setTimeout(poll, 2000);
+      } else {
+        stopWatch(); loadRuns();
+      }
+    }catch(err){ watchTimer = setTimeout(poll, 4000); }
+  };
+  poll();
+}
+function stopWatch(){
+  if (watchTimer) clearTimeout(watchTimer);
+  watchTimer = null; watchRunId = null; watchLastEv = 0;
+  updateCtl();
+}
+
+// ── Interactive task streaming ────────────────────────────────────
+async function sendTask(){
+  if (streaming || !selAgent) return;
+  const task = $('#taskBox').value.trim();
+  if (!task) return;
+  if (watchRunId){ alert('This run is live — open a new run to send a task.'); return; }
+  $('#taskBox').value = '';
+  streaming = true;
+  $('#runBtn').disabled = true;
+  updateCtl();
+  $('#engineLbl').textContent = 'fable-5 · ' + (selAgent.effort||'high');
+
+  const inner = $('#threadInner');
+  inner.appendChild(userMsgEl(task));
+  const shell = assistantShell();
+  inner.appendChild(shell);
+  const handle = makeRenderer(shell, inner);
+  scrollThread();
+
+  try{
+    const r = await fetch(API + '/api/agents/task', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ agent_id: selAgent.id, run_id: selRun || undefined, task }),
+    });
+    if (!r.ok || !r.body){
+      let msg = 'request failed (' + r.status + ')';
+      try{ const j = await r.json(); if (j.error) msg = j.error; }catch(e){}
+      throw new Error(msg);
+    }
+    const newRunId = r.headers.get('x-agents-run-id');
+    if (newRunId) selRun = newRunId;
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true){
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0){
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl+1);
+        if (!line.startsWith('data:')) continue;
+        let ev; try{ ev = JSON.parse(line.slice(5)); }catch(e){ continue; }
+        handle(ev);
+      }
+    }
+  }catch(e){
+    const el = document.createElement('div'); el.className = 'errline';
+    el.textContent = '⚠ ' + (e && e.message || e);
+    inner.appendChild(el);
+  }finally{
+    streaming = false;
+    $('#runBtn').disabled = false;
+    updateCtl();
+    loadRuns(); loadAgents(true);
+    scrollThread();
+  }
+}
+
+// Ctrl/⌘+Enter to run.
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && document.activeElement === $('#taskBox')) sendTask();
+});
+
+boot();
+</script>
+</body>
+</html>
