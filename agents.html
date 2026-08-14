@@ -160,7 +160,13 @@ select.inline-sel{width:auto;background:var(--surface);border:1px solid var(--bo
 .mediarow{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
 .mediarow img,.mediarow video{max-width:220px;max-height:150px;border:1px solid var(--border);border-radius:8px;background:var(--surface);object-fit:cover}
 .mediarow video{max-width:300px;max-height:200px}
+.mediarow audio{height:32px;max-width:300px}
 .mediarow a.mthumb{display:block;line-height:0}
+.plog{margin:0 0 8px}
+.plog summary{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);cursor:pointer;letter-spacing:.6px}
+.plog .pl{font-family:var(--font-mono);font-size:10.5px;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:8px 11px;margin-top:6px;max-height:260px;overflow-y:auto}
+.plog .pl div{margin-bottom:7px;line-height:1.55;word-break:break-word}
+.plog .pl b{color:var(--gold);font-weight:600}
 .fpill{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--gold);border:1px solid var(--gold);background:var(--gold-dim);padding:5px 12px;border-radius:14px;text-decoration:none}
 .fpill:hover{background:var(--gold);color:var(--black)}
 .errline{font-family:var(--font-mono);font-size:11px;color:var(--red);border:1px solid var(--red);background:rgba(239,68,68,.07);border-radius:7px;padding:9px 12px;margin-bottom:14px}
@@ -696,9 +702,11 @@ async function createYtPreset(){
       'for hero shots; near-static camera on text-heavy shots so captions stay legible) → ' +
       'extract_frames → vision_audit the keyframes for motion quality, melted/warped text, ' +
       'and continuity with neighboring shots. A clip ships only when its audit passes.\n' +
-      '6. When all shots pass, merge_videos in beat-sheet order, extract_frames on the ' +
-      'merged cut, run a final end-to-end audit, and write the title, description, and ' +
-      'thumbnail pick.\n' +
+      '6. When all shots pass, merge_videos in beat-sheet order. NARRATION: write a ' +
+      '~150-word voiceover script paced to the beat sheet (hook line lands in the first ' +
+      '2 seconds), narrate it, then add_audio over the merged cut (this replaces clip ' +
+      'ambience — the VO carries the video). extract_frames on the final cut, run an ' +
+      'end-to-end audit, and write the title, description, and thumbnail pick.\n' +
       '7. IMPROVE: with a full cut done, rank shots by audit score, regenerate the weakest ' +
       'from the storyboard, and re-merge.\n\n' +
       'MEMORY DISCIPLINE: record the concept, the beat sheet, the approved storyboard URL, ' +
@@ -783,6 +791,7 @@ function assistantShell(){
   const d = document.createElement('div');
   d.className = 'msg';
   d.innerHTML = `<div class="who">Agent</div><div class="trace"></div>
+    <details class="plog" style="display:none"><summary>prompts &amp; tool inputs</summary><div class="pl"></div></details>
     <details class="think" style="display:none"><summary>thinking</summary><div class="tk"></div></details>
     <div class="bubble" style="display:none"></div><div class="filerow"></div>`;
   return d;
@@ -792,14 +801,24 @@ function assistantMsgFromBlocks(blocks){
   if (!Array.isArray(blocks)) blocks = [];
   let text = '', think = '';
   const trace = d.querySelector('.trace');
+  const plog = d.querySelector('.plog');
   for (const b of blocks){
     if (!b) continue;
     if (b.type === 'text') text += b.text || '';
     else if (b.type === 'thinking') think += b.thinking || '';
     else if (b.type === 'server_tool_use' || b.type === 'mcp_tool_use' || b.type === 'tool_use'){
       const c = document.createElement('span'); c.className = 'tchip donec';
+      const inp = b.input || {};
+      const detail = String(inp.prompt || inp.question || inp.text || '').slice(0, 500);
+      if (detail) c.title = detail;
       c.innerHTML = `<span class="tdot"></span>${esc(b.name||'tool')}${b.server_name?' @'+esc(b.server_name):''}`;
       trace.appendChild(c);
+      if (detail){
+        plog.style.display = '';
+        const line = document.createElement('div');
+        line.innerHTML = `<b>${esc(b.name)}</b> ${esc(detail)}`;
+        plog.querySelector('.pl').appendChild(line);
+      }
     }
   }
   if (think){ d.querySelector('.think').style.display=''; d.querySelector('.tk').textContent = think; }
@@ -825,6 +844,7 @@ function mediaFromToolResults(blocks){
       let m;
       if ((m = txt.match(/"image_url"\s*:\s*"(https?:\/\/[^"]+)"/))) out.push({url:m[1], kind:'image'});
       if ((m = txt.match(/"video_url"\s*:\s*"(https?:\/\/[^"]+)"/))) out.push({url:m[1], kind:'video'});
+      if ((m = txt.match(/"audio_url"\s*:\s*"(https?:\/\/[^"]+)"/))) out.push({url:m[1], kind:'audio'});
       const fm = txt.match(/"frames"\s*:\s*\{[^}]*\}/);
       if (fm) for (const fu of fm[0].matchAll(/"(https?:\/\/[^"]+)"/g)) out.push({url:fu[1], kind:'image'});
     }
@@ -843,6 +863,10 @@ function mediaRowEl(items){
       const v = document.createElement('video');
       v.src = it.url; v.controls = true; v.muted = true; v.preload = 'metadata';
       row.appendChild(v);
+    } else if (it.kind === 'audio'){
+      const a = document.createElement('audio');
+      a.src = it.url; a.controls = true; a.preload = 'metadata';
+      row.appendChild(a);
     } else {
       const a = document.createElement('a');
       a.className = 'mthumb'; a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
@@ -886,6 +910,10 @@ function makeRenderer(shell, inner){
           const v = document.createElement('video');
           v.src = ev.url; v.controls = true; v.muted = true; v.preload = 'metadata';
           row.appendChild(v);
+        } else if (ev.kind === 'audio'){
+          const a = document.createElement('audio');
+          a.src = ev.url; a.controls = true; a.preload = 'metadata';
+          row.appendChild(a);
         } else {
           const a = document.createElement('a');
           a.className = 'mthumb'; a.href = ev.url; a.target = '_blank'; a.rel = 'noopener';
@@ -917,8 +945,16 @@ function makeRenderer(shell, inner){
         if (liveChip) liveChip.classList.add('donec');
         liveChip = document.createElement('span');
         liveChip.className = 'tchip';
+        if (ev.detail) liveChip.title = ev.detail;
         liveChip.innerHTML = `<span class="tdot"></span>${esc(ev.name||'tool')}${ev.server?' @'+esc(ev.server):''}`;
         trace.appendChild(liveChip);
+        if (ev.detail){
+          const plog = shell.querySelector('.plog');
+          plog.style.display = '';
+          const line = document.createElement('div');
+          line.innerHTML = `<b>${esc(ev.name)}</b> ${esc(ev.detail)}`;
+          plog.querySelector('.pl').appendChild(line);
+        }
         scrollThread();
         break;
       }
