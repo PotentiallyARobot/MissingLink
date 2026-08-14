@@ -50,7 +50,7 @@
 <main>
   <div class="card">
     <div id="drop">Drop a video or click to choose<br>
-      <span style="font-size:12px">≤ 20 minutes · ≤ 400MB · audio is kept · 200 tokens / minute</span></div>
+      <span style="font-size:12px">≤ 20 minutes · ≤ 500MB · audio is kept · 200 tokens / minute</span></div>
     <input type="file" id="file" accept="video/*" hidden>
     <div class="row">
       <input type="url" id="importUrl" placeholder="…or paste a direct video file URL (https://…/video.mp4)">
@@ -84,7 +84,7 @@
       <span class="note" id="xrnote"></span>
     </div>
     <p class="note">Full side-by-side 3D with the H.264 3D flag — works here in VR,
-      on YouTube, or copied onto a headset.</p>
+      on YouTube, or copied onto a headset. <b>Finished videos are kept for 72 hours</b> — download anything you want to keep.</p>
   </div>
   <canvas id="xrcanvas" style="display:none"></canvas>
 </main>
@@ -127,7 +127,9 @@ function showCost(){
   $("cost").textContent=`cost: ${(mins*200).toLocaleString()} tokens (${mins} min × 200)`;
 }
 function pick(f){
-  if(!f)return; file=f; importedKey=null;
+  if(!f)return;
+  if(f.size>500*1024*1024){ $("err").textContent="File is over 500MB."; return; }
+  file=f; importedKey=null;
   const v=document.createElement("video");
   v.preload="metadata"; v.src=URL.createObjectURL(f);
   v.onloadedmetadata=()=>{
@@ -146,10 +148,19 @@ $("importBtn").onclick=async()=>{
       body:JSON.stringify({url:$("importUrl").value.trim()})});
     const d=await r.json(); if(!r.ok)throw new Error(d.error||r.status);
     importedKey=d.src_key; importedName=d.name||"import"; file=null;
-    durationS=0; // duration unknown until GPU probes; charge trues up server-side
-    drop.innerHTML=`<b>Imported:</b> ${importedName}`;
-    $("go").disabled=false;
-    $("cost").textContent="cost: 200 tokens/min (final duration measured on the GPU)";
+    drop.innerHTML=`<b>Imported:</b> ${importedName} — reading duration…`;
+    // mandatory cost preview: read duration from the stored copy
+    durationS=await new Promise((res,rej)=>{
+      const v=document.createElement("video"); v.preload="metadata";
+      v.crossOrigin="use-credentials";
+      v.src="/api/vr3d/srcfile/"+importedKey;
+      v.onloadedmetadata=()=>res(v.duration||0);
+      v.onerror=()=>rej(new Error("could not read imported video"));
+    });
+    if(!(durationS>0)) throw new Error("could not read duration");
+    if(durationS>20*60){ $("err").textContent="Video is over 20 minutes."; return; }
+    drop.innerHTML=`<b>Imported:</b> ${importedName} (${(durationS/60).toFixed(1)} min)`;
+    showCost(); $("go").disabled=false;
   }catch(e){ $("err").textContent="Import: "+e.message; }
   $("importBtn").disabled=false;
 };
@@ -176,7 +187,8 @@ $("go").onclick=async()=>{
       headers:{"content-type":"application/json"},
       body:JSON.stringify({src_key:srcKey,disparity_px:+$("disp").value,
         engine:$("engine").value,duration_s:durationS||60,name})});
-    const jd=await jr.json(); if(!jr.ok)throw new Error(jd.error||jr.status);
+    let jd; try{ jd=await jr.json(); }catch{ throw new Error("server error ("+jr.status+") — try again"); }
+    if(!jr.ok)throw new Error(jd.error||jr.status);
     refreshTokens();
     await watchJob(jd.job_id);
   }catch(e){ $("err").textContent="Error: "+e.message; $("go").disabled=false; refreshTokens(); }
