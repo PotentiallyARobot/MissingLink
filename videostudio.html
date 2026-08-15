@@ -1168,6 +1168,37 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 .flc-ic{display:flex;gap:4px;font-size:10px}
 .flc-add{border-style:dashed;opacity:.75}
 .flc-add:hover{opacity:1}
+/* ── Movie strip: drag finished clips together, stitch into one mp4 ── */
+.movie-bar{position:absolute;left:12px;right:12px;bottom:10px;z-index:15;
+  background:rgba(12,12,14,.86);backdrop-filter:blur(8px);
+  border:1px solid var(--border);border-radius:12px;padding:8px 10px;
+  display:flex;flex-direction:column;gap:6px;max-height:190px;
+  transition:border-color .15s,box-shadow .15s}
+.movie-bar.drop{border-color:var(--gold);
+  box-shadow:0 0 0 1px var(--gold),0 6px 24px rgba(232,169,23,.18)}
+.mv-head{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+.mv-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--gold);white-space:nowrap;font-weight:700;
+  display:flex;align-items:center;gap:6px}
+.mv-dur{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);white-space:nowrap}
+.mv-head .chip{padding:4px 10px;font-size:10px}
+.mv-head .chip:disabled{opacity:.45;cursor:default}
+.mv-strip{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:2px;
+  align-items:stretch;min-height:44px}
+.mv-tile{width:120px;height:74px;cursor:grab}
+.mv-tile:active{cursor:grabbing}
+.mv-tile.ins-before{box-shadow:-3px 0 0 0 var(--gold)}
+.mv-tile.ins-after{box-shadow:3px 0 0 0 var(--gold)}
+.movie-approve{position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  z-index:16;display:flex;align-items:center;gap:10px;
+  background:rgba(12,12,14,.92);backdrop-filter:blur(10px);
+  border:1px solid var(--gold);border-radius:12px;padding:10px 14px;
+  font-size:12px;color:var(--text);max-width:min(92%,600px);flex-wrap:wrap;justify-content:center}
+.movie-approve button{border:none;border-radius:8px;padding:8px 12px;cursor:pointer;
+  font-family:var(--font-mono);font-size:11px;font-weight:700;
+  background:var(--gold);color:#1a1400;white-space:nowrap}
+.movie-approve button.no{background:var(--surface-3);color:var(--text-dim)}
+.movie-approve button:hover{filter:brightness(1.12)}
 .flc-ghost{filter:grayscale(.7) brightness(.75);opacity:.6}
 .flc-mini{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;
   justify-content:center;width:38px}
@@ -1604,7 +1635,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
     <div class="viewer" id="viewer">
       <div class="ph"><span class="big">&#127909;</span>Your video plays here, full size.<br>Add a <b>starting frame</b>, write a prompt, hit <b>Generate</b>.</div>
     </div>
-    <div class="stage-tools" id="stageTools"><a class="chip" id="dlBtn" download="missinglink_video.mp4">&#11015; Download</a><button class="chip" id="vr180Btn" onclick="convertVR180()" title="Convert this clip to 180&deg; VR (mono, headset-ready)">&#129488; 180&deg; VR</button><button class="chip" id="faceKfBtn" onclick="extractFaceKeyframes()" title="Find the first face every 10s and download the frames + timestamps">&#128100; Face frames</button><button class="chip" id="autoClipBtn" onclick="faceAutoClip()" title="Auto-cut into clips at face boundaries; download each clip + its first/last frames for consistent-character reskinning">&#9986; Auto-clip</button><button class="chip" id="nextSceneBtn" onclick="autoNextScene()" title="Look at the last clip and build the next scene's starting image">&#127916; Auto Next Scene</button><button class="chip" id="nextCfgBtn" onclick="openNextCfg()" title="Auto Next Scene settings: story context &amp; instructions">&#9881;</button><button class="chip" id="useFirstBtn" onclick="_stageUseAs('start')" title="Use this image as the first frame" style="display:none">&#11015; First frame</button><button class="chip" id="useLastBtn" onclick="_stageUseAs('end')" title="Use this image as the last frame" style="display:none">&#11015; Last frame</button><button class="chip" id="clearBtn" onclick="clearStage()" title="Clear the stage">&#128465; Clear</button></div>
+    <div class="stage-tools" id="stageTools"><a class="chip" id="dlBtn" download="missinglink_video.mp4">&#11015; Download</a><button class="chip" id="vr180Btn" onclick="convertVR180()" title="Convert this clip to 180&deg; VR (mono, headset-ready)">&#129488; 180&deg; VR</button><button class="chip" id="faceKfBtn" onclick="extractFaceKeyframes()" title="Find the first face every 10s and download the frames + timestamps">&#128100; Face frames</button><button class="chip" id="autoClipBtn" onclick="faceAutoClip()" title="Auto-cut into clips at face boundaries; download each clip + its first/last frames for consistent-character reskinning">&#9986; Auto-clip</button><button class="chip" id="nextSceneBtn" onclick="autoNextScene()" title="Look at the last clip and build the next scene's starting image">&#127916; Auto Next Scene</button><button class="chip" id="nextCfgBtn" onclick="openNextCfg()" title="Auto Next Scene settings: story context &amp; instructions">&#9881;</button><button class="chip" id="useFirstBtn" onclick="_stageUseAs('start')" title="Use this image as the first frame" style="display:none">&#11015; First frame</button><button class="chip" id="useLastBtn" onclick="_stageUseAs('end')" title="Use this image as the last frame" style="display:none">&#11015; Last frame</button><button class="chip" id="mvAddBtn" onclick="movieAddStaged()" title="Add this clip to the movie strip" style="display:none">&#10133; Movie</button><button class="chip" id="clearBtn" onclick="clearStage()" title="Clear the stage">&#128465; Clear</button></div>
     <div class="stage-status" id="stage_status"></div>
     <!-- TIMELINE (restored). The whole clip system — renderClipOverview's
          tiles, the per-clip editor, the add/extend chooser, delete — was
@@ -1616,6 +1647,30 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
          clip control — setEngine toggles it. -->
     <div class="stage-timeline" id="stageTimeline" style="display:none">
       <div class="stl-strip" id="clipOverview"></div>
+    </div>
+    <!-- MOVIE STRIP: an ordered sequence of FINISHED clips. Populated by
+         dragging cards from History, tapping their + MOVIE button, the
+         stage's + Movie chip, or approving a fresh render. Stitch joins
+         them into one mp4 client-side (ffmpeg.wasm), so no server change
+         is needed and the combined movie appears in History. -->
+    <div class="movie-bar" id="movieBar" style="display:none">
+      <div class="mv-head">
+        <span class="mv-title">&#127916; Movie<span class="q-count" id="mvCount" style="margin-left:0"></span></span>
+        <span class="mv-dur" id="mvDur"></span>
+        <span style="flex:1"></span>
+        <button class="chip" onclick="moviePreview()" title="Play the clips back to back (instant, no stitching)">&#9654; Preview</button>
+        <button class="chip" id="mvStitchBtn" onclick="movieStitch()" title="Join all clips into one mp4">&#9095; Stitch</button>
+        <button class="chip" onclick="movieClear()" title="Empty the strip (clips stay in History)">&#128465;</button>
+      </div>
+      <div class="mv-strip" id="mvStrip"></div>
+    </div>
+    <!-- Post-render approval: approve = add to the movie strip and stitch
+         with what is already there; dismiss = the clip stays in History
+         only. Shown each time a video render completes. -->
+    <div class="movie-approve" id="movieApprove" style="display:none">
+      <span id="mvApTxt">Clip rendered.</span>
+      <button id="mvApYes" onclick="movieApprove()">&#10003; Approve &amp; stitch</button>
+      <button class="no" onclick="movieDismiss()">&#10005; Not this one</button>
     </div>
     <div class="progrow"><div class="prog"><div class="fill" id="fill"></div></div></div>
     <!-- Timeline removed. This studio makes one clip at a time; the
@@ -2808,6 +2863,7 @@ function setEngine(e){
   // Dialogue builder is an LTX feature; Wan (both) uses plain prompt.
   {const d=$("dlgSec");if(d)d.style.display=ltx?"flex":"none";}
   {const t=$("stageTimeline");if(t)t.style.display=ltx?"":"none";}
+  try{_movieLayout();}catch(e){}
   if(ltx){try{renderClipOverview();}catch(e){}}
   // Dialogue is LTX-only — Wan has no speech synthesis.
   {const dl=$("dlgLeftSec");if(dl){dl.style.display=ltx?"block":"none";
@@ -4484,6 +4540,7 @@ function toggleStl(){
   const b=$("stlMin");if(b)b.innerHTML=_stlMin?"\u9652":"\u9662";
   if(b)b.innerHTML=_stlMin?"\u25b4":"\u25be";
   if(b)b.title=_stlMin?"Expand the timeline":"Minimize the timeline";
+  try{_movieLayout();}catch(e){}
 }
 function renderClipOverview(){
   const box=$("clipOverview");if(!box)return;box.innerHTML="";
@@ -6822,6 +6879,7 @@ function renderHistoryModal(){
       ? "<button data-a='first'>FIRST</button>"
         +"<button data-a='last'>LAST</button>"
       : "<button data-a='stage'>OPEN</button>"
+        +"<button data-a='movie' title='Add to the movie strip'>&#10133; MOVIE</button>"
         +"<button data-a='control'>CONTROL</button>")
       +"<button data-a='del' title='Delete'>&#10005;</button>";
     card.innerHTML="<div class='hcard-thumb'>"+media
@@ -6837,6 +6895,7 @@ function renderHistoryModal(){
         if(a==="first")_useAsFrame(it,"start");
         else if(a==="last")_useAsFrame(it,"end");
         else if(a==="stage"){showVideo(it);closeHistoryModal();}
+        else if(a==="movie"){movieAdd(it,undefined,true);toast("Added. Close this window to see the movie strip.");}
         else if(a==="control")_setControlVideo(it);
         else if(a==="del")deleteHistoryItem(it,ev);
       });
@@ -7094,7 +7153,7 @@ function renderHistory(){
         +"<button data-w='end' title='Use as the last frame'>LAST</button>"
         +"<button data-w='del' title='Delete'>&#10005;</button>"
         +"</div>"
-        :"<div class='h-use'><button data-w='del' title='Delete this clip'>&#10005; DELETE</button></div>")
+        :"<div class='h-use'><button data-w='movie' title='Add to the movie strip'>&#10133; MOVIE</button><button data-w='del' title='Delete this clip'>&#10005;</button></div>")
       +"</div>";
     // Click the card body -> stage. Click a FIRST/LAST chip -> assign,
     // and stop it bubbling so assigning doesn't also swap the stage.
@@ -7104,9 +7163,21 @@ function renderHistory(){
         ev.stopPropagation();
         const w=b.getAttribute("data-w");
         if(w==="del")deleteHistoryItem(h,ev);
+        else if(w==="movie")movieAdd(h);
         else _useAsFrame(h,w);
       });
     });
+    // Finished videos drag onto the movie strip. The strip pops up on
+    // dragstart so there is always a visible target to drop on.
+    if(!isImg&&h.url){
+      c.draggable=true;
+      c.addEventListener("dragstart",ev=>{
+        ev.dataTransfer.setData("text/vs-clip",String(h.id));
+        ev.dataTransfer.effectAllowed="copy";
+        _movieDragOn(true);
+      });
+      c.addEventListener("dragend",()=>_movieDragOn(false));
+    }
     g.appendChild(c);
   });
   renderGallery();
@@ -7131,7 +7202,8 @@ async function deleteHistoryItem(item,ev){
   const label=isImg?"this image":"this clip and its files";
   if(!confirm("Delete "+label+"? This cannot be undone."))return;
 
-  if(!isImg){
+  // Stitched movies are local blobs with no server row behind them.
+  if(!isImg&&!item.local){
     try{
       const r=await fetch("/api/videostudio/delete/"+item.id,{method:"POST"});
       const j=await r.json();
@@ -7145,6 +7217,15 @@ async function deleteHistoryItem(item,ev){
 
   const i=history.findIndex(x=>x===item||(x.id&&x.id===item.id&&_histKind(x)===_histKind(item)));
   if(i>=0)history.splice(i,1);
+  // A clip that no longer exists cannot be stitched; drop it from the
+  // movie strip as well.
+  try{
+    if(item.local&&item.url&&item.url.indexOf("blob:")===0)URL.revokeObjectURL(item.url);
+    if(movie.histId===item.id)movie.histId=null;
+    const _mb=movie.clips.length;
+    movie.clips=movie.clips.filter(c=>c.id!==item.id);
+    if(movie.clips.length!==_mb){movie.dirty=true;_movieSave();renderMovie();}
+  }catch(e){}
   // If the deleted item was on the stage, clear it rather than leave a
   // dead <video src> pointing at an object that no longer exists.
   if(_stageItem&&_stageItem.id===item.id)clearStage();
@@ -7264,7 +7345,7 @@ function _addImageToHistory(dataUrl,label){
    still is just an invitation to an error toast. */
 let _stageItem=null;
 function _stageChips(kind){
-  const vidOnly=["vr180Btn","faceKfBtn","autoClipBtn","nextSceneBtn","nextCfgBtn"];
+  const vidOnly=["vr180Btn","faceKfBtn","autoClipBtn","nextSceneBtn","nextCfgBtn","mvAddBtn"];
   const imgOnly=["useFirstBtn","useLastBtn"];
   vidOnly.forEach(id=>{const e=$(id);if(e)e.style.display=(kind==="video")?"":"none";});
   imgOnly.forEach(id=>{const e=$(id);if(e)e.style.display=(kind==="image")?"":"none";});
@@ -7501,6 +7582,9 @@ setInterval(async()=>{
             catch(e){}
             if(url){const h={id:q.id,prompt:q.prompt,thumb:q.thumb,url:url,ts:Date.now()};
               history.unshift(h);showVideo(h);
+              // Approval step: approve adds this clip to the movie strip
+              // and stitches it onto whatever is already there.
+              try{_movieOfferApprove(h);}catch(e){}
               // The clip's FINAL frame goes into History as its own image.
               // That is the whole mechanism for continuing a shot: drop it
               // into the next clip's first-frame slot and the motion
@@ -7955,6 +8039,9 @@ async function restoreJobs(){
   });
   if(add.length)history.unshift(...add);
   renderQueue();renderHistory();
+  // The strip persists as a list of clip ids; now that History is back
+  // from the server the ids resolve to real urls again.
+  try{_movieRestore();}catch(e){}
   // Video clips first (they are this app's output), then append the image
   // library below them.
   if(!_libLoaded)loadImageLibrary();
@@ -7963,6 +8050,398 @@ async function restoreJobs(){
   // just stop — "where did my older clips go" is the obvious next question.
   if((j.jobs||[]).length>=60)
     console.log("[history] showing the 60 most recent jobs");
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOVIE STRIP
+   An ordered list of FINISHED clips (things that already exist as mp4s
+   in History), assembled into one longer video.
+
+   In:   drag a History card onto the strip, tap its + MOVIE button, the
+         stage's + Movie chip, or approve a render when the approval bar
+         appears after every completed video job.
+   Out:  Stitch joins the clips into a single mp4 IN THE BROWSER with
+         ffmpeg.wasm (lazy-loaded on first use). When every clip shares
+         the same resolution and audio layout this is a lossless stream
+         copy and takes seconds; otherwise it falls back to a normalizing
+         re-encode. The Worker never changes: clip bytes come from the
+         same-origin /output/ URLs the player already streams, and the
+         result is a local blob that lands in History (downloadable, and
+         itself draggable back onto the strip).
+
+   The strip survives reloads as a list of clip ids in localStorage and
+   re-resolves against History once restoreJobs() has run. The stitched
+   blob itself does not survive a reload; press Stitch again to rebuild.
+   ══════════════════════════════════════════════════════════════════════ */
+let movie={clips:[],histId:null,dirty:false,pending:null};
+let _mvDrag=false,_mvInsIdx=null,_mvBusy=false;
+
+function _movieSave(){
+  try{localStorage.setItem("vs_movie_ids",
+    JSON.stringify(movie.clips.map(c=>c.id)));}catch(e){}
+}
+function _movieRestore(){
+  if(movie.clips.length){renderMovie();return;}   // never clobber a live strip
+  let ids=[];
+  try{ids=JSON.parse(localStorage.getItem("vs_movie_ids")||"[]");}catch(e){}
+  if(Array.isArray(ids)&&ids.length){
+    const found=[];
+    ids.forEach(id=>{
+      const h=history.find(x=>x.id===id&&_histKind(x)==="video"&&x.url);
+      if(h)found.push({id:h.id,url:h.url,thumb:h.thumb||"",prompt:h.prompt||"clip"});
+    });
+    if(found.length){movie.clips=found;movie.dirty=true;}
+  }
+  renderMovie();
+}
+
+/* Stack the strip above the clip-plan bar when both are visible; both
+   dock to the stage bottom otherwise. */
+function _movieLayout(){
+  const bar=$("movieBar");if(!bar)return;
+  const stl=$("stageTimeline");
+  const up=stl&&stl.style.display!=="none"&&bar.style.display!=="none";
+  bar.style.bottom=up?((stl.offsetHeight||0)+18)+"px":"10px";
+}
+
+function renderMovie(){
+  const bar=$("movieBar"),strip=$("mvStrip");if(!bar||!strip)return;
+  const n=movie.clips.length;
+  bar.style.display=(n||_mvDrag)?"":"none";
+  const cnt=$("mvCount");if(cnt)cnt.textContent=n?String(n):"";
+  const st=$("mvStitchBtn");
+  if(st&&!st.dataset.busy)st.disabled=n<2;
+  strip.innerHTML="";
+  if(!n){
+    const e=document.createElement("div");e.className="clip-empty";
+    e.textContent=_mvDrag
+      ?"Drop the clip here to add it to your movie"
+      :"Drag finished clips here from History, or approve a fresh render.";
+    strip.appendChild(e);
+  }
+  movie.clips.forEach((c,i)=>{
+    const t=document.createElement("div");t.className="flc mv-tile";
+    t.title=(c.prompt||"clip")+"\nDrag to reorder \u00b7 click to play";
+    t.innerHTML=(c.thumb
+        ?"<img class='flc-img' src='"+c.thumb+"'>"
+        :"<div class='flc-ph'>\ud83c\udfac</div>")
+      +"<span class='flc-num'>"+(i+1)+"</span>"
+      +"<button class='flc-x' title='Remove from the movie (stays in History)'>\u00d7</button>"
+      +"<div class='flc-bar'><span class='flc-t' data-mvdur='"+i+"'></span></div>";
+    t.querySelector(".flc-x").onclick=(e)=>{e.stopPropagation();
+      movie.clips.splice(i,1);movie.dirty=true;_movieSave();renderMovie();};
+    t.onclick=()=>{const h=history.find(x=>x.id===c.id);showVideo(h||c);};
+    t.draggable=true;
+    t.addEventListener("dragstart",ev=>{
+      ev.dataTransfer.setData("text/vs-movie",String(i));
+      ev.dataTransfer.effectAllowed="move";});
+    strip.appendChild(t);
+    // Duration is probed lazily and cached (_edProbe survives from the
+    // old editor); the label fills in when metadata arrives.
+    _edProbe(c.url).then(d=>{
+      const el=strip.querySelector("[data-mvdur='"+i+"']");
+      if(el)el.textContent=d.toFixed(1)+"s";
+      _movieTotal();
+    }).catch(()=>{});
+  });
+  _movieTotal();
+  _movieLayout();
+}
+function _movieTotal(){
+  const el=$("mvDur");if(!el)return;
+  let t=0,known=true;
+  movie.clips.forEach(c=>{const d=_edMediaDur[c.url];
+    if(d==null)known=false;else t+=d;});
+  el.textContent=movie.clips.length
+    ?((known?"":"\u2265")+t.toFixed(1)+"s total"+(movie.dirty?" \u00b7 unstitched changes":""))
+    :"";
+}
+
+/* Called from History-card dragstart/dragend so the drop target is
+   visible for the whole drag even when the strip is empty. */
+function _movieDragOn(on){
+  _mvDrag=on;
+  const bar=$("movieBar");if(bar)bar.classList.toggle("drop",on);
+  if(!on){_mvInsIdx=null;_movieShowIns();}
+  renderMovie();
+}
+function _movieInsIdx(x){
+  const tiles=[...$("mvStrip").querySelectorAll(".mv-tile")];
+  for(let i=0;i<tiles.length;i++){
+    const r=tiles[i].getBoundingClientRect();
+    if(x<r.left+r.width/2)return i;
+  }
+  return tiles.length;
+}
+function _movieShowIns(){
+  const tiles=[...($("mvStrip")||{querySelectorAll:()=>[]}).querySelectorAll(".mv-tile")];
+  tiles.forEach(t=>t.classList.remove("ins-before","ins-after"));
+  if(_mvInsIdx==null||!tiles.length)return;
+  if(_mvInsIdx>=tiles.length)tiles[tiles.length-1].classList.add("ins-after");
+  else tiles[_mvInsIdx].classList.add("ins-before");
+}
+function _movieInit(){
+  const bar=$("movieBar");if(!bar)return;
+  bar.addEventListener("dragover",ev=>{
+    const ty=[...(ev.dataTransfer.types||[])];
+    if(!ty.includes("text/vs-clip")&&!ty.includes("text/vs-movie"))return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect=ty.includes("text/vs-movie")?"move":"copy";
+    _mvInsIdx=_movieInsIdx(ev.clientX);
+    _movieShowIns();
+  });
+  bar.addEventListener("dragleave",ev=>{
+    if(!bar.contains(ev.relatedTarget)){_mvInsIdx=null;_movieShowIns();}
+  });
+  bar.addEventListener("drop",ev=>{
+    ev.preventDefault();
+    const at=(_mvInsIdx==null)?movie.clips.length:_mvInsIdx;
+    _mvInsIdx=null;_movieShowIns();
+    const mv=ev.dataTransfer.getData("text/vs-movie");
+    if(mv!==""){                        // internal reorder
+      const from=parseInt(mv,10);
+      if(!isNaN(from)&&from>=0&&from<movie.clips.length){
+        const it=movie.clips.splice(from,1)[0];
+        movie.clips.splice(at>from?at-1:at,0,it);
+        movie.dirty=true;_movieSave();renderMovie();
+      }
+      return;
+    }
+    const id=ev.dataTransfer.getData("text/vs-clip");
+    const h=history.find(x=>String(x.id)===id&&_histKind(x)==="video");
+    if(h)movieAdd(h,at);
+  });
+  window.addEventListener("resize",()=>{try{_movieLayout();}catch(e){}});
+  renderMovie();
+}
+
+function movieAdd(h,at,quiet){
+  if(!h||_histKind(h)!=="video"){
+    toast("Only finished video clips can join the movie.",true);return;}
+  if(!h.url){toast("That clip has no playable video yet.",true);return;}
+  const c={id:h.id,url:h.url,thumb:h.thumb||"",prompt:h.prompt||"clip"};
+  if(at==null||at>movie.clips.length)at=movie.clips.length;
+  movie.clips.splice(at,0,c);
+  movie.dirty=true;_movieSave();renderMovie();
+  if(!quiet)toast("Added to the movie ("+movie.clips.length+" clip"
+    +(movie.clips.length===1?"":"s")+")."
+    +(movie.clips.length>1?" Press Stitch to join them.":""));
+}
+function movieAddStaged(){
+  if(!_stageItem){toast("Nothing on the stage to add.",true);return;}
+  movieAdd(_stageItem);
+}
+function movieClear(){
+  if(!movie.clips.length)return;
+  if(!confirm("Empty the movie strip? Your clips stay in History."))return;
+  movie.clips=[];movie.dirty=false;_movieSave();renderMovie();
+}
+
+/* ── post-render approval ── */
+function _movieOfferApprove(h){
+  const bar=$("movieApprove");if(!bar)return;
+  movie.pending=h;
+  const n=movie.clips.length;
+  $("mvApTxt").textContent=n
+    ?"New clip rendered. Approve it to stitch it onto your movie ("+n
+      +" clip"+(n===1?"":"s")+" so far)."
+    :"Clip rendered. Start a movie with it?";
+  $("mvApYes").innerHTML=n?"&#10003; Approve &amp; stitch":"&#10003; Start movie";
+  bar.style.display="flex";
+}
+function movieApprove(){
+  const h=movie.pending;movie.pending=null;
+  const bar=$("movieApprove");if(bar)bar.style.display="none";
+  if(!h)return;
+  movieAdd(h,undefined,true);
+  if(movie.clips.length>1)movieStitch();
+  else toast("Movie started. Render or drag in more clips, then Stitch.");
+}
+function movieDismiss(){
+  movie.pending=null;
+  const bar=$("movieApprove");if(bar)bar.style.display="none";
+}
+
+/* ── instant preview: play the clips back to back, no stitching ── */
+let _mvPlay={on:false};
+function moviePreview(){
+  if(!movie.clips.length){toast("The movie strip is empty.",true);return;}
+  _mvPlay.on=true;
+  toast("Previewing "+movie.clips.length+" clip"
+    +(movie.clips.length===1?"":"s")+" back to back.");
+  _mvPlayAt(0);
+}
+function _mvPlayAt(i){
+  if(!_mvPlay.on||i>=movie.clips.length){_mvPlay.on=false;return;}
+  const c=movie.clips[i];
+  // Reuse ONE element across the whole sequence: an element that started
+  // playing from a user gesture may keep chaining unmuted, while a fresh
+  // element per clip can hit the autoplay block after the first one.
+  let v=$("viewer").querySelector("video[data-mvseq]");
+  if(!v){
+    $("viewer").innerHTML="<video data-mvseq='1' playsinline controls></video>";
+    v=$("viewer").querySelector("video");
+  }
+  v.onended=()=>_mvPlayAt(i+1);
+  v.onerror=()=>_mvPlayAt(i+1);
+  v.src=c.url;
+  v.play().catch(()=>{v.muted=true;v.play().catch(()=>{});});
+}
+
+/* ── the stitcher: ffmpeg.wasm, lazy-loaded on first use ──
+   Single-thread core: GitHub Pages sends no COOP/COEP headers, so the
+   multithreaded (SharedArrayBuffer) build cannot run here. Copy-concat
+   does no decoding, so single-thread is still fast. */
+let _ff=null,_ffLoading=null,_ffLog=[];
+function _loadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement("script");s.src=src;
+    s.onload=res;s.onerror=()=>rej(new Error("could not load "+src));
+    document.head.appendChild(s);});
+}
+async function _ffmpegGet(){
+  if(_ff)return _ff;
+  if(_ffLoading)return _ffLoading;
+  _ffLoading=(async()=>{
+    const CDN="https://cdn.jsdelivr.net/npm";
+    if(!window.FFmpegWASM)
+      await _loadScript(CDN+"/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js");
+    if(!window.FFmpegUtil)
+      await _loadScript(CDN+"/@ffmpeg/util@0.12.1/dist/umd/index.js");
+    const {toBlobURL}=window.FFmpegUtil;
+    const core=CDN+"/@ffmpeg/core@0.12.6/dist/umd";
+    const ff=new window.FFmpegWASM.FFmpeg();
+    ff.on("log",e=>{_ffLog.push(e.message);if(_ffLog.length>500)_ffLog.shift();});
+    // Everything goes through blob URLs: the UMD build's internal worker
+    // chunk (814.ffmpeg.js) will not load cross-origin from a CDN
+    // otherwise, and the core wasm has the same problem.
+    await ff.load({
+      coreURL:await toBlobURL(core+"/ffmpeg-core.js","text/javascript"),
+      wasmURL:await toBlobURL(core+"/ffmpeg-core.wasm","application/wasm"),
+      classWorkerURL:await toBlobURL(
+        CDN+"/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js","text/javascript"),
+    });
+    _ff=ff;return ff;
+  })();
+  try{return await _ffLoading;}
+  finally{_ffLoading=null;}
+}
+/* Probe a file already in the wasm FS: bare -i exits nonzero by design;
+   the stream info we need is in the log. */
+async function _ffProbe(ff,name){
+  _ffLog.length=0;
+  try{await ff.exec(["-hide_banner","-i",name]);}catch(e){}
+  const log=_ffLog.join("\n");
+  const dm=log.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+  const vm=log.match(/Video:.*?(\d{2,5})x(\d{2,5})/);
+  const fm=log.match(/([\d.]+)\s*fps/);
+  return{
+    dur:dm?(+dm[1]*3600+ +dm[2]*60+parseFloat(dm[3])):0,
+    w:vm?+vm[1]:0,h:vm?+vm[2]:0,
+    fps:fm?parseFloat(fm[1]):24,
+    audio:/Stream.*Audio:/.test(log)};
+}
+async function movieStitch(){
+  if(_mvBusy){toast("Already stitching. Hang on.");return;}
+  if(movie.clips.length<2){
+    toast("Add at least two clips to stitch.",true);return;}
+  _mvBusy=true;
+  const btn=$("mvStitchBtn");const orig=btn?btn.innerHTML:"";
+  const say=t=>{if(btn)btn.innerHTML=t;};
+  if(btn){btn.dataset.busy="1";btn.disabled=true;}
+  let prog=null,ff=null;
+  try{
+    say("\u2699 Loading engine\u2026");
+    ff=await _ffmpegGet();
+    const {fetchFile}=window.FFmpegUtil;
+    const n=movie.clips.length,names=[],meta=[];
+    for(let i=0;i<n;i++){
+      say("\u2699 Fetching clip "+(i+1)+"/"+n+"\u2026");
+      const nm="in"+i+".mp4";
+      await ff.writeFile(nm,await fetchFile(movie.clips[i].url));
+      names.push(nm);
+    }
+    say("\u2699 Checking formats\u2026");
+    for(const nm of names)meta.push(await _ffProbe(ff,nm));
+    const f=meta[0];
+    const uniform=f.w>0&&meta.every(m=>m.w===f.w&&m.h===f.h&&m.audio===f.audio);
+    prog=e=>{if(e&&e.progress>=0&&e.progress<=1)
+      say("\u2699 Stitching "+Math.round(e.progress*100)+"%");};
+    ff.on("progress",prog);
+    let ok=false;
+    if(uniform){
+      // Same renderer, same settings: a pure remux. No quality loss,
+      // near-instant even single-threaded.
+      say("\u2699 Stitching\u2026");
+      await ff.writeFile("list.txt",names.map(x=>"file '"+x+"'").join("\n"));
+      const rc=await ff.exec(["-f","concat","-safe","0","-i","list.txt",
+        "-c","copy","-movflags","+faststart","out.mp4"]);
+      ok=(rc===0);
+      if(!ok)try{await ff.deleteFile("out.mp4");}catch(e){}
+    }
+    if(!ok){
+      // Mixed sizes / missing audio tracks: normalize everything to the
+      // first clip's geometry, synthesize silence where a clip has no
+      // audio, and re-encode. Slower, but it always produces a movie.
+      toast(uniform
+        ?"Fast join failed. Re-encoding instead (slower)."
+        :"Clips differ in format. Re-encoding to match; this can take a while.");
+      const args=[];
+      names.forEach(nm=>args.push("-i",nm));
+      const fl=[];let sil=n;
+      meta.forEach((m,i)=>{
+        fl.push("["+i+":v]scale="+f.w+":"+f.h
+          +":force_original_aspect_ratio=decrease,pad="+f.w+":"+f.h
+          +":(ow-iw)/2:(oh-ih)/2,setsar=1,fps="+(f.fps||24)+"[v"+i+"]");
+        if(m.audio){
+          fl.push("["+i+":a]aresample=48000[a"+i+"]");
+        }else{
+          args.push("-f","lavfi","-t",String(Math.max(0.1,m.dur||1)),
+            "-i","anullsrc=channel_layout=stereo:sample_rate=48000");
+          fl.push("["+sil+":a]anull[a"+i+"]");sil++;
+        }
+      });
+      const pairs=meta.map((m,i)=>"[v"+i+"][a"+i+"]").join("");
+      args.push("-filter_complex",
+        fl.join(";")+";"+pairs+"concat=n="+n+":v=1:a=1[v][a]",
+        "-map","[v]","-map","[a]",
+        "-c:v","libx264","-preset","veryfast","-crf","19","-pix_fmt","yuv420p",
+        "-c:a","aac","-b:a","192k","-movflags","+faststart","out.mp4");
+      say("\u2699 Re-encoding\u2026");
+      const rc2=await ff.exec(args);
+      ok=(rc2===0);
+    }
+    if(!ok)throw new Error("ffmpeg could not join these clips");
+    const data=await ff.readFile("out.mp4");
+    const url=URL.createObjectURL(new Blob([data.buffer],{type:"video/mp4"}));
+    for(const nm of names){try{await ff.deleteFile(nm);}catch(e){}}
+    try{await ff.deleteFile("list.txt");}catch(e){}
+    try{await ff.deleteFile("out.mp4");}catch(e){}
+    // One evolving History entry per movie: replace the previous stitch
+    // rather than piling up near-duplicates.
+    if(movie.histId){
+      const old=history.find(x=>x.id===movie.histId);
+      if(old){
+        if(old.url&&old.url.indexOf("blob:")===0)
+          try{URL.revokeObjectURL(old.url);}catch(e){}
+        history.splice(history.indexOf(old),1);
+      }
+    }
+    const h={id:"movie_"+Date.now().toString(36),
+      prompt:"Movie ("+n+" clips)",thumb:movie.clips[0].thumb||"",
+      url:url,ts:Date.now(),local:true};
+    movie.histId=h.id;movie.dirty=false;_movieTotal();
+    history.unshift(h);renderHistory();showVideo(h);
+    toast("Stitched "+n+" clips into one video. It is on the stage and in "
+      +"History; use Download to save it (it lives in this tab until then).");
+  }catch(e){
+    toast("Stitch failed: "+(e&&e.message?e.message:e),true);
+  }finally{
+    if(ff&&prog)try{ff.off("progress",prog);}catch(e){}
+    _mvBusy=false;
+    if(btn){delete btn.dataset.busy;btn.innerHTML=orig;
+      btn.disabled=movie.clips.length<2;}
+  }
 }
 
 updateDur();
@@ -7999,5 +8478,5 @@ pollGpu();_schedulePoll();
 // render, and an L40S spun up by a sign-in bills for its whole idle
 // window whether or not anything is generated. The wake happens on
 // submit, where a job actually exists to justify it.
-mlBoot();refreshLoras();renderQueue();renderHistory();restoreJobs();
+mlBoot();refreshLoras();renderQueue();renderHistory();restoreJobs();_movieInit();
 </script></body></html>
