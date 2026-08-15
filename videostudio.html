@@ -1615,7 +1615,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       <div class="sec">
         <div class="sec-label"><span class="icon">&#9880;</span> LoRAs</div>
         <button class="gen-btn gen-btn-secondary" style="width:100%;margin-bottom:8px" onclick="civOpenSearch()">&#128269; Browse Civitai LoRAs</button>
-        <input type="text" class="lora-url" id="loraUrl" placeholder="paste HF or Civitai .safetensors URL">
+        <input type="text" class="lora-url" id="loraUrl" placeholder="paste a Civitai model page, download, or HF .safetensors URL">
         <div class="lora-row">
           <input type="text" class="lora-url" id="loraName" placeholder="name (optional)">
           <input type="number" class="lora-url lora-scale" id="loraScale" value="1.0" min="0" max="2" step="0.05">
@@ -3081,8 +3081,27 @@ async function addLora(){
       body:JSON.stringify({url:url,name:$("loraName").value.trim(),
         scale:parseFloat($("loraScale").value)||1.0,engine:currentEngine})});
     const j=await r.json();
-    if(j.ok){toast("LoRA added.");$("loraUrl").value="";$("loraName").value="";}
-    else toast("LoRA failed: "+(j.error||"unknown"),true);
+    if(j.ok){
+      const trig=(j.triggers||[]).filter(Boolean);
+      // Same behaviour as adding from the search grid: without its
+      // trained words in the prompt the LoRA silently does nothing.
+      if(trig.length){
+        const p=$("prompt");
+        trig.forEach(t=>{
+          if(p.value.toLowerCase().indexOf(t.toLowerCase())<0)
+            p.value=p.value.replace(/\s*$/,"")+(p.value?", ":"")+t;
+        });
+      }
+      toast("LoRA added"+(j.resolved_name?": "+j.resolved_name:"")
+        +(trig.length?". Trigger words appended to the prompt.":"."));
+      if(j.base_warning)
+        toast("Heads up: this version is for "+j.base_warning
+          +", which may not match the current engine.",true);
+      $("loraUrl").value="";$("loraName").value="";
+    }
+    // message over error code: "not_a_download_url" is a riddle,
+    // the message that ships with it is the instruction.
+    else toast("LoRA failed: "+(j.message||j.error||"unknown"),true);
   }catch(e){toast("Error: "+e,true);}
   b.disabled=false;b.textContent="+ Add LoRA";refreshLoras();
 }
