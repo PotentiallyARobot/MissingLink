@@ -1335,6 +1335,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
           <button class="mode-btn" id="engWan" onclick="setEngine('wan')">Wan 2.1</button>
           <button class="mode-btn" id="engWan22" onclick="setEngine('wan22')">Wan 2.2</button>
           <button class="mode-btn active" id="engLtx" onclick="setEngine('ltx')">LTX-2.3 Fast</button>
+          <button class="mode-btn" id="engSeedance" onclick="setEngine('seedance25')">Seedance 2.5</button>
         </div>
         <div id="wan22Opts" style="display:none;margin-top:8px">
           <label class="civ-nsfw-toggle"><input type="checkbox" id="wan22Lightning" checked onchange="updateDur()"> Lightning (4-step fast)</label>
@@ -1345,6 +1346,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
       <div class="mode-sec" id="modeSec">
         <div class="mode-cap">Generation mode</div>
         <div class="mode-toggle">
+          <button class="mode-btn" id="modeT2V" style="display:none" onclick="setMode('t2v')">Text&rarr;Vid</button>
           <button class="mode-btn active" id="modeI2V" onclick="setMode('i2v')">Image&rarr;Vid</button>
           <button class="mode-btn" id="modeFLF" onclick="setMode('flf2v')">First-Last</button>
           <button class="mode-btn" id="modeVACE" onclick="setMode('vace')">Reference</button>
@@ -1431,7 +1433,16 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         <div class="hintline">VACE keeps this subject consistent across the generated video. The "Start frame" above is optional extra conditioning.</div>
       </div>
 
-      <div class="sec">
+      <div class="sec" id="seedRefSec" style="display:none">
+        <div class="sec-label"><span class="icon">&#9673;</span> Multimodal references <span class="c">up to 50 total</span></div>
+        <div class="hintline" style="margin-bottom:9px">Add up to 30 images, 10 MP4 videos, and 10 audio files. Refer to them in the prompt as <b>[Image1]</b>, <b>[Video1]</b>, and <b>[Audio1]</b>. A video reference can drive motion, edit an existing clip, or continue it.</div>
+        <label class="gen-btn gen-btn-secondary" style="display:block;text-align:center;margin-bottom:6px;cursor:pointer">+ Images<input id="seedRefImages" type="file" accept="image/*" multiple hidden onchange="seedanceUploadRefs(this.files,'image');this.value=''" /></label>
+        <label class="gen-btn gen-btn-secondary" style="display:block;text-align:center;margin-bottom:6px;cursor:pointer">+ MP4 videos<input id="seedRefVideos" type="file" accept="video/mp4" multiple hidden onchange="seedanceUploadRefs(this.files,'video');this.value=''" /></label>
+        <label class="gen-btn gen-btn-secondary" style="display:block;text-align:center;cursor:pointer">+ Audio<input id="seedRefAudio" type="file" accept="audio/*" multiple hidden onchange="seedanceUploadRefs(this.files,'audio');this.value=''" /></label>
+        <div id="seedRefList" style="margin-top:9px"></div>
+      </div>
+
+      <div class="sec" id="renderSettingsSec">
         <div class="sec-label"><span class="icon">&#10022;</span> <span id="promptLbl">Prompt</span>
           <button class="spk-gear" id="autoCfgGear" style="margin-left:auto" onclick="openAutoCfg()" title="Auto Prompt settings: standing instructions &amp; extra context">&#9881;</button>
           <button class="q-clear" id="autoBtn" style="margin-left:8px" onclick="autoPrompt()" title="Look at the image with GPT and write the prompt (and dialogue on LTX)">&#10024; Auto Prompt</button></div>
@@ -1553,11 +1564,24 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
             <option value="14B">14B &mdash; 720P, heavier</option>
           </select>
         </div>
-        <div class="slider-row" style="margin-top:12px"><span class="sl">FPS</span>
+        <div id="seedanceOptions" style="display:none">
+          <div class="sec-label" style="margin:12px 0 6px"><span class="icon">&#9645;</span> Aspect ratio</div>
+          <select class="model-select" id="seedanceAspect" onchange="seedanceScheduleQuote()">
+            <option value="16:9" selected>16:9 &mdash; landscape</option>
+            <option value="9:16">9:16 &mdash; vertical</option>
+            <option value="1:1">1:1 &mdash; square</option>
+            <option value="21:9">21:9 &mdash; ultrawide</option>
+            <option value="4:3">4:3</option>
+            <option value="3:4">3:4</option>
+          </select>
+          <label class="civ-nsfw-toggle" style="margin-top:10px"><input type="checkbox" id="seedanceAudio" checked onchange="seedanceScheduleQuote()"> Generate synchronized audio</label>
+          <div class="hintline">Audio does not change the generation price.</div>
+        </div>
+        <div class="slider-row" id="fpsRow" style="margin-top:12px"><span class="sl">FPS</span>
           <input type="range" id="fps" min="8" max="30" value="16"><input class="sv" id="fpsV" value="16"></div>
       </div>
 
-      <div class="sec">
+      <div class="sec" id="advancedSec">
         <div class="adv-toggle" id="advToggle" onclick="toggleAdv()"><span class="icon">&#9881;</span> Advanced settings <span id="advCaret">&#9656;</span></div>
         <div class="adv-body" id="advBody">
           <div id="advWanOnly">
@@ -1612,7 +1636,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
         </div>
       </div>
 
-      <div class="sec">
+      <div class="sec" id="loraSec">
         <div class="sec-label"><span class="icon">&#9880;</span> LoRAs</div>
         <button class="gen-btn gen-btn-secondary" style="width:100%;margin-bottom:8px" onclick="civOpenSearch()">&#128269; Browse Civitai LoRAs</button>
         <input type="text" class="lora-url" id="loraUrl" placeholder="paste a Civitai model page, download, or HF .safetensors URL">
@@ -1628,6 +1652,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
     <div class="sidebar-foot">
       <div id="ctrlVidSlot"></div>
+      <div id="seedanceQuote" style="display:none;margin:0 0 8px;padding:10px 11px;border:1px solid rgba(212,175,55,.42);border-radius:8px;background:rgba(212,175,55,.08);font-size:11px;line-height:1.45;color:var(--text)">Calculating exact cost&hellip;</div>
 <button class="gen-btn" id="genBtn" onclick="generate()">&#10022; Generate Video</button>
     </div>
   </aside>
@@ -2629,7 +2654,7 @@ function _spokenSeconds(text){
 function _autoClipSeconds(){
   const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
   const maxF=currentEngine==="ltx"?481:129;
-  const maxS=maxF/fps;
+  const maxS=currentEngine==="seedance25"?30:maxF/fps;
 
   // Dialogue first, if this scene has any.
   let dlg=0,lines=0;
@@ -2645,7 +2670,7 @@ function _autoClipSeconds(){
   if(dlg>0){
     // A beat between lines, plus head and tail room so nothing is clipped.
     const secs=dlg+Math.max(0,lines-1)*0.45+1.6;
-    return Math.min(maxS,Math.max(3,secs));
+    return Math.min(maxS,Math.max(currentEngine==="seedance25"?4:3,secs));
   }
 
   // No dialogue: scale with how much the prompt is asking for.
@@ -2658,7 +2683,7 @@ function _autoClipSeconds(){
   // Explicit motion cues want room to actually happen.
   if(/\b(walks?|runs?|turns?|enters?|exits?|pans?|zooms?|dolly|tracking|reveals?|approaches?)\b/i.test(p))
     secs+=1.5;
-  return Math.min(maxS,Math.max(3,secs));
+  return Math.min(maxS,Math.max(currentEngine==="seedance25"?4:3,secs));
 }
 function _clipSeconds(){
   const auto=$("autoLen");
@@ -2717,6 +2742,7 @@ function _clipLenPinned(c){
 function _clipFrames(){
   const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
   const want=Math.round(_clipSeconds()*fps);
+  if(currentEngine==="seedance25")return Math.max(96,Math.min(720,want));
   if(currentEngine==="ltx")
     // No upper bound — snap to the 8n+1 grid the engine requires and
     // pass through whatever length was asked for.
@@ -2733,20 +2759,22 @@ function _autoLenChange(){
 
 function updateDur(){
   const fps=+($("fpsV")||{}).value||(currentEngine==="ltx"?24:16);
-  const f=_clipFrames(), secs=f/fps;
+  const f=_clipFrames(), secs=currentEngine==="seedance25"
+    ?Math.max(4,Math.min(30,Math.round(_clipSeconds()))) : f/fps;
   const auto=$("autoLen"), isAuto=!auto||auto.checked;
   // Keep the slider showing the derived length while auto is on, so the
   // control never contradicts the readout above it.
   if(isAuto){
     const sl=$("clipSecs"),nv=$("clipSecsV");
-    if(sl&&document.activeElement!==sl)sl.value=Math.min(20,Math.max(2,secs)).toFixed(1);
+    if(sl&&document.activeElement!==sl)sl.value=Math.min(currentEngine==="seedance25"?30:20,Math.max(currentEngine==="seedance25"?4:2,secs)).toFixed(1);
     if(nv&&document.activeElement!==nv)nv.value=secs.toFixed(1);
   }
   const d=$("durHint");
-  if(d)d.innerHTML=(isAuto?"Auto \u2014 ":"Set \u2014 ")+"~"+secs.toFixed(1)+" s"
-    +" <span style='opacity:.6'>&middot; "+f+" frames"
+  if(d)d.innerHTML=(isAuto?"Auto \u2014 ":"Set \u2014 ")+(currentEngine==="seedance25"?secs.toFixed(0):"~"+secs.toFixed(1))+" s"
+    +" <span style='opacity:.6'>"+(currentEngine==="seedance25"?"&middot; exact billed duration":"&middot; "+f+" frames")
     +(isAuto?"":" &middot; <a href=\'#\' onclick=\'event.preventDefault();$(\"autoLen\").checked=true;_autoLenChange();\' style=\'color:var(--gold)\'>back to auto</a>")
     +"</span>";
+  if(currentEngine==="seedance25")seedanceScheduleQuote();
 }
 
 /* speed modes ─────────────────────────────────────────────────────────
@@ -2774,7 +2802,10 @@ async function qualityMode(){
   _setLightning(false);
   toast("Quality mode on \u2014 slower, higher fidelity.");
 }
-$("profile").addEventListener("change",e=>{setSL("shift",e.target.value==="720P"?"5.0":"3.0");});
+$("profile").addEventListener("change",e=>{
+  setSL("shift",e.target.value==="720P"?"5.0":"3.0");
+  if(currentEngine==="seedance25")seedanceScheduleQuote();
+});
 // Manual seconds slider keeps its readout and the length box in step.
 (function(){
   const sl=$("clipSecs"),nv=$("clipSecsV");
@@ -2831,13 +2862,14 @@ function _populateCivBase(engine){
 function setEngine(e){
   const _prevLane=(typeof _activeLane==="function")?_activeLane():null;
   currentEngine=e;
-  try{refreshLoras();}catch(_e){}
+  const seedance=e==="seedance25";
+  if(!seedance)try{refreshLoras();}catch(_e){}
   // Switching engines changes which container would run the job, but
   // browsing the engine list is not intent to render either — just
   // refresh that lane's status so the pill is accurate.
   try{
     const l=_activeLane();
-    if(l!==_prevLane)pollGpu();
+    if(!seedance&&l!==_prevLane)pollGpu();
   }catch(_e){}
   const ltx=e==="ltx";
   const wan22=e==="wan22";
@@ -2845,22 +2877,29 @@ function setEngine(e){
   $("engWan").classList.toggle("active",wan);
   $("engWan22").classList.toggle("active",wan22);
   $("engLtx").classList.toggle("active",ltx);
+  $("engSeedance").classList.toggle("active",seedance);
   $("wan22Opts").style.display=wan22?"block":"none";
   // Rebuild the LoRA-search base-model filter for the active engine so it
   // only offers bases that actually apply (LTX bases on LTX, Wan on Wan).
-  _populateCivBase(e);
+  if(!seedance)_populateCivBase(e);
   if(ltx||wan22)setMode("i2v");     // LTX + Wan 2.2 here are i2v only
+  else if(seedance)setMode("t2v");
+  else setMode(currentMode==="t2v"?"i2v":currentMode);
   // Wan-only sections: task modes, Lightning/Quality, clip chaining.
   // Wan 2.2 is i2v-only (no flf2v/vace) and its steps are Lightning-fixed,
   // so it hides the task-mode + speed sections but keeps length/LoRAs.
   const showWan=!ltx;                 // both Wan engines show Wan UI
-  $("modeSec").style.display=(wan)?"block":"none";   // 2.1 only
+  $("modeSec").style.display=(wan||seedance)?"block":"none";
   $("speedSec").style.display=(wan)?"block":"none";  // 2.1 only (2.2=Lightning)
   // Length is no longer Wan-only. It used to be, because LTX length came
   // from committed timeline clips; with auto-length it is the one control
   // that governs every render, so it stays visible for both engines.
   $("lengthSec").style.display="block";
   $("ltxResHint").style.display=ltx?"block":"none";
+  $("seedanceOptions").style.display=seedance?"block":"none";
+  $("advancedSec").style.display=seedance?"none":"block";
+  $("loraSec").style.display=seedance?"none":"block";
+  $("fpsRow").style.display=seedance?"none":"flex";
   // Dialogue builder is an LTX feature; Wan (both) uses plain prompt.
   {const d=$("dlgSec");if(d)d.style.display=ltx?"flex":"none";}
   // The dock decides its own visibility now (Plan tab is LTX-only, the
@@ -2874,17 +2913,17 @@ function setEngine(e){
     if(ltx){try{renderSpeakers();renderClipModalDialog();}catch(e){}}}}
   // On LTX the prompt IS the base scene for the clips below — label it so
   // and show the role hint, so it doesn't look like a duplicate.
-  $("promptLbl").textContent=ltx?"Clip 1 \u00b7 scene":"Prompt";
+  $("promptLbl").textContent=ltx?"Clip 1 \u00b7 scene":seedance?"Describe the video":"Prompt";
   $("promptRoleHint").style.display=ltx?"block":"none";
   const atb=$("addToTimelineBtn"),ath=$("addToTimelineHint");
   if(atb)atb.style.display=ltx?"block":"none";
   if(ath)ath.style.display=ltx?"block":"none";
   const atw=$("appendTlWrap");if(atw)atw.style.display=ltx?"flex":"none";
   if(ltx){_updateSceneRoleHint();_syncGenerateEnabled();}
-  else{const gb=$("genBtn");if(gb){gb.disabled=false;gb.style.opacity="";}}
+  else if(!seedance){const gb=$("genBtn");if(gb){gb.disabled=false;gb.style.opacity="";}}
   // The starting-frame section is Clip 1's first/last frame under LTX.
   const fl=$("firstLabel");
-  if(fl)fl.innerHTML=ltx
+  if(fl&&!seedance)fl.innerHTML=ltx
     ? "<span class='icon'>\u25a3</span> Clip 1 frames"
     : "<span class='icon'>\u25a3</span> Starting frame <span class='c'>required</span>";
   // LTX shows the first+last frame pair; Wan keeps the single dropzone.
@@ -2892,10 +2931,10 @@ function setEngine(e){
   if(c1)c1.style.display=ltx?"block":"none";
   if(dz)dz.style.display=ltx?"none":"block";
   if(ltx)_renderC1Frames();
-  $("neg").style.display=ltx?"none":"block";
-  $("negLabel").style.display=ltx?"none":"flex";
+  $("neg").style.display=(ltx||seedance)?"none":"block";
+  $("negLabel").style.display=(ltx||seedance)?"none":"flex";
   if(ltx){renderSpeakers();renderDialog();}
-  else _updateGenBtnLabel(1);   // Wan/Wan2.2: plain label
+  else if(!seedance)_updateGenBtnLabel(1);   // Wan/Wan2.2: plain label
   // Advanced settings: Wan knobs vs LTX knobs.
   $("advWanOnly").style.display=ltx?"none":"block";
   $("advWanOnly2").style.display=ltx?"none":"block";
@@ -2903,16 +2942,56 @@ function setEngine(e){
   $("frameRuleHint").textContent=ltx
     ?"Frames snap to LTX's 8k+1 rule; 121 @ 24 fps \u2248 5 s. ~20 s (481 frames) is LTX-2.3's trained max \u2014 longer is allowed but drifts and may run out of memory."
     :"Frames snap to Wan's 4n+1 rule; 81 is the trained length. Flow shift ~3 for 480P, ~5 for 720P.";
-  const f=$("frames");
-  if(ltx){f.min=33;f.max=1449;f.step=8;setSL("frames",121);setSL("fps",24);}
-  else{f.min=17;f.max=81;f.step=4;setSL("frames",81);setSL("fps",16);}
+  const f=$("frames"),cs=$("clipSecs"),cv=$("clipSecsV");
+  if(seedance){
+    f.min=96;f.max=720;f.step=24;setSL("frames",120);setSL("fps",24);
+    if(cs){cs.min=4;cs.max=30;cs.step=1;}
+    if(cv){cv.min=4;cv.max=30;cv.step=1;}
+  }else if(ltx){
+    f.min=33;f.max=1449;f.step=8;setSL("frames",121);setSL("fps",24);
+    if(cs){cs.min=2;cs.max=20;cs.step=.5;}if(cv){cv.min=2;cv.max=20;cv.step=.5;}
+  }else{
+    f.min=17;f.max=81;f.step=4;setSL("frames",81);setSL("fps",16);
+    if(cs){cs.min=2;cs.max=20;cs.step=.5;}if(cv){cv.min=2;cv.max=20;cv.step=.5;}
+  }
+  $("seedanceQuote").style.display=seedance?"block":"none";
   updateDur();
+  _syncGenerateEnabled();
 }
 function setMode(m){
   currentMode=m;
+  const seedance=currentEngine==="seedance25";
+  $("modeT2V").style.display=seedance?"block":"none";
+  $("modeT2V").classList.toggle("active",m==="t2v");
   $("modeI2V").classList.toggle("active",m==="i2v");
   $("modeFLF").classList.toggle("active",m==="flf2v");
   $("modeVACE").classList.toggle("active",m==="vace");
+  if(seedance){
+    $("firstSec").style.display=(m==="i2v"||m==="flf2v")?"block":"none";
+    $("lastSec").style.display=m==="flf2v"?"block":"none";
+    $("refSec").style.display="none";
+    $("seedRefSec").style.display=m==="vace"?"block":"none";
+    $("lengthSec").style.display="block";
+    $("profileWrap").style.display="block";
+    $("flfNote").style.display="none";
+    $("vaceSizeWrap").style.display="none";
+    const fl=$("firstLabel");
+    if(m==="text")m="t2v";
+    if(m==="flf2v"){
+      fl.innerHTML="<span class='icon'>&#9635;</span> First frame <span class='c'>required</span>";
+      $("modeHint").textContent="Set the opening and ending frames; Seedance generates the transition, motion, and optional synchronized audio.";
+    }else if(m==="vace"){
+      $("modeHint").textContent="Combine images, videos, and audio for reference generation, video editing, motion transfer, or extension.";
+    }else if(m==="i2v"){
+      fl.innerHTML="<span class='icon'>&#9635;</span> Starting frame <span class='c'>required</span>";
+      $("modeHint").textContent="Animate one image into a 4\u201330 second clip with optional synchronized audio.";
+    }else{
+      $("modeHint").textContent="Generate a 4\u201330 second clip from text alone, with optional synchronized audio.";
+    }
+    _syncGenerateEnabled();seedanceScheduleQuote();return;
+  }
+  $("firstSec").style.display="block";
+  $("seedRefSec").style.display="none";
   $("lastSec").style.display=m==="flf2v"?"block":"none";
   $("refSec").style.display=m==="vace"?"block":"none";
   // Every mode produces a clip of some length — hiding this for flf2v
@@ -4094,7 +4173,11 @@ function buildScript(){
       segments:+_v("segmentsV")||1,
       vary_seed:_c("varySeed"),
       wan22_lightning:_c("wan22Lightning"),
-      vace_size:_v("vaceSize")
+      vace_size:_v("vaceSize"),
+      mode:currentMode,
+      duration_seconds:_seedanceDuration(),
+      aspect_ratio:_v("seedanceAspect"),
+      generate_audio:_c("seedanceAudio")
     },
     auto:{
       instructions:(autoCfg&&autoCfg.instructions)||"",
@@ -4107,7 +4190,7 @@ function buildScript(){
 // partial scripts. Returns a short summary of what was set.
 function applyScript(sc){
   if(!sc||typeof sc!=="object")throw "not a script object";
-  if(sc.engine&&["wan","wan22","ltx"].includes(sc.engine))setEngine(sc.engine);
+  if(sc.engine&&["wan","wan22","ltx","seedance25"].includes(sc.engine))setEngine(sc.engine);
   if(sc.fps){setSL("fps",parseInt(sc.fps,10)||16);}
   if(typeof sc.base_scene==="string")$("prompt").value=sc.base_scene;
   if(sc.first_image){try{_setStartImage(sc.first_image);}catch(e){imgData=sc.first_image;}}
@@ -4173,6 +4256,12 @@ function applyScript(sc){
       if($("varySeed"))$("varySeed").checked=!!st.vary_seed;
       if($("wan22Lightning"))$("wan22Lightning").checked=!!st.wan22_lightning;
       if(st.vace_size&&$("vaceSize"))$("vaceSize").value=st.vace_size;
+      if(st.mode&&["t2v","i2v","flf2v","vace"].includes(st.mode))setMode(st.mode);
+      if(st.duration_seconds!=null){const a=$("autoLen");if(a)a.checked=false;
+        if($("clipSecs"))$("clipSecs").value=+st.duration_seconds;
+        if($("clipSecsV"))$("clipSecsV").value=+st.duration_seconds;}
+      if(st.aspect_ratio&&$("seedanceAspect"))$("seedanceAspect").value=st.aspect_ratio;
+      if(st.generate_audio!=null&&$("seedanceAudio"))$("seedanceAudio").checked=!!st.generate_audio;
     }catch(e){/* a missing control on this engine's UI is not an error */}
   }
   // v2: auto-prompt steering.
@@ -4237,7 +4326,7 @@ function applyAgentActions(actions){
         $("prompt").value=(a.scene||a.text||"").toString();
         notes.push("Base scene updated.");
       }else if(t==="set_engine"){
-        if(["wan","wan22","ltx"].includes(a.engine)){setEngine(a.engine);
+        if(["wan","wan22","ltx","seedance25"].includes(a.engine)){setEngine(a.engine);
           notes.push("Engine set to "+a.engine+".");}
       }else if(t==="set_fps"){
         setSL("fps",parseInt(a.fps,10)||fps);notes.push("FPS set to "+a.fps+".");
@@ -4903,6 +4992,23 @@ function _autoSplitControl(scene,ctrlUrl,dur,segS,stagedImg){
 // Enable/disable Generate based on whether any clip is committed (LTX only).
 function _syncGenerateEnabled(){
   const gb=$("genBtn");if(!gb)return;
+  if(currentEngine==="seedance25"){
+    const hasImg=!!(imgData||(typeof clipStartImages!=="undefined"&&clipStartImages[1]));
+    const hasEnd=!!(lastData||(typeof _stagedEnd!=="undefined"&&_stagedEnd)
+      ||(typeof clipEndImages!=="undefined"&&clipEndImages[1]));
+    const hasPrompt=!!((($("prompt")||{}).value)||"").trim();
+    const hasRefs=seedanceRefs.image.length+seedanceRefs.video.length+seedanceRefs.audio.length>0;
+    const modeReady=currentMode==="t2v"||(currentMode==="i2v"&&hasImg)
+      ||(currentMode==="flf2v"&&hasImg&&hasEnd)||(currentMode==="vace"&&hasRefs);
+    const priced=!!(seedanceQuoteState&&seedanceQuoteState.tokens&&!seedanceQuoteState.busy);
+    const ready=hasPrompt&&modeReady&&priced;
+    gb.disabled=!ready;gb.style.opacity=ready?"":"0.55";
+    gb.title=!hasPrompt?"Write a video prompt first."
+      :!modeReady?(currentMode==="vace"?"Add at least one reference first."
+        :currentMode==="flf2v"?"Add both first and last frames.":"Add a starting frame first.")
+      :!priced?"Wait for the exact price to finish calculating.":"";
+    return;
+  }
   /* Was: LTX required _committedClips > 0 — clips committed to the
      timeline. The timeline is gone, nothing increments that counter any
      more, and Generate could never enable on LTX no matter what you did.
@@ -6489,7 +6595,180 @@ function _civRefreshApplied(){
 }
 
 /* ── generate -> queue ── */
+/* Seedance uses fal's three native endpoints. References are uploaded once
+   and represented by user-scoped opaque ids; quote + create then use the
+   same server-side duration metadata, so the displayed charge cannot drift
+   from what is deducted. */
+let seedanceRefs={image:[],video:[],audio:[]};
+let seedanceQuoteState={tokens:null,key:"",busy:false,timer:null,quote:null};
+let _seedanceUploadsBusy=0;
+const _seedanceFrameCache=new Map();
+
+function _seedanceMode(){
+  return currentMode==="t2v"?"text":currentMode==="vace"?"reference":"image";
+}
+function _seedanceDuration(){return Math.max(4,Math.min(30,Math.round(_clipSeconds())));}
+function _seedanceRequest(){
+  const refMode=currentMode==="vace";
+  return {
+    mode:_seedanceMode(),prompt:($("prompt").value||"").trim(),
+    resolution:$("profile").value==="480P"?"480p":"720p",
+    aspect_ratio:$("seedanceAspect").value,duration:_seedanceDuration(),
+    generate_audio:$("seedanceAudio").checked,seed:+$("seed").value||0,
+    image_ids:refMode?seedanceRefs.image.map(x=>x.id):[],
+    video_ids:refMode?seedanceRefs.video.map(x=>x.id):[],
+    audio_ids:refMode?seedanceRefs.audio.map(x=>x.id):[]
+  };
+}
+function _seedanceKeyFor(b){
+  return [b.resolution,b.aspect_ratio,b.duration,b.mode,(b.video_ids||[]).join(",")].join("|");
+}
+function _seedanceQuoteKey(){
+  return _seedanceKeyFor(_seedanceRequest());
+}
+function seedanceScheduleQuote(){
+  if(currentEngine!=="seedance25")return;
+  clearTimeout(seedanceQuoteState.timer);
+  seedanceQuoteState.tokens=null;seedanceQuoteState.quote=null;
+  const q=$("seedanceQuote"),b=$("genBtn");
+  if(q)q.innerHTML="Calculating exact cost&hellip;";
+  if(b)b.innerHTML="&#10022; Calculating price&hellip;";
+  _syncGenerateEnabled();
+  seedanceQuoteState.timer=setTimeout(()=>seedanceRefreshQuote(false),220);
+}
+async function seedanceRefreshQuote(force){
+  if(currentEngine!=="seedance25")return null;
+  const key=_seedanceQuoteKey();
+  if(!force&&seedanceQuoteState.key===key&&seedanceQuoteState.tokens)
+    return seedanceQuoteState.quote;
+  seedanceQuoteState.busy=true;seedanceQuoteState.tokens=null;
+  const q=$("seedanceQuote");if(q)q.innerHTML="Calculating exact cost&hellip;";
+  _syncGenerateEnabled();
+  try{
+    const body=_seedanceRequest();
+    const r=await fetch("/api/studio/video/seedance25/quote",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const o=await r.json().catch(()=>({}));
+    if(!r.ok||!o.ok)throw new Error(o.error||"price unavailable");
+    if(key!==_seedanceQuoteKey())return null;
+    const z=o.quote,t=Number(z.tokens||0);
+    seedanceQuoteState={tokens:t,key:key,busy:false,timer:null,quote:z};
+    const input=Number(z.input_video_seconds||0);
+    const balance=(typeof mlState.tokens==="number")
+      ?"<div style='margin-top:3px;color:"+(mlState.tokens<t?"var(--red)":"var(--text-muted)")+"'>Balance: "+mlState.tokens.toLocaleString()+" tokens</div>":"";
+    q.innerHTML="<div style='font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--gold)'>Exact generation cost</div>"
+      +"<div style='font-size:18px;font-weight:750;margin:2px 0;color:var(--text)'>"+t.toLocaleString()+" tokens</div>"
+      +"<div>"+z.duration+"s &middot; "+String(z.resolution).toUpperCase()+" &middot; "+esc(z.aspect_ratio)
+      +(input?" &middot; includes "+input.toFixed(1)+"s of video references":"")+"</div>"+balance;
+    const b=$("genBtn");if(b)b.innerHTML="&#10022; Generate &middot; "+t.toLocaleString()+" tokens";
+    _syncGenerateEnabled();return z;
+  }catch(e){
+    seedanceQuoteState.busy=false;seedanceQuoteState.tokens=null;
+    if(q)q.innerHTML="<span style='color:var(--red)'>Price could not be verified.</span> Sign in or retry before generating.";
+    const b=$("genBtn");if(b)b.innerHTML="&#10022; Price unavailable";
+    _syncGenerateEnabled();return null;
+  }
+}
+async function _seedanceUploadBlob(blob,name){
+  const safe=(name||"reference").replace(/[^\x20-\x7e]/g,"_").slice(0,120);
+  const r=await fetch("/api/studio/video/seedance25/upload",{method:"POST",
+    headers:{"Content-Type":blob.type||"application/octet-stream","X-File-Name":safe},body:blob});
+  const o=await r.json().catch(()=>({}));
+  if(!r.ok||!o.ok)throw new Error(o.message||o.error||"upload failed");
+  return o;
+}
+async function seedanceUploadRefs(files,kind){
+  const incoming=Array.from(files||[]),caps={image:30,video:10,audio:10};
+  if(!incoming.length)return;
+  const total=seedanceRefs.image.length+seedanceRefs.video.length+seedanceRefs.audio.length;
+  const room=Math.min(caps[kind]-seedanceRefs[kind].length,50-total);
+  if(room<=0){toast("That reference limit is already full.",true);return;}
+  const chosen=incoming.slice(0,room);_seedanceUploadsBusy+=chosen.length;_syncGenerateEnabled();
+  seedanceRenderRefs();
+  for(const file of chosen){
+    try{
+      const o=await _seedanceUploadBlob(file,file.name);
+      seedanceRefs[kind].push(o);toast("Added "+file.name+".");
+    }catch(e){toast("Could not add "+file.name+": "+(e.message||e),true);}
+    finally{_seedanceUploadsBusy--;seedanceRenderRefs();}
+  }
+  seedanceScheduleQuote();
+}
+function seedanceRemoveRef(kind,index){
+  seedanceRefs[kind].splice(index,1);seedanceRenderRefs();seedanceScheduleQuote();
+}
+function seedanceRenderRefs(){
+  const box=$("seedRefList");if(!box)return;box.innerHTML="";
+  const labels={image:"Image",video:"Video",audio:"Audio"};
+  ["image","video","audio"].forEach(kind=>seedanceRefs[kind].forEach((x,i)=>{
+    const row=document.createElement("div");row.className="ctrlvid-chip";row.style.marginBottom="5px";
+    const name=document.createElement("span");
+    name.textContent="["+labels[kind]+(i+1)+"] "+(x.file_name||"reference")
+      +(kind==="video"&&x.duration_seconds?" · "+Number(x.duration_seconds).toFixed(1)+"s":"");
+    const del=document.createElement("button");del.textContent="×";del.title="Remove reference";
+    del.onclick=()=>seedanceRemoveRef(kind,i);row.appendChild(name);row.appendChild(del);box.appendChild(row);
+  }));
+  if(_seedanceUploadsBusy){const d=document.createElement("div");d.className="hintline";
+    d.textContent="Uploading "+_seedanceUploadsBusy+" reference"+(_seedanceUploadsBusy===1?"":"s")+"…";box.appendChild(d);}
+  else if(!box.firstChild){const d=document.createElement("div");d.className="hintline";
+    d.textContent="No references added yet.";box.appendChild(d);}
+  _syncGenerateEnabled();
+}
+async function _seedanceUploadFrame(dataUrl,label){
+  if(!dataUrl)return null;
+  if(_seedanceFrameCache.has(dataUrl))return _seedanceFrameCache.get(dataUrl);
+  const blob=await fetch(dataUrl).then(r=>{if(!r.ok)throw new Error("could not read "+label);return r.blob();});
+  const p=_seedanceUploadBlob(blob,label+"."+((blob.type||"").includes("png")?"png":"jpg"));
+  _seedanceFrameCache.set(dataUrl,p);
+  try{return await p;}catch(e){_seedanceFrameCache.delete(dataUrl);throw e;}
+}
+async function generateSeedance(_attested){
+  if(!mlState.authed){toast("Sign in to generate — taking you to Google…");setTimeout(_signIn,600);return;}
+  let body=_seedanceRequest();const start=imgData||(typeof clipStartImages!=="undefined"&&clipStartImages[1])||null;
+  const end=lastData||(typeof _stagedEnd!=="undefined"&&_stagedEnd)
+    ||(typeof clipEndImages!=="undefined"&&clipEndImages[1])||null;
+  if(!body.prompt){toast("Write a video prompt first.",true);return;}
+  if((currentMode==="i2v"||currentMode==="flf2v")&&!start){toast("Add a starting frame first.",true);return;}
+  if(currentMode==="flf2v"&&!end){toast("Add the last frame too.",true);return;}
+  if(currentMode==="vace"&&!body.image_ids.length&&!body.video_ids.length&&!body.audio_ids.length){toast("Add at least one reference first.",true);return;}
+  if(_seedanceUploadsBusy){toast("Wait for reference uploads to finish.",true);return;}
+  const quote=await seedanceRefreshQuote(true);if(!quote)return;
+  body=_seedanceRequest();const quotedKey=_seedanceKeyFor(body);body.expected_tokens=quote.tokens;
+  if(typeof mlState.tokens==="number"&&mlState.tokens<quote.tokens){
+    toast("This generation costs "+quote.tokens.toLocaleString()+" tokens; your balance is "+mlState.tokens.toLocaleString()+".",true);
+    try{buyTokens();}catch(e){}return;
+  }
+  const btn=$("genBtn");btn.disabled=true;btn.innerHTML="&#10022; Preparing inputs&hellip;";
+  try{
+    if(body.mode==="image"){
+      const s=await _seedanceUploadFrame(start,"seedance-start");body.start_image_id=s.id;
+      if(currentMode==="flf2v"){const z=await _seedanceUploadFrame(end,"seedance-end");body.end_image_id=z.id;}
+    }
+    if(_seedanceQuoteKey()!==quotedKey){toast("Settings changed while inputs were uploading. Review the updated cost and press Generate again.",true);return;}
+    const r=await fetch("/api/studio/video/seedance25/create",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const o=await r.json().catch(()=>({}));
+    if(!r.ok||!o.ok){
+      if(o.error==="age_ack_required"&&!_attested){const ok=await _vsAttest();if(ok)return generateSeedance(true);return;}
+      if(o.error==="price_changed"){
+        seedanceQuoteState.tokens=null;seedanceScheduleQuote();
+        toast("The price changed before submission. Nothing was charged; review the new cost and generate again.",true);return;
+      }
+      if(o.error==="insufficient_tokens"){toast("Not enough tokens — this generation costs "+(o.need||quote.tokens).toLocaleString()+".",true);try{buyTokens();}catch(e){}return;}
+      if(r.status===401){mlState.authed=false;_mlBadge();toast("Session expired — signing you back in…");setTimeout(_signIn,600);return;}
+      throw new Error(o.detail||o.error||"generation could not start");
+    }
+    if(typeof o.tokens==="number"){mlState.tokens=o.tokens;_mlBadge();}
+    queue.unshift({id:o.id,kind:"seedance25",prompt:body.prompt,thumb:start||"",
+      status:"running",progress:8,stage:"Seedance · generating",tokens_charged:o.tokens_charged});
+    renderQueue();toast("Seedance generation started · "+o.tokens_charged.toLocaleString()+" tokens charged.");
+    seedanceScheduleQuote();
+  }catch(e){toast("Seedance could not start: "+(e.message||e),true);}
+  finally{if(currentEngine==="seedance25"){btn.disabled=false;seedanceRefreshQuote(true);}}
+}
+
 function generate(){
+  if(currentEngine==="seedance25"){generateSeedance();return;}
   const mode=currentMode;
   /* The LTX branch used to demand _committedClips — clips committed to
      the timeline. The timeline is gone and nothing increments that
@@ -7037,6 +7316,7 @@ let gpuLanes={ltx:null,wan:null};
 function _activeLane(){
   // "wan" and "wan22" both run on the Wan container; only "ltx" is the
   // L40S lane.
+  if(typeof currentEngine!=="undefined"&&currentEngine==="seedance25")return "fal";
   return (typeof currentEngine!=="undefined"&&currentEngine==="ltx")?"ltx":"wan";
 }
 /* Mid-render stages reported by the container. Anything not listed falls
@@ -7117,6 +7397,7 @@ function _paintBoot(){
    starting cold on Generate. Debounced server-side. */
 async function wakeGpu(lane){
   if(!mlState.authed)return;          // /wake needs a session
+  if((lane||_activeLane())==="fal")return;
   try{
     await fetch("/api/videostudio/wake",{method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -7125,6 +7406,7 @@ async function wakeGpu(lane){
 }
 
 async function pollGpu(){
+  if(_activeLane()==="fal"){_paintBoot();_schedulePoll();return;}
   try{
     const j=await(await fetch("/api/videostudio/gpu-status")).json();
     if(!j||!j.lanes)return;
@@ -7156,7 +7438,7 @@ function renderQueue(){
       :"<span class='badge b-queue'>queued</span>";
     const d=document.createElement("div");d.className="q-item";
     // Image builds have no thumbnail — show a film icon tile instead.
-    const thumbHtml=(q.kind==="image")
+    const thumbHtml=(q.kind==="image"||(q.kind==="seedance25"&&!q.thumb))
       ? "<div class='q-imgicon'>\ud83c\udfac</div>"
       : "<img src='"+q.thumb+"'>";
     d.innerHTML=thumbHtml+
@@ -7278,7 +7560,10 @@ async function deleteHistoryItem(item,ev){
   // Stitched movies are local blobs with no server row behind them.
   if(!isImg&&!item.local){
     try{
-      const r=await fetch("/api/videostudio/delete/"+item.id,{method:"POST"});
+      const r=item.source==="studio_video"
+        ?await fetch("/api/studio/video/delete",{method:"POST",
+          headers:{"Content-Type":"application/json"},body:JSON.stringify({id:item.id})})
+        :await fetch("/api/videostudio/delete/"+item.id,{method:"POST"});
       const j=await r.json();
       if(!j.ok){
         toast(j.message||("Couldn't delete: "+(j.error||"failed")),true);
@@ -7588,12 +7873,23 @@ setInterval(async()=>{
       ||q.status==="cancelling");
     let running=null,changed=false;
     for(const q of active){
-      let j;try{j=await(await fetch("/api/videostudio/status/"+q.id)).json();}catch(e){continue;}
+      let j;try{j=await(await fetch(q.kind==="seedance25"
+        ?"/api/studio/video/status?id="+encodeURIComponent(q.id)
+        :"/api/videostudio/status/"+q.id)).json();}catch(e){continue;}
+      if(q.kind==="seedance25"){
+        if(j.status==="failed")j.status="error";
+        if(j.status==="running"){
+          // fal exposes a queue state, not trustworthy percent-complete.
+          // Keep a small indeterminate-looking bar instead of inventing progress.
+          j.progress=q.progress||12;
+          j.stage="Seedance · generating on fal";
+        }
+      }
       if(q.status!==j.status||q.progress!==(j.progress||0))changed=true;
       q.status=j.status;q.progress=j.progress||0;q.stage=j.stage||"";
       // Live clip-by-clip playback: when a new partial clip finishes,
       // fetch and play it on the stage so the movie builds before your eyes.
-      if(j.status==="running" && (j.partial_index||0) > (q._partIdx||0)){
+      if(q.kind!=="seedance25"&&j.status==="running" && (j.partial_index||0) > (q._partIdx||0)){
         q._partIdx=j.partial_index;
         (async()=>{try{
           const pr=await(await fetch("/api/videostudio/partial/"+q.id)).json();
@@ -7650,10 +7946,12 @@ setInterval(async()=>{
             else{toast("Image build finished but returned no image.",true);}
           }else{
             let url=null,lastFrame=null;
-            try{const rr=await(await fetch("/api/videostudio/result/"+q.id)).json();
+            if(q.kind==="seedance25")url=j.video_url||null;
+            else try{const rr=await(await fetch("/api/videostudio/result/"+q.id)).json();
               url=rr.result;lastFrame=rr.last_frame_url||null;}
             catch(e){}
-            if(url){const h={id:q.id,prompt:q.prompt,thumb:q.thumb,url:url,ts:Date.now()};
+            if(url){const h={id:q.id,prompt:q.prompt,thumb:q.thumb,url:url,ts:Date.now(),
+              source:q.kind==="seedance25"?"studio_video":"videostudio"};
               history.unshift(h);showVideo(h);
               // Approval step: approve adds this clip to the movie strip
               // and stitches it onto whatever is already there.
@@ -7690,9 +7988,10 @@ setInterval(async()=>{
     if(running){$("fill").style.width=(running.progress||0)+"%";
       ss.textContent=running.stage||"";ss.classList.add("show");
       // Rendering never blocks new submissions — make that obvious.
-      $("genBtn").innerHTML="\u2726 Queue Next Video";}
+      if(currentEngine!=="seedance25")$("genBtn").innerHTML="\u2726 Queue Next Video";}
     else{$("fill").style.width="0%";ss.classList.remove("show");
-      $("genBtn").innerHTML="\u2726 Generate Video";}
+      if(currentEngine!=="seedance25")$("genBtn").innerHTML="\u2726 Generate Video";}
+    if(currentEngine==="seedance25")_syncGenerateEnabled();
     if(changed)renderQueue();
   }finally{_polling=false;}
 },800);
@@ -8110,6 +8409,23 @@ async function restoreJobs(){
           status:it.status,progress:it.progress||0,stage:it.stage||""});
     }
   });
+  // Seedance/fal jobs live in the shared studio video table. Merge both
+  // completed and active Seedance work so a reload does not lose it.
+  try{
+    const fr=await fetch("/api/studio/video/list?limit=60&include_active=1");
+    const fj=await fr.json();
+    if(fr.ok&&fj&&fj.ok)(fj.items||[]).forEach(it=>{
+      const p=it.params||{};if(p.model!=="seedance-2.5")return;
+      if(it.status==="done"&&it.video_url){
+        if(doneIds.has(it.id))return;doneIds.add(it.id);
+        add.push({id:it.id,prompt:p.prompt||"Seedance video",thumb:"",url:it.video_url,
+          source:"studio_video",ts:(it.finished_at||it.created_at||0)*1000});
+      }else if(it.status==="running"&&!queue.some(q=>q.id===it.id)){
+        queue.unshift({id:it.id,kind:"seedance25",prompt:p.prompt||"Seedance video",
+          thumb:"",status:"running",progress:12,stage:"Seedance · generating on fal"});
+      }
+    });
+  }catch(e){}
   if(add.length)history.unshift(...add);
   renderQueue();renderHistory();
   // The strip persists as a list of clip ids; now that History is back
