@@ -1168,37 +1168,37 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 .flc-ic{display:flex;gap:4px;font-size:10px}
 .flc-add{border-style:dashed;opacity:.75}
 .flc-add:hover{opacity:1}
-/* ── Movie strip: drag finished clips together, stitch into one mp4 ── */
-.movie-bar{position:absolute;left:12px;right:12px;bottom:10px;z-index:15;
-  background:rgba(12,12,14,.86);backdrop-filter:blur(8px);
-  border:1px solid var(--border);border-radius:12px;padding:8px 10px;
-  display:flex;flex-direction:column;gap:6px;max-height:190px;
-  transition:border-color .15s,box-shadow .15s}
-.movie-bar.drop{border-color:var(--gold);
+/* ── Movie tab of the dock: tiles, tabs, inline post-render offer ── */
+.dock-tab{border:1px solid var(--border);background:transparent;
+  color:var(--text-muted);font-family:var(--font-mono);font-size:10px;
+  text-transform:uppercase;letter-spacing:.5px;border-radius:7px;
+  padding:4px 10px;cursor:pointer;white-space:nowrap}
+.dock-tab.on{color:var(--gold);border-color:var(--gold);
+  background:rgba(232,169,23,.08);font-weight:700}
+.dock-tab #mvCount:not(:empty){margin-left:5px;opacity:.8}
+.stage-timeline.drop{border-color:var(--gold);
   box-shadow:0 0 0 1px var(--gold),0 6px 24px rgba(232,169,23,.18)}
-.mv-head{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
-.mv-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
-  letter-spacing:.5px;color:var(--gold);white-space:nowrap;font-weight:700;
-  display:flex;align-items:center;gap:6px}
 .mv-dur{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);white-space:nowrap}
-.mv-head .chip{padding:4px 10px;font-size:10px}
-.mv-head .chip:disabled{opacity:.45;cursor:default}
+.stl-head .chip{padding:4px 10px;font-size:10px}
+.stl-head .chip:disabled{opacity:.45;cursor:default}
 .mv-strip{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:2px;
   align-items:stretch;min-height:44px}
+.mv-strip .clip-empty{flex:0 0 auto;display:flex;align-items:center;
+  padding:8px 12px;font-size:11px;color:var(--text-muted);white-space:nowrap}
 .mv-tile{width:120px;height:74px;cursor:grab}
 .mv-tile:active{cursor:grabbing}
 .mv-tile.ins-before{box-shadow:-3px 0 0 0 var(--gold)}
 .mv-tile.ins-after{box-shadow:3px 0 0 0 var(--gold)}
-.movie-approve{position:absolute;top:14px;left:50%;transform:translateX(-50%);
-  z-index:16;display:flex;align-items:center;gap:10px;
-  background:rgba(12,12,14,.92);backdrop-filter:blur(10px);
-  border:1px solid var(--gold);border-radius:12px;padding:10px 14px;
-  font-size:12px;color:var(--text);max-width:min(92%,600px);flex-wrap:wrap;justify-content:center}
-.movie-approve button{border:none;border-radius:8px;padding:8px 12px;cursor:pointer;
-  font-family:var(--font-mono);font-size:11px;font-weight:700;
-  background:var(--gold);color:#1a1400;white-space:nowrap}
-.movie-approve button.no{background:var(--surface-3);color:var(--text-dim)}
-.movie-approve button:hover{filter:brightness(1.12)}
+.mv-offer{display:flex;align-items:center;gap:6px;font-size:11px;
+  color:var(--text);background:rgba(232,169,23,.1);
+  border:1px solid var(--gold);border-radius:8px;padding:3px 6px 3px 10px;
+  white-space:nowrap}
+.mv-offer button{border:none;border-radius:6px;padding:4px 9px;cursor:pointer;
+  font-family:var(--font-mono);font-size:10px;font-weight:700;
+  background:var(--surface-3);color:var(--text-dim)}
+.mv-offer button.ok{background:var(--gold);color:#1a1400}
+.mv-offer button:hover{filter:brightness(1.12)}
+@media (max-width:700px){.mv-offer #mvApTxt{display:none}}
 .flc-ghost{filter:grayscale(.7) brightness(.75);opacity:.6}
 .flc-mini{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;
   justify-content:center;width:38px}
@@ -1621,6 +1621,7 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
           <input type="number" class="lora-url lora-scale" id="loraScale" value="1.0" min="0" max="2" step="0.05">
         </div>
         <button class="gen-btn gen-btn-secondary" id="addLoraBtn" style="margin-top:8px;width:100%" onclick="addLora()">+ Add LoRA</button>
+        <button class="gen-btn gen-btn-secondary" id="verifyLoraBtn" style="margin-top:6px;width:100%;font-size:10px;padding:7px" onclick="verifyLoras()" title="Check that every LoRA in your library is actually downloadable (size, filename, access)">&#128269; Verify downloads</button>
         <div id="loraList"></div>
       </div>
     </div>
@@ -1645,32 +1646,32 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
          people to use "the timeline below". Docked to the stage bottom
          (the .stage-timeline CSS never left). LTX-only, like every other
          clip control — setEngine toggles it. -->
+    <!-- UNIFIED DOCK. One bar, two tabs: PLAN is the LTX clip plan for
+         the NEXT render (what renderClipOverview paints); MOVIE is the
+         sequence of FINISHED clips being stitched into one mp4. They
+         were two stacked bars for one evening and it read as "two
+         timelines" — same dock now, one visible strip at a time.
+         Post-render approval lives inline in the header (mvOffer)
+         instead of a floating box over the video. -->
     <div class="stage-timeline" id="stageTimeline" style="display:none">
-      <div class="stl-strip" id="clipOverview"></div>
-    </div>
-    <!-- MOVIE STRIP: an ordered sequence of FINISHED clips. Populated by
-         dragging cards from History, tapping their + MOVIE button, the
-         stage's + Movie chip, or approving a fresh render. Stitch joins
-         them into one mp4 client-side (ffmpeg.wasm), so no server change
-         is needed and the combined movie appears in History. -->
-    <div class="movie-bar" id="movieBar" style="display:none">
-      <div class="mv-head">
-        <span class="mv-title">&#127916; Movie<span class="q-count" id="mvCount" style="margin-left:0"></span></span>
+      <div class="stl-head">
+        <button class="dock-tab" id="tabPlan" onclick="dockTab('plan')">Plan</button>
+        <button class="dock-tab" id="tabMovie" onclick="dockTab('movie')">&#127916; Movie<span id="mvCount"></span></button>
         <span class="mv-dur" id="mvDur"></span>
+        <span class="mv-offer" id="mvOffer" style="display:none">
+          <span id="mvApTxt">Add last render?</span>
+          <button class="ok" id="mvApYes" onclick="movieApprove()">&#10003; Add</button>
+          <button onclick="movieDismiss()">&#10005;</button>
+        </span>
         <span style="flex:1"></span>
-        <button class="chip" onclick="moviePreview()" title="Play the clips back to back (instant, no stitching)">&#9654; Preview</button>
-        <button class="chip" id="mvStitchBtn" onclick="movieStitch()" title="Join all clips into one mp4">&#9095; Stitch</button>
-        <button class="chip" onclick="movieClear()" title="Empty the strip (clips stay in History)">&#128465;</button>
+        <span id="mvTools" style="display:none">
+          <button class="chip" onclick="moviePreview()" title="Play the clips back to back (instant, no stitching)">&#9654; Preview</button>
+          <button class="chip" id="mvStitchBtn" onclick="movieStitch()" title="Join all clips into one mp4">&#9095; Stitch</button>
+          <button class="chip" onclick="movieClear()" title="Empty the strip (clips stay in History)">&#128465;</button>
+        </span>
       </div>
-      <div class="mv-strip" id="mvStrip"></div>
-    </div>
-    <!-- Post-render approval: approve = add to the movie strip and stitch
-         with what is already there; dismiss = the clip stays in History
-         only. Shown each time a video render completes. -->
-    <div class="movie-approve" id="movieApprove" style="display:none">
-      <span id="mvApTxt">Clip rendered.</span>
-      <button id="mvApYes" onclick="movieApprove()">&#10003; Approve &amp; stitch</button>
-      <button class="no" onclick="movieDismiss()">&#10005; Not this one</button>
+      <div class="stl-strip" id="clipOverview"></div>
+      <div class="mv-strip" id="mvStrip" style="display:none"></div>
     </div>
     <div class="progrow"><div class="prog"><div class="fill" id="fill"></div></div></div>
     <!-- Timeline removed. This studio makes one clip at a time; the
@@ -2862,7 +2863,8 @@ function setEngine(e){
   $("ltxResHint").style.display=ltx?"block":"none";
   // Dialogue builder is an LTX feature; Wan (both) uses plain prompt.
   {const d=$("dlgSec");if(d)d.style.display=ltx?"flex":"none";}
-  {const t=$("stageTimeline");if(t)t.style.display=ltx?"":"none";}
+  // The dock decides its own visibility now (Plan tab is LTX-only, the
+  // Movie tab exists on every engine).
   try{_movieLayout();}catch(e){}
   if(ltx){try{renderClipOverview();}catch(e){}}
   // Dialogue is LTX-only — Wan has no speech synthesis.
@@ -2960,6 +2962,35 @@ $("fileRef").addEventListener("change",e=>{
 });
 
 /* ── LoRAs ── */
+/* url -> verdict from /loras/verify; refreshLoras paints a status line
+   under each card when present. */
+window._loraVerify=window._loraVerify||{};
+function _bytesHuman(n){
+  if(!n)return "size unknown";
+  if(n>=1e9)return (n/1e9).toFixed(2)+" GB";
+  if(n>=1e6)return (n/1e6).toFixed(0)+" MB";
+  return Math.round(n/1e3)+" KB";
+}
+async function verifyLoras(){
+  const b=$("verifyLoraBtn");
+  if(b){b.disabled=true;b.textContent="Checking\u2026";}
+  try{
+    const r=await fetch("/api/videostudio/loras/verify",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:"{}"});
+    const j=await r.json();
+    if(!j.ok)throw new Error(j.error||"verify failed");
+    let good=0,bad=0;
+    (j.results||[]).forEach(v=>{
+      window._loraVerify[v.url]=v;
+      v.ok?good++:bad++;
+    });
+    toast(bad
+      ?bad+" LoRA"+(bad===1?"":"s")+" can't be downloaded. Details under each card."
+      :"All "+good+" LoRA"+(good===1?"":"s")+" downloadable.",!!bad);
+  }catch(e){toast("Verify failed: "+(e.message||e),true);}
+  if(b){b.disabled=false;b.innerHTML="&#128269; Verify downloads";}
+  refreshLoras();
+}
 async function refreshLoras(){
   const box=$("loraList");let j;
   try{j=await(await fetch("/api/videostudio/loras")).json();}
@@ -3019,6 +3050,18 @@ async function refreshLoras(){
       "<div class='slider-row' style='margin:8px 0 0'><span class='sl'>strength</span>"+
       "<input type='range' min='0' max='2' step='0.05' value='"+L.scale+"'>"+
       "<input class='sv' value='"+(+L.scale).toFixed(2)+"'></div>";
+    // Verify verdict (only after the user ran Verify downloads): proof
+    // the file behind this row is a real, reachable model file.
+    const vv=window._loraVerify[L.url];
+    if(vv){
+      const s=document.createElement("div");
+      s.style.cssText="font-size:9px;margin-top:5px;font-family:var(--font-mono);"
+        +"word-break:break-all;color:"+(vv.ok?"#5dbb63":"#ff6b6b");
+      s.textContent=vv.ok
+        ?"\u2713 "+_bytesHuman(vv.size)+(vv.filename?" \u00b7 "+vv.filename:"")
+        :"\u2717 "+(vv.reason||("HTTP "+vv.status));
+      d.appendChild(s);
+    }
     const sl=d.querySelector("input[type=range]"),nm=d.querySelector(".sv"),xb=d.querySelector(".lora-x");
     /* url, NOT name. The LoRA table is keyed (user_id, url) and both
        routes reject a body without one — so sending {name} meant every
@@ -6714,6 +6757,17 @@ async function _submitOne(body,prompt,thumb,_attested){
   }
   queue.unshift({id:o.job_id,prompt:prompt,thumb:thumb,
     status:"queued",progress:0,stage:"queued"});
+  // The server reports which LoRAs it snapshotted into THIS job. Saying
+  // it out loud at submit time beats inferring it from a render that
+  // looks untouched 5 minutes later.
+  if(typeof o.loras_attached==="number"){
+    if(o.loras_attached>0)
+      toast("\u2728 "+o.loras_attached+" LoRA"+(o.loras_attached===1?"":"s")
+        +" in this render: "+(o.lora_names||[]).join(", "));
+    else if(window._loraUrls&&window._loraUrls.size>0)
+      toast("Note: 0 LoRAs attached to this render (none active for this "
+        +"engine, or strength is 0).");
+  }
   // Assume cold until the next poll says otherwise. Without this the
   // queue shows a bare "queued" row for up to 3s before the boot card
   // appears, which is the exact moment the user is looking for feedback.
@@ -8114,19 +8168,37 @@ function _movieRestore(){
   renderMovie();
 }
 
-/* Stack the strip above the clip-plan bar when both are visible; both
-   dock to the stage bottom otherwise. */
-function _movieLayout(){
-  const bar=$("movieBar");if(!bar)return;
-  const stl=$("stageTimeline");
-  const up=stl&&stl.style.display!=="none"&&bar.style.display!=="none";
-  bar.style.bottom=up?((stl.offsetHeight||0)+18)+"px":"10px";
+/* One dock, two tabs. PLAN only exists on LTX (the clip plan); MOVIE
+   exists everywhere. The dock shows when there is anything to show:
+   always on LTX, and on Wan whenever the movie has content, a drag is
+   in flight, or a fresh render is waiting for approval. */
+let _dockTab="plan";
+function dockTab(t){
+  _dockTab=(t==="movie")?"movie":"plan";
+  _dockUpdate();
 }
+function _dockUpdate(){
+  const dock=$("stageTimeline");if(!dock)return;
+  const ltx=(typeof currentEngine!=="undefined"&&currentEngine==="ltx");
+  if(!ltx)_dockTab="movie";                       // no plan to show on Wan
+  const showDock=ltx||movie.clips.length>0||_mvDrag||!!movie.pending;
+  dock.style.display=showDock?"":"none";
+  const onMovie=(_dockTab==="movie");
+  const tp=$("tabPlan"),tm=$("tabMovie");
+  if(tp){tp.style.display=ltx?"":"none";tp.classList.toggle("on",!onMovie);}
+  if(tm)tm.classList.toggle("on",onMovie);
+  const co=$("clipOverview"),ms=$("mvStrip"),tools=$("mvTools");
+  if(co)co.style.display=(!onMovie&&ltx)?"flex":"none";
+  if(ms)ms.style.display=onMovie?"flex":"none";
+  if(tools)tools.style.display=onMovie?"":"none";
+  const du=$("mvDur");if(du)du.style.display=onMovie?"":"none";
+}
+/* Kept as a shim: setEngine and toggleStl call this by name. */
+function _movieLayout(){_dockUpdate();}
 
 function renderMovie(){
-  const bar=$("movieBar"),strip=$("mvStrip");if(!bar||!strip)return;
+  const strip=$("mvStrip");if(!strip)return;
   const n=movie.clips.length;
-  bar.style.display=(n||_mvDrag)?"":"none";
   const cnt=$("mvCount");if(cnt)cnt.textContent=n?String(n):"";
   const st=$("mvStitchBtn");
   if(st&&!st.dataset.busy)st.disabled=n<2;
@@ -8164,7 +8236,7 @@ function renderMovie(){
     }).catch(()=>{});
   });
   _movieTotal();
-  _movieLayout();
+  _dockUpdate();
 }
 function _movieTotal(){
   const el=$("mvDur");if(!el)return;
@@ -8176,11 +8248,12 @@ function _movieTotal(){
     :"";
 }
 
-/* Called from History-card dragstart/dragend so the drop target is
-   visible for the whole drag even when the strip is empty. */
+/* Called from History-card dragstart/dragend: force the dock visible on
+   the Movie tab for the whole drag so there is always a drop target. */
 function _movieDragOn(on){
   _mvDrag=on;
-  const bar=$("movieBar");if(bar)bar.classList.toggle("drop",on);
+  if(on)_dockTab="movie";
+  const dock=$("stageTimeline");if(dock)dock.classList.toggle("drop",on);
   if(!on){_mvInsIdx=null;_movieShowIns();}
   renderMovie();
 }
@@ -8200,19 +8273,22 @@ function _movieShowIns(){
   else tiles[_mvInsIdx].classList.add("ins-before");
 }
 function _movieInit(){
-  const bar=$("movieBar");if(!bar)return;
-  bar.addEventListener("dragover",ev=>{
+  const dock=$("stageTimeline");if(!dock)return;
+  dock.addEventListener("dragover",ev=>{
     const ty=[...(ev.dataTransfer.types||[])];
     if(!ty.includes("text/vs-clip")&&!ty.includes("text/vs-movie"))return;
     ev.preventDefault();
+    if(_dockTab!=="movie"){_dockTab="movie";_dockUpdate();}
     ev.dataTransfer.dropEffect=ty.includes("text/vs-movie")?"move":"copy";
     _mvInsIdx=_movieInsIdx(ev.clientX);
     _movieShowIns();
   });
-  bar.addEventListener("dragleave",ev=>{
-    if(!bar.contains(ev.relatedTarget)){_mvInsIdx=null;_movieShowIns();}
+  dock.addEventListener("dragleave",ev=>{
+    if(!dock.contains(ev.relatedTarget)){_mvInsIdx=null;_movieShowIns();}
   });
-  bar.addEventListener("drop",ev=>{
+  dock.addEventListener("drop",ev=>{
+    const ty=[...(ev.dataTransfer.types||[])];
+    if(!ty.includes("text/vs-clip")&&!ty.includes("text/vs-movie"))return;
     ev.preventDefault();
     const at=(_mvInsIdx==null)?movie.clips.length:_mvInsIdx;
     _mvInsIdx=null;_movieShowIns();
@@ -8230,7 +8306,6 @@ function _movieInit(){
     const h=history.find(x=>String(x.id)===id&&_histKind(x)==="video");
     if(h)movieAdd(h,at);
   });
-  window.addEventListener("resize",()=>{try{_movieLayout();}catch(e){}});
   renderMovie();
 }
 
@@ -8256,29 +8331,31 @@ function movieClear(){
   movie.clips=[];movie.dirty=false;_movieSave();renderMovie();
 }
 
-/* ── post-render approval ── */
+/* ── post-render approval: a small inline offer in the dock header,
+      not a box floating over the video ── */
 function _movieOfferApprove(h){
-  const bar=$("movieApprove");if(!bar)return;
+  const off=$("mvOffer");if(!off)return;
   movie.pending=h;
   const n=movie.clips.length;
-  $("mvApTxt").textContent=n
-    ?"New clip rendered. Approve it to stitch it onto your movie ("+n
-      +" clip"+(n===1?"":"s")+" so far)."
-    :"Clip rendered. Start a movie with it?";
-  $("mvApYes").innerHTML=n?"&#10003; Approve &amp; stitch":"&#10003; Start movie";
-  bar.style.display="flex";
+  $("mvApTxt").textContent=n?"Add last render to the movie?"
+    :"Start a movie with the last render?";
+  $("mvApYes").innerHTML=n?"&#10003; Add &amp; stitch":"&#10003; Start";
+  _dockTab="movie";
+  off.style.display="flex";
+  _dockUpdate();
 }
 function movieApprove(){
   const h=movie.pending;movie.pending=null;
-  const bar=$("movieApprove");if(bar)bar.style.display="none";
-  if(!h)return;
+  const off=$("mvOffer");if(off)off.style.display="none";
+  if(!h){_dockUpdate();return;}
   movieAdd(h,undefined,true);
   if(movie.clips.length>1)movieStitch();
   else toast("Movie started. Render or drag in more clips, then Stitch.");
 }
 function movieDismiss(){
   movie.pending=null;
-  const bar=$("movieApprove");if(bar)bar.style.display="none";
+  const off=$("mvOffer");if(off)off.style.display="none";
+  _dockUpdate();
 }
 
 /* ── instant preview: play the clips back to back, no stitching ── */
