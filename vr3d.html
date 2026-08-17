@@ -27,6 +27,7 @@
   .bar{height:8px;background:#18181B;border-radius:6px;overflow:hidden;margin:12px 0 6px}
   .fill{height:100%;width:0%;background:#E8A917;transition:width .3s}
   #stage{color:#A1A1AA;font-size:13px;min-height:1.3em}
+  #jobtime{font-family:'JetBrains Mono',monospace;font-size:12px;color:#A1A1AA}
   #err{color:#EF4444;font-size:13px}
   #cost{font-family:'JetBrains Mono',monospace;font-size:12px;color:#E8A917}
   video{width:100%;border-radius:10px;background:#000;display:block}
@@ -40,6 +41,7 @@
   .jrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .jrow .st{font-family:'JetBrains Mono',monospace;font-size:11px;color:#71717A}
   .jrow .st.done{color:#22C55E}.jrow .st.error{color:#EF4444}
+  .jrow .st.cancelled{color:#F97316}
   .jrow button{padding:6px 12px;font-size:11px}
 </style></head><body>
 <header>
@@ -72,10 +74,12 @@
     </div>
     <div class="row">
       <button id="go" disabled>Convert to 3D</button>
+      <button class="ghost" id="stop" style="display:none;color:#FCA5A5">Stop job</button>
       <span id="cost"></span>
     </div>
     <div class="bar"><div class="fill" id="upfill"></div></div>
-    <div id="stage"></div><div id="err"></div>
+    <div class="row" style="margin-top:0"><div id="stage" style="flex:1"></div><span id="jobtime"></span></div>
+    <div id="err"></div>
   </div>
 
   <div class="card" id="stepPlay" style="display:none">
@@ -83,12 +87,14 @@
     <div class="row">
       <button id="entervr">Enter VR</button>
       <a id="dl" download="missinglink_3d.mp4"><button class="ghost">Download</button></a>
+      <a id="dlleft" download="missinglink_left.mp4"><button class="ghost">Download left eye</button></a>
+      <a id="dlright" download="missinglink_right.mp4"><button class="ghost">Download right eye</button></a>
       <a id="dlyt" download="missinglink_3d_youtube.mkv"><button class="ghost">Download for YouTube 3D</button></a>
       <button class="ghost" id="depthBtn">Depth map</button>
       <span class="note" id="xrnote"></span>
     </div>
-    <p class="note">Two formats: full-SBS MP4 (VR headsets) and the YouTube MKV (same video,
-      tagged with stereo metadata YouTube detects). The 3D toggle appears only after YouTube FULLY processes the upload — allow up to a few hours. <b>Finished videos are kept for 72 hours</b> — download anything you want to keep.</p>
+    <p class="note">Downloads include full-SBS MP4, separate left- and right-eye MP4s, and a
+      YouTube MKV tagged with stereo metadata. The 3D toggle appears only after YouTube FULLY processes the upload — allow up to a few hours. <b>Finished videos are kept for 72 hours</b> — download anything you want to keep.</p>
   </div>
   <canvas id="xrcanvas" style="display:none"></canvas>
 </main>
@@ -136,8 +142,9 @@
 <script type="module">
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 const $=(id)=>document.getElementById(id);
-const UI_VERSION="v37";   // bump on EVERY html change
+const UI_VERSION="v38";   // bump on EVERY html change
 let file=null, importedKey=null, importedName=null, durationS=0;
+let activeJobId=null, watchSerial=0;
 
 (async()=>{   // layer versions in the header; mismatch shows red
   $("ver").textContent="ui "+UI_VERSION;
@@ -191,6 +198,36 @@ async function refreshTokens(){
   }catch{} }
 refreshTokens();
 
+const fmtTime=(seconds)=>{
+  const n=Math.max(0,Math.round(Number(seconds)||0));
+  const h=Math.floor(n/3600), m=Math.floor((n%3600)/60), s=n%60;
+  return h?`${h}h ${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s`:
+    m?`${m}m ${String(s).padStart(2,"0")}s`:`${s}s`;
+};
+function setJobActive(id){
+  activeJobId=id; $("go").disabled=true; $("stop").style.display=""; $("stop").disabled=false;
+}
+function clearJobActive(){
+  activeJobId=null; $("stop").style.display="none"; $("stop").disabled=false;
+  $("go").disabled=!(file||importedKey);
+}
+async function cancelJob(id){
+  if(!id||!confirm("Stop this job? Processing will end and its tokens will be refunded.")) return false;
+  $("stop").disabled=true; $("stage").textContent="Stopping job…";
+  const r=await fetch(`/api/vr3d/jobs/${id}/cancel`,{
+    method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:"{}"});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){ $("stop").disabled=false; throw new Error(d.error||`stop failed (${r.status})`); }
+  watchSerial++;
+  $("stage").textContent="Stopped by user";
+  $("jobtime").textContent="";
+  $("upfill").style.width="0%";
+  $("err").textContent=d.refunded_tokens?`${d.refunded_tokens.toLocaleString()} tokens refunded.`:"";
+  clearJobActive(); refreshTokens();
+  return true;
+}
+$("stop").onclick=async()=>{ try{ await cancelJob(activeJobId); }catch(e){ $("err").textContent=e.message; } };
+
 // resume any in-flight job after a page refresh
 (async()=>{
   try{
@@ -200,12 +237,13 @@ refreshTokens();
     const act=(d.jobs||[]).find(jb=>jb.status==="processing"||jb.status==="queued");
     if(act){
       videoName=act.name||videoName;
-      $("go").disabled=true;
+      setJobActive(act.id);
       $("stage").textContent=`Resumed job "${act.name||act.id}" — ${act.stage||act.status} (${Math.round(act.pct||0)}%)`;
+      $("jobtime").textContent=`Elapsed ${fmtTime(act.total_s)}`;
       $("upfill").style.width=(act.pct||0)+"%";
       try{ await watchJob(act.id); }
       catch(e){ $("err").textContent="Resumed job failed: "+e.message; }
-      $("go").disabled=false;
+      if(activeJobId===act.id) clearJobActive();
     }
   }catch{}
 })();
@@ -265,7 +303,7 @@ $("importBtn").onclick=async()=>{
 
 // ── convert flow ─────────────────────────────────────────────────
 $("go").onclick=async()=>{
-  $("go").disabled=true; $("err").textContent="";
+  $("go").disabled=true; $("err").textContent=""; $("jobtime").textContent="";
   try{
     let srcKey=importedKey;
     videoName=genName();
@@ -291,65 +329,42 @@ $("go").onclick=async()=>{
     let jd; try{ jd=await jr.json(); }catch{ throw new Error("server error ("+jr.status+") — try again"); }
     if(!jr.ok)throw new Error(jd.error||jr.status);
     refreshTokens();
-
-// resume any in-flight job after a page refresh
-(async()=>{
-  try{
-    const r=await fetch("/api/vr3d/jobs",{credentials:"include"});
-    if(!r.ok) return;
-    const d=await r.json();
-    const act=(d.jobs||[]).find(jb=>jb.status==="processing"||jb.status==="queued");
-    if(act){
-      videoName=act.name||videoName;
-      $("go").disabled=true;
-      $("stage").textContent=`Resumed job "${act.name||act.id}" — ${act.stage||act.status} (${Math.round(act.pct||0)}%)`;
-      $("upfill").style.width=(act.pct||0)+"%";
-      try{ await watchJob(act.id); }
-      catch(e){ $("err").textContent="Resumed job failed: "+e.message; }
-      $("go").disabled=false;
-    }
-  }catch{}
-})();
     await watchJob(jd.job_id);
-  }catch(e){ $("err").textContent="Error: "+e.message; $("go").disabled=false; refreshTokens();
-
-// resume any in-flight job after a page refresh
-(async()=>{
-  try{
-    const r=await fetch("/api/vr3d/jobs",{credentials:"include"});
-    if(!r.ok) return;
-    const d=await r.json();
-    const act=(d.jobs||[]).find(jb=>jb.status==="processing"||jb.status==="queued");
-    if(act){
-      videoName=act.name||videoName;
-      $("go").disabled=true;
-      $("stage").textContent=`Resumed job "${act.name||act.id}" — ${act.stage||act.status} (${Math.round(act.pct||0)}%)`;
-      $("upfill").style.width=(act.pct||0)+"%";
-      try{ await watchJob(act.id); }
-      catch(e){ $("err").textContent="Resumed job failed: "+e.message; }
-      $("go").disabled=false;
-    }
-  }catch{}
-})(); }
+  }catch(e){
+    $("err").textContent="Error: "+e.message; clearJobActive(); refreshTokens();
+  }
 };
 
 async function watchJob(id){
-  while(true){
-    await new Promise(r=>setTimeout(r,4000));
+  const serial=++watchSerial;
+  setJobActive(id);
+  while(serial===watchSerial){
     const sr=await fetch("/api/vr3d/jobs/"+id,{credentials:"include"});
     const s=await sr.json(); if(s.error)throw new Error(s.error);
     $("upfill").style.width=(s.pct||0)+"%";
     $("stage").textContent=`${s.status} — ${s.stage||""} (${(s.pct||0).toFixed(0)}%)`;
-    if(s.status==="done"){ window._doneStage=s.stage||""; break; }
+    $("jobtime").textContent=`${s.status==="done"?"Completed in":"Elapsed"} ${fmtTime(s.total_s)}`;
+    if(s.status==="done"){
+      loadResult(id,videoName);
+      $("stage").textContent="Done ✓"+(s.stage&&s.stage!=="done"?" — "+s.stage:"");
+      clearJobActive();
+      return;
+    }
+    if(s.status==="cancelled"){
+      $("stage").textContent="Stopped by user"; clearJobActive(); refreshTokens(); return;
+    }
     if(s.status==="error")throw new Error(s.error||"processing failed (tokens refunded)");
+    await new Promise(r=>setTimeout(r,4000));
   }
-  loadResult(id,videoName);
-  $("stage").textContent="Done ✓"+(window._doneStage&&window._doneStage!=="done"?" — "+window._doneStage:""); $("go").disabled=false;
 }
 function loadResult(id,nm){
   const u="/api/vr3d/out/"+id;
   $("vid").src=u; $("dl").href=u;
   $("dl").setAttribute("download",(nm||videoName||"missinglink_3d")+".mp4");
+  $("dlleft").href=u+"?fmt=left";
+  $("dlright").href=u+"?fmt=right";
+  $("dlleft").setAttribute("download",(nm||videoName||"missinglink_3d")+"_left.mp4");
+  $("dlright").setAttribute("download",(nm||videoName||"missinglink_3d")+"_right.mp4");
   $("dlyt").href=u+"?fmt=yt";
   $("depthBtn").onclick=()=>window.open(u+"?fmt=depth","_blank");
   $("dlyt").setAttribute("download",(nm||videoName||"missinglink_3d")+"_youtube.mkv");
@@ -371,8 +386,15 @@ $("histBtn").onclick=async()=>{
     row.innerHTML=`<img src="/api/vr3d/thumb/${jb.id}" onerror="this.style.display='none'"
         style="width:72px;height:40px;object-fit:cover;border-radius:6px;background:#18181B">
       <span class="nm"><b>${jb.name||jb.id}</b>
-        <span class="st">· ${dt} · ${jb.engine} · ${(jb.duration_s/60||0).toFixed(1)}min · ${jb.cost_tokens} tok</span></span>
+        <span class="st">· ${dt} · ${jb.engine} · ${(jb.duration_s/60||0).toFixed(1)}min · ${jb.cost_tokens} tok · ${jb.status==='done'?'completed in':'elapsed'} ${fmtTime(jb.total_s)}</span></span>
       <span class="st ${jb.status}">${jb.status}${jb.status==='processing'?` ${Math.round(jb.pct)}%`:''}</span>`;
+    if(jb.status==="processing"||jb.status==="queued"){
+      const stop=document.createElement("button"); stop.className="ghost"; stop.textContent="Stop";
+      stop.style.color="#FCA5A5";
+      stop.onclick=async()=>{ try{ if(await cancelJob(jb.id)) $("histBtn").click(); }
+        catch(e){ $("err").textContent=e.message; } };
+      row.appendChild(stop);
+    }
     if(jb.status==="done"){
       const b=document.createElement("button"); b.textContent="Watch";
       b.onclick=()=>{ $("histWrap").style.display="none"; loadResult(jb.id, jb.name); };
