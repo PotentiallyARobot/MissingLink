@@ -45,6 +45,7 @@
 <header>
   <b><span>◆</span> MissingLink</b><span style="color:#71717A">/ VR3D</span>
   <button class="ghost" id="histBtn" style="margin-left:18px">My 3D videos</button>
+  <span class="pill" id="ver" title="ui · api · gpu versions">v?</span>
   <span class="pill">tokens: <b id="tok">…</b></span>
 </header>
 <main>
@@ -96,8 +97,10 @@
   <div style="background:#111113;border:1px solid #27272A;border-radius:14px;width:min(460px,92vw);padding:20px">
     <div class="row" style="margin:0 0 8px"><b>Quality settings</b>
       <button class="ghost" style="margin-left:auto" id="setClose">Close</button></div>
-    <p class="note" style="margin-top:0">StereoCrafter / DepthCrafter knobs. Blank = script default. Best-quality recipe: depth steps 25, width Native, tiles Auto,
-      3D strength 16-20 (lower disparity = fewer artifacts). Higher = slower, same token price.</p>
+    <p class="note" style="margin-top:0">Blank = script default. Best-quality recipe: depth steps 25,
+      inpaint steps 16, width Native, tiles Auto, 3D strength 16-20
+      (lower disparity = fewer artifacts). Higher = slower, same token price.</p>
+    <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#E8A917;margin:12px 0 2px">DEPTHCRAFTER (depth estimation)</p>
     <div class="row"><label style="width:150px">Depth steps</label>
       <input type="number" id="s_depth_steps" min="2" max="25" placeholder="8 (25 = best)" style="width:80px;background:#18181B;border:1px solid #27272A;border-radius:8px;color:#E4E4E7;padding:8px"></div>
     <div class="row"><label style="width:150px">Guidance scale</label>
@@ -106,8 +109,12 @@
       <input type="number" id="s_window_size" min="16" max="110" placeholder="default" style="width:80px;background:#18181B;border:1px solid #27272A;border-radius:8px;color:#E4E4E7;padding:8px"></div>
     <div class="row"><label style="width:150px">Window overlap</label>
       <input type="number" id="s_overlap" min="0" max="50" placeholder="default" style="width:80px;background:#18181B;border:1px solid #27272A;border-radius:8px;color:#E4E4E7;padding:8px"></div>
+    <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#E8A917;margin:12px 0 2px">STEREOCRAFTER (inpainting)</p>
+    <div class="row"><label style="width:150px">Inpaint steps</label>
+      <input type="number" id="s_inpaint_steps" min="4" max="30" placeholder="8" style="width:80px;background:#18181B;border:1px solid #27272A;border-radius:8px;color:#E4E4E7;padding:8px"></div>
     <div class="row"><label style="width:150px">Inpaint tiles</label>
       <select id="s_tile_num"><option value="" selected>Auto (scales with resolution)</option><option value="1">1 (fastest)</option><option value="2">2 (Tencent reference)</option><option value="3">3 (2K+)</option></select></div>
+    <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#E8A917;margin:12px 0 2px">OUTPUT</p>
     <div class="row"><label style="width:150px">Eye source</label>
       <select id="s_eye_mode">
         <option value="hybrid" selected>Hybrid (native detail + SC only in occlusions)</option>
@@ -129,7 +136,19 @@
 <script type="module">
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 const $=(id)=>document.getElementById(id);
+const UI_VERSION="v37";   // bump on EVERY html change
 let file=null, importedKey=null, importedName=null, durationS=0;
+
+(async()=>{   // layer versions in the header; mismatch shows red
+  $("ver").textContent="ui "+UI_VERSION;
+  try{
+    const r=await fetch("/api/vr3d/health",{credentials:"include"});
+    const d=await r.json();
+    $("ver").textContent=`ui ${UI_VERSION} · api ${d.api||"?"} · gpu ${d.gpu||"?"}`;
+    const vs=[UI_VERSION,d.api,d.gpu].filter(Boolean);
+    if(new Set(vs).size>1) $("ver").style.color="#EF4444";
+  }catch{ $("ver").textContent=`ui ${UI_VERSION} · api ? · gpu ?`; }
+})();
 
 // ── unique video names: adjective-noun-#### ──────────────────────
 const ADJ=["amber","cobalt","crimson","dusk","ember","frost","golden","iron",
@@ -142,7 +161,7 @@ const genName=()=>`${ADJ[Math.random()*ADJ.length|0]}-${NOUN[Math.random()*NOUN.
 let videoName=genName();
 
 // ── quality settings (persisted) ─────────────────────────────────
-const SET_KEYS=["depth_steps","guidance","window_size","overlap","tile_num","out_width","eye_mode"];
+const SET_KEYS=["depth_steps","guidance","window_size","overlap","tile_num","out_width","eye_mode","inpaint_steps"];
 function loadSettings(){
   let s={}; try{ s=JSON.parse(localStorage.vr3dSettings||"{}"); }catch{}
   for(const k of SET_KEYS){ const el=$("s_"+k); if(el && s[k]!=null) el.value=s[k]; }
@@ -171,6 +190,25 @@ async function refreshTokens(){
     $("tok").textContent=(d.tokens??0).toLocaleString();
   }catch{} }
 refreshTokens();
+
+// resume any in-flight job after a page refresh
+(async()=>{
+  try{
+    const r=await fetch("/api/vr3d/jobs",{credentials:"include"});
+    if(!r.ok) return;
+    const d=await r.json();
+    const act=(d.jobs||[]).find(jb=>jb.status==="processing"||jb.status==="queued");
+    if(act){
+      videoName=act.name||videoName;
+      $("go").disabled=true;
+      $("stage").textContent=`Resumed job "${act.name||act.id}" — ${act.stage||act.status} (${Math.round(act.pct||0)}%)`;
+      $("upfill").style.width=(act.pct||0)+"%";
+      try{ await watchJob(act.id); }
+      catch(e){ $("err").textContent="Resumed job failed: "+e.message; }
+      $("go").disabled=false;
+    }
+  }catch{}
+})();
 
 // ── choose source: file drop / URL import ────────────────────────
 const drop=$("drop");
@@ -253,8 +291,46 @@ $("go").onclick=async()=>{
     let jd; try{ jd=await jr.json(); }catch{ throw new Error("server error ("+jr.status+") — try again"); }
     if(!jr.ok)throw new Error(jd.error||jr.status);
     refreshTokens();
+
+// resume any in-flight job after a page refresh
+(async()=>{
+  try{
+    const r=await fetch("/api/vr3d/jobs",{credentials:"include"});
+    if(!r.ok) return;
+    const d=await r.json();
+    const act=(d.jobs||[]).find(jb=>jb.status==="processing"||jb.status==="queued");
+    if(act){
+      videoName=act.name||videoName;
+      $("go").disabled=true;
+      $("stage").textContent=`Resumed job "${act.name||act.id}" — ${act.stage||act.status} (${Math.round(act.pct||0)}%)`;
+      $("upfill").style.width=(act.pct||0)+"%";
+      try{ await watchJob(act.id); }
+      catch(e){ $("err").textContent="Resumed job failed: "+e.message; }
+      $("go").disabled=false;
+    }
+  }catch{}
+})();
     await watchJob(jd.job_id);
-  }catch(e){ $("err").textContent="Error: "+e.message; $("go").disabled=false; refreshTokens(); }
+  }catch(e){ $("err").textContent="Error: "+e.message; $("go").disabled=false; refreshTokens();
+
+// resume any in-flight job after a page refresh
+(async()=>{
+  try{
+    const r=await fetch("/api/vr3d/jobs",{credentials:"include"});
+    if(!r.ok) return;
+    const d=await r.json();
+    const act=(d.jobs||[]).find(jb=>jb.status==="processing"||jb.status==="queued");
+    if(act){
+      videoName=act.name||videoName;
+      $("go").disabled=true;
+      $("stage").textContent=`Resumed job "${act.name||act.id}" — ${act.stage||act.status} (${Math.round(act.pct||0)}%)`;
+      $("upfill").style.width=(act.pct||0)+"%";
+      try{ await watchJob(act.id); }
+      catch(e){ $("err").textContent="Resumed job failed: "+e.message; }
+      $("go").disabled=false;
+    }
+  }catch{}
+})(); }
 };
 
 async function watchJob(id){
