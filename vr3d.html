@@ -95,8 +95,8 @@
   <div style="background:#111113;border:1px solid #27272A;border-radius:14px;width:min(460px,92vw);padding:20px">
     <div class="row" style="margin:0 0 8px"><b>Quality settings</b>
       <button class="ghost" style="margin-left:auto" id="setClose">Close</button></div>
-    <p class="note" style="margin-top:0">StereoCrafter / DepthCrafter knobs. Blank = script default. Best-quality recipe: depth steps 25, tiles 2,
-      width 1280, 3D strength ~20. Higher = slower, same token price.</p>
+    <p class="note" style="margin-top:0">StereoCrafter / DepthCrafter knobs. Blank = script default. Best-quality recipe: depth steps 25, width Native, tiles Auto,
+      3D strength 16-20 (lower disparity = fewer artifacts). Higher = slower, same token price.</p>
     <div class="row"><label style="width:150px">Depth steps</label>
       <input type="number" id="s_depth_steps" min="2" max="25" placeholder="8 (25 = best)" style="width:80px;background:#18181B;border:1px solid #27272A;border-radius:8px;color:#E4E4E7;padding:8px"></div>
     <div class="row"><label style="width:150px">Guidance scale</label>
@@ -106,7 +106,7 @@
     <div class="row"><label style="width:150px">Window overlap</label>
       <input type="number" id="s_overlap" min="0" max="50" placeholder="default" style="width:80px;background:#18181B;border:1px solid #27272A;border-radius:8px;color:#E4E4E7;padding:8px"></div>
     <div class="row"><label style="width:150px">Inpaint tiles</label>
-      <select id="s_tile_num"><option value="1">1 (fastest)</option><option value="2" selected>2 (Tencent reference, sharper)</option></select></div>
+      <select id="s_tile_num"><option value="" selected>Auto (scales with resolution)</option><option value="1">1 (fastest)</option><option value="2">2 (Tencent reference)</option><option value="3">3 (2K+)</option></select></div>
     <div class="row"><label style="width:150px">Eye source</label>
       <select id="s_eye_mode">
         <option value="hybrid" selected>Hybrid (native detail + SC only in occlusions)</option>
@@ -114,7 +114,7 @@
         <option value="pure_sc">Pure StereoCrafter (matched eyes, softest)</option>
       </select></div>
     <div class="row"><label style="width:150px">Output width</label>
-      <select id="s_out_width"><option value="768">768 (faster)</option><option value="1024" selected>1024</option><option value="1280">1280 (slowest)</option></select></div>
+      <select id="s_out_width"><option value="768">768 (fastest)</option><option value="1024">1024</option><option value="1280">1280</option><option value="0" selected>Native (source resolution)</option></select></div>
     <div class="row"><button id="setSave">Save</button>
       <button class="ghost" id="setReset">Reset to defaults</button></div>
   </div>
@@ -263,10 +263,11 @@ async function watchJob(id){
     const s=await sr.json(); if(s.error)throw new Error(s.error);
     $("upfill").style.width=(s.pct||0)+"%";
     $("stage").textContent=`${s.status} — ${s.stage||""} (${(s.pct||0).toFixed(0)}%)`;
-    if(s.status==="done")break;
+    if(s.status==="done"){ window._doneStage=s.stage||""; break; }
     if(s.status==="error")throw new Error(s.error||"processing failed (tokens refunded)");
   }
-  loadResult(id,videoName); $("stage").textContent="Done ✓"; $("go").disabled=false;
+  loadResult(id,videoName);
+  $("stage").textContent="Done ✓"+(window._doneStage&&window._doneStage!=="done"?" — "+window._doneStage:""); $("go").disabled=false;
 }
 function loadResult(id,nm){
   const u="/api/vr3d/out/"+id;
