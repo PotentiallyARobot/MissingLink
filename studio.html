@@ -14652,10 +14652,14 @@ async function toggleShareJob(jobId, makePublic, payload){
         const d = await r.json();
         if (!d.ok) {
             log(`Share toggle failed: ${d.error || 'unknown'}`, 'error');
-            showNotif(makePublic
-                ? `Couldn't share this image (${d.error || 'unknown error'}).`
-                : `Couldn't unshare this image (${d.error || 'unknown error'}).`,
-                'error');
+            if (d.error === 'nsfw_not_shareable') {
+                showNotif("NSFW content can't be shared to the gallery.", 'error');
+            } else {
+                showNotif(makePublic
+                    ? `Couldn't share this image (${d.error || 'unknown error'}).`
+                    : `Couldn't unshare this image (${d.error || 'unknown error'}).`,
+                    'error');
+            }
             return null;
         }
         // Mirror the change in our local history cache so the history
@@ -26604,19 +26608,6 @@ function openFilterPopover(surface, anchorEl){
                 <button class="gfp-option" data-val="agent">Agent</button>
             </div>
         </div>
-        ${(_user && _user.nsfw_enabled) ? `
-        <div class="gfp-section">
-            <span class="gfp-label">Orientation</span>
-            <div class="gfp-options" data-key="orientation">
-                <button class="gfp-option" data-val="">Any</button>
-                <button class="gfp-option" data-val="straight">Straight</button>
-                <button class="gfp-option" data-val="gay">Gay</button>
-                <button class="gfp-option" data-val="lesbian">Lesbian</button>
-                <button class="gfp-option" data-val="trans">Trans</button>
-                <button class="gfp-option" data-val="bi">Bi</button>
-                <button class="gfp-option" data-val="queer">Queer</button>
-            </div>
-        </div>` : ''}
         ${_user ? `
         <div class="gfp-section">
             <span class="gfp-label">Author</span>
@@ -26633,16 +26624,6 @@ function openFilterPopover(surface, anchorEl){
         </div>
         <div class="gfp-section">
             <span class="gfp-label">Content rating</span>
-            <div class="gfp-toggle-row">
-                <div>
-                    <div class="gfp-toggle-label">Show NSFW content</div>
-                    <div class="gfp-toggle-sub">Reveal sexually-flagged images (saved to profile)</div>
-                </div>
-                <label class="pref-switch">
-                    <input type="checkbox" id="gfpNsfwToggle" ${_user.nsfw_enabled ? 'checked' : ''}>
-                    <span class="pref-switch-track"></span>
-                </label>
-            </div>
             <div class="gfp-toggle-row">
                 <div>
                     <div class="gfp-toggle-label">Show violence / gore</div>
@@ -26689,20 +26670,11 @@ function openFilterPopover(surface, anchorEl){
     if (mineToggle) {
         mineToggle.onchange = () => { _filterPopoverDraft.mine = mineToggle.checked ? 1 : 0; };
     }
-    // NSFW toggle is a profile preference — flipping it goes straight
-    // to toggleNsfwPref so it persists. The popover doesn't include the
-    // NSFW state in the draft; the chip below the search shows the
-    // current state.
-    const nsfwToggle = pop.querySelector('#gfpNsfwToggle');
-    if (nsfwToggle) {
-        nsfwToggle.onchange = () => {
-            toggleNsfwPref(nsfwToggle.checked);
-            // Brief delay then close so the user sees the visual ack.
-            setTimeout(() => closeFilterPopover(), 200);
-        };
-    }
-    // Same pattern for the violence preference — independent axis from
-    // NSFW, persisted to studio_users.violence_enabled.
+    // Violence toggle is a profile preference — flipping it goes straight
+    // to toggleViolencePref so it persists to studio_users.violence_enabled.
+    // (The NSFW toggle and orientation filter were removed from this
+    // popover: NSFW content is no longer shareable to the gallery, so
+    // there is nothing for them to reveal or filter.)
     const violenceToggle = pop.querySelector('#gfpViolenceToggle');
     if (violenceToggle) {
         violenceToggle.onchange = () => {
