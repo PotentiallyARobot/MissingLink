@@ -24280,7 +24280,13 @@ const AGENT_TOOL_HANDLERS = {
                 body: JSON.stringify({ prompt: args.prompt, image_id: args.image_id, source: 'agent' }),
             }, 30_000);
             const d = await r.json();
-            if (!d.ok) throw new Error(d.detail || d.error || 'qwen_submit_failed');
+            if (!d.ok) {
+                // Surface the adult-content gates the backend now runs on
+                // this route (paywall toast + UI sync for the paid gate; the
+                // readable message either way instead of a bare error code).
+                if (typeof handleNsfwPaywall === 'function') handleNsfwPaywall(d);
+                throw new Error(d.message || d.detail || d.error || 'qwen_submit_failed');
+            }
             const jobId = d.job_id;
             if (!jobId) throw new Error('no_job_id');
             if (d.tokens_remaining !== undefined && _user) {
