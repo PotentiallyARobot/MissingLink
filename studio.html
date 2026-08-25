@@ -6711,6 +6711,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <button class="modal-close" onclick="closeBuyModal()">×</button>
         <div class="popup-icon">🪙</div>
         <h2>Get More Tokens</h2>
+        <div id="buyPaywallNote" style="display:none;margin:0 0 14px;padding:10px 14px;border:1px solid var(--gold);border-radius:8px;background:linear-gradient(135deg,var(--gold-dim) 0%,transparent 100%);font-size:12px;line-height:1.5;color:var(--text)">
+            <b style="color:var(--gold)">🔞 Adult content is for paying members.</b><br>
+            Buy a token pack or subscribe below and it unlocks instantly. Everything else on MissingLink stays free.
+        </div>
         <p class="popup-balance">Current balance: <b id="buyBalance">0</b> tokens</p>
         <div class="popup-option" onclick="doBuyTokens()">
             <div class="popup-amount">~100 IMAGES</div>
@@ -8413,6 +8417,12 @@ function handleNsfwPaywall(d){
         'error'
     );
     if (typeof syncNsfwPaywallUi === 'function') syncNsfwPaywallUi();
+    // Take them straight to the fix: open the purchase modal with the
+    // paywall banner, where "Buy tokens" and "Subscribe" both go directly
+    // to Stripe Checkout (doBuyTokens / doSubscribe). Anonymous users get
+    // routed to sign-in by doSubscribe itself. Signed-in free-TRIAL users
+    // see the modal too — buying a pack mid-trial unlocks immediately.
+    try { showBuyModal({ paywall: true }); } catch (e) { /* toast already shown */ }
     return true;
 }
 
@@ -9161,7 +9171,13 @@ async function toggleViolencePref(checked){
 }
 
 // ── Buy modals ────────────────────────────────────
-function showBuyModal(){
+function showBuyModal(opts){
+    // opts.paywall === true → opened because an adult-content generation was
+    // refused for lack of paid entitlement. Shows the contextual banner so
+    // the user knows exactly why this popped and what buying unlocks.
+    // All other callers (token counter, upsells) leave the banner hidden.
+    const note = $('buyPaywallNote');
+    if (note) note.style.display = (opts && opts.paywall) ? '' : 'none';
     if(_user) $('buyBalance').textContent = _user.tokens;
     // Toggle Subscribe vs. Manage based on the user's current subscription
     // state (set by /auth/me). 'active' means they're paid through the
@@ -16048,7 +16064,16 @@ async function doGenerate(){
     //
     // We only call warmup for Qwen-driven jobs (camera/edit). Create
     // mode uses gpt-image-2 directly which doesn't need our GPU warm.
-    if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') {
+    //
+    // PAYWALL-AWARE: this speculative pre-submit wake fires only for
+    // accounts with paid NSFW entitlement. A free account's request may
+    // be refused by the server's adult-content gate, and a cold boot
+    // costs real GPU money — so for unpaid users we let the SERVER wake
+    // Modal after the job actually passes the gates and enqueues (it
+    // already pings the health endpoint on every accepted job). Refused
+    // requests then never pay for a boot; accepted free jobs just start
+    // the boot a moment later.
+    if ((_gpuState.state === 'sleeping' || _gpuState.state === 'cold') && _hasNsfwEntitlement) {
         warmupGpu();
     }
 
@@ -16494,7 +16519,10 @@ async function generatePanorama(){
     }
 
     _switchToStudioForOutput();
-    if (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') { warmupGpu(); }
+    // Paywall-aware pre-wake (see the generate handler): unpaid accounts
+    // rely on the server-side wake that fires once the job is accepted,
+    // so a gate-refused request never triggers a paid cold boot.
+    if ((_gpuState.state === 'sleeping' || _gpuState.state === 'cold') && _hasNsfwEntitlement) { warmupGpu(); }
 
     // Pano runs at 2048×1024. CFG / steps / Lightning come from the SELECTED
     // PRESET, not the shared sliders (which are hidden in 360° and never
@@ -19639,7 +19667,10 @@ async function _generateBatchEditsInner(){
 
     // GPU wake. Qwen batches warm the Qwen container here; SDXL batches skip it
     // (the SDXL endpoint wakes its own T4 on every enqueue, server-side).
-    if (!useSdxl && !useGpt && (_gpuState.state === 'sleeping' || _gpuState.state === 'cold')) {
+    // Paywall-aware (see the generate handler): unpaid accounts skip the
+    // speculative wake — the server wakes Modal when the first batch shot
+    // passes the gates and enqueues, so refused batches cost no boot.
+    if (!useSdxl && !useGpt && (_gpuState.state === 'sleeping' || _gpuState.state === 'cold') && _hasNsfwEntitlement) {
         warmupGpu();
     }
 
