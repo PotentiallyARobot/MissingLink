@@ -7974,10 +7974,8 @@ function requireLogin(){
 //   - Otherwise: fire warmup.
 //
 // The worker now actually wakes Modal (hits the GPU's /health endpoint).
-// If the container was scaled down (30 min idle), the user gets a
-// one-time thank-you bonus of 300 tokens. We surface that with a modal
-// so the user understands why their balance jumped — silent token
-// changes feel buggy.
+// (The old one-time cold-boot token bonus has been removed server-side;
+// warmup only wakes the GPU and reports state now.)
 async function warmupGpu(){
     // Use the same READY_STALE_S threshold the overlay does — within
     // that window the consumer thread is heartbeating, which can only
@@ -8048,13 +8046,10 @@ async function warmupGpu(){
         const r = await fetchT(`${API}/api/studio/warmup`,{method:'POST'},8000);
         const d = await r.json().catch(() => ({}));
         if (!d.ok) return;
-        // Reflect the new token balance in the UI immediately. Bonus
-        // grants happen server-side; without this the header still
-        // shows the old number until the next /status poll lands.
-        // The startup overlay is the ONLY user-facing signal during
-        // wake-up — no toasts, no modals, no log entries. The token
-        // counter updating silently is sufficient acknowledgement of
-        // any bonus grant.
+        // Reflect the server-authoritative token balance in the UI
+        // immediately; without this the header shows the old number
+        // until the next /status poll lands. (No bonus grants happen
+        // here anymore — the cold-boot bonus was removed.)
         if (d.tokens !== undefined && _user) {
             _user.tokens = d.tokens;
             const tc = $('tokenCount');
@@ -10161,27 +10156,12 @@ function _renderStartupOverlay_DISABLED(){
     if (titleEl) {
         titleEl.textContent = _gs.state === 'cold' ? 'Starting GPU…' : 'GPU warming up…';
     }
-    // Apology line. Only the token phrase is emphasised (yellow + bold);
-    // the rest of the line is normal weight. Shown once the user has
-    // received the one-time cold-boot token grant (coldboot_bonus_at set
-    // by the grant endpoint or carried in from /auth/me on a later visit).
-    const _granted = !!(_user && _user.coldboot_bonus_at);
-    if (bonusEl) {
-        bonusEl.style.display = _granted ? '' : 'none';
-        if (_granted) {
-            // Fixed string, no user input, so innerHTML is safe here.
-            // Only the span is styled; the lead-in sentence stays plain.
-            bonusEl.innerHTML = "Cold-boot takes about 90 seconds the first time. Apologies for the wait, we've "
-                + "<span style=\"color:var(--gold);font-weight:700\">added 500 tokens to your account.</span>";
-        }
-    }
+    // Cold-boot bonus removed: the overlay never shows a token-grant
+    // apology line anymore, for anyone — including users who received the
+    // historical grant.
+    if (bonusEl) bonusEl.style.display = 'none';
     if (subEl) {
-        // When the bold line is shown it already carries the "~90 seconds"
-        // message, so the sub-text trims to just the tip to avoid saying
-        // it twice. When it isn't shown, the sub keeps the full message.
-        subEl.textContent = _granted
-            ? "You can prepare your prompt and settings while this runs."
-            : "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
+        subEl.textContent = "Cold-boot takes about 90 seconds the first time. You can prepare your prompt and settings while this runs.";
     }
 }
 
