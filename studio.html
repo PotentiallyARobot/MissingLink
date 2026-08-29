@@ -19682,6 +19682,11 @@ async function _generateBatchEditsInner(){
     const cfg = parseFloat($('rngCfg').value);
     const steps = parseInt($('rngSteps').value);
     const lightning = parseFloat($('rngLoraLightning').value);
+    // Sidebar output size. When the user has set Width/Height they apply
+    // to EVERY shot in the batch; empty ("auto") falls back to each
+    // input's own dimensions (see the payload below).
+    const batchW = parseInt($('inpWidth').value) || 0;
+    const batchH = parseInt($('inpHeight').value) || 0;
     // No angles LoRA in edit mode — irrelevant for batch edit
     const batchId = `bedit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -19801,10 +19806,15 @@ async function _generateBatchEditsInner(){
                 prompt: shotPrompt, negative_prompt: negative, seed,
                 guidance_scale: cfg, inference_steps: steps,
                 ...loraPayload('edit'),
-                // Preserve the input's own dimensions per-job so each output
-                // matches its source. If the inputs vary in aspect ratio, this
-                // avoids stretching them all into one fixed shape.
-                width: inp.w || 0, height: inp.h || 0,
+                // Output size. A Width/Height the user set in the sidebar is
+                // an explicit instruction and applies to every shot in the
+                // batch — this used to be silently ignored in favor of each
+                // input's own dimensions, which made the size fields look
+                // broken in batch mode. Only when the fields are empty
+                // ("auto") do we preserve each input's own dimensions, so
+                // mixed-aspect batches aren't stretched into one shape.
+                width: (batchW > 0 ? batchW : (inp.w || 0)),
+                height: (batchH > 0 ? batchH : (inp.h || 0)),
                 batch_id: batchId,
             };
         }
