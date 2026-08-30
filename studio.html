@@ -12666,7 +12666,7 @@ async function submitVideo(_attested){
                 else { $('vmStatus').textContent = 'Cancelled — the video was not generated.'; }
             }
             else if (d && d.error === 'nsfw_video_disabled') $('vmStatus').textContent = 'Adult video generation is currently disabled on this site.';
-            else if (d && d.error === 'content_blocked') $('vmStatus').textContent = 'This request isn’t permitted.';
+            else if (d && d.error === 'content_blocked') $('vmStatus').textContent = (d.message || 'This request isn’t permitted.');
             else if (d && d.error === 'nsfw_requires_paid') $('vmStatus').textContent = (d.message || 'Adult content requires an active subscription or a token purchase.');
             else if (d && d.error === 'moderation_unavailable') $('vmStatus').textContent = 'Content screening is temporarily unavailable — please try again shortly.';
             else $('vmStatus').textContent = 'Submit failed' + (d && d.detail ? `: ${d.detail}` : '.');
@@ -16212,7 +16212,10 @@ async function doGenerate(){
             else if (r.status === 402) { showBuyModal(); }
             else if (r.status === 429) { showNotif('Max 3 jobs queued. Wait for one to finish or cancel one.'); }
             else if (d.error === 'content_blocked') {
-                showNotif('This request was blocked: content involving minors is not allowed. Adult content is fine, but this was flagged and cannot be generated.', 'error');
+                // Server message wins: this code now covers BOTH the minors
+                // screen and the adult age-margin gate, and each sends its
+                // own accurate explanation.
+                showNotif(d.message || 'This request was blocked: content involving minors is not allowed. Adult content is fine, but this was flagged and cannot be generated.', 'error');
             }
             else if (d.error === 'moderation_unavailable') {
                 showNotif('Safety check is temporarily unavailable, so this edit was not run. Please try again in a moment.' + (d.reason ? ` (${d.reason})` : ''), 'error');
@@ -19860,7 +19863,7 @@ async function _generateBatchEditsInner(){
                     continue;
                 }
                 if (d.error === 'content_blocked') {
-                    showNotif(`'${inp.fname}' was blocked: content involving minors is not allowed.`, 'error');
+                    showNotif(d.message ? `'${inp.fname}': ${d.message}` : `'${inp.fname}' was blocked: content involving minors is not allowed.`, 'error');
                     _activeBatch.shots[i].status = 'error';
                     renderBatchGrid();
                     continue;
@@ -20417,7 +20420,7 @@ async function _generateAngleBatchInner(angles, btnDefaultText, btn){
                 }
                 log(`Shot '${shot.label}' failed: ${d.error || 'unknown'}`, 'error');
                 if (d.error === 'content_blocked') {
-                    showNotif('This request was blocked: content involving minors is not allowed.', 'error');
+                    showNotif(d.message || 'This request was blocked: content involving minors is not allowed.', 'error');
                 } else if (d.error === 'moderation_unavailable') {
                     showNotif('Safety check temporarily unavailable — not run. Try again shortly.', 'error');
                 }
