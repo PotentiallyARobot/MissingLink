@@ -267,7 +267,6 @@
   .copyr{ position:fixed;right:8px;bottom:6px;z-index:5;font-size:9px;line-height:1;color:var(--faint);opacity:.32;pointer-events:none;letter-spacing:.02em;user-select:none }
   body.chat .copyr{ display:none }
 </style>
-<script src="https://accounts.google.com/gsi/client" async></script>
 </head>
 <body>
 
@@ -454,25 +453,28 @@
       .catch(function(){ pubList.innerHTML='<div class="pub-empty">Public boards aren’t enabled on this server yet.</div>'; });
   }
   function fetchMine(){
-    var email=(currentUser&&currentUser.email)||"";
-    if(!email){ pubList.innerHTML='<div class="pub-empty">Sign in to see your rooms.</div>'; return; }
-    var list=[]; try{ list=JSON.parse(localStorage.getItem("myrooms:"+email)||"[]"); }catch(e){}
-    if(!list.length){ pubList.innerHTML='<div class="pub-empty">No rooms yet.<br>Generate a bridge while signed in and it’ll show up here.</div>'; return; }
-    pubList.innerHTML="";
-    list.forEach(function(token){
-      if(!token) return;
-      var card=document.createElement("div"); card.className="pub-card";
-      var body=document.createElement("div"); body.className="pc-body";
-      var t=document.createElement("div"); t.className="pc-topic untitled"; t.textContent="Room "+token.slice(0,8)+"…";
-      var meta=document.createElement("div"); meta.className="pc-meta"; meta.textContent="your room";
-      body.appendChild(t); body.appendChild(meta);
-      var join=document.createElement("button"); join.className="btn"; join.textContent="Open"; join.setAttribute("data-token",token);
-      card.appendChild(body); card.appendChild(join); pubList.appendChild(card);
-      // best-effort topic
-      fetch(ORIGIN+"/api/bridge/"+encodeURIComponent(token)+"/meta",{headers:{accept:"application/json"}})
-        .then(function(r){ return r.ok?r.json():null; })
-        .then(function(d){ if(d&&d.topic){ t.textContent=d.topic; t.className="pc-topic"; } }).catch(function(){});
-    });
+    if(!currentUser){ pubList.innerHTML='<div class="pub-empty">Sign in to see your rooms.</div>'; return; }
+    pubList.innerHTML='<div class="pub-empty">Loading…</div>';
+    fetch(ORIGIN+"/api/bridge/my-rooms",{credentials:"include",headers:{accept:"application/json"}})
+      .then(function(r){ if(r.status===401) throw new Error("401"); if(!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(d){ var rooms=(d&&d.rooms)||[];
+        if(!rooms.length){ pubList.innerHTML='<div class="pub-empty">No rooms yet.<br>Generate a bridge while signed in and it’ll show up here.</div>'; return; }
+        pubList.innerHTML="";
+        rooms.forEach(function(b){ var token=b.token; if(!token) return;
+          var card=document.createElement("div"); card.className="pub-card";
+          var body=document.createElement("div"); body.className="pc-body";
+          var topic=(b.topic||"").trim();
+          var t=document.createElement("div"); t.className="pc-topic"+(topic?"":" untitled"); t.textContent=topic||"Untitled room";
+          var meta=document.createElement("div"); meta.className="pc-meta";
+          var parts=[]; if(b.messages!=null) parts.push(b.messages+(b.messages===1?" message":" messages"));
+          if(b.last_active) parts.push("active "+relPublic(b.last_active));
+          meta.textContent=parts.join(" · ")||"your room";
+          body.appendChild(t); body.appendChild(meta);
+          var join=document.createElement("button"); join.className="btn"; join.textContent="Open"; join.setAttribute("data-token",token);
+          card.appendChild(body); card.appendChild(join); pubList.appendChild(card);
+        });
+      })
+      .catch(function(e){ pubList.innerHTML = (e&&e.message==="401") ? '<div class="pub-empty">Sign in to see your rooms.</div>' : '<div class="pub-empty">Couldn’t load your rooms.</div>'; });
   }
   var boardsMode="public";
   function openBoards(mode){ boardsMode=mode||"public"; el("pubTitle").textContent=boardsMode==="mine"?"My rooms":"Public boards";
@@ -484,56 +486,25 @@
   el("publicRefresh").addEventListener("click", function(){ boardsMode==="mine"?fetchMine():fetchPublic(); });
   document.addEventListener("keydown", function(e){ if(e.key==="Escape") closePublic(); });
 
-  // ---------- accounts: Google sign-in + upload allowlist ----------
-  // Set this to your Google OAuth Web client ID (Google Cloud Console → Credentials).
-  var GOOGLE_CLIENT_ID = "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
-  // Only these signed-in emails may upload files while uploads are otherwise "coming soon".
+  // ---------- accounts: MissingLink (Studio) session ----------
+  // Reuses your existing Google login. Sign-in redirects through
+  // /auth/google?return=<here> and lands back on the bridge; the studio_token
+  // cookie is the session. currentUser comes from /api/bridge/me.
   var UPLOAD_ALLOWLIST = ["ace0278@gmail.com"];
-  var currentUser=null; try{ var _su=localStorage.getItem("bridge_user"); if(_su) currentUser=JSON.parse(_su); }catch(e){}
+  var currentUser=null;
   function uploadsEnabled(){ return !!(currentUser && UPLOAD_ALLOWLIST.indexOf(String(currentUser.email||"").toLowerCase())>=0); }
   function uinitials(u){ var n=(u&&(u.name||u.email)||"?").trim(); return n.slice(0,1).toUpperCase(); }
+  function esc2(s){ return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
 
-  function decodeJwt(t){ try{ var p=t.split(".")[1].replace(/-/g,"+").replace(/_/g,"/"); return JSON.parse(decodeURIComponent(escape(atob(p)))); }catch(e){ return null; } }
-  function onGoogleCredential(resp){ var p=decodeJwt(resp&&resp.credential); if(!p||!p.email) return;
-    currentUser={ email:String(p.email).toLowerCase(), name:p.name||p.given_name||"", picture:p.picture||"" };
-    try{ localStorage.setItem("bridge_user", JSON.stringify(currentUser)); }catch(e){} onAuthChange(); closeAcct(); }
-  var googleReady=false;
-  function initGoogle(){ if(googleReady) return true;
-    if(!window.google||!google.accounts||!google.accounts.id) return false;
-    if(GOOGLE_CLIENT_ID.indexOf("YOUR_GOOGLE")===0) return false;
-    google.accounts.id.initialize({ client_id:GOOGLE_CLIENT_ID, callback:onGoogleCredential });
-    googleReady=true; return true; }
-  function renderGoogleButton(){ var host=el("gbtn"), note=el("authNote"); if(!host) return;
-    host.innerHTML="";
-    if(initGoogle()){ try{ google.accounts.id.renderButton(host,{theme:"outline",size:"large",text:"continue_with",shape:"pill"}); if(note) note.textContent=""; }catch(e){ if(note) note.textContent="Google sign-in failed to load."; } }
-    else { if(note) note.textContent = (GOOGLE_CLIENT_ID.indexOf("YOUR_GOOGLE")===0) ? "Sign-in isn’t configured yet — set GOOGLE_CLIENT_ID in this file." : "Loading Google… reopen this menu in a moment."; }
-  }
-  function signOut(){ currentUser=null; try{ localStorage.removeItem("bridge_user"); }catch(e){} try{ if(window.google&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect(); }catch(e){} onAuthChange(); closeAcct(); }
-
-  // Direct popup sign-in: clicking "Sign in" opens Google's account chooser.
-  var tokenClient=null;
-  function startGoogleSignIn(){
-    if(currentUser) return;
-    if(!window.google||!google.accounts||!google.accounts.oauth2||GOOGLE_CLIENT_ID.indexOf("YOUR_GOOGLE")===0){ openAcct(); return; }
-    try{
-      if(!tokenClient){
-        tokenClient=google.accounts.oauth2.initTokenClient({
-          client_id:GOOGLE_CLIENT_ID, scope:"openid email profile",
-          callback:function(resp){
-            if(!resp||!resp.access_token) return;
-            fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})
-              .then(function(r){ return r.json(); })
-              .then(function(p){ if(!p||!p.email) return;
-                currentUser={ email:String(p.email).toLowerCase(), name:p.name||p.given_name||"", picture:p.picture||"" };
-                try{ localStorage.setItem("bridge_user", JSON.stringify(currentUser)); }catch(e){}
-                onAuthChange(); closeAcct(); })
-              .catch(function(){});
-          }
-        });
-      }
-      tokenClient.requestAccessToken();
-    }catch(e){ openAcct(); }
-  }
+  // Sign in → MissingLink Google login, returning to this bridge page.
+  function goSignIn(){ location.href = ORIGIN + "/auth/google?return=" + encodeURIComponent(location.pathname + location.search); }
+  function signOut(){ fetch(ORIGIN+"/auth/logout",{method:"POST",credentials:"include"}).catch(function(){}).then(function(){ currentUser=null; onAuthChange(); closeAcct(); }); }
+  function loadMe(){ fetch(ORIGIN+"/api/bridge/me",{credentials:"include",headers:{accept:"application/json"}})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ currentUser=(d&&d.user&&d.user.email)?{ email:String(d.user.email).toLowerCase(), name:d.user.name||"", picture:d.user.picture||"" }:null; onAuthChange();
+        if(currentUser && typeof TOKEN!=="undefined" && /^[A-Za-z0-9_-]{20,64}$/.test(TOKEN||"")) claimRoom(TOKEN); })
+      .catch(function(){ currentUser=null; onAuthChange(); }); }
+  function claimRoom(token){ fetch(ORIGIN+"/api/bridge/"+encodeURIComponent(token)+"/claim",{method:"POST",credentials:"include"}).catch(function(){}); }
 
   function setUav(elm,u){ if(!elm) return; if(u&&u.picture){ elm.innerHTML='<img alt="" referrerpolicy="no-referrer" src="'+u.picture+'">'; } else { elm.textContent=uinitials(u); } }
   function onAuthChange(){
@@ -545,28 +516,25 @@
     if(so) so.style.display = signedIn?"none":"block";
     if(si) si.style.display = signedIn?"block":"none";
     if(signedIn){ setUav(el("acctAv2"),currentUser); if(el("acctName")) el("acctName").textContent=currentUser.name||"—"; if(el("acctEmail")) el("acctEmail").textContent=currentUser.email; }
-    var ha=el("homeAuth"); if(ha) ha.innerHTML = signedIn ? ('Signed in as <strong>'+(currentUser.name||currentUser.email)+'</strong> · <button id="myRoomsHome" type="button">My rooms</button> · <button id="signOutHome" type="button">Sign out</button>') : '<button id="signInHome" type="button">Sign in</button> to create rooms under your account.';
-    // (re)bind splash auth buttons since we just rewrote them
-    bindEl("signInHome","click",startGoogleSignIn); bindEl("signOutHome","click",signOut); bindEl("myRoomsHome","click",function(){ openBoards("mine"); });
+    var ha=el("homeAuth"); if(ha) ha.innerHTML = signedIn ? ('Signed in as <strong>'+esc2(currentUser.name||currentUser.email)+'</strong> · <button id="myRoomsHome" type="button">My rooms</button> · <button id="signOutHome" type="button">Sign out</button>') : '<button id="signInHome" type="button">Sign in</button> to create rooms under your account.';
+    bindEl("signInHome","click",goSignIn); bindEl("signOutHome","click",signOut); bindEl("myRoomsHome","click",function(){ openBoards("mine"); });
     if(typeof refreshUploadUI==="function") refreshUploadUI();
-    if(signedIn && typeof rememberRoom==="function" && typeof TOKEN!=="undefined") rememberRoom(TOKEN);
     if(signedIn && !nameSetByUser && typeof nameIn!=="undefined" && nameIn && !nameIn.value){ nameIn.value=currentUser.name||""; if(typeof evalIdentity==="function") evalIdentity(); }
   }
   function bindEl(id,ev,fn){ var e=el(id); if(e && !e._b){ e.addEventListener(ev,fn); e._b=1; } }
 
-  // account popover
+  // account popover (signed-in menu). Signed-out click goes straight to login.
   var acctBtn=el("acctBtn"), acctPop=el("acctPop");
-  function openAcct(){ acctPop.classList.add("open"); acctBtn.setAttribute("aria-expanded",true); if(!currentUser) renderGoogleButton(); }
+  function openAcct(){ acctPop.classList.add("open"); acctBtn.setAttribute("aria-expanded",true); }
   function closeAcct(){ acctPop.classList.remove("open"); acctBtn.setAttribute("aria-expanded",false); }
-  acctBtn.addEventListener("click", function(e){ e.stopPropagation(); if(!currentUser){ startGoogleSignIn(); return; } acctPop.classList.contains("open")?closeAcct():openAcct(); });
+  acctBtn.addEventListener("click", function(e){ e.stopPropagation(); if(!currentUser){ goSignIn(); return; } acctPop.classList.contains("open")?closeAcct():openAcct(); });
   document.addEventListener("click", function(e){ if(!acctPop.contains(e.target) && e.target!==acctBtn && !acctBtn.contains(e.target)) closeAcct(); });
-  bindEl("signInHome","click",startGoogleSignIn);
+  bindEl("signInHome","click",goSignIn);
   bindEl("signOutBtn","click",signOut);
   bindEl("myRoomsBtn","click",function(){ closeAcct(); openBoards("mine"); });
   var nameSetByUser=false;
   onAuthChange();
-  // Google script loads async; try to render the button once it's ready.
-  var _gtries=0, _gt=setInterval(function(){ _gtries++; if(window.google&&google.accounts&&google.accounts.id){ if(acctPop.classList.contains("open")&&!currentUser) renderGoogleButton(); clearInterval(_gt); } if(_gtries>40) clearInterval(_gt); }, 250);
+  loadMe();
 
   // only boot the board when a valid token is present
   if(!TOKEN || !/^[A-Za-z0-9_-]{20,64}$/.test(TOKEN)) return;
