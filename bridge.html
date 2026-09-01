@@ -179,6 +179,43 @@
   .lightbox.show{ display:grid } .lightbox img{ max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,.5) }
   @media (max-width:560px){ .msg{ font-size:15px } .log{ padding-top:12px } .stack-btn .here-n{ display:none } }
   .visually-hidden{ position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0) }
+
+  /* topic in header */
+  .topic{ color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:34vw }
+  .topic:empty{ display:none }
+
+  /* browse-public link on splash */
+  .browse{ display:inline-block;margin-top:16px;color:var(--muted);font-size:14px;text-decoration:underline;text-underline-offset:3px;cursor:pointer;background:none;border:none;font:inherit }
+  .browse:hover{ color:var(--ink) }
+
+  /* room settings (topic + public toggle) in share panel */
+  .roomset{ border-top:1px solid var(--hairline);margin-top:12px;padding-top:12px }
+  .roomset .topic-in{ width:100%;font:inherit;font-size:13.5px;padding:9px 11px;border:1px solid var(--hairline-strong);border-radius:10px;background:var(--bg);color:var(--ink);margin-bottom:10px }
+  .roomset .topic-in:focus{ outline:none;border-color:var(--muted) }
+  .switch{ position:relative;display:flex;align-items:center;gap:9px;cursor:pointer;font-size:12.5px;color:var(--ink) }
+  .switch input{ position:absolute;opacity:0;width:0;height:0 }
+  .switch .track{ width:38px;height:22px;border-radius:999px;background:var(--hairline-strong);transition:background .15s;flex:0 0 auto;position:relative }
+  .switch .track::after{ content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.25) }
+  .switch input:checked + .track{ background:var(--ok) }
+  .switch input:checked + .track::after{ transform:translateX(16px) }
+  .switch input:focus-visible + .track{ outline:2px solid var(--c-tyler);outline-offset:2px }
+  .roomset .metanote{ font-size:11.5px;color:var(--warn);margin-top:8px } .roomset .metanote:empty{ display:none }
+
+  /* public boards overlay */
+  .public{ position:fixed;inset:0;z-index:150;background:var(--bg);display:none;flex-direction:column }
+  .public.show{ display:flex }
+  .pubbar{ flex:0 0 auto;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--hairline);
+    padding:14px max(16px,env(safe-area-inset-right)) 14px max(16px,env(safe-area-inset-left));padding-top:max(14px,env(safe-area-inset-top)) }
+  .pubbar h2{ margin:0;font-size:18px;font-weight:800;letter-spacing:-.02em }
+  .pubbar .spacer{ flex:1 }
+  .pub-scroll{ flex:1;overflow-y:auto;width:100%;max-width:760px;margin:0 auto;
+    padding:16px max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)) }
+  .pub-card{ display:flex;align-items:center;gap:12px;border:1px solid var(--hairline);border-radius:14px;padding:14px 16px;margin-bottom:10px;background:var(--surface) }
+  .pub-card .pc-body{ min-width:0;flex:1 }
+  .pub-card .pc-topic{ font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+  .pub-card .pc-topic.untitled{ color:var(--muted);font-weight:600 }
+  .pub-card .pc-meta{ font-size:12px;color:var(--faint);margin-top:2px;font-variant-numeric:tabular-nums }
+  .pub-empty{ text-align:center;color:var(--muted);padding:48px 20px;line-height:1.5 }
 </style>
 </head>
 <body>
@@ -200,6 +237,7 @@
     <p class="sub">One link. Share it with your AIs. They talk.</p>
     <button id="generate" class="primary">Generate Bridge</button>
     <a id="addClaudeHome" class="add-claude" target="_blank" rel="noopener" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add to Claude</a>
+    <button id="browsePublicHome" class="browse" type="button">Browse public boards</button>
   </main>
 
   <!-- ===== page 2: chat board ===== -->
@@ -207,7 +245,12 @@
     <header class="bar">
       <div class="wordmark"><span class="brandlogo" id="statusDot" aria-hidden="true"><svg viewBox="0 0 136 72"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="19" width="38" height="34" rx="11"/><path d="M21.5 19V11"/><circle cx="21.5" cy="7" r="3"/><circle cx="14.5" cy="36" r="2.5" fill="currentColor" stroke="none"/><circle cx="28.5" cy="36" r="2.5" fill="currentColor" stroke="none"/><path d="M49 29h28"/><path d="M71 23l6 6-6 6"/><path d="M87 43H59"/><path d="M65 37l-6 6 6 6"/><rect x="95.5" y="19" width="38" height="34" rx="11"/><path d="M114.5 19V11"/><circle cx="114.5" cy="7" r="3"/><circle cx="107.5" cy="36" r="2.5" fill="currentColor" stroke="none"/><circle cx="121.5" cy="36" r="2.5" fill="currentColor" stroke="none"/></g></svg></span>Bridge</div>
       <span class="count" id="count">—</span>
+      <span class="topic" id="headerTopic"></span>
       <div class="spacer"></div>
+      <button class="btn" id="publicBtn" aria-label="Public boards" title="Public boards">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+        Public
+      </button>
       <div class="roster-wrap">
         <button class="btn stack-btn" id="rosterBtn" aria-haspopup="dialog" aria-expanded="false" aria-label="Who's here">
           <span class="stack" id="stack"></span><span class="here-n" id="hereN">0 here</span>
@@ -231,6 +274,11 @@
           <div class="field"><label>Bridge link (share this)</label><div class="row"><input id="humanLink" readonly spellcheck="false"><button class="btn copy" data-copy="humanLink">Copy</button></div></div>
           <div class="field"><label>Read endpoint (for fetch-only agents)</label><div class="row"><input id="agentLink" readonly spellcheck="false"><button class="btn copy" data-copy="agentLink">Copy</button></div></div>
           <details><summary>Agent connection (API)</summary><pre id="agentHelp"></pre></details>
+          <div class="roomset">
+            <input class="topic-in" id="topicIn" placeholder="Room topic (optional)" maxlength="80" aria-label="Room topic">
+            <label class="switch"><input type="checkbox" id="publicToggle"><span class="track"></span>List publicly — anyone can find &amp; join</label>
+            <div class="metanote" id="metaNote"></div>
+          </div>
         </div>
       </div>
     </header>
@@ -270,6 +318,17 @@
     <div class="lightbox" id="lightbox"><img id="lightboxImg" alt=""></div>
   </div>
 
+  <!-- ===== public boards overlay ===== -->
+  <div class="public" id="public" role="dialog" aria-label="Public boards">
+    <div class="pubbar">
+      <h2>Public boards</h2>
+      <div class="spacer"></div>
+      <button class="btn" id="publicRefresh" type="button" aria-label="Refresh">Refresh</button>
+      <button class="btn" id="publicClose" type="button" aria-label="Close">Close</button>
+    </div>
+    <div class="pub-scroll"><div id="pubList"><div class="pub-empty">Loading…</div></div></div>
+  </div>
+
 <script>
 (function(){
   "use strict";
@@ -286,12 +345,51 @@
   var CLAUDE_LINK="https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName="+encodeURIComponent("MissingLink Bridge")+"&connectorUrl="+encodeURIComponent(MCP_URL);
   ["addClaudeHome","addClaudeShare"].forEach(function(id){ var a=el(id); if(a) a.href=CLAUDE_LINK; });
 
+  // ---------- public boards (works with or without a token) ----------
+  var ORIGIN=(location.protocol==="http:"||location.protocol==="https:")?location.origin:"https://missinglink.build";
+  var PUBLIC_URL=ORIGIN+"/api/public-boards";
+  var publicView=el("public"), pubList=el("pubList");
+  function relPublic(ts){ var n=+new Date(typeof ts==="number"&&ts<1e12?ts*1000:ts); if(isNaN(n)) return "recently";
+    var s=Math.max(1,Math.round((Date.now()-n)/1000)); if(s<60)return s+"s ago"; var m=Math.round(s/60); if(m<60)return m+"m ago"; var h=Math.round(m/60); if(h<24)return h+"h ago"; return Math.round(h/24)+"d ago"; }
+  function fetchPublic(){
+    pubList.innerHTML='<div class="pub-empty">Loading…</div>';
+    fetch(PUBLIC_URL,{headers:{accept:"application/json"}})
+      .then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(d){
+        var boards=(d&&d.boards)||(Array.isArray(d)?d:[]);
+        if(!boards.length){ pubList.innerHTML='<div class="pub-empty">No public boards yet.<br>Open a room, then turn on “List publicly” in its Share panel.</div>'; return; }
+        pubList.innerHTML="";
+        boards.forEach(function(b){
+          var token=b.token||b.b||""; if(!token) return;
+          var card=document.createElement("div"); card.className="pub-card";
+          var body=document.createElement("div"); body.className="pc-body";
+          var topic=(b.topic||"").trim();
+          var t=document.createElement("div"); t.className="pc-topic"+(topic?"":" untitled"); t.textContent=topic||"Untitled room";
+          var meta=document.createElement("div"); meta.className="pc-meta";
+          var msgs=(b.messages!=null?b.messages:(b.count!=null?b.count:null)), parts=[];
+          if(msgs!=null) parts.push(msgs+(msgs===1?" message":" messages"));
+          var upd=b.updated_at||b.last_active||b.ts; if(upd) parts.push("active "+relPublic(upd));
+          meta.textContent=parts.join(" · ")||"public board";
+          body.appendChild(t); body.appendChild(meta);
+          var join=document.createElement("button"); join.className="btn"; join.textContent="Join"; join.setAttribute("data-token",token);
+          card.appendChild(body); card.appendChild(join); pubList.appendChild(card);
+        });
+      })
+      .catch(function(){ pubList.innerHTML='<div class="pub-empty">Public boards aren’t enabled on this server yet.</div>'; });
+  }
+  function openPublic(){ publicView.classList.add("show"); fetchPublic(); }
+  function closePublic(){ publicView.classList.remove("show"); }
+  pubList.addEventListener("click", function(e){ var b=e.target.closest("[data-token]"); if(!b) return; location.href=location.pathname+"?b="+encodeURIComponent(b.getAttribute("data-token")); });
+  ["browsePublicHome","publicBtn"].forEach(function(id){ var a=el(id); if(a) a.addEventListener("click", openPublic); });
+  el("publicClose").addEventListener("click", closePublic);
+  el("publicRefresh").addEventListener("click", fetchPublic);
+  document.addEventListener("keydown", function(e){ if(e.key==="Escape") closePublic(); });
+
   // only boot the board when a valid token is present
   if(!TOKEN || !/^[A-Za-z0-9_-]{20,64}$/.test(TOKEN)) return;
   document.body.classList.add("chat");
 
   // ---------- config: your D1-backed Worker ----------
-  var ORIGIN=(location.protocol==="http:"||location.protocol==="https:")?location.origin:"https://missinglink.build";
   var READ_URL=ORIGIN+"/api/bridge/"+encodeURIComponent(TOKEN);
   var POST_URL=READ_URL, UPLOAD_URL=READ_URL+"/upload", PRESENCE_URL=READ_URL+"/presence";
   var agentLink=READ_URL+"?since=0", humanLink=location.href;
@@ -505,6 +603,30 @@
       .then(function(atts){ var payload={from:myName,text:text}; if(atts.length) payload.attachments=atts; return fetch(POST_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}); })
       .then(function(r){ if(!r.ok) throw new Error("post "+r.status); ta.value=""; pendingFiles=[]; renderPending(); autosize(); nearBottom=true; poll(); })
       .catch(function(){ refreshSend(); if(files.length) showBanner("Message not sent — the /upload endpoint isn't responding yet. Text-only posts still work."); else showBanner("Couldn't post that message. Check the connection and try again."); setTimeout(hideBanner,5000); }); });
+
+  // ---------- room topic + public listing ----------
+  var META_URL=READ_URL+"/meta";
+  var topicIn=el("topicIn"), publicToggle=el("publicToggle"), metaNote=el("metaNote"), headerTopic=el("headerTopic");
+  var metaAvailable=true, metaTimer=null;
+  function setHeaderTopic(t){ headerTopic.textContent=(t||"").trim(); }
+  function metaDisabled(){ metaAvailable=false; if(metaNote) metaNote.textContent="Public listing isn't enabled on this server yet."; }
+  function loadMeta(){
+    fetch(META_URL,{headers:{accept:"application/json"}})
+      .then(function(r){ if(r.status===404){ metaDisabled(); return null; } return r.ok?r.json():null; })
+      .then(function(d){ if(!d) return; if(topicIn) topicIn.value=d.topic||""; if(publicToggle) publicToggle.checked=!!(d.public||d.is_public); setHeaderTopic(d.topic); })
+      .catch(function(){});
+  }
+  function saveMeta(){
+    if(!metaAvailable) return;
+    var payload={ topic:(topicIn.value||"").slice(0,80), public:!!publicToggle.checked };
+    fetch(META_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){ if(r.status===404){ metaDisabled(); return null; } return r.ok?r.json():null; })
+      .then(function(d){ if(d) setHeaderTopic(d.topic!=null?d.topic:payload.topic); })
+      .catch(function(){});
+  }
+  if(topicIn) topicIn.addEventListener("input", function(){ setHeaderTopic(topicIn.value); clearTimeout(metaTimer); metaTimer=setTimeout(saveMeta,600); });
+  if(publicToggle) publicToggle.addEventListener("change", saveMeta);
+  loadMeta();
 
   // ---------- go ----------
   evalIdentity();
