@@ -240,6 +240,12 @@
   .icon-btn.soon:hover{ background:none;color:var(--muted) }
   .soon-tag{ position:absolute;bottom:100%;right:0;margin-bottom:6px;background:var(--ink);color:var(--bg);font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;white-space:nowrap;display:none }
   .ta-wrap.showsoon .soon-tag{ display:block }
+
+  /* service-down (kill switch) overlay */
+  .down{ position:fixed;inset:0;z-index:170;background:var(--bg);display:none;place-items:center;text-align:center;padding:24px }
+  .down.show{ display:grid }
+  .down-title{ font-weight:800;font-size:22px;letter-spacing:-.02em;margin-bottom:8px }
+  .down-msg{ color:var(--muted);font-size:15px;max-width:440px;line-height:1.55;margin:0 auto }
 </style>
 <script src="https://accounts.google.com/gsi/client" async></script>
 </head>
@@ -369,6 +375,14 @@
       <button class="btn" id="publicClose" type="button" aria-label="Close">Close</button>
     </div>
     <div class="pub-scroll"><div id="pubList"><div class="pub-empty">Loading…</div></div></div>
+  </div>
+
+  <!-- ===== service down (kill switch) ===== -->
+  <div class="down" id="down">
+    <div>
+      <div class="down-title">Technical difficulties</div>
+      <div class="down-msg" id="downMsg">Apologies, we're experiencing technical difficulties. Try back later.</div>
+    </div>
   </div>
 
 <script>
@@ -639,9 +653,13 @@
     return []; }
   var failures=0;
   function setDot(ok){ statusDot.style.color=ok?"":"var(--warn)"; }
+  function showDown(msg){ var d=el("down"); if(!d) return; var mm=el("downMsg"); if(mm && msg) mm.textContent=msg; d.classList.add("show"); }
+  function hideDown(){ var d=el("down"); if(d) d.classList.remove("show"); }
   function poll(){ fetch(READ_URL+"?since="+lastId,{headers:{accept:"application/json"}})
-      .then(function(r){ var ct=r.headers.get("content-type")||""; return ct.indexOf("json")>=0?r.json():r.text(); })
-      .then(function(data){ failures=0; setDot(true); hideBanner();
+      .then(function(r){ var ct=r.headers.get("content-type")||""; var pp=ct.indexOf("json")>=0?r.json():r.text(); return pp.then(function(d){ return {s:r.status,d:d}; }); })
+      .then(function(res){ var data=res.d;
+        if(res.s===503 || (data&&data.error==="unavailable")){ showDown(data&&data.message); return; }
+        hideDown(); failures=0; setDot(true); hideBanner();
         var list=normalize(data).slice().sort(function(a,b){ return (getId(a)||0)-(getId(b)||0); });
         var before=Object.keys(seen).length; list.forEach(addMessage); afterRender(Object.keys(seen).length-before); initialLoaded=true; })
       .catch(function(){ failures++; setDot(false);
@@ -741,8 +759,8 @@
     var text=ta.value.trim(), files=pendingFiles.slice(); if(!text&&!files.length) return; send.disabled=true;
     (files.length?uploadAll(files):Promise.resolve([]))
       .then(function(atts){ var payload={from:myName,text:text}; if(atts.length) payload.attachments=atts; return fetch(POST_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}); })
-      .then(function(r){ if(!r.ok) throw new Error("post "+r.status); ta.value=""; pendingFiles=[]; renderPending(); autosize(); nearBottom=true; poll(); })
-      .catch(function(){ refreshSend(); if(files.length) showBanner("Message not sent — the /upload endpoint isn't responding yet. Text-only posts still work."); else showBanner("Couldn't post that message. Check the connection and try again."); setTimeout(hideBanner,5000); }); });
+      .then(function(r){ if(r.status===503){ r.json().then(function(d){ showDown(d&&d.message); }).catch(function(){ showDown(); }); throw new Error("down"); } if(!r.ok) throw new Error("post "+r.status); ta.value=""; pendingFiles=[]; renderPending(); autosize(); nearBottom=true; poll(); })
+      .catch(function(err){ refreshSend(); if(err&&err.message==="down") return; if(files.length) showBanner("Message not sent — the /upload endpoint isn't responding yet. Text-only posts still work."); else showBanner("Couldn't post that message. Check the connection and try again."); setTimeout(hideBanner,5000); }); });
 
   // ---------- room topic + public listing ----------
   var META_URL=READ_URL+"/meta";
