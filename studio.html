@@ -5581,7 +5581,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
         <div class="edit-model-seg" id="editModelSeg">
             <button type="button" class="ems-btn active" data-pref="auto" onclick="setEditModelPref('auto')" title="Let the agent choose — defaults to Qwen (faster &amp; cheaper) and uses GPT when the request calls for it. The batch Generate button uses Qwen.">Auto</button>
-            <button type="button" class="ems-btn" data-pref="gpt" onclick="setEditModelPref('gpt')" title="Force gpt-image-2 for every agent edit">GPT</button>
+            <button type="button" class="ems-btn" data-pref="gpt" onclick="setEditModelPref('gpt')" title="Force GPT Image (Sunburst) for every agent edit">GPT</button>
             <button type="button" class="ems-btn" data-pref="qwen" onclick="setEditModelPref('qwen')" title="Force the in-house Qwen Image Edit pipeline">Qwen</button>
             <button type="button" class="ems-btn" data-pref="sdxl" onclick="setEditModelPref('sdxl')" title="Batch Generate runs SDXL img2img on each selected image (Pony Realism v2.2) with Pony 2.2 quality tags added automatically">SDXL</button>
         </div>
@@ -5671,79 +5671,52 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         </div>
     </div>
 
-    <!-- Model selector UI removed — gpt-image-2 is now hardcoded as
-         the only supported Create model. The hidden <select> below
-         keeps the historical contract intact: JS elsewhere reads
-         genModelSelect.value to decide which size/background options
-         are valid + what to send in the request payload. Anything that
-         called genSetModel() still works (it's a no-op for the
-         hidden element since the value never changes). -->
-    <select id="genModelSelect" style="display:none">
-        <option value="gpt-image-2" selected>gpt-image-2</option>
-    </select>
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🧠</span> IMAGE MODEL <span class="sec-label-count">GPT Image 2.5</span></div>
+        <select id="genModelSelect" class="model-select" onchange="genSetModel(this.value)">
+            <option value="gpt-image-2.5-sunburst" selected>☀ Sunburst — best quality + reference editing (default)</option>
+            <option value="gpt-image-2.5-flare">⚡ Flare — fastest everyday text-to-image</option>
+            <option value="gpt-image-2">↩ GPT Image 2 — legacy rollback</option>
+        </select>
+        <div id="genModelHint" class="size-hint" style="margin-top:7px">Most capable GPT Image model. Supports generation + multi-reference editing.</div>
+        <div id="genPricingHint" class="size-hint" style="margin-top:7px">
+            OpenAI GPT Image 2.5 rates: text input $5/M tokens ($1.25/M cached) · image input $8/M ($2/M cached) · image output $30/M. Studio token = $0.0005; the usage charge includes the existing 15% service cushion. Studio reserves an estimate before generation and reconciles to returned usage when available.
+        </div>
+    </div>
 
     <div class="sec generate-only" style="display:none">
-        <div class="sec-label"><span class="icon">📐</span> OUTPUT SIZE</div>
-        <!-- gpt-image-2 supports any custom size where: both edges
-             are multiples of 16, max edge 3840px, aspect ratio ≤ 3:1,
-             total pixels in [655360, 8294400]. The preset buttons cover
-             the canonical 1024-based ratios; the custom W×H inputs let
-             advanced users dial in exact dimensions (e.g. matching a
-             reference image's aspect ratio). The "Match reference"
-             button below auto-fills from slot 1 if a ref exists. -->
+        <div class="sec-label"><span class="icon">📐</span> OUTPUT SIZE <span class="sec-label-count">up to 4K</span></div>
         <div class="size-toggle">
-            <!-- Default selection: Landscape (1536×1024). 16:9-ish
-                 aspect reads better for general-purpose generation
-                 than a square thumbnail — most reference work, scene
-                 generation, and social-share targets want landscape.
-                 Square remains one click away. -->
+            <button class="size-btn active" data-size="auto" onclick="genSetSize('auto')" title="Let GPT Image 2.5 choose the size">Auto</button>
             <button class="size-btn" data-size="1024x1024" onclick="genSetSize('1024x1024')" title="1024×1024">⬛ Square</button>
             <button class="size-btn" data-size="1024x1536" onclick="genSetSize('1024x1536')" title="1024×1536">▮ Portrait</button>
-            <button class="size-btn active" data-size="1536x1024" onclick="genSetSize('1536x1024')" title="1536×1024">▭ Landscape</button>
+            <button class="size-btn" data-size="1536x1024" onclick="genSetSize('1536x1024')" title="1536×1024">▭ Landscape</button>
+            <button class="size-btn" data-size="2048x1152" onclick="genSetSize('2048x1152')" title="2048×1152 custom 2K preset">2K 16:9</button>
+            <button class="size-btn" data-size="3840x2160" onclick="genSetSize('3840x2160')" title="3840×2160 custom 4K preset — experimental">4K 16:9</button>
             <button class="size-btn" data-size="custom" onclick="genSetSize('custom')" title="Custom W×H">✏️ Custom</button>
         </div>
-        <!-- Custom dim inputs — only shown when size is set to 'custom'.
-             The two number fields are constrained to gpt-image-2's
-             validation rules client-side (16-multiple, 256-3840 range)
-             so the worker rarely has to reject. Step=16 makes the
-             native browser arrow controls snap to valid values. -->
         <div id="genCustomSize" style="display:none;margin-top:8px">
             <div style="display:flex;gap:8px;align-items:center">
-                <div style="flex:1">
-                    <label class="size-label">WIDTH</label>
-                    <input type="number" id="genCustomW" min="256" max="3840" step="16" value="1024"
-                           class="size-input" oninput="genUpdateCustomSize()">
-                </div>
+                <div style="flex:1"><label class="size-label">WIDTH</label><input type="number" id="genCustomW" min="256" max="3840" step="16" value="1024" class="size-input" oninput="genUpdateCustomSize()"></div>
                 <span style="color:var(--text-muted);padding-top:14px">×</span>
-                <div style="flex:1">
-                    <label class="size-label">HEIGHT</label>
-                    <input type="number" id="genCustomH" min="256" max="3840" step="16" value="1024"
-                           class="size-input" oninput="genUpdateCustomSize()">
-                </div>
+                <div style="flex:1"><label class="size-label">HEIGHT</label><input type="number" id="genCustomH" min="256" max="3840" step="16" value="1024" class="size-input" oninput="genUpdateCustomSize()"></div>
             </div>
             <div id="genSizeWarn" class="size-warn" style="display:none"></div>
-            <div class="size-hint">
-                Multiples of 16. Max 3840 per side. Aspect ≤ 3:1. Custom sizes work with reference images on gpt-image-2.
-            </div>
+            <div class="size-hint">Multiples of 16 · aspect 1:3–3:1 · max edge 3840 · 655,360–8,294,400 pixels. Above 2560×1440-equivalent is experimental.</div>
         </div>
     </div>
 
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">⭐</span> QUALITY</div>
-        <!-- Quality controls cost vs detail tradeoff. low = fast, cheap,
-             rough; high = slow, expensive, refined; auto = let the model
-             pick based on prompt complexity.
-             Default: medium. The "high" tier roughly DOUBLES wall-clock
-             time vs medium for marginal quality gains on typical prompts.
-             Users who want the slow refined output explicitly opt in by
-             clicking the High chip — that decision should be conscious,
-             not the default everyone pays the latency cost on. -->
         <div class="size-toggle">
-            <button class="size-btn" data-quality="low" onclick="genSetQuality('low')">Low</button>
-            <button class="size-btn active" data-quality="medium" onclick="genSetQuality('medium')">Medium</button>
+            <button class="size-btn" data-quality="low" onclick="genSetQuality('low')" title="Quick drafts; lowest latency/cost">Low</button>
+            <button class="size-btn" data-quality="medium" onclick="genSetQuality('medium')">Medium</button>
             <button class="size-btn" data-quality="high" onclick="genSetQuality('high')">High</button>
-            <button class="size-btn" data-quality="auto" onclick="genSetQuality('auto')">Auto</button>
+            <button class="size-btn" data-quality="xhigh" onclick="genSetQuality('xhigh')" title="GPT Image 2.5 only">XHigh</button>
+            <button class="size-btn" data-quality="max" onclick="genSetQuality('max')" title="GPT Image 2.5 only; highest latency/cost">Max</button>
+            <button class="size-btn active" data-quality="auto" onclick="genSetQuality('auto')" title="OpenAI default; model chooses">Auto</button>
         </div>
+        <div class="size-hint">GPT Image 2.5 adds XHigh + Max. Auto is the upstream default; Low is best for fast drafts.</div>
     </div>
 
     <div class="sec generate-only" style="display:none">
@@ -5770,31 +5743,33 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🌫️</span> BACKGROUND</div>
-        <!-- Background transparency. gpt-image-2 itself does NOT support
-             transparent backgrounds (per OpenAI's official docs as of
-             April 2026 — gpt-image-1.5 still does). We expose the
-             control for completeness and to match the API contract,
-             but the Transparent button is disabled with a tooltip
-             explaining this. Auto + Opaque both work and produce
-             different aesthetic results: Auto lets the model pick
-             based on prompt context; Opaque forces a solid background
-             which is useful for product shots. -->
         <div class="size-toggle">
-            <button class="size-btn active" data-bg="auto" onclick="genSetBackground('auto')" title="Model picks based on prompt">Auto</button>
-            <button class="size-btn" data-bg="opaque" onclick="genSetBackground('opaque')" title="Force a solid background — good for product shots">Opaque</button>
-            <button class="size-btn disabled" data-bg="transparent" onclick="genSetBackground('transparent')" title="Transparent only available on the Transparent model (switch above)">Transparent</button>
+            <button class="size-btn active" data-bg="auto" onclick="genSetBackground('auto')" title="OpenAI default">Auto</button>
+            <button class="size-btn" data-bg="opaque" onclick="genSetBackground('opaque')" title="Force an opaque background">Opaque</button>
+            <button class="size-btn" data-bg="transparent" onclick="genSetBackground('transparent')" title="GPT Image 2.5 supports alpha with PNG or WebP">Transparent</button>
         </div>
+        <div class="size-hint">Transparent output automatically switches JPEG to PNG. PNG/WebP preserve alpha.</div>
     </div>
 
-    <!-- Moderation: hardcoded to 'low' (most permissive setting OpenAI
-         allows on gpt-image-2). 'low' still blocks clearly-disallowed
-         content per OpenAI policy — there's no "off" knob — but lets
-         through tasteful figure work, horror imagery, mild violence,
-         and other borderline material that 'auto' over-filters. We
-         removed the user-facing toggle since the choice is now made
-         once at the app level: this is a creative tool, the user is
-         opted into permissive mode by default. The _generateModeration
-         state variable still exists so the request body is unchanged. -->
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🛡️</span> MODERATION</div>
+        <div class="size-toggle">
+            <button class="size-btn active" data-mod="auto" onclick="genSetModeration('auto')" title="OpenAI default standard filtering">Standard</button>
+            <button class="size-btn" data-mod="low" onclick="genSetModeration('low')" title="Less restrictive OpenAI filtering; policy enforcement still applies">Low</button>
+        </div>
+        <div class="size-hint">OpenAI supports <code>auto</code> (default) and <code>low</code>. Studio's own downstream safety gate still applies.</div>
+    </div>
+
+    <div class="sec generate-only" style="display:none">
+        <div class="sec-label"><span class="icon">🌊</span> PROGRESSIVE PREVIEWS <span class="sec-label-count">Image API streaming</span></div>
+        <div class="size-toggle">
+            <button class="size-btn active" title="Final image only">Final only</button>
+            <button class="size-btn disabled" title="OpenAI supports 1–3 partial images, but Studio keeps partials off because displayed outputs must pass the downstream safety screen first">1 preview</button>
+            <button class="size-btn disabled" title="OpenAI supports 1–3 partial images, but Studio keeps partials off because displayed outputs must pass the downstream safety screen first">2 previews</button>
+            <button class="size-btn disabled" title="OpenAI supports 1–3 partial images, but Studio keeps partials off because displayed outputs must pass the downstream safety screen first">3 previews</button>
+        </div>
+        <div class="size-hint">Upstream supports 0–3 partial images (+100 image-output tokens each). They remain intentionally disabled here so an unscreened partial can never bypass Studio's fail-closed output safety check.</div>
+    </div>
 
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🔢</span> NUMBER OF IMAGES
@@ -5814,8 +5789,8 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec generate-only" style="display:none">
         <button class="gen-btn" id="btnGenerateMode" onclick="doGenerateMode()">✨ CREATE</button>
         <div class="token-cost" style="display:flex;justify-content:space-between;padding:8px 0 0">
-            <span style="color:var(--text-muted)">Cost</span>
-            <span style="color:var(--gold);font-weight:700" id="genCostLabel">🪙 100 tokens · ~$0.05</span>
+            <span style="color:var(--text-muted)">Estimated reserve</span>
+            <span style="color:var(--gold);font-weight:700" id="genCostLabel">🪙 estimating…</span>
         </div>
     </div>
 
@@ -10730,7 +10705,7 @@ function setInputImage(id,url,w,h){
 // that batch + agent generations get.
 //
 // State: 4 ref slots (mirrors Edit mode's pattern but caps at 4 since
-// gpt-image-2 attends well to ~4 references) + a chosen output size.
+// GPT Image 2.5 attends well to a small reference set) + a chosen output size.
 // Both persist to localStorage so a refresh doesn't wipe the user's
 // half-built generation setup.
 let _generateRefs = [null, null, null, null];
@@ -10740,7 +10715,7 @@ let _generateRefs = [null, null, null, null];
 // workflows; switching to gpt-image-1.5 enables transparent-background
 // PNG output (which gpt-image-2 doesn't support). The Background
 // section's Transparent button enables/disables based on this.
-let _generateModel = 'gpt-image-2';
+let _generateModel = 'gpt-image-2.5-sunburst';
 
 // Agent edit-model preference: 'auto' (agent decides), 'qwen', or 'gpt'.
 // Sent to /api/studio/agent-chat each turn; the worker turns it into a
@@ -10915,7 +10890,7 @@ try { setEditModelPref(_editModelPref); } catch {}
 // the HTML so the initial render is consistent before any restore /
 // auto-fit. Most general-purpose Create work reads better in
 // landscape than the previous square default.
-let _generateSize = '1536x1024';
+let _generateSize = 'auto';
 let _generateCustomW = 1024;
 let _generateCustomH = 1024;
 // True once the user has manually picked a size (any preset button OR
@@ -10926,22 +10901,18 @@ let _generateCustomH = 1024;
 // uploads. Reset to false when all refs are cleared (no refs → next
 // upload starts fresh).
 let _generateSizeUserSet = false;
-let _generateQuality = 'medium';
+let _generateQuality = 'auto';
 let _generateFormat = 'png';
 let _generateCompression = 85;
-// Background — gpt-image-2 supports auto / opaque (NOT transparent).
-// Only gpt-image-1.5 supports transparent backgrounds. The Transparent
-// button enables when the user picks gpt-image-1.5 from the model
-// dropdown above.
+// Background — GPT Image 2.5 supports auto / opaque / transparent.
+// Transparent output is valid with PNG/WebP; the UI automatically moves
+// away from JPEG when transparency is selected. Legacy gpt-image-2 still
+// disables transparency through the capability map below.
 let _generateBackground = 'auto';
-// Moderation — hardcoded to 'low' (most permissive setting OpenAI
-// accepts on the GPT Image family). 'low' still blocks clearly
-// disallowed content per OpenAI policy (no "off" mode exists), but
-// allows tasteful figure studies, horror, mild violence, and other
-// borderline content that 'auto' over-filters. Persisted to
-// localStorage like the others; if the schema is ever extended to
-// expose a UI toggle again, this state is ready.
-let _generateModeration = 'low';
+// Moderation — OpenAI exposes auto (standard/default) and low. Keep auto
+// as the Create default and surface both choices in the sidebar; there is
+// no supported "off" value.
+let _generateModeration = 'auto';
 // n: number of images per request. 1-4. The worker caps at 4 too;
 // gpt-image-2 supports up to 10 but we don't need more than 4 for
 // our UX (more would crowd the stage in Create's single-image flow).
@@ -11242,6 +11213,7 @@ function genUpdateCounter(){
         if (_generateRefs[i] !== null && _generateRefs[i] !== undefined) filled++;
     }
     el.textContent = `${filled} / ${max}`;
+    if (typeof genRefreshModelMeta === 'function') genRefreshModelMeta();
     // Adding/removing refs changes the GPT-Image cost (per-ref input
     // surcharge) — keep the cost label in sync. Cheap call.
     if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
@@ -11354,13 +11326,15 @@ function genUpdateCustomSize(){
             const total = w * h;
             if (total < 655_360) msg = `Total pixels too low (${total.toLocaleString()} < 655,360)`;
             else if (total > 8_294_400) msg = `Total pixels too high (${total.toLocaleString()} > 8,294,400)`;
+            else if (total > 3_686_400) msg = 'Valid, but above 2560×1440-equivalent is experimental';
         }
     }
     if (warn) {
         warn.style.display = msg ? '' : 'none';
         warn.textContent = msg;
     }
-    if (!msg) {
+    const isExperimental = msg === 'Valid, but above 2560×1440-equivalent is experimental';
+    if (!msg || isExperimental) {
         _generateCustomW = w;
         _generateCustomH = h;
         // Manual typing in the W/H inputs is also a user-set signal —
@@ -11375,6 +11349,8 @@ function genUpdateCustomSize(){
 }
 
 function genSetQuality(q){
+    const caps = _GEN_MODEL_CAPS[_generateModel];
+    if ((q === 'xhigh' || q === 'max') && caps && !caps.supportsXHigh) return;
     _generateQuality = q;
     document.querySelectorAll('.size-toggle .size-btn[data-quality]').forEach(b => {
         b.classList.toggle('active', b.dataset.quality === q);
@@ -11386,6 +11362,7 @@ function genSetQuality(q){
 }
 
 function genSetFormat(f){
+    if (f === 'jpeg' && _generateBackground === 'transparent') genSetBackground('auto');
     _generateFormat = f;
     document.querySelectorAll('.size-toggle .size-btn[data-format]').forEach(b => {
         b.classList.toggle('active', b.dataset.format === f);
@@ -11420,20 +11397,27 @@ function genUpdateCompression(){
 // Encoded per-model so a future variant that drops multi-ref support
 // is caught automatically by the gate in doGenerateMode.
 const _GEN_MODEL_CAPS = {
+    'gpt-image-2.5-sunburst': {
+        supportsTransparent: true,
+        supportsMultiRef: true,
+        supportsEdits: true,
+        supportsXHigh: true,
+        hint: 'Most capable GPT Image model. Generation + multi-reference editing; best when precision matters.',
+    },
+    'gpt-image-2.5-flare': {
+        supportsTransparent: true,
+        supportsMultiRef: true,
+        supportsEdits: false,
+        supportsXHigh: true,
+        editFallback: 'gpt-image-2.5-sunburst',
+        hint: 'Fastest everyday text-to-image. Reference-image Create requests automatically use Sunburst because Flare has no Image API edits endpoint.',
+    },
     'gpt-image-2': {
         supportsTransparent: false,
         supportsMultiRef: true,
-        hint: 'Latest model. Best photorealism + text rendering.',
-    },
-    'gpt-image-1-mini': {
-        supportsTransparent: false,
-        supportsMultiRef: true,
-        hint: 'About 4× cheaper than Quality. Great for drafts and high-volume work.',
-    },
-    'gpt-image-1.5': {
-        supportsTransparent: true,
-        supportsMultiRef: true,
-        hint: 'Slightly cheaper than Quality at high tier. Only model that supports transparent PNGs.',
+        supportsEdits: true,
+        supportsXHigh: false,
+        hint: 'Legacy rollback option. Use Sunburst for the current best generation + editing quality.',
     },
 };
 
@@ -11441,39 +11425,55 @@ const _GEN_MODEL_CAPS = {
 // it's out of sync (called from restore), updates the hint text below
 // the dropdown, refreshes the Transparent-background button's enabled
 // state (it's only valid on gpt-image-1.5), and re-prices.
+function genRefreshModelMeta(){
+    const caps = _GEN_MODEL_CAPS[_generateModel];
+    if (!caps) return;
+    genRefreshModelMeta();
+    const pricing = $('genPricingHint');
+    if (pricing) {
+        pricing.textContent = _generateModel.startsWith('gpt-image-2.5-')
+            ? 'OpenAI GPT Image 2.5 rates: text input $5/M tokens ($1.25/M cached) · image input $8/M ($2/M cached) · image output $30/M. Studio token = $0.0005; the usage charge includes the existing 15% service cushion. Studio reserves an estimate before generation and reconciles to returned usage when available.'
+            : 'Legacy GPT Image 2 rollback. Studio keeps compatibility pricing for this option; use a GPT Image 2.5 model for the current token-rate contract.';
+    }
+}
+
+function genGetEffectiveModel(){
+    const caps = _GEN_MODEL_CAPS[_generateModel];
+    const hasRefs = _generateRefs.some(Boolean);
+    return (hasRefs && caps && caps.supportsEdits === false && caps.editFallback)
+        ? caps.editFallback
+        : _generateModel;
+}
+
 function genSetModel(m){
-    if (!_GEN_MODEL_CAPS[m]) m = 'gpt-image-2';  // unknown → default
+    if (!_GEN_MODEL_CAPS[m]) m = 'gpt-image-2.5-sunburst';
     _generateModel = m;
+    const caps = _GEN_MODEL_CAPS[m];
     const sel = $('genModelSelect');
     if (sel && sel.value !== m) sel.value = m;
     const hint = $('genModelHint');
-    if (hint) hint.textContent = _GEN_MODEL_CAPS[m].hint;
-    // Enable / disable the Transparent background chip. Disabled chips
-    // get the .disabled class which dims them and blocks clicks via
-    // onclick="return false".
+    if (hint) {
+        const usingFallback = _generateRefs.some(Boolean) && caps.supportsEdits === false && caps.editFallback;
+        hint.textContent = usingFallback
+            ? `${caps.hint} Active refs → this render will use ${caps.editFallback}.`
+            : caps.hint;
+    }
     const transparentBtn = document.querySelector('.size-toggle .size-btn[data-bg="transparent"]');
     if (transparentBtn) {
-        const allowed = _GEN_MODEL_CAPS[m].supportsTransparent;
+        const allowed = !!caps.supportsTransparent;
         transparentBtn.classList.toggle('disabled', !allowed);
         transparentBtn.title = allowed
-            ? 'Transparent background — saved as PNG with alpha'
-            : 'Transparent only available on the Transparent model (switch above)';
-        if (!allowed && _generateBackground === 'transparent') {
-            genSetBackground('auto');
-        }
+            ? 'Transparent background — PNG or WebP with alpha'
+            : 'Transparent background is not available on this legacy model';
+        if (!allowed && _generateBackground === 'transparent') genSetBackground('auto');
     }
-    // Reference slots — single vs multi depending on the model. Only
-    // adjust visibility while in Create to avoid clobbering inline
-    // display:none on the panels when called from non-Create contexts.
-    if (currentMode === 'generate') {
-        const supportsMultiRef = !!_GEN_MODEL_CAPS[m].supportsMultiRef;
-        for (let i = 1; i < 4; i++) {
-            const slotEl = document.getElementById(`genSlot${i}`);
-            if (slotEl) slotEl.style.display = supportsMultiRef ? '' : 'none';
-        }
+    document.querySelectorAll('.size-toggle .size-btn[data-quality="xhigh"], .size-toggle .size-btn[data-quality="max"]').forEach(btn => {
+        btn.classList.toggle('disabled', !caps.supportsXHigh);
+    });
+    if (!caps.supportsXHigh && (_generateQuality === 'xhigh' || _generateQuality === 'max')) {
+        genSetQuality('auto');
     }
     if (typeof genUpdateCounter === 'function') genUpdateCounter();
-
     persistGenerateState();
     if (typeof genUpdateCostLabel === 'function') genUpdateCostLabel();
 }
@@ -11487,6 +11487,7 @@ function genSetBackground(b){
     if (b === 'transparent') {
         const caps = _GEN_MODEL_CAPS[_generateModel];
         if (!caps || !caps.supportsTransparent) return;  // model can't honor it
+        if (_generateFormat === 'jpeg') genSetFormat('png');
     }
     _generateBackground = b;
     document.querySelectorAll('.size-toggle .size-btn[data-bg]').forEach(btn => {
@@ -11540,20 +11541,22 @@ function genUpdateCount(){
 // outputs don't drop below the 1024² baseline. Safety markup 1.15×
 // covers input tokens + minor pricing volatility. Round up to nearest 5.
 const _GEN_MODEL_PRICING = {
-    'gpt-image-2':      { low: 0.006, medium: 0.053, high: 0.211, auto: 0.053 },
-    'gpt-image-1.5':    { low: 0.009, medium: 0.040, high: 0.165, auto: 0.040 },
-    'gpt-image-1-mini': { low: 0.005, medium: 0.011, high: 0.052, auto: 0.011 },
+    // Reservation anchors only. GPT Image 2.5 is billed by returned token
+    // usage; OpenAI explicitly notes GPT Image 2's calculator does not
+    // estimate 2.5 consumption. The worker reconciles this reserve against
+    // response.usage when available. xhigh/max use intentionally conservative
+    // reserve multipliers so the account normally has enough balance.
+    'gpt-image-2.5-sunburst': { low: 0.006, medium: 0.053, high: 0.211, xhigh: 0.370, max: 0.530, auto: 0.090 },
+    'gpt-image-2.5-flare':    { low: 0.006, medium: 0.053, high: 0.211, xhigh: 0.370, max: 0.530, auto: 0.090 },
+    'gpt-image-2':            { low: 0.006, medium: 0.053, high: 0.211, auto: 0.053 },
 };
 const _GEN_TOKEN_DOLLAR = 0.0005;
 const _GEN_PX_EXP = 0.32;
 const _GEN_SAFETY = 1.15;
 const _GEN_ROUND = 5;
-// Per-reference input surcharge — mirrors the worker's REF_IMAGE_USD
-// constant. Refs are sent ONCE per /v1/images/edits request regardless
-// of n outputs, so this is added once to the total, not multiplied by n.
 const _GEN_REF_USD = 0.010;
 function genTokenCostFor(size, quality, model){
-    const m = _GEN_MODEL_PRICING[model] ? model : 'gpt-image-2';
+    const m = _GEN_MODEL_PRICING[model] ? model : 'gpt-image-2.5-sunburst';
     let px = 1024 * 1024;
     if (size && size !== 'auto') {
         const match = String(size).match(/^(\d+)x(\d+)$/);
@@ -11590,7 +11593,7 @@ function genUpdateCostLabel(){
     const size = genGetEffectiveSize();
     const refCount = _generateRefs.filter(r => r !== null).length;
     const tokens = genRequestTokenCost(
-        size, _generateQuality, _generateModel,
+        size, _generateQuality, genGetEffectiveModel(),
         _generateCount, refCount,
     );
     const dollars = (tokens * _GEN_TOKEN_DOLLAR).toFixed(2);
@@ -11598,7 +11601,9 @@ function genUpdateCostLabel(){
     if (_generateCount > 1) suffixParts.push(`${_generateCount} images`);
     if (refCount > 0) suffixParts.push(`${refCount} ref${refCount === 1 ? '' : 's'}`);
     const suffix = suffixParts.length ? ' · ' + suffixParts.join(' · ') : '';
-    lbl.textContent = `🪙 ${tokens} tokens · ~$${dollars}${suffix}`;
+    const routed = genGetEffectiveModel() !== _generateModel ? ` · refs → Sunburst` : '';
+    lbl.textContent = `🪙 ~${tokens} tokens · ~$${dollars}${suffix}${routed}`;
+    lbl.title = 'Estimated reserve. GPT Image 2.5 final charge is reconciled from OpenAI response token usage when available.';
 }
 
 // Resolve the active size selection to a wire-format string. Custom
@@ -11690,19 +11695,11 @@ function restoreGenerateState(){
         if (typeof d.model === 'string' && _GEN_MODEL_CAPS[d.model]) {
             _generateModel = d.model;
         }
-        // gpt-image-2 is now the only supported Create model. Force-
-        // upgrade any older persisted preference so users who picked
-        // gpt-image-1-mini or gpt-image-1.5 in a previous session
-        // don't get stuck on a model the UI no longer exposes.
-        if (_generateModel !== 'gpt-image-2') {
-            _generateModel = 'gpt-image-2';
-            // Snap an incompatible background choice while we're here
-            // (mini doesn't support transparent — neither do the
-            // others in this mode, but defense-in-depth).
-            if (_generateBackground === 'transparent'
-                && !(_GEN_MODEL_CAPS['gpt-image-2']?.supportsTransparent)) {
-                _generateBackground = 'auto';
-            }
+        // Migrate removed 1.x choices to the current default. Preserve the
+        // explicit GPT Image 2 rollback option and either GPT Image 2.5 model.
+        if (!_GEN_MODEL_CAPS[_generateModel]) _generateModel = 'gpt-image-2.5-sunburst';
+        if (d.model === 'gpt-image-1.5' || d.model === 'gpt-image-1-mini') {
+            _generateModel = 'gpt-image-2.5-sunburst';
         }
         if (typeof d.customW === 'number') _generateCustomW = d.customW;
         if (typeof d.customH === 'number') _generateCustomH = d.customH;
@@ -11907,7 +11904,9 @@ async function doGenerateMode(_autoRetried){
         low: 25,
         medium: 50,
         high: 90,
-        auto: 60,
+        xhigh: 150,
+        max: 210,
+        auto: 70,
     })[_generateQuality] || 60;
     const placeholderEstSec = refIds.length
         ? Math.round(_qualityBaseSec * 1.7)   // ref-edit overhead
@@ -11964,9 +11963,9 @@ async function doGenerateMode(_autoRetried){
                     // view can tell the two surfaces apart.
                     source: 'create',
                     // Which GPT Image model to use. The worker validates
-                    // against an allow-list and falls back to gpt-image-2
+                    // against an allow-list and falls back to Sunburst
                     // if unrecognized — so client bugs can't surface upstream.
-                    model: _generateModel,
+                    model: genGetEffectiveModel(),
                     // Number of images per request — 1-4. Worker caps at 4
                     // for symmetry. Cost = per-image variable × n.
                     n: _generateCount,
@@ -11994,8 +11993,8 @@ async function doGenerateMode(_autoRetried){
                 //   plain + other → 120s
                 // Frontend adds 30s buffer to each.
             }, refIds.length
-                ? (_generateQuality === 'high' ? 390_000 : 270_000)
-                : (_generateQuality === 'high' ? 270_000 : 150_000), ctrl.signal);
+                ? (['high','xhigh','max'].includes(_generateQuality) ? 510_000 : 270_000)
+                : (['high','xhigh','max'].includes(_generateQuality) ? 390_000 : 150_000), ctrl.signal);
         let d = await r.json();
         // The route now runs generation as a BACKGROUND JOB (so the long
         // OpenAI call + child-safety screening can't time out the HTTP
@@ -12024,8 +12023,8 @@ async function doGenerateMode(_autoRetried){
                 d = { ok: true, images: imgs0 };
             } else {
             const deadline = Date.now() + (refIds.length
-                ? (_generateQuality === 'high' ? 420_000 : 300_000)
-                : (_generateQuality === 'high' ? 300_000 : 180_000));
+                ? (['high','xhigh','max'].includes(_generateQuality) ? 540_000 : 300_000)
+                : (['high','xhigh','max'].includes(_generateQuality) ? 420_000 : 180_000));
             let jd = null;
             while (Date.now() < deadline) {
                 await new Promise(res => setTimeout(res, 3000));
