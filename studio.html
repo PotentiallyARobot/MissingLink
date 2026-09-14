@@ -5759,10 +5759,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     <div class="sec generate-only" style="display:none">
         <div class="sec-label"><span class="icon">🛡️</span> MODERATION</div>
         <div class="size-toggle">
-            <button class="size-btn active" data-mod="auto" onclick="genSetModeration('auto')" title="OpenAI default standard filtering">Standard</button>
-            <button class="size-btn" data-mod="low" onclick="genSetModeration('low')" title="Less restrictive OpenAI filtering; policy enforcement still applies">Low</button>
+            <button class="size-btn active" data-mod="auto" onclick="genSetModeration('auto')" title="OpenAI standard moderation">Standard</button>
+            <button class="size-btn disabled" data-mod="low" onclick="genSetModeration('low')" title="Pro subscribers can use OpenAI's less-restrictive provider moderation">Low · Pro</button>
         </div>
-        <div class="size-hint">OpenAI supports <code>auto</code> (default) and <code>low</code>. Studio's own downstream safety gate still applies.</div>
+        <div class="size-hint" id="genModerationHint">Standard moderation is required unless you have a live Pro subscription. Studio's own fail-closed safety gates always remain active.</div>
     </div>
 
     <div class="sec generate-only" style="display:none">
@@ -7549,6 +7549,26 @@ function notifyUploadError(code, data){
 // never swallow information.
 function friendlyGenError(code){
     const c = (code || '').toString();
+    const base = c.split(':')[0].trim();
+    if (base === 'safety_blocked') {
+        const suffix = c.includes(':') ? c.slice(c.indexOf(':') + 1) : '';
+        const labels = suffix.split(',')
+            .map(v => v.trim().replace(/_/g, ' '))
+            .filter(v => /^[a-z0-9 /-]{1,64}$/i.test(v));
+        return labels.length
+            ? 'Blocked by the safety filter. Safety violations: ' + labels.join(', ') + '.'
+            : 'Blocked by the safety filter.';
+    }
+    // Legacy defensive path: older workers sometimes surfaced the full OpenAI
+    // error JSON. Extract only the safety labels and never echo request IDs or
+    // moderation internals to the user.
+    if (/moderation_blocked|safety_violations\s*=|rejected by the safety system/i.test(c)) {
+        const m = c.match(/safety_violations\s*=\s*\[([^\]]*)\]/i);
+        const labels = m ? m[1].split(',').map(v => v.replace(/["']/g,'').trim()).filter(Boolean) : [];
+        return labels.length
+            ? 'Blocked by the safety filter. Safety violations: ' + labels.join(', ') + '.'
+            : 'Blocked by the safety filter.';
+    }
     const map = {
         // Server-side per-batch image cap (20 per pass). With the cap now
         // ignoring failed rows, hitting this means 20 live/successful jobs
@@ -7573,10 +7593,9 @@ function friendlyGenError(code){
         insufficient_tokens:
             'You don\u2019t have enough tokens for this generation.',
     };
-    // Some codes arrive as "code: detail" (the worker appends a detail
-    // suffix on openai_error / reference_missing). Match on the prefix.
-    const base = c.split(':')[0].trim();
-    return map[c] || map[base] || c || 'Generation failed.';
+    // Some codes arrive as "code: detail". Never surface unknown raw details
+    // that might contain provider request IDs; known prefixes get friendly copy.
+    return map[c] || map[base] || (base ? 'The image service could not complete this request.' : 'Generation failed.');
 }
 // Admin-only: when an upload PASSES and the server returned moderation
 // scores (debug object, populated only for ADMIN_EMAIL), record the result
@@ -7823,6 +7842,7 @@ async function checkAuth(){
         } else {
             const _wasUserId = (_user && _user.id) ? String(_user.id) : null;
             _user=null;
+            if (typeof syncModerationSubscriptionGate === 'function') syncModerationSubscriptionGate();
             // Session is gone (expired, revoked, or signed out in another
             // tab). doLogout() never ran in those paths, so the stage was
             // left on screen and in localStorage for whoever signs in
@@ -8264,6 +8284,7 @@ function updateUserMenuSubState(){
     // And the Unchained LoRA lock — unlock the slider the moment a
     // subscription goes live, re-lock (and zero it) when one lapses.
     if (typeof _applyUnchainedGate === 'function') _applyUnchainedGate();
+    if (typeof syncModerationSubscriptionGate === 'function') syncModerationSubscriptionGate();
     if (statusLine) {
         if (status === 'active') {
             statusLine.textContent = '👑 Pro · active';
@@ -10415,7 +10436,8 @@ function handleJobTerminal(jobId, d){
         // no explanation. Cancelled jobs are user-initiated, so we only
         // toast on real errors.
         if (d.status === 'error') {
-            showNotif('Generation failed: ' + friendlyGenError(d.error), 'error');
+            const msg = friendlyGenError(d.error);
+            showNotif(msg.startsWith('Blocked by the safety filter') ? msg : ('Generation failed: ' + msg), 'error');
         }
         checkAuth();
     }
@@ -10917,9 +10939,8 @@ let _generateCompression = 85;
 // away from JPEG when transparency is selected. Legacy gpt-image-2 still
 // disables transparency through the capability map below.
 let _generateBackground = 'auto';
-// Moderation — OpenAI exposes auto (standard/default) and low. Keep auto
-// as the Create default and surface both choices in the sidebar; there is
-// no supported "off" value.
+// Moderation is platform-enforced. The client always sends auto, and the
+// worker independently overrides any caller-provided value to auto.
 let _generateModeration = 'auto';
 // n: number of images per request. 1-4. The worker caps at 4 too;
 // gpt-image-2 supports up to 10 but we don't need more than 4 for
@@ -11503,16 +11524,36 @@ function genSetBackground(b){
     persistGenerateState();
 }
 
-// Moderation strictness. The UI no longer exposes this — we hardcoded
-// to 'low' (most permissive) for all generations. Keeping the function
-// around so any future re-introduction of the toggle works without
-// code changes elsewhere; persistence + restore still wire it up.
+// Provider moderation may only be relaxed by a live Pro subscriber. The
+// worker enforces the same rule server-side, so DOM/request tampering cannot
+// bypass it; this client gate is just the honest UX layer.
 function genSetModeration(m){
-    _generateModeration = m;
+    const wantsLow = m === 'low';
+    const allowedLow = (typeof isSubscriber === 'function') && isSubscriber();
+    _generateModeration = (wantsLow && allowedLow) ? 'low' : 'auto';
     document.querySelectorAll('.size-toggle .size-btn[data-mod]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.mod === m);
+        btn.classList.toggle('active', btn.dataset.mod === _generateModeration);
     });
     persistGenerateState();
+}
+
+function syncModerationSubscriptionGate(){
+    const allowedLow = (typeof isSubscriber === 'function') && isSubscriber();
+    const lowBtn = document.querySelector('.size-btn[data-mod="low"]');
+    const hint = document.getElementById('genModerationHint');
+    if (lowBtn) {
+        lowBtn.classList.toggle('disabled', !allowedLow);
+        lowBtn.disabled = !allowedLow;
+        lowBtn.title = allowedLow
+            ? "Use OpenAI\'s less-restrictive provider moderation. Studio safety gates still apply."
+            : 'Low provider moderation is available to Pro subscribers only.';
+    }
+    if (!allowedLow && _generateModeration === 'low') genSetModeration('auto');
+    if (hint) {
+        hint.textContent = allowedLow
+            ? "Pro: you can choose Standard or Low provider moderation. Studio\'s own fail-closed safety gates always remain active."
+            : "Standard moderation is required unless you have a live Pro subscription. Studio\'s own fail-closed safety gates always remain active.";
+    }
 }
 
 // Count slider — updates the visible count label, the cost line, and
@@ -11730,7 +11771,7 @@ function restoreGenerateState(){
                 _generateBackground = d.background;
             }
         }
-        if (typeof d.moderation === 'string') _generateModeration = d.moderation;
+        _generateModeration = 'auto'; // ignore stale persisted low-moderation preference
         if (typeof d.count === 'number') _generateCount = Math.max(1, Math.min(4, d.count));
         if (typeof d.size === 'string') {
             _generateSize = d.size;
@@ -11985,7 +12026,7 @@ async function doGenerateMode(_autoRetried){
                     output_format: _generateFormat,
                     output_compression: _generateFormat === 'png' ? null : _generateCompression,
                     background: _generateBackground,
-                    moderation: _generateModeration,
+                    moderation: 'auto', // server also enforces this; keep client honest
                     reference_image_ids: refIds,
                     job_id: synthJobId,
                     telemetry: window.mlActivityContext ? window.mlActivityContext() : null,
@@ -12173,7 +12214,8 @@ async function doGenerateMode(_autoRetried){
         const sj2 = myJobs.find(jj => jj.id === synthJobId);
         if (sj2) { sj2.status = 'error'; sj2.error = (e && e.message) || 'failed'; sj2.finishedAt = Date.now(); }
         renderQueue();
-        showNotif('Generation failed: ' + ((e && e.message) || 'unknown error'), 'error');
+        const msg = (e && e.message) || 'unknown error';
+        showNotif(msg.startsWith('Blocked by the safety filter') ? msg : ('Generation failed: ' + msg), 'error');
     } finally {
         clearInterval(tickHandle);
     }
