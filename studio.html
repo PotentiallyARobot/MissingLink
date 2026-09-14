@@ -4479,6 +4479,40 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     transform:translateY(-1px);
 }
 
+/* ── Terms of Service clickwrap ─────────────────────────────────────
+   Highest-priority account gate. New users and users whose accepted version
+   is stale must scroll the agreement, check the box, and explicitly Accept.
+   Backdrop/Escape do not dismiss the blocking version; declining signs out. */
+#legalTermsModal{z-index:10120;background:rgba(0,0,0,.95);padding:18px}
+.legal-terms-card{
+    width:min(930px,calc(100vw - 36px));height:min(900px,calc(100vh - 36px));
+    max-height:94vh;background:#191b1f;border:1px solid #2d3036;border-radius:14px;
+    box-shadow:0 26px 80px rgba(0,0,0,.85);display:flex;flex-direction:column;overflow:hidden;
+    color:var(--text);font-family:var(--font-body);
+}
+.legal-terms-head{padding:28px 30px 20px;border-bottom:1px solid #35383e;flex:0 0 auto}
+.legal-terms-head h2{margin:0;font-size:30px;line-height:1.1;font-family:var(--font-body);font-weight:750;color:#e4e5e7;letter-spacing:-.5px}
+.legal-terms-modified{margin-top:8px;color:#979ca8;font-size:14px}
+.legal-terms-body{flex:1 1 auto;overflow:auto;padding:24px 30px 34px;scrollbar-width:thin;overscroll-behavior:contain}
+.legal-terms-body::-webkit-scrollbar{width:8px}.legal-terms-body::-webkit-scrollbar-thumb{background:#5b5e65;border-radius:8px}
+.legal-terms-intro{font-size:14px;line-height:1.68;color:#d7d9dd;margin:0 0 22px}
+.legal-terms-section{margin:0 0 23px}.legal-terms-section h3{margin:0 0 7px;font-size:15px;line-height:1.35;color:#f0f1f2}
+.legal-terms-section p{margin:0;font-size:13.5px;line-height:1.68;color:#c7c9ce}
+.legal-terms-section strong{color:#fff}
+.legal-terms-footer{flex:0 0 auto;border-top:1px solid #35383e;padding:18px 24px 22px;background:#191b1f}
+.legal-scroll-hint{font-size:11px;color:var(--text-muted);margin:0 0 10px;text-align:right}
+.legal-agree-row{display:flex;gap:12px;align-items:flex-start;margin:0 0 16px;cursor:pointer;color:#d6d8dc;font-size:14px;line-height:1.45}
+.legal-agree-row input{width:20px;height:20px;margin:0;flex:0 0 auto;accent-color:var(--gold);cursor:pointer}
+.legal-agree-row input:disabled{cursor:not-allowed}
+.legal-terms-actions{display:flex;justify-content:flex-end;gap:10px}
+.legal-terms-accept,.legal-terms-secondary{border-radius:8px;padding:11px 20px;font-family:var(--font-body);font-size:13px;font-weight:700;cursor:pointer}
+.legal-terms-accept{background:var(--gold);color:#111;border:1px solid var(--gold)}
+.legal-terms-accept:disabled{opacity:.35;cursor:not-allowed;filter:grayscale(.5)}
+.legal-terms-secondary{background:#24272d;color:#c7c9cf;border:1px solid #3a3d44}
+.legal-terms-secondary:hover{border-color:#666b75;color:#fff}
+.legal-terms-company{font-size:12px;color:#8f949f;margin-top:18px}
+@media(max-width:700px){#legalTermsModal{padding:8px}.legal-terms-card{width:calc(100vw - 16px);height:calc(100vh - 16px);max-height:none}.legal-terms-head{padding:20px 18px 15px}.legal-terms-head h2{font-size:24px}.legal-terms-body{padding:18px}.legal-terms-footer{padding:14px 16px 16px}.legal-terms-actions{flex-direction:column-reverse}.legal-terms-accept,.legal-terms-secondary{width:100%}}
+
 /* ── Age acknowledgement gate ───────────────────────────────────────
    Blocking first-sign-in modal. Higher z-index than other modals so
    nothing layers above it. Backdrop is opaque-ish to underscore "you
@@ -5093,6 +5127,13 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
                 </button>
             </div>
             <div class="user-menu-section user-menu-section-foot">
+                <button class="user-menu-item" onclick="closeUserMenu();openLegalTermsModal(false)" role="menuitem">
+                    <span class="user-menu-icon">📄</span>
+                    <span class="user-menu-label">
+                        <span class="user-menu-title">Terms of Service</span>
+                        <span class="user-menu-sub">MissingLink · current agreement</span>
+                    </span>
+                </button>
                 <button class="user-menu-item user-menu-item-danger" onclick="closeUserMenu();doLogout()" role="menuitem">
                     <span class="user-menu-icon">↪</span>
                     <span class="user-menu-label">
@@ -6751,6 +6792,132 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 </div>
 
+<!-- ── TERMS OF SERVICE CLICKWRAP ─────────────────────────────────────
+     MissingLink. For an account that has not
+     accepted the current version this is an undismissable gate: the user can
+     Accept or sign out. The checkbox is disabled until the scroll reaches the
+     end, and Accept stays disabled until the checkbox is checked. -->
+<div class="popup-modal" id="legalTermsModal" role="dialog" aria-modal="true" aria-labelledby="legalTermsTitle">
+    <div class="legal-terms-card" onclick="event.stopPropagation()">
+        <div class="legal-terms-head">
+            <h2 id="legalTermsTitle">Terms of Service</h2>
+            <div class="legal-terms-modified">Last modified: September 14, 2026</div>
+        </div>
+        <div class="legal-terms-body" id="legalTermsBody" tabindex="0" onscroll="legalTermsOnScroll()">
+            <p class="legal-terms-intro"><strong>Please read these Terms carefully.</strong> They include important rules about AI-generated content, safety systems, account enforcement, payments, warranties, and liability.</p>
+            <section class="legal-terms-section">
+                <h3>1. Agreement to These Terms</h3>
+                <p>These Terms of Service (&quot;Terms&quot;) are a legally binding agreement between you and the operator of the MissingLink service (&quot;MissingLink,&quot; &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;), governing your access to and use of MissingLink, including our websites, hosted applications, AI image and video generation tools, APIs, community features, and related services (collectively, the &quot;Service&quot;). By clicking &ldquo;Accept,&rdquo; or by accessing or using the Service after accepting these Terms, you confirm that you have read and understood these Terms and agree to be legally bound by them. If you do not agree, you may not use the Service.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>2. Eligibility</h3>
+                <p>You must be at least 18 years old to use the Service. By accepting these Terms, you represent and warrant that you are at least 18 years old, that you have not been prohibited from using the Service, and that your registration and use of the Service comply with applicable law. If you use the Service on behalf of a company or other entity, you represent that you have authority to bind that entity to these Terms.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>3. Accounts and Account Security</h3>
+                <p>You are responsible for the accuracy of information associated with your account, for maintaining the security of your credentials, and for activity that occurs through your account. You may not sell, transfer, rent, or share account access in a way that defeats account, billing, safety, or enforcement controls. Notify us promptly if you believe your account has been compromised.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>4. The MissingLink Service and AI Systems</h3>
+                <p>MissingLink provides tools for creating, editing, transforming, organizing, searching, and sharing AI-generated or AI-assisted media. Results may be produced by MissingLink systems or by third-party models, APIs, infrastructure, or service providers. AI systems are probabilistic and can produce inaccurate, unexpected, offensive, duplicative, or otherwise unsuitable results. We do not guarantee that any prompt will be accepted, that any requested result will be produced, or that any output will be unique, accurate, non-infringing, or eligible for intellectual-property protection.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>5. Tokens, Purchases, and Subscriptions</h3>
+                <p>Certain features may require tokens, one-time purchases, or a subscription. Prices and applicable charges are shown before purchase. Subscriptions may renew automatically until canceled through the available billing controls. Tokens are service credits for use within MissingLink; except where required by law or expressly stated otherwise, they are not cash, are not redeemable for cash, and are not transferable. Fees, cancellation rights, and refunds are subject to the checkout terms presented at purchase and applicable law. A user&rsquo;s dissatisfaction with the artistic or creative qualities of a successfully delivered AI result does not, by itself, establish a technical failure.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>6. Limited License to Use the Service</h3>
+                <p>Subject to your compliance with these Terms, MissingLink grants you a limited, non-exclusive, non-transferable, revocable right to access and use the Service for lawful purposes. Except where applicable law expressly permits otherwise, you may not copy, modify, reverse engineer, resell, scrape, interfere with, or circumvent the Service, its access controls, billing systems, rate limits, moderation systems, or other technical safeguards.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>7. Your Prompts, Uploads, and Other Content</h3>
+                <p>You retain whatever rights you may have in prompts, images, videos, text, files, and other material you submit to the Service (&quot;User Content&quot;). You grant MissingLink a worldwide, non-exclusive, royalty-free license to host, store, copy, transmit, transform, and otherwise process User Content only as reasonably necessary to operate, secure, moderate, improve, and provide the Service and the features you request. If you deliberately publish or share User Content through a public MissingLink feature, you also authorize us to display and distribute that content through that feature until you remove it or the feature is discontinued, subject to these Terms and our retention practices.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>8. Rights and Permissions</h3>
+                <p>You are solely responsible for User Content you submit and for your instructions to the Service. You represent and warrant that you own the User Content or have all rights, licenses, permissions, and consents needed for MissingLink and its service providers to process it as contemplated by the Service. Your use may not infringe or violate another person&rsquo;s copyright, trademark, trade-secret, privacy, publicity, contractual, or other rights. You are responsible for obtaining any legally required consent before using another person&rsquo;s likeness, voice, private information, or other protected material.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>9. Generated and Edited Outputs</h3>
+                <p>Subject to these Terms and any applicable third-party model or content license, MissingLink does not claim ownership of an output merely because the Service generated or edited it for you. You are responsible for reviewing outputs before using, publishing, selling, or distributing them and for determining whether your intended use is lawful and appropriate. Similar or identical outputs may be generated for other users, and applicable law may limit or deny intellectual-property protection for AI-generated material.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>10. Content and Safety Rules</h3>
+                <p>You may not use the Service to request, create, upload, edit, store, publish, or distribute content that is unlawful or prohibited by MissingLink&rsquo;s safety rules. Prohibited uses include, without limitation: child sexual abuse material or sexualized content involving any person depicted or described as under 18, including fictional or stylized minors; child exploitation, abuse, or endangerment; non-consensual intimate imagery or sexual deepfakes; sexual violence or content that promotes or facilitates sexual abuse; graphic violence, mutilation, dismemberment, or gore involving minors; instructions or content that meaningfully facilitates serious violent wrongdoing; material that unlawfully exploits another person&rsquo;s likeness or private information; content that promotes terrorism or violent extremist activity; and content whose creation, possession, or distribution is otherwise illegal. MissingLink may maintain additional model-specific or feature-specific restrictions that are incorporated into these Terms when presented in the Service.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>11. No Circumvention, Evasion, or Safety Testing Without Permission</h3>
+                <p>You may not bypass, disable, defeat, probe, stress-test, reverse engineer, or attempt to discover the limits of MissingLink&rsquo;s safety, moderation, abuse-prevention, authentication, billing, or access-control systems without our prior written authorization. You may not repeatedly rephrase prohibited requests to evade filters, manipulate classifiers, conceal prohibited intent, use alternate accounts or identities to evade enforcement, tamper with client requests to obtain restricted moderation settings, or assist another person in doing so. Good-faith security research is permitted only when expressly authorized by MissingLink in writing and conducted within the scope of that authorization.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>12. Safety Screening, Moderation, and Enforcement</h3>
+                <p>To operate and protect the Service, MissingLink and its service providers may automatically screen prompts, uploads, reference media, generated outputs, and relevant account activity for safety, abuse prevention, fraud prevention, policy compliance, and legal compliance. Requests may be rejected before generation, outputs may be withheld, and content may be removed or restricted. We may preserve safety and abuse records as reasonably necessary for security, dispute resolution, legal compliance, and enforcement. We may warn, restrict, suspend, or terminate accounts, revoke feature access, or block attempts to create new accounts when we reasonably believe these Terms or our safety rules have been violated. Safety systems reduce risk but cannot guarantee that every prohibited item will be detected.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>13. Third-Party Models, APIs, and Services</h3>
+                <p>The Service may depend on third-party model providers, hosting providers, payment processors, identity providers, search services, storage providers, and other services. Your use of particular features may also be subject to provider restrictions or licenses that we identify in the Service. Third-party services are not controlled by MissingLink, may change or become unavailable, and may independently reject or moderate requests. To the fullest extent permitted by law, MissingLink is not responsible for outages, decisions, content, or conduct of independent third-party services.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>14. Public Sharing and Community Features</h3>
+                <p>If you choose to make content public, you understand that other people may view, discuss, link to, or interact with it. You may not publish content that violates these Terms or the rights of others. MissingLink may moderate, remove, unpublish, limit distribution of, or disable access to public content at any time. Public sharing does not transfer ownership of your content to MissingLink, but it necessarily grants us the rights needed to display and operate the public feature as described above.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>15. Copyright and Intellectual-Property Complaints</h3>
+                <p>MissingLink respects intellectual-property rights. If you believe material available through the Service infringes rights you own or control, contact support@missinglink.build with identification of the protected work, the material you believe infringes it, information sufficient to locate the material, your contact information, and a statement explaining the basis of your claim. We may remove or disable material and may suspend or terminate repeat or egregious infringers. Nothing in this section represents that MissingLink has completed any statutory service-provider registration that may be required for a particular safe harbor.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>16. Suspension, Termination, and Service Changes</h3>
+                <p>You may stop using the Service at any time. We may suspend or terminate access, remove content, limit features, or discontinue all or part of the Service when reasonably necessary for safety, security, legal compliance, nonpayment, abuse prevention, product changes, or violations of these Terms. If your account is terminated for violating these Terms, you may not create or use another account to evade that termination. Provisions that by their nature should survive termination—including payment obligations, licenses needed for retained records, indemnity, disclaimers, liability limitations, and dispute provisions—will survive.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>17. Disclaimer of Warranties</h3>
+                <p>TO THE FULLEST EXTENT PERMITTED BY LAW, THE SERVICE, AI MODELS, OUTPUTS, USER CONTENT, AND ALL RELATED MATERIALS ARE PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE.&rdquo; MISSINGLINK AND THE OPERATOR OF THE SERVICE DISCLAIM EXPRESS AND IMPLIED WARRANTIES, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, AVAILABILITY, SECURITY, AND ERROR-FREE OPERATION. WE DO NOT WARRANT THAT THE SERVICE WILL BE UNINTERRUPTED OR THAT SAFETY SYSTEMS WILL IDENTIFY EVERY PROHIBITED REQUEST OR OUTPUT. NOTHING IN THESE TERMS DISCLAIMS A WARRANTY OR RIGHT THAT CANNOT LAWFULLY BE DISCLAIMED.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>18. Limitation of Liability</h3>
+                <p>TO THE FULLEST EXTENT PERMITTED BY LAW, MISSINGLINK, THE OPERATOR OF THE SERVICE, AND THEIR AFFILIATES, OFFICERS, EMPLOYEES, CONTRACTORS, AND AGENTS WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOSS OF PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS OPPORTUNITY, ARISING FROM OR RELATED TO THE SERVICE. TO THE FULLEST EXTENT PERMITTED BY LAW, OUR TOTAL AGGREGATE LIABILITY FOR CLAIMS ARISING OUT OF OR RELATING TO THE SERVICE OR THESE TERMS WILL NOT EXCEED THE GREATER OF (A) THE AMOUNT YOU PAID TO MISSINGLINK FOR THE SERVICE DURING THE 12 MONTHS BEFORE THE EVENT GIVING RISE TO THE CLAIM OR (B) US$100. THESE LIMITATIONS DO NOT APPLY TO LIABILITY THAT APPLICABLE LAW DOES NOT PERMIT US TO LIMIT.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>19. Indemnification</h3>
+                <p>To the fullest extent permitted by law, you are responsible for your use of the Service and agree to defend, indemnify, and hold harmless MissingLink, the operator of the Service, and their affiliates, officers, employees, contractors, and agents from third-party claims, liabilities, losses, damages, costs, and reasonable attorneys&rsquo; fees arising out of or related to: your misuse of the Service; your User Content; your violation of these Terms or applicable law; your infringement or violation of another person&rsquo;s intellectual-property, privacy, publicity, or other rights; or a dispute between you and a third party arising from your conduct through the Service. We may assume control of the defense of a matter subject to indemnification, and you agree to cooperate with that defense.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>20. Privacy, Security, and Electronic Records</h3>
+                <p>Our operation of the Service involves collection and processing of account, device, transaction, usage, content, and safety-related information. Our privacy disclosures, as presented through the Service, describe how personal information is handled. By accepting these Terms electronically, you consent to the use of electronic records for this agreement and acknowledge that MissingLink may maintain an audit record of your acceptance, including your account identifier, acceptance time, agreement version, a cryptographic identifier of the agreement text, a privacy-preserving network identifier, and device/browser information reasonably needed to establish the acceptance record and protect the Service.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>21. Changes to These Terms</h3>
+                <p>We may update these Terms from time to time. The &ldquo;Last modified&rdquo; date identifies the current version. For material changes, we may provide notice and may require you to accept a new version before continuing to use protected features. Your previous acceptance does not count as acceptance of a later version when the Service expressly requires re-acceptance.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>22. Governing Law and Venue</h3>
+                <p>Except to the extent applicable law provides otherwise, these Terms are governed by the laws of the District of Columbia, without regard to conflict-of-law principles. Any court proceeding that is not required by applicable law to be brought elsewhere will be brought in a state or federal court with jurisdiction in the District of Columbia, and you and MissingLink consent to that jurisdiction and venue. This section does not prevent either party from seeking appropriate injunctive or equitable relief where legally available.</p>
+            </section>
+            <section class="legal-terms-section">
+                <h3>23. Miscellaneous and Contact</h3>
+                <p>These Terms, together with policies and feature-specific terms expressly incorporated into them, form the agreement between you and MissingLink regarding the Service. If a provision is unenforceable, the remaining provisions remain in effect to the fullest extent permitted by law. Our failure to enforce a provision is not a waiver of our right to enforce it later. You may not assign these Terms without our consent; we may assign them in connection with a merger, acquisition, financing, reorganization, or transfer of the Service or relevant business. Questions about these Terms may be sent to support@missinglink.build.</p>
+            </section>
+            <div class="legal-terms-company">MissingLink · support@missinglink.build</div>
+        </div>
+        <div class="legal-terms-footer" id="legalTermsAgreementFooter">
+            <div class="legal-scroll-hint" id="legalTermsScrollHint">Scroll to the end to enable agreement.</div>
+            <label class="legal-agree-row">
+                <input type="checkbox" id="legalTermsCheck" disabled onchange="legalTermsSyncAccept()">
+                <span>I am at least 18 years old, I have read and agree to these Terms of Service, and I understand that MissingLink may screen prompts, uploads, and outputs for safety and abuse prevention.</span>
+            </label>
+            <div class="legal-terms-actions">
+                <button class="legal-terms-secondary" type="button" onclick="doLogout()">Decline &amp; sign out</button>
+                <button class="legal-terms-accept" id="legalTermsAcceptBtn" type="button" disabled onclick="acceptLegalTerms()">Accept</button>
+            </div>
+        </div>
+        <div class="legal-terms-footer" id="legalTermsReadOnlyFooter" style="display:none">
+            <div class="legal-terms-actions">
+                <button class="legal-terms-secondary" type="button" onclick="closeLegalTermsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ── AGE ACKNOWLEDGEMENT GATE ──────────────────────────────────────
      Shown once per user account on first sign-in. Blocks all
      interaction with the app until acknowledged. Server stores the
@@ -7586,6 +7753,8 @@ function friendlyGenError(code){
             'The image service didn\u2019t respond in time. Your tokens were refunded \u2014 please try again.',
         openai_error:
             'The image service rejected the request. Try simplifying the prompt or lowering the quality, then retry.',
+        terms_required:
+            'Please review and accept the current Terms of Service before continuing.',
         no_images_returned:
             'No image came back from the service. Your tokens were refunded \u2014 please try again.',
         all_outputs_blocked_or_empty:
@@ -7690,7 +7859,103 @@ function fetchT(url,opts,ms,extSignal){
         else extSignal.addEventListener('abort',()=>c.abort(),{once:true});
     }
     opts=opts||{}; opts.signal=c.signal; opts.credentials='include';
-    return fetch(url,opts).finally(()=>clearTimeout(t));
+    return fetch(url,opts).then(async r=>{
+        // Server-side clickwrap gate is authoritative. If an old tab, devtools
+        // edit, or stale client reaches a protected POST without current assent,
+        // surface the Terms modal instead of leaking a raw "terms_required" code.
+        if(r.status===403){
+            try{
+                const d=await r.clone().json();
+                if(d && d.error==='terms_required' && typeof handleTermsRequired==='function') handleTermsRequired(d);
+            }catch(e){}
+        }
+        return r;
+    }).finally(()=>clearTimeout(t));
+}
+
+// ── Terms of Service clickwrap ─────────────────────
+const LEGAL_AGREEMENT_VERSION = 'missinglink_tos_2026-09-14_v2';
+let _legalTermsBlocking = false;
+
+function legalTermsOnScroll(){
+    const body=$('legalTermsBody'), chk=$('legalTermsCheck'), hint=$('legalTermsScrollHint');
+    if(!body || !chk || !_legalTermsBlocking) return;
+    const reached = body.scrollTop + body.clientHeight >= body.scrollHeight - 18;
+    if(reached){
+        chk.disabled=false;
+        if(hint) hint.textContent='Review complete — check the box to agree.';
+    }
+}
+function legalTermsSyncAccept(){
+    const chk=$('legalTermsCheck'), btn=$('legalTermsAcceptBtn');
+    if(btn) btn.disabled = !chk || chk.disabled || !chk.checked;
+}
+function openLegalTermsModal(blocking){
+    const m=$('legalTermsModal'); if(!m) return;
+    _legalTermsBlocking = blocking !== false;
+    const agree=$('legalTermsAgreementFooter'), read=$('legalTermsReadOnlyFooter');
+    if(agree) agree.style.display = _legalTermsBlocking ? '' : 'none';
+    if(read) read.style.display = _legalTermsBlocking ? 'none' : '';
+    const body=$('legalTermsBody');
+    if(body){ body.scrollTop=0; setTimeout(()=>{ try{body.focus({preventScroll:true});}catch(e){} },0); }
+    if(_legalTermsBlocking){
+        const chk=$('legalTermsCheck'), btn=$('legalTermsAcceptBtn'), hint=$('legalTermsScrollHint');
+        if(chk){ chk.checked=false; chk.disabled=true; }
+        if(btn) btn.disabled=true;
+        if(hint) hint.textContent='Scroll to the end to enable agreement.';
+        requestAnimationFrame(()=>{
+            // Short viewports/content can already be at the end without scrolling.
+            const b=$('legalTermsBody'), c=$('legalTermsCheck');
+            if(b && c && b.scrollHeight <= b.clientHeight + 18){ c.disabled=false; const hi=$('legalTermsScrollHint'); if(hi) hi.textContent='Review complete — check the box to agree.'; }
+        });
+    }
+    m.classList.add('open');
+}
+function closeLegalTermsModal(){
+    if(_legalTermsBlocking) return;
+    const m=$('legalTermsModal'); if(m) m.classList.remove('open');
+}
+function handleTermsRequired(d){
+    if(_user){
+        _user.legal_agreement_required=true;
+        if(d && d.legal_agreement_version) _user.legal_agreement_version=d.legal_agreement_version;
+    }
+    openLegalTermsModal(true);
+    return true;
+}
+async function acceptLegalTerms(){
+    if(!_user) return;
+    const chk=$('legalTermsCheck'), btn=$('legalTermsAcceptBtn');
+    if(!chk || chk.disabled || !chk.checked) return;
+    if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+    try{
+        const r=await fetchT(`${API}/api/studio/legal-ack`,{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({accepted:true,version:LEGAL_AGREEMENT_VERSION}),
+        },10000);
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok || !d.ok){
+            if(d && d.error==='terms_version_changed'){
+                showNotif('The Terms changed while this page was open. Reloading the current agreement.', 'info');
+                setTimeout(()=>location.reload(),500);
+                return;
+            }
+            showNotif("Couldn't save your agreement. Please try again.", 'error');
+            return;
+        }
+        _user.legal_ack_at=d.legal_ack_at||Date.now()/1000;
+        _user.legal_ack_version=d.legal_ack_version||LEGAL_AGREEMENT_VERSION;
+        _user.legal_agreement_version=d.legal_agreement_version||LEGAL_AGREEMENT_VERSION;
+        _user.legal_agreement_required=false;
+        if(d.age_ack_at) _user.age_ack_at=d.age_ack_at;
+        _legalTermsBlocking=false;
+        const m=$('legalTermsModal'); if(m) m.classList.remove('open');
+        showNotif('Terms accepted. Welcome to MissingLink.', 'success');
+    }catch(e){
+        showNotif("Couldn't save your agreement. Please try again.", 'error');
+    }finally{
+        if(btn){ btn.textContent='Accept'; legalTermsSyncAccept(); }
+    }
 }
 
 // ── Auth ───────────────────────────────────────────
@@ -7715,6 +7980,10 @@ async function checkAuth(){
             const _prevAgeAck = (_user && _user.age_ack_at) ? _user.age_ack_at : 0;
             const _prevUserId = (_user && _user.id) ? String(_user.id) : null;
             _user=d;
+            _user.legal_ack_at = (typeof d.legal_ack_at === 'number' && d.legal_ack_at > 0) ? d.legal_ack_at : null;
+            _user.legal_ack_version = d.legal_ack_version || null;
+            _user.legal_agreement_version = d.legal_agreement_version || LEGAL_AGREEMENT_VERSION;
+            _user.legal_agreement_required = !!d.legal_agreement_required;
             // ── Stage ownership reconciliation ──────────────────────
             // This is the first point at which the real identity is
             // known. Three cases:
@@ -7838,6 +8107,12 @@ async function checkAuth(){
                 // page load (browser-wide, see DOMContentLoaded
                 // handler) — it shows for anonymous and signed-in
                 // users alike on first visit, then stays dismissed.
+            }
+            // Terms are account/version-bound and server-authoritative. Existing
+            // users with no current acceptance get the same blocking clickwrap
+            // as brand-new accounts; a future version bump re-arms it automatically.
+            if (_user.legal_agreement_required) {
+                setTimeout(()=>openLegalTermsModal(true), 0);
             }
         } else {
             const _wasUserId = (_user && _user.id) ? String(_user.id) : null;
