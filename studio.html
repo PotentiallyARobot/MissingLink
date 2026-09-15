@@ -5663,9 +5663,10 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
     </div>
 
     <div class="sec generate-only" style="display:none">
-        <div class="sec-label"><span class="icon">🖼️</span> REFERENCE IMAGES
+        <div class="sec-label"><span class="icon">🖼️</span> REFERENCE IMAGES <span style="font-weight:500;color:var(--text-muted)">(OPTIONAL)</span>
             <span class="slot-counter" id="genSlotCounter">0 / 4</span>
         </div>
+        <div class="size-hint" style="margin-bottom:8px">Leave these empty for normal text-to-image generation. Add references only when you want the model to follow an existing image.</div>
         <!-- Drop-or-click slots — gpt-image-2 /edits accepts up to 16 ref
              images, but the model in practice can only attend to ~4 well,
              so we cap at 4 to avoid tokenizer bloat and rate-limit pain.
@@ -6795,15 +6796,16 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <!-- ── TERMS OF SERVICE CLICKWRAP ─────────────────────────────────────
      MissingLink. For an account that has not
      accepted the current version this is an undismissable gate: the user can
-     Accept or sign out. The checkbox is disabled until the scroll reaches the
-     end, and Accept stays disabled until the checkbox is checked. -->
+     Accept or sign out. The checkbox is available immediately; the user does
+     not have to scroll through the document before agreeing. Accept stays
+     disabled only until the checkbox is checked. -->
 <div class="popup-modal" id="legalTermsModal" role="dialog" aria-modal="true" aria-labelledby="legalTermsTitle">
     <div class="legal-terms-card" onclick="event.stopPropagation()">
         <div class="legal-terms-head">
             <h2 id="legalTermsTitle">Terms of Service</h2>
             <div class="legal-terms-modified">Last modified: September 14, 2026</div>
         </div>
-        <div class="legal-terms-body" id="legalTermsBody" tabindex="0" onscroll="legalTermsOnScroll()">
+        <div class="legal-terms-body" id="legalTermsBody" tabindex="0">
             <p class="legal-terms-intro"><strong>Please read these Terms carefully.</strong> They include important rules about AI-generated content, safety systems, account enforcement, payments, warranties, and liability.</p>
             <section class="legal-terms-section">
                 <h3>1. Agreement to These Terms</h3>
@@ -6900,9 +6902,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             <div class="legal-terms-company">MissingLink · support@missinglink.build</div>
         </div>
         <div class="legal-terms-footer" id="legalTermsAgreementFooter">
-            <div class="legal-scroll-hint" id="legalTermsScrollHint">Scroll to the end to enable agreement.</div>
+            <div class="legal-scroll-hint" id="legalTermsScrollHint">You can review the Terms above, then check the box to agree.</div>
             <label class="legal-agree-row">
-                <input type="checkbox" id="legalTermsCheck" disabled onchange="legalTermsSyncAccept()">
+                <input type="checkbox" id="legalTermsCheck" onchange="legalTermsSyncAccept()">
                 <span>I am at least 18 years old, I have read and agree to these Terms of Service, and I understand that MissingLink may screen prompts, uploads, and outputs for safety and abuse prevention.</span>
             </label>
             <div class="legal-terms-actions">
@@ -7878,17 +7880,15 @@ const LEGAL_AGREEMENT_VERSION = 'missinglink_tos_2026-09-14_v2';
 let _legalTermsBlocking = false;
 
 function legalTermsOnScroll(){
-    const body=$('legalTermsBody'), chk=$('legalTermsCheck'), hint=$('legalTermsScrollHint');
-    if(!body || !chk || !_legalTermsBlocking) return;
-    const reached = body.scrollTop + body.clientHeight >= body.scrollHeight - 18;
-    if(reached){
-        chk.disabled=false;
-        if(hint) hint.textContent='Review complete — check the box to agree.';
-    }
+    // Kept as a compatibility no-op for stale cached markup. Agreement is
+    // intentionally NOT scroll-gated: users may accept immediately after
+    // reviewing as much of the scrollable Terms as they choose.
+    const chk=$('legalTermsCheck');
+    if(chk) chk.disabled=false;
 }
 function legalTermsSyncAccept(){
     const chk=$('legalTermsCheck'), btn=$('legalTermsAcceptBtn');
-    if(btn) btn.disabled = !chk || chk.disabled || !chk.checked;
+    if(btn) btn.disabled = !chk || !chk.checked;
 }
 function openLegalTermsModal(blocking){
     const m=$('legalTermsModal'); if(!m) return;
@@ -7900,14 +7900,11 @@ function openLegalTermsModal(blocking){
     if(body){ body.scrollTop=0; setTimeout(()=>{ try{body.focus({preventScroll:true});}catch(e){} },0); }
     if(_legalTermsBlocking){
         const chk=$('legalTermsCheck'), btn=$('legalTermsAcceptBtn'), hint=$('legalTermsScrollHint');
-        if(chk){ chk.checked=false; chk.disabled=true; }
+        // No forced-scroll requirement. The terms remain fully scrollable, but
+        // the user can agree immediately by checking the explicit clickwrap box.
+        if(chk){ chk.checked=false; chk.disabled=false; }
         if(btn) btn.disabled=true;
-        if(hint) hint.textContent='Scroll to the end to enable agreement.';
-        requestAnimationFrame(()=>{
-            // Short viewports/content can already be at the end without scrolling.
-            const b=$('legalTermsBody'), c=$('legalTermsCheck');
-            if(b && c && b.scrollHeight <= b.clientHeight + 18){ c.disabled=false; const hi=$('legalTermsScrollHint'); if(hi) hi.textContent='Review complete — check the box to agree.'; }
-        });
+        if(hint) hint.textContent='You can review the Terms above, then check the box to agree.';
     }
     m.classList.add('open');
 }
@@ -7926,7 +7923,7 @@ function handleTermsRequired(d){
 async function acceptLegalTerms(){
     if(!_user) return;
     const chk=$('legalTermsCheck'), btn=$('legalTermsAcceptBtn');
-    if(!chk || chk.disabled || !chk.checked) return;
+    if(!chk || !chk.checked) return;
     if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
     try{
         const r=await fetchT(`${API}/api/studio/legal-ack`,{
@@ -12277,35 +12274,40 @@ async function doGenerateMode(_autoRetried){
         const _sj = myJobs.find(jj => jj.id === synthJobId);
         if (_sj) _sj._abort = ctrl;
         let r;
+        // Reference images are OPTIONAL. When there are none, omit the field
+        // completely so Create is an unambiguous prompt-only text→image call;
+        // the worker then routes it through /v1/images/generations. References
+        // are added only when the user has actually populated a slot.
+        const createPayload = {
+            prompt,
+            // This call originates from the CREATE UI, not the AI
+            // agent — the shared endpoint records it so the admin
+            // view can tell the two surfaces apart.
+            source: 'create',
+            // Which GPT Image model to use. The worker validates
+            // against an allow-list and falls back to Sunburst
+            // if unrecognized — so client bugs can't surface upstream.
+            model: genGetEffectiveModel(),
+            // Number of images per request — 1-4. Worker caps at 4
+            // for symmetry. Cost = per-image variable × n.
+            n: _generateCount,
+            // Resolve preset vs custom W×H. The worker validates again
+            // (and falls back to 1024² if anything's off) so client
+            // bugs here never escape OpenAI as 400s — they just get
+            // silently corrected.
+            size: genGetEffectiveSize(),
+            quality: _generateQuality,
+            output_format: _generateFormat,
+            output_compression: _generateFormat === 'png' ? null : _generateCompression,
+            background: _generateBackground,
+            moderation: 'auto', // server also enforces this; keep client honest
+            job_id: synthJobId,
+            telemetry: window.mlActivityContext ? window.mlActivityContext() : null,
+        };
+        if (refIds.length) createPayload.reference_image_ids = refIds;
         r = await fetchT(`${API}/api/studio/agent-image-gen`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    // This call originates from the CREATE UI, not the AI
-                    // agent — the shared endpoint records it so the admin
-                    // view can tell the two surfaces apart.
-                    source: 'create',
-                    // Which GPT Image model to use. The worker validates
-                    // against an allow-list and falls back to Sunburst
-                    // if unrecognized — so client bugs can't surface upstream.
-                    model: genGetEffectiveModel(),
-                    // Number of images per request — 1-4. Worker caps at 4
-                    // for symmetry. Cost = per-image variable × n.
-                    n: _generateCount,
-                    // Resolve preset vs custom W×H. The worker validates again
-                    // (and falls back to 1024² if anything's off) so client
-                    // bugs here never escape OpenAI as 400s — they just get
-                    // silently corrected.
-                    size: genGetEffectiveSize(),
-                    quality: _generateQuality,
-                    output_format: _generateFormat,
-                    output_compression: _generateFormat === 'png' ? null : _generateCompression,
-                    background: _generateBackground,
-                    moderation: 'auto', // server also enforces this; keep client honest
-                    reference_image_ids: refIds,
-                    job_id: synthJobId,
-                    telemetry: window.mlActivityContext ? window.mlActivityContext() : null,
-                }),
+                body: JSON.stringify(createPayload),
                 // Frontend timeout slightly above the worker's so the
                 // worker's AbortController fires first with a useful error
                 // (openai_error / detail) rather than us giving up first
