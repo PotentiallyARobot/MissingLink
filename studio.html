@@ -268,6 +268,9 @@ body{background:var(--black);color:var(--text);font-family:var(--font-body);font
     opacity:.4;cursor:not-allowed;pointer-events:auto
 }
 .size-btn.disabled:hover{color:var(--text-muted)}
+/* Pro-locked moderation is intentionally clickable: selecting it opens the
+   subscription upsell without changing the active moderation setting. */
+.size-btn.disabled[data-mod="low"]{cursor:pointer}
 
 /* Custom W×H input row — small numeric fields styled like the rest of
    the studio's input chrome. Sized to read alongside the size-btn row
@@ -6734,13 +6737,13 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 <div class="popup-modal" id="buyModal" onclick="if(event.target===this)closeBuyModal()">
     <div class="popup-card">
         <button class="modal-close" onclick="closeBuyModal()">×</button>
-        <div class="popup-icon">🪙</div>
-        <h2>Get More Tokens</h2>
+        <div class="popup-icon" id="buyModalIcon">🪙</div>
+        <h2 id="buyModalTitle">Get More Tokens</h2>
         <div id="buyPaywallNote" style="display:none;margin:0 0 10px;padding:8px 12px;border:1px solid var(--gold);border-radius:8px;background:linear-gradient(135deg,var(--gold-dim) 0%,transparent 100%);font-size:11px;line-height:1.45;color:var(--text)">
             <b style="color:var(--gold)">🔞 Adult content is for paying members.</b> Buy a pack or subscribe and it unlocks instantly.
         </div>
         <p class="popup-balance">Current balance: <b id="buyBalance">0</b> tokens</p>
-        <div class="popup-option" onclick="doBuyTokens()">
+        <div class="popup-option" id="buyTokenOption" onclick="doBuyTokens()">
             <div class="popup-amount">~100 IMAGES</div>
             <div class="popup-detail">10,000 tokens · ~$0.05 per image</div>
             <div class="popup-price">$5.00</div>
@@ -6748,7 +6751,7 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
         <!-- Subscribe option. JS toggles its visibility based on
              _user.subscription_status — when active, this hides and
              #subActiveStatus shows in its place with a Manage button. -->
-        <div class="popup-divider">OR SUBSCRIBE</div>
+        <div class="popup-divider" id="buySubscribeDivider">OR SUBSCRIBE</div>
         <div class="popup-option popup-option-subscribe" id="subscribeOption" onclick="doSubscribe()">
             <span class="popup-ribbon">MOST VALUE</span>
             <div class="popup-amount">👑 PRO — 500+ IMAGES/MONTH</div>
@@ -9450,12 +9453,32 @@ async function toggleViolencePref(checked){
 
 // ── Buy modals ────────────────────────────────────
 function showBuyModal(opts){
-    // opts.paywall === true → opened because an adult-content generation was
-    // refused for lack of paid entitlement. Shows the contextual banner so
-    // the user knows exactly why this popped and what buying unlocks.
-    // All other callers (token counter, upsells) leave the banner hidden.
+    // Contextual purchase / subscription modal. `proFeature=low_moderation` is
+    // subscription-only: buying a one-time token pack must NOT be presented as
+    // unlocking Low moderation. Other callers retain the normal token + Pro UI.
+    const isLowModerationUpsell = !!(opts && opts.proFeature === 'low_moderation');
     const note = $('buyPaywallNote');
-    if (note) note.style.display = (opts && opts.paywall) ? '' : 'none';
+    const title = $('buyModalTitle');
+    const icon = $('buyModalIcon');
+    const tokenOption = $('buyTokenOption');
+    const divider = $('buySubscribeDivider');
+
+    if (note) {
+        if (isLowModerationUpsell) {
+            note.innerHTML = '<b style="color:var(--gold)">🛡️ Low moderation is a Pro feature.</b> Subscribe to choose Low provider moderation. MissingLink\'s own safety gates always remain active.';
+            note.style.display = '';
+        } else if (opts && opts.paywall) {
+            note.innerHTML = '<b style="color:var(--gold)">🔞 Adult content is for paying members.</b> Buy a pack or subscribe and it unlocks instantly.';
+            note.style.display = '';
+        } else {
+            note.style.display = 'none';
+        }
+    }
+    if (title) title.textContent = isLowModerationUpsell ? 'Unlock Pro' : 'Get More Tokens';
+    if (icon) icon.textContent = isLowModerationUpsell ? '👑' : '🪙';
+    if (tokenOption) tokenOption.style.display = isLowModerationUpsell ? 'none' : '';
+    if (divider) divider.textContent = isLowModerationUpsell ? 'SUBSCRIBE TO UNLOCK' : 'OR SUBSCRIBE';
+
     if(_user) $('buyBalance').textContent = _user.tokens;
     // Toggle Subscribe vs. Manage based on the user's current subscription
     // state (set by /auth/me). 'active' means they're paid through the
@@ -11802,7 +11825,20 @@ function genSetBackground(b){
 function genSetModeration(m){
     const wantsLow = m === 'low';
     const allowedLow = (typeof isSubscriber === 'function') && isSubscriber();
-    _generateModeration = (wantsLow && allowedLow) ? 'low' : 'auto';
+
+    // Low is a Pro upsell for non-subscribers. IMPORTANT: do not mutate the
+    // selected moderation state or button styling before opening the modal.
+    // Standard therefore stays visibly active. The worker independently
+    // forces non-subscribers to `auto`, so hand-crafted requests cannot bypass
+    // this client-side gate.
+    if (wantsLow && !allowedLow) {
+        if (typeof showBuyModal === 'function') {
+            showBuyModal({ proFeature: 'low_moderation' });
+        }
+        return;
+    }
+
+    _generateModeration = wantsLow ? 'low' : 'auto';
     document.querySelectorAll('.size-toggle .size-btn[data-mod]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mod === _generateModeration);
     });
@@ -11815,10 +11851,13 @@ function syncModerationSubscriptionGate(){
     const hint = document.getElementById('genModerationHint');
     if (lowBtn) {
         lowBtn.classList.toggle('disabled', !allowedLow);
-        lowBtn.disabled = !allowedLow;
+        // Do not use the native `disabled` attribute here: the locked option
+        // must still receive clicks so it can open the Pro subscription modal.
+        lowBtn.disabled = false;
+        lowBtn.setAttribute('aria-disabled', allowedLow ? 'false' : 'true');
         lowBtn.title = allowedLow
             ? "Use OpenAI\'s less-restrictive provider moderation. Studio safety gates still apply."
-            : 'Low provider moderation is available to Pro subscribers only.';
+            : 'Low provider moderation is a Pro feature — click to subscribe.';
     }
     if (!allowedLow && _generateModeration === 'low') genSetModeration('auto');
     if (hint) {
