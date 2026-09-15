@@ -27178,20 +27178,42 @@ let _stageGalleryFirstLoaded = false;
 
 const STAGE_GALLERY_PAGE_SIZE = 20;
 
-// Two-tab stage view: 'studio' (workspace — output / batch grid /
-// generation results) or 'gallery' (community feed). Default
-// 'gallery' so first-time visitors land on the feed of community
-// work — gives them something to look at while they figure out what
-// they want to make. Persisted in localStorage so the user's
-// preference sticks across reloads; explicit 'studio' from a prior
-// session is respected, but absence (first visit) defaults to gallery.
-// Page-load default is ALWAYS the gallery view — this is a hard product rule.
-// We deliberately do NOT restore a previously-saved stage view on load: a
-// reload should always land the user on the gallery (with Create mode), never
-// dump them back into the Studio or SDXL tab. The saved value is still written
-// when the user switches tabs (so other code can read "current view"), but it
-// is intentionally ignored for the initial render.
+// Stage view defaults to the community gallery for a plain /studio.html load.
+// Marketing/landing-page deep links can request a specific workspace with
+// ?mode=camera, ?mode=edit, ?mode=batch, or ?mode=create. Those links open
+// the Studio workspace directly instead of being covered by the Gallery.
 window._stageView = 'gallery';
+
+function getInitialStudioDestination(){
+    let mode = 'generate';
+    let view = 'gallery';
+    let explicitMode = false;
+    try {
+        const qs = new URLSearchParams(window.location.search);
+        const raw = (qs.get('mode') || '').trim().toLowerCase();
+        const modeMap = {
+            camera: 'camera',
+            edit: 'edit',
+            batch: 'batch',
+            create: 'generate',
+            generate: 'generate',
+        };
+        if (modeMap[raw]) {
+            mode = modeMap[raw];
+            view = 'studio';
+            explicitMode = true;
+        } else if ((qs.get('view') || '').trim().toLowerCase() === 'studio') {
+            view = 'studio';
+        }
+        // A mode deep-link is intentional navigation and wins over the
+        // gallery default. A plain ?view=gallery keeps the existing gallery
+        // behavior when no workspace mode was requested.
+        if (!explicitMode && (qs.get('view') || '').trim().toLowerCase() === 'gallery') {
+            view = 'gallery';
+        }
+    } catch (e) {}
+    return { mode, view, explicitMode };
+}
 
 // ─────────────────────────────────────────────────────────────────────
 //  SDXL STUDIO PANEL
@@ -30862,12 +30884,13 @@ document.addEventListener('DOMContentLoaded',()=>{
     // slots are upload ids too, so an unstamped/foreign stage must not
     // repopulate them before checkAuth() has established who we are.
     if (!stageIsForeign()) restoreGenerateState();
-    // Force the sidebar into Create-mode state on every fresh load.
-    // currentMode is initialized to 'generate' at the top of the file
-    // and the Create button is the one marked .active in HTML, but the
-    // .sec.*-only sections need an explicit setMode call to flip their
-    // display from the HTML defaults (which still show camera-only).
-    setMode('generate');
+    // Route page-load deep links from the landing page into the requested
+    // workspace. A plain /studio.html load keeps the existing Create + Gallery
+    // landing behavior; ?mode=camera / edit / batch / create opens that mode
+    // directly in the Studio workspace.
+    const initialDestination = getInitialStudioDestination();
+    window._stageView = initialDestination.view;
+    setMode(initialDestination.mode, { switchToStudio: initialDestination.view === 'studio' });
     // On mobile (width <= 900px) the sidebar is a fixed off-canvas
     // drawer. Default it to OPEN on first paint so users immediately
     // see the workspace controls instead of an empty stage with a
@@ -31057,7 +31080,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     // share URLs. Optional &q=<term> pre-fills the search input.
     try {
         const qs = new URLSearchParams(window.location.search);
-        if (qs.get('view') === 'gallery') {
+        if (!initialDestination.explicitMode && qs.get('view') === 'gallery') {
             const q = qs.get('q') || '';
             const inp = $('gallerySearchInput');
             if (inp) inp.value = q;
