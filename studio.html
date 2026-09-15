@@ -11729,11 +11729,18 @@ function genSetBackground(b){
 }
 
 
-// worker enforces the same rule server-side, so DOM/request tampering cannot
-// bypass it; this client gate is just the honest UX layer.
+// Worker enforces the same rule server-side, so DOM/request tampering cannot
+// bypass it; this client gate is just the honest UX layer. The server exposes
+// a capability bit so special operator access never has to be hard-coded in
+// public frontend source.
+function canUseLowModerationUi(){
+    if (_user && _user.can_use_low_moderation === true) return true;
+    // Backward-compatible fallback while an older worker is still serving.
+    return (typeof isSubscriber === 'function') && isSubscriber();
+}
 function genSetModeration(m){
     const wantsLow = m === 'low';
-    const allowedLow = (typeof isSubscriber === 'function') && isSubscriber();
+    const allowedLow = canUseLowModerationUi();
 
     // Low is a Pro upsell for non-subscribers. IMPORTANT: do not mutate the
     // selected moderation state or button styling before opening the modal.
@@ -11755,7 +11762,7 @@ function genSetModeration(m){
 }
 
 function syncModerationSubscriptionGate(){
-    const allowedLow = (typeof isSubscriber === 'function') && isSubscriber();
+    const allowedLow = canUseLowModerationUi();
     const lowBtn = document.querySelector('.size-btn[data-mod="low"]');
     if (lowBtn) {
         lowBtn.classList.toggle('disabled', !allowedLow);
