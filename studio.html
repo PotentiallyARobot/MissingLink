@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="ml-design-version" content="studio-2026-09-17-v6-auto-prompt">
+<meta name="ml-design-version" content="studio-2026-09-17-v6.1-auto-prompt-ui">
 <title>MissingLink Studio</title>
 <link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png?v=2">
 <style>
@@ -5663,8 +5663,9 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             rows="5"
             oninput="updateGenButton()"></textarea>
         <div class="create-auto-prompt-row">
-            <button type="button" class="create-auto-prompt-btn" id="createAutoPromptBtn" onclick="openCreateAutoPromptModal()">✦ AUTO PROMPT</button>
-            <button type="button" class="create-auto-prompt-info" onclick="showCreateAutoPromptInfo()" aria-label="What is Auto Prompt?" title="What is Auto Prompt?">i</button>
+            <button type="button" class="create-auto-prompt-btn" id="createAutoPromptBtn" onclick="runCreateAutoPrompt()">✦ AUTO PROMPT</button>
+            <button type="button" class="lora-info-btn create-auto-prompt-info" onclick="showCreateAutoPromptInfo()" aria-label="What is Auto Prompt?" title="What is Auto Prompt?">i</button>
+            <button type="button" class="create-auto-prompt-settings" onclick="openCreateAutoPromptModal()" aria-label="Auto Prompt settings" title="Auto Prompt settings">⚙</button>
         </div>
         <div class="create-auto-prompt-hint" id="createAutoPromptHint">Optional — GPT can inspect your reference images + rough prompt and rewrite it using your saved instructions. You review the result before Create runs.</div>
     </div>
@@ -6966,12 +6967,14 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
      pressing Escape. -->
 <style>
 /* ── Create Auto Prompt ─────────────────────────────────────────── */
-.create-auto-prompt-row{display:grid;grid-template-columns:minmax(0,1fr) 31px;gap:7px;margin-top:8px}
+.create-auto-prompt-row{display:grid;grid-template-columns:minmax(0,1fr) 18px 34px;gap:7px;margin-top:8px;align-items:center}
 .create-auto-prompt-btn{height:34px;border-radius:7px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-family:var(--font-mono);font-size:10px;font-weight:800;letter-spacing:.6px;cursor:pointer;transition:all .15s}
 .create-auto-prompt-btn:hover:not(:disabled){background:var(--gold);color:#0a0a0c}
 .create-auto-prompt-btn:disabled{opacity:.55;cursor:default}
-.create-auto-prompt-info{width:31px;height:34px;border-radius:7px;border:1px solid var(--border);background:var(--surface-3);color:var(--text-muted);font-family:Georgia,serif;font-size:14px;font-weight:700;cursor:pointer}
-.create-auto-prompt-info:hover{border-color:var(--gold);color:var(--gold)}
+/* Match the tiny circular LoRA ⓘ treatment exactly; only alignment differs. */
+.create-auto-prompt-info{justify-self:center}
+.create-auto-prompt-settings{width:34px;height:34px;padding:0;border-radius:7px;border:1px solid var(--border);background:var(--surface-3);color:var(--text-muted);font-family:var(--font-mono);font-size:15px;line-height:1;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.create-auto-prompt-settings:hover{color:var(--gold);border-color:var(--gold);background:var(--surface-2)}
 .create-auto-prompt-hint{margin-top:6px;color:var(--text-muted);font-size:9.5px;line-height:1.45}
 #createAutoPromptModal .cap-row{margin-bottom:13px}
 #createAutoPromptModal .cap-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted)}
@@ -11139,14 +11142,28 @@ async function deleteCreateAutoPromptProfile(){
 async function runCreateAutoPrompt(){
     if(_createAutoPromptBusy) return;
     if(!_user){ requireLogin(); return; }
+
+    // AUTO PROMPT is a one-click action. The settings wheel owns the modal;
+    // hydrate the active account profile here so the user never has to open it first.
+    await loadCreateAutoPromptProfiles(false);
+    syncCreateAutoPromptProfileUi();
+
     const rough=($('generatePrompt').value||'').trim();
     const refs=_generateRefs.filter(Boolean);
-    if(!rough && !refs.length){ _createAutoPromptSetStatus('Add a rough prompt or at least one reference image first.','err'); return; }
-    const instructions=($('createAutoPromptInstructions').value||'').trim();
-    const profileId=$('createAutoPromptProfile').value||'';
+    if(!rough && !refs.length){
+        showNotif('Add a rough prompt or at least one reference image first.');
+        _createAutoPromptSetStatus('Add a rough prompt or at least one reference image first.','err');
+        return;
+    }
+    const profileId=_createAutoPromptActiveId() || ($('createAutoPromptProfile')?.value||'');
+    const activeProfile=_createAutoPromptProfiles.find(x=>x.id===profileId);
+    const instructions=(activeProfile?.instructions ?? $('createAutoPromptInstructions')?.value ?? '').trim();
     const runBtn=$('createAutoPromptRunBtn'), mainBtn=$('createAutoPromptBtn');
-    _createAutoPromptBusy=true; runBtn.disabled=true; mainBtn.disabled=true;
-    runBtn.textContent='✦ ANALYZING…'; mainBtn.textContent='✦ WRITING…';
+    _createAutoPromptBusy=true;
+    if(runBtn) runBtn.disabled=true;
+    if(mainBtn) mainBtn.disabled=true;
+    if(runBtn) runBtn.textContent='✦ ANALYZING…';
+    if(mainBtn) mainBtn.textContent='✦ WRITING…';
     _createAutoPromptSetStatus(`GPT is reading your request${refs.length?` + ${refs.length} reference image${refs.length===1?'':'s'}`:''}…`);
     try{
         const body={
@@ -11173,8 +11190,9 @@ async function runCreateAutoPrompt(){
         _createAutoPromptSetStatus('Auto Prompt failed: '+(e.message||e)+'. Your original prompt was not changed.','err');
         if(window.mlTrackActivity) window.mlTrackActivity('auto_prompt_error',{action:'rewrite',meta:{message:String(e.message||e).slice(0,120)}});
     }finally{
-        _createAutoPromptBusy=false; runBtn.disabled=false; mainBtn.disabled=false;
-        runBtn.textContent='✦ WRITE PROMPT'; mainBtn.textContent='✦ AUTO PROMPT';
+        _createAutoPromptBusy=false;
+        if(runBtn){ runBtn.disabled=false; runBtn.textContent='✦ WRITE PROMPT'; }
+        if(mainBtn){ mainBtn.disabled=false; mainBtn.textContent='✦ AUTO PROMPT'; }
     }
 }
 
