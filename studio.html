@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="ml-design-version" content="studio-2026-09-17-v5-variants">
+<meta name="ml-design-version" content="studio-2026-09-17-v6-auto-prompt">
 <title>MissingLink Studio</title>
 <link rel="icon" href="https://raw.githubusercontent.com/PotentiallyARobot/MissingLink-Extras/main/image-edit-studio/static/app_logo.png?v=2">
 <style>
@@ -5662,6 +5662,11 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
             placeholder="Describe what to create...&#10;&#10;e.g. &quot;A vintage comic book cover with a heroine in front of an explosion, dramatic lighting, halftone shading&quot;"
             rows="5"
             oninput="updateGenButton()"></textarea>
+        <div class="create-auto-prompt-row">
+            <button type="button" class="create-auto-prompt-btn" id="createAutoPromptBtn" onclick="openCreateAutoPromptModal()">✦ AUTO PROMPT</button>
+            <button type="button" class="create-auto-prompt-info" onclick="showCreateAutoPromptInfo()" aria-label="What is Auto Prompt?" title="What is Auto Prompt?">i</button>
+        </div>
+        <div class="create-auto-prompt-hint" id="createAutoPromptHint">Optional — GPT can inspect your reference images + rough prompt and rewrite it using your saved instructions. You review the result before Create runs.</div>
     </div>
 
     <div class="sec generate-only" style="display:none">
@@ -6960,6 +6965,35 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
      User can dismiss via the X, clicking the dim backdrop, or
      pressing Escape. -->
 <style>
+/* ── Create Auto Prompt ─────────────────────────────────────────── */
+.create-auto-prompt-row{display:grid;grid-template-columns:minmax(0,1fr) 31px;gap:7px;margin-top:8px}
+.create-auto-prompt-btn{height:34px;border-radius:7px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-family:var(--font-mono);font-size:10px;font-weight:800;letter-spacing:.6px;cursor:pointer;transition:all .15s}
+.create-auto-prompt-btn:hover:not(:disabled){background:var(--gold);color:#0a0a0c}
+.create-auto-prompt-btn:disabled{opacity:.55;cursor:default}
+.create-auto-prompt-info{width:31px;height:34px;border-radius:7px;border:1px solid var(--border);background:var(--surface-3);color:var(--text-muted);font-family:Georgia,serif;font-size:14px;font-weight:700;cursor:pointer}
+.create-auto-prompt-info:hover{border-color:var(--gold);color:var(--gold)}
+.create-auto-prompt-hint{margin-top:6px;color:var(--text-muted);font-size:9.5px;line-height:1.45}
+#createAutoPromptModal .cap-row{margin-bottom:13px}
+#createAutoPromptModal .cap-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted)}
+#createAutoPromptModal select,#createAutoPromptModal input,#createAutoPromptModal textarea{width:100%;box-sizing:border-box;background:var(--surface-3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:9px 10px;outline:none}
+#createAutoPromptModal textarea{min-height:130px;resize:vertical;line-height:1.5}
+#createAutoPromptModal select:focus,#createAutoPromptModal input:focus,#createAutoPromptModal textarea:focus{border-color:var(--gold)}
+#createAutoPromptModal .cap-profile-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:7px;align-items:end}
+#createAutoPromptModal .cap-profile-actions button{height:34px;padding:0 10px;border-radius:7px;font-family:var(--font-mono);font-size:9px;font-weight:700;cursor:pointer}
+#createAutoPromptModal .cap-save{background:var(--gold);border:1px solid var(--gold);color:#0a0a0c}
+#createAutoPromptModal .cap-delete{background:#241617;border:1px solid #5e2d31;color:#e58b91}
+#createAutoPromptModal .cap-delete:disabled{opacity:.4;cursor:default}
+#createAutoPromptModal .cap-note{font-size:10px;color:var(--text-muted);line-height:1.5;margin-top:5px}
+#createAutoPromptModal .cap-status{min-height:18px;font-size:10px;color:var(--text-muted);line-height:1.45}
+#createAutoPromptModal .cap-status.ok{color:#65d78d}
+#createAutoPromptModal .cap-status.err{color:#ff8181}
+#createAutoPromptModal .cap-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+#createAutoPromptModal .cap-actions button{border-radius:8px;padding:10px 15px;font-family:var(--font-mono);font-size:11px;cursor:pointer}
+#createAutoPromptModal .cap-cancel{background:var(--surface-3);border:1px solid var(--border);color:var(--text)}
+#createAutoPromptModal .cap-run{background:var(--gold);border:1px solid var(--gold);color:#0a0a0c;font-weight:800}
+#createAutoPromptModal .cap-run:disabled{opacity:.55;cursor:default}
+@media(max-width:560px){#createAutoPromptModal .cap-profile-actions{grid-template-columns:1fr 1fr}#createAutoPromptModal .cap-profile-name{grid-column:1/-1}}
+
 .autoqa-gear{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:0 4px;margin-left:2px;line-height:1;vertical-align:middle;transition:color .15s}
 .autoqa-gear:hover{color:var(--gold)}
 #autoQaModal .aq-row{margin-bottom:14px}
@@ -6974,6 +7008,48 @@ body.q-overlay-dragging{user-select:none;-webkit-user-select:none;cursor:grabbin
 #autoQaModal .btn-gold{background:var(--gold);border:1px solid var(--gold);color:#0a0a0c;font-family:var(--font-mono);font-size:12px;font-weight:700;letter-spacing:.5px;border-radius:8px;padding:10px 18px;cursor:pointer}
 #autoQaModal .btn-plain{background:var(--surface-3);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:12px;border-radius:8px;padding:10px 16px;cursor:pointer}
 </style>
+<!-- ── Create Auto Prompt modal ───────────────────────────────────
+     Optional prompt-writing helper for GPT Image Create. It never starts
+     image generation. It only replaces #generatePrompt after the user
+     asks it to, and saved instruction profiles are account-scoped in D1. -->
+<div class="popup-modal" id="createAutoPromptModal" onclick="if(event.target===this) closeCreateAutoPromptModal()">
+    <div class="popup-card" style="max-width:560px;text-align:left" role="dialog" aria-modal="true" aria-labelledby="createAutoPromptTitle">
+        <button class="modal-close" onclick="closeCreateAutoPromptModal()" style="top:12px;right:14px">×</button>
+        <h2 id="createAutoPromptTitle" style="font-family:var(--font-mono);font-size:15px;letter-spacing:1px;margin-bottom:7px">✦ AUTO PROMPT</h2>
+        <p style="font-size:11px;color:var(--text-muted);line-height:1.55;margin:0 0 14px">
+            GPT reads your current Create prompt and any reference images, then writes a stronger image prompt that follows your reusable instructions. <b style="color:var(--text)">It does not generate an image or spend generation tokens.</b>
+        </p>
+
+        <div class="cap-row">
+            <div class="cap-label"><span>Saved instruction profile</span><span id="createAutoPromptProfileCount"></span></div>
+            <select id="createAutoPromptProfile" onchange="selectCreateAutoPromptProfile(this.value)">
+                <option value="">Current / unsaved</option>
+            </select>
+        </div>
+
+        <div class="cap-row">
+            <div class="cap-label">Profile name</div>
+            <div class="cap-profile-actions">
+                <input class="cap-profile-name" id="createAutoPromptProfileName" maxlength="80" placeholder="e.g. Product campaign · Editorial realism · Character consistency">
+                <button type="button" class="cap-save" id="createAutoPromptSaveBtn" onclick="saveCreateAutoPromptProfile()">SAVE / UPDATE</button>
+                <button type="button" class="cap-delete" id="createAutoPromptDeleteBtn" onclick="deleteCreateAutoPromptProfile()" disabled>DELETE</button>
+            </div>
+        </div>
+
+        <div class="cap-row">
+            <div class="cap-label">Overall Auto Prompt instructions</div>
+            <textarea id="createAutoPromptInstructions" maxlength="8000" placeholder="Examples: preserve the subject's identity and exact product geometry; use natural editorial photography; never add text or logos unless requested; when references disagree, prioritize reference 1 for identity and the current prompt for the requested change..."></textarea>
+            <div class="cap-note">These are reusable directions for the prompt writer, not a replacement for the current prompt. The current Create prompt remains the specific request.</div>
+        </div>
+
+        <div class="cap-status" id="createAutoPromptStatus"></div>
+        <div class="cap-actions">
+            <button type="button" class="cap-cancel" onclick="closeCreateAutoPromptModal()">Cancel</button>
+            <button type="button" class="cap-run" id="createAutoPromptRunBtn" onclick="runCreateAutoPrompt()">✦ WRITE PROMPT</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── Auto-QA settings modal ─────────────────────────────────────
      Configures how finished batch tiles are evaluated: custom criteria
      (folded into the critique model's instructions), the failing score
@@ -10939,6 +11015,166 @@ function setInputImage(id,url,w,h){
     // no-ops outside Camera→360° mode).
     if (typeof _camGenType !== 'undefined' && _camGenType === 'pano' && typeof autoPanoPrompt === 'function') {
         try { autoPanoPrompt({}); } catch (e) {}
+    }
+}
+
+// ─── Create Auto Prompt ─────────────────────────────────────────────
+// Optional prompt-writing helper. Profiles are persisted server-side per
+// MissingLink account; only the selected profile id is remembered locally.
+let _createAutoPromptProfiles = [];
+let _createAutoPromptProfilesLoaded = false;
+let _createAutoPromptProfilesUserId = '';
+let _createAutoPromptBusy = false;
+const _CREATE_AP_ACTIVE_KEY = 'ml_create_auto_prompt_profile_v1';
+function _createAutoPromptActiveId(){ try { return localStorage.getItem(_CREATE_AP_ACTIVE_KEY) || ''; } catch { return ''; } }
+function _setCreateAutoPromptActiveId(id){ try { if(id)localStorage.setItem(_CREATE_AP_ACTIVE_KEY,id);else localStorage.removeItem(_CREATE_AP_ACTIVE_KEY); } catch {} }
+function _createAutoPromptSetStatus(msg, kind){
+    const el = $('createAutoPromptStatus'); if(!el) return;
+    el.className = 'cap-status' + (kind ? ' ' + kind : '');
+    el.textContent = msg || '';
+}
+function showCreateAutoPromptInfo(){
+    showNotif('Auto Prompt uses GPT to inspect your current Create text and reference images, then rewrites the prompt using your saved instructions. It only changes the prompt field — it never starts image generation.');
+}
+async function loadCreateAutoPromptProfiles(force){
+    const uid = _user && _user.id ? String(_user.id) : '';
+    if (uid !== _createAutoPromptProfilesUserId) {
+        _createAutoPromptProfilesUserId = uid;
+        _createAutoPromptProfilesLoaded = false;
+        _createAutoPromptProfiles = [];
+    }
+    if (_createAutoPromptProfilesLoaded && !force) return _createAutoPromptProfiles;
+    if (!_user) { _createAutoPromptProfiles=[]; _createAutoPromptProfilesLoaded=true; return []; }
+    try {
+        const r = await fetchT('/api/studio/auto-prompt/profiles', {method:'GET'}, 12000);
+        const d = await r.json();
+        if(!r.ok || d.error) throw new Error(d.error || ('HTTP '+r.status));
+        _createAutoPromptProfiles = Array.isArray(d.profiles) ? d.profiles : [];
+        _createAutoPromptProfilesLoaded = true;
+    } catch(e) {
+        _createAutoPromptProfiles = [];
+        _createAutoPromptProfilesLoaded = false;
+        _createAutoPromptSetStatus('Could not load saved profiles. You can still use unsaved instructions.', 'err');
+    }
+    return _createAutoPromptProfiles;
+}
+function syncCreateAutoPromptProfileUi(){
+    const sel=$('createAutoPromptProfile'); if(!sel) return;
+    const active=_createAutoPromptActiveId();
+    sel.innerHTML='<option value="">Current / unsaved</option>' + _createAutoPromptProfiles.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+    const valid=_createAutoPromptProfiles.some(p=>p.id===active) ? active : '';
+    sel.value=valid;
+    $('createAutoPromptProfileCount').textContent=_createAutoPromptProfiles.length ? `${_createAutoPromptProfiles.length} saved` : '';
+    const p=_createAutoPromptProfiles.find(x=>x.id===valid);
+    if(p){
+        $('createAutoPromptProfileName').value=p.name||'';
+        $('createAutoPromptInstructions').value=p.instructions||'';
+    }
+    $('createAutoPromptDeleteBtn').disabled=!p;
+}
+function selectCreateAutoPromptProfile(id){
+    _setCreateAutoPromptActiveId(id||'');
+    const p=_createAutoPromptProfiles.find(x=>x.id===id);
+    if(p){
+        $('createAutoPromptProfileName').value=p.name||'';
+        $('createAutoPromptInstructions').value=p.instructions||'';
+        _createAutoPromptSetStatus(`Using “${p.name}”.`,'ok');
+    }else{
+        $('createAutoPromptProfileName').value='';
+        _createAutoPromptSetStatus('Current instructions are unsaved.');
+    }
+    $('createAutoPromptDeleteBtn').disabled=!p;
+}
+async function openCreateAutoPromptModal(){
+    if(!_user){ requireLogin(); return; }
+    $('createAutoPromptModal').classList.add('open');
+    _createAutoPromptSetStatus('Loading saved profiles…');
+    await loadCreateAutoPromptProfiles(false);
+    syncCreateAutoPromptProfileUi();
+    const refs=_generateRefs.filter(Boolean).length;
+    const rough=($('generatePrompt').value||'').trim();
+    _createAutoPromptSetStatus(`${rough?'Current prompt ready':'No text yet'}${refs?` · ${refs} reference image${refs===1?'':'s'} will be inspected`:''}.`);
+    setTimeout(()=>$('createAutoPromptInstructions')?.focus(),0);
+    if(window.mlTrackActivity) window.mlTrackActivity('auto_prompt_open',{action:'open',meta:{refs,has_prompt:!!rough}});
+}
+function closeCreateAutoPromptModal(){ $('createAutoPromptModal')?.classList.remove('open'); }
+async function saveCreateAutoPromptProfile(){
+    if(!_user) return;
+    const name=($('createAutoPromptProfileName').value||'').trim();
+    const instructions=($('createAutoPromptInstructions').value||'').trim();
+    if(!name){ _createAutoPromptSetStatus('Give this instruction profile a name first.','err'); return; }
+    const id=$('createAutoPromptProfile').value||'';
+    const btn=$('createAutoPromptSaveBtn'); btn.disabled=true;
+    try{
+        const r=await fetchT('/api/studio/auto-prompt/profile-save',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,name,instructions})},15000);
+        const d=await r.json();
+        if(!r.ok||d.error) throw new Error(d.message||d.error||('HTTP '+r.status));
+        await loadCreateAutoPromptProfiles(true);
+        _setCreateAutoPromptActiveId(d.profile?.id||'');
+        syncCreateAutoPromptProfileUi();
+        _createAutoPromptSetStatus(`Saved “${d.profile?.name||name}” to your MissingLink account.`,'ok');
+        if(window.mlTrackActivity) window.mlTrackActivity('auto_prompt_profile_saved',{action:'save'});
+    }catch(e){ _createAutoPromptSetStatus('Could not save profile: '+(e.message||e),'err'); }
+    finally{ btn.disabled=false; }
+}
+async function deleteCreateAutoPromptProfile(){
+    const id=$('createAutoPromptProfile').value||'';
+    const p=_createAutoPromptProfiles.find(x=>x.id===id); if(!p) return;
+    const ok=await showConfirm(`Delete Auto Prompt profile “${p.name}”?`,{confirmLabel:'Delete',danger:true});
+    if(!ok) return;
+    const btn=$('createAutoPromptDeleteBtn'); btn.disabled=true;
+    try{
+        const r=await fetchT('/api/studio/auto-prompt/profile-delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})},12000);
+        const d=await r.json();
+        if(!r.ok||d.error) throw new Error(d.message||d.error||('HTTP '+r.status));
+        _setCreateAutoPromptActiveId('');
+        await loadCreateAutoPromptProfiles(true);
+        $('createAutoPromptProfileName').value='';
+        syncCreateAutoPromptProfileUi();
+        _createAutoPromptSetStatus('Profile deleted.','ok');
+        if(window.mlTrackActivity) window.mlTrackActivity('auto_prompt_profile_deleted',{action:'delete'});
+    }catch(e){ _createAutoPromptSetStatus('Could not delete profile: '+(e.message||e),'err'); }
+    finally{ btn.disabled=false; }
+}
+async function runCreateAutoPrompt(){
+    if(_createAutoPromptBusy) return;
+    if(!_user){ requireLogin(); return; }
+    const rough=($('generatePrompt').value||'').trim();
+    const refs=_generateRefs.filter(Boolean);
+    if(!rough && !refs.length){ _createAutoPromptSetStatus('Add a rough prompt or at least one reference image first.','err'); return; }
+    const instructions=($('createAutoPromptInstructions').value||'').trim();
+    const profileId=$('createAutoPromptProfile').value||'';
+    const runBtn=$('createAutoPromptRunBtn'), mainBtn=$('createAutoPromptBtn');
+    _createAutoPromptBusy=true; runBtn.disabled=true; mainBtn.disabled=true;
+    runBtn.textContent='✦ ANALYZING…'; mainBtn.textContent='✦ WRITING…';
+    _createAutoPromptSetStatus(`GPT is reading your request${refs.length?` + ${refs.length} reference image${refs.length===1?'':'s'}`:''}…`);
+    try{
+        const body={
+            rough_prompt:rough,
+            instructions,
+            profile_id:profileId||null,
+            reference_image_ids:refs.map(r=>r.id),
+            model_context:genGetEffectiveModel(),
+            size:genGetEffectiveSize(),
+            background:_generateBackground,
+        };
+        const r=await fetchT('/api/studio/auto-prompt/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)},90000);
+        const d=await r.json();
+        if(!r.ok||d.error) throw new Error(d.message||friendlyGenError(d.error)||d.error||('HTTP '+r.status));
+        $('generatePrompt').value=d.prompt||rough;
+        $('generatePrompt').dispatchEvent(new Event('input',{bubbles:true}));
+        const refNote=d.reference_count_used?` · inspected ${d.reference_count_used} ref${d.reference_count_used===1?'':'s'}`:'';
+        _createAutoPromptSetStatus(`✓ Prompt rewritten${refNote}. Review it, then click Create.`,'ok');
+        $('createAutoPromptHint').textContent=`✓ Auto Prompt applied${refNote}. You can edit the result before generating.`;
+        if(window.mlTrackActivity) window.mlTrackActivity('auto_prompt_applied',{action:'rewrite',meta:{refs:d.reference_count_used||0,profile:!!profileId}});
+        closeCreateAutoPromptModal();
+        $('generatePrompt').focus();
+    }catch(e){
+        _createAutoPromptSetStatus('Auto Prompt failed: '+(e.message||e)+'. Your original prompt was not changed.','err');
+        if(window.mlTrackActivity) window.mlTrackActivity('auto_prompt_error',{action:'rewrite',meta:{message:String(e.message||e).slice(0,120)}});
+    }finally{
+        _createAutoPromptBusy=false; runBtn.disabled=false; mainBtn.disabled=false;
+        runBtn.textContent='✦ WRITE PROMPT'; mainBtn.textContent='✦ AUTO PROMPT';
     }
 }
 
