@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#08090b">
+<title>Notebook Pro is ready | MissingLink</title>
+<style>
+:root{--bg:#08090b;--panel:#101216;--line:#2b3039;--text:#f5f6f8;--dim:#aeb5c1;--gold:#f4b51f;--green:#7ee2a8;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box} body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% -10%,rgba(244,181,31,.12),transparent 35%),var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;place-items:center;padding:24px}.card{width:min(760px,100%);border:1px solid rgba(244,181,31,.34);border-radius:20px;background:linear-gradient(145deg,rgba(20,20,14,.98),rgba(11,13,16,.98));padding:34px;box-shadow:0 30px 90px rgba(0,0,0,.45)}.eyebrow{font:800 11px/1.2 var(--mono);letter-spacing:1.1px;text-transform:uppercase;color:var(--gold)}h1{margin:12px 0 10px;font-size:clamp(34px,6vw,58px);letter-spacing:-2.2px;line-height:1}.lead{margin:0;color:var(--dim);font-size:16px;line-height:1.6}.status{margin:24px 0 14px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:#0a0c0f;color:#dce1e8}.ok{color:var(--green)}.keywrap{margin-top:18px}.label{font:800 10px/1.2 var(--mono);letter-spacing:1px;color:#8f98a7;text-transform:uppercase;margin-bottom:8px}.keyrow{display:grid;grid-template-columns:1fr auto;gap:10px}.key{min-width:0;padding:15px 16px;border:1px solid var(--line);border-radius:11px;background:#07090c;color:#fff;font:700 13px/1.4 var(--mono);word-break:break-all}.btn{border:1px solid var(--line);border-radius:11px;background:#15191f;color:#fff;padding:0 18px;font-weight:850;cursor:pointer;min-height:50px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.primary{background:var(--gold);border-color:var(--gold);color:#111}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.small{margin-top:15px;color:#7f8794;font:600 11px/1.55 var(--mono)}@media(max-width:600px){.card{padding:24px}.keyrow{grid-template-columns:1fr}.btn{width:100%}.actions{display:grid}}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="eyebrow">MissingLink Notebook Pro</div>
+  <h1>Your notebook access is ready.</h1>
+  <p class="lead" id="lead">We’re finishing your subscription and preparing your API key.</p>
+  <div class="status" id="status">Connecting to your completed Stripe checkout…</div>
+  <div class="keywrap" id="keywrap" hidden>
+    <div class="label">Your MissingLink API key</div>
+    <div class="keyrow">
+      <div class="key" id="key"></div>
+      <button class="btn" id="copy">Copy key</button>
+    </div>
+    <div class="small">We also emailed this key to the address used in Stripe Checkout. Keep it private. If you rotate it later, this key stops working.</div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="/notebooks.html">Open notebook library →</a>
+    <a class="btn" href="/notebook-pro/manage">Manage / cancel subscription</a>
+  </div>
+</main>
+<script>
+(function(){
+  const qs=new URLSearchParams(location.search); const sid=qs.get('session_id');
+  const status=document.getElementById('status'), lead=document.getElementById('lead');
+  const keywrap=document.getElementById('keywrap'), key=document.getElementById('key'), copy=document.getElementById('copy');
+  let tries=0;
+  async function poll(){
+    if(!sid){status.textContent='Missing checkout session id. Check your email for your API key or contact support.';return;}
+    tries++;
+    try{
+      const r=await fetch('/session-token?session_id='+encodeURIComponent(sid),{cache:'no-store'});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&d.ok&&d.token){
+        key.textContent=d.token; keywrap.hidden=false; status.classList.add('ok');
+        if(d.subscription_status==='trialing'&&d.trial_end){
+          const when=new Date(d.trial_end*1000).toLocaleString();
+          status.textContent='7-day free trial active. Your $20/month subscription starts '+when+'.';
+          lead.textContent='Your optimized notebook runtimes are unlocked now.';
+        }else{
+          status.textContent='Notebook Pro is active.'; lead.textContent='Your optimized notebook runtimes are unlocked.';
+        }
+        return;
+      }
+      if(tries<30 && (r.status===404||r.status===429||r.status===409)){
+        status.textContent='Finishing setup… this normally takes a few seconds.';
+        setTimeout(poll,2200); return;
+      }
+      status.textContent=d.message||'Your checkout completed, but the API key is not available yet. Check your email or contact support.';
+    }catch(e){
+      if(tries<30){status.textContent='Finishing setup…';setTimeout(poll,2200);return;}
+      status.textContent='Could not load the API key. Check your email or contact support.';
+    }
+  }
+  copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(key.textContent||'');copy.textContent='Copied';setTimeout(()=>copy.textContent='Copy key',1400)}catch{}});
+  poll();
+})();
+</script>
+</body>
+</html>
