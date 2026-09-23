@@ -12,7 +12,7 @@ Changes:
 - Stop setup on command failures. Preserve existing cloned repos rather than overwriting local edits.
 - Retain TRELLIS dependency lists, select the existing A100/L4 path using the detected GPU, and mount Drive after successful installation.
 - Install missing dependencies for the basic Wan/Z-Image examples and the Qwen launchers. Model checkpoints and generation settings are unchanged.
-- Prompt for an I2V input image, validate it before model downloads, and retry only unexpected-keyword errors in the existing wrapper compatibility fallback.
+- Load Wan I2V models once, then repeat the separate generation cell. Validate and orient source images before generation, preserve their proportions, and save each video under a distinct filename. Retry only unexpected-keyword errors in the existing wrapper compatibility fallback.
 - Stream Wan frames to ffmpeg rather than duplicating the entire raw video in memory. Preserve existing exports if encoding fails. Add output links and save the Z-Image GGUF PNG.
 
 Run CPU regression tests with `python -m unittest discover -s notebook_support -p 'test_*.py' -v`.

@@ -54,6 +54,41 @@ class SetupTests(unittest.TestCase):
 
 
 class NotebookTests(unittest.TestCase):
+    def test_wan_repeated_generation_reuses_model_and_keeps_outputs(self):
+        import math
+        from PIL import Image, ImageOps
+        notebook = json.loads((ROOT / NAMES[1]).read_text(encoding="utf-8"))
+        source = "".join(next(c for c in notebook["cells"] if c.get("id") == "wan-i2v-generate")["source"])
+        with self.assertRaisesRegex(RuntimeError, "model-loading cell"):
+            exec(source, {})
+        # Exercise the actual repeat cell with CPU images and a stub model/encoder.
+        with tempfile.TemporaryDirectory() as folder:
+            image = Image.new("RGB", (120, 60), "red")
+            exif = image.getexif(); exif[274] = 6
+            image.save(Path(folder) / "input.png", exif=exif)
+            calls, outputs = [], []
+            def generate(**kwargs):
+                calls.append(kwargs)
+                self.assertGreater(kwargs["height"], kwargs["width"])
+                return [Image.open(kwargs["init_image"]).copy()]
+            def save(frames, fps, out_path):
+                outputs.append(out_path)
+                Path(out_path).write_bytes(b"video")
+            source = source.replace("/content/", Path(folder).as_posix() + "/")
+            tree = ast.parse(source)
+            tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name == "save_video_ffmpeg")]
+            model = types.SimpleNamespace(generate_video=generate)
+            ns = dict(sd=model, os=os, math=math, Image=Image, ImageOps=ImageOps,
+                      save_video_ffmpeg=save, Video=lambda *a, **k: None, display=lambda *a: None)
+            display_stub = types.ModuleType("IPython.display")
+            display_stub.FileLink = lambda *a: None
+            with patch.dict("sys.modules", {"IPython.display": display_stub}), redirect_stdout(io.StringIO()):
+                for _ in range(2): exec(compile(tree, "wan_repeat", "exec"), ns)
+            self.assertIs(ns["sd"], model)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(set(outputs)), 2)
+            self.assertTrue(all(Path(p).exists() for p in outputs))
+
     def test_model_loading_and_generation_calls_preserved_from_git(self):
         git = r"C:\Users\tyler\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe"
         paths = [ROOT / prefix / name for prefix in (".", "notebooks") for name in NAMES]
