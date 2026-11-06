@@ -894,12 +894,13 @@ a.lm-tier:hover {
         <div class="lm-tier-price">100,000 tokens</div>
         <div class="lm-tier-price-note">monthly allowance, no card</div>
       </div>
-      <a href="https://checkout.stripe.com/c/pay/cs_live_b147N9ceTsa9eabESxaQoTOof6ii35rmj4CLBbOiXWqistNRBeAlKCo1p3#fidnandhYHdWcXxpYCc%2FJ2FgY2RwaXEnKSd2cGd2ZndsdXFsamtQa2x0cGBrYHZ2QGtkZ2lgYSc%2FY2RpdmApJ2JwZGZkaGppYFNkd2xka3EnPydmamtxd2ppJyknZHVsTmB8Jz8ndW5aaWxzYFowNEh1fEJhT1FJf1FsUFFtRk1%2Fc0BXNHdCMG08a0lWd2h%2FdWlDZ1F2QEB2aldvcnRBSTdAcGdjVkhAR001bVA0a0JhTkxPYmkzU202XTFhQVcyd3xcMHVsbDU1RzxkTGBBRn0nKSdjd2poVmB3c2B3Jz9xd3BgKSdnZGZuYndqcGthRmppancnPycmY2NjY2NjJyknaWR8anBxUXx1YCc%2FJ2hwaXFsWmxxYGgnKSdga2RnaWBVaWRmYG1qaWFgd3YnP3F3cGB4JSUl" class="lm-tier lm-tier-featured" target="_blank" rel="noopener">
+      <a href="/auth/google?return=%2Fpromptflow_learn_more.html%3Fcheckout%3Dsubscribe" class="lm-tier lm-tier-featured" id="promptflowSubscribe">
         <div class="lm-tier-name">Subscribe</div>
         <div class="lm-tier-price">$20<span style="font-size:14px;color:var(--text-muted);font-weight:400;"> / mo</span></div>
         <div class="lm-tier-price-note">extended allowance &amp; priority</div>
       </a>
     </div>
+    <p id="promptflowCheckoutStatus" role="status" aria-live="polite" style="display:none;margin:14px auto 0;max-width:560px;color:var(--text-muted);font-size:13px;text-align:center;"></p>
     <div style="margin-top: 32px;">
       <a href="https://missinglink.build/promptflow" class="lm-cta lm-cta-primary">Open PromptFlow&trade;</a>
     </div>
@@ -925,5 +926,53 @@ a.lm-tier:hover {
 
 </div>
 
+<script>
+  (() => {
+    const subscribeLink = document.getElementById("promptflowSubscribe");
+    const status = document.getElementById("promptflowCheckoutStatus");
+    const checkoutReturn = "/promptflow_learn_more.html?checkout=subscribe";
+
+    function showStatus(message, isError = false) {
+      status.textContent = message;
+      status.style.display = "block";
+      status.style.color = isError ? "#fca5a5" : "var(--text-muted)";
+    }
+
+    async function startCheckout() {
+      subscribeLink.setAttribute("aria-busy", "true");
+      showStatus("Preparing secure checkout…");
+      try {
+        const response = await fetch("/api/studio/subscribe", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Accept": "application/json" }
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (response.status === 401 || result.error === "not_logged_in") {
+          window.location.assign("/auth/google?return=" + encodeURIComponent(checkoutReturn));
+          return;
+        }
+        if (!response.ok || !result.ok || !result.url) {
+          throw new Error(result.message || result.error || "Checkout could not be started.");
+        }
+        window.location.assign(result.url);
+      } catch (error) {
+        showStatus(error.message || "Checkout could not be started. Please try again.", true);
+        subscribeLink.removeAttribute("aria-busy");
+      }
+    }
+
+    subscribeLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      startCheckout();
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("checkout") === "subscribe") {
+      startCheckout();
+    }
+  })();
+</script>
 </body>
 </html>
