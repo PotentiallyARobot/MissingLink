@@ -49,18 +49,13 @@
     overscroll-behavior:contain;
   }
 
-  /* Hide scrollbars everywhere — desktop AND mobile — while keeping
-     scroll functionality. Wheel/touch/keyboard scroll all still work;
-     only the visual track is suppressed. Three rules cover all browsers:
-       - ::-webkit-scrollbar       → Chrome, Safari, Edge, mobile webviews
-       - scrollbar-width:none      → Firefox 64+
-       - -ms-overflow-style:none   → legacy Edge/IE
-     Applied as a wildcard so any element with overflow scrolls cleanly. */
-  html,body,*{ scrollbar-width:none; -ms-overflow-style:none }
-  ::-webkit-scrollbar{ width:0; height:0; display:none }
-  *::-webkit-scrollbar{ width:0; height:0; display:none }
-  *::-webkit-scrollbar-track{ display:none }
-  *::-webkit-scrollbar-thumb{ display:none }
+  /* Keep long panels discoverable and usable with a mouse or keyboard. */
+  *{ scrollbar-width:thin; scrollbar-color:var(--border-light) transparent }
+  ::-webkit-scrollbar{ width:8px; height:8px }
+  ::-webkit-scrollbar-thumb{ background:var(--border-light); border-radius:8px }
+  :is(button,a,input,textarea,select,[tabindex]):focus-visible{
+    outline:2px solid var(--gold); outline-offset:3px;
+  }
 
   /* Header */
   .hdr{
@@ -3372,7 +3367,7 @@
     width: 26px !important;
     height: 26px !important;
     padding: 0 !important;
-    display: inline-flex !important;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     background: rgba(20,20,22,0.85);
@@ -11630,7 +11625,7 @@ $ promptflow run my-process.promptflow</code></pre>
            through behind the user's text. -->
       <div class="input-wrap">
         <div class="input-highlight" id="inputHighlight" aria-hidden="true"></div>
-        <textarea id="textInput" placeholder="Extract lessons from this build — attach a .zip + chat" rows="1"></textarea>
+        <textarea id="textInput" aria-label="Message Promptflow" placeholder="Extract lessons from this build — attach a .zip + chat" rows="1"></textarea>
       </div>
       <!-- Generation preferences — controls which processes the
            planner considers for the next request. Persistent default
@@ -13225,6 +13220,10 @@ promptflow whoami</code></pre>
     currentEditorProcessId = null;
     currentEditorProcess = null;
     currentGraphProcessId = null;
+    refineBoundProcessId = null;
+    refineBoundProcessName = null;
+    paintRefineBindChip();
+    paintEditorDoneRow();
     clearStream();
     empty.style.display = "none"; setHeroGraphVisible(false);
     for (const turn of resp.turns) renderHistoricalTurn(turn);
@@ -13316,7 +13315,7 @@ promptflow whoami</code></pre>
       const stepCount = Array.isArray(turn.plan.steps) ? turn.plan.steps.length : 1;
       card.innerHTML =
         '<div class="row">' +
-          '<span class="k">Running</span>' +
+          '<span class="k">' + escapeHtml(({complete:"Completed",failed:"Failed",canceled:"Canceled",pending:"Awaiting confirmation",running:"Running"})[turn.status] || "Status unavailable") + '</span>' +
           '<span class="v">Saved process (' + stepCount + ' step' + (stepCount === 1 ? '' : 's') + ')</span>' +
         '</div>';
       assist.body.appendChild(card);
@@ -13344,7 +13343,7 @@ promptflow whoami</code></pre>
       [...card.querySelectorAll(".v")].forEach((el, i) => { el.textContent = rows[i][1]; });
       assist.body.appendChild(card);
     }
-    if (turn.cost) renderCost(assist, turn.cost);
+    if (turn.cost) renderCost(assist, turn.cost, { status: turn.status });
 
     if (turn.status === "complete") {
       renderOutputs(assist, turn.outputs, turn.output_kind, turn.video_url);
@@ -13362,12 +13361,13 @@ promptflow whoami</code></pre>
   }
 
   // ── Modal control ─────────────────────────────────────
+  let pendingProcessAfterAuth = null;
   function openAuth(mode) {
     authMode = mode;
     $("authTitle").textContent = mode === "signup" ? "Create account" : "Sign in";
     $("authSubtitle").textContent = mode === "signup"
       ? "1,000 free tokens to start. No credit card needed."
-      : "Sign in to start animating images.";
+      : "Sign in to run, create, and save processes.";
     $("authSubmit").textContent = mode === "signup" ? "Create account" : "Sign in";
     $("authSwitch").innerHTML = mode === "signup"
       ? `Already have an account? <a id="authSwitchLink">Sign in</a>`
@@ -13408,6 +13408,11 @@ promptflow whoami</code></pre>
       await refreshMe();
       await refreshConversations();
       refreshProcesses();
+      if (pendingProcessAfterAuth) {
+        const pid = pendingProcessAfterAuth;
+        pendingProcessAfterAuth = null;
+        await openProcessEditor(pid);
+      }
     } catch (e) { errEl.textContent = "Network error."; }
   };
 
@@ -15697,7 +15702,13 @@ promptflow whoami</code></pre>
         paintRefineBindChip();
         paintEditorDoneRow();
         paintProcessList();
-        clearStream();
+        // Keep the run card mounted: send() adopts its body for errors,
+        // progress and results. Clearing it here made runs disappear.
+        if (window._forceRunProcessId && window._runCardBubble) {
+          stream.querySelector("#editorPane")?.remove();
+        } else {
+          clearStream();
+        }
         // Fall through to normal /plan path.
       } else {
         // Normal editor refinement — chat-driven, same flow as
@@ -16940,6 +16951,7 @@ promptflow whoami</code></pre>
               lastStatus = s.status;
               if (s.status === "complete") {
                 clearStatus(assist);
+                if (s.cost) costAPI.update(s.cost, { status: "complete" });
                 renderOutputs(assist, s.outputs, s.output_kind, s.video_url);
 
                 const charged = document.createElement("div");
@@ -17512,6 +17524,8 @@ promptflow whoami</code></pre>
   }
   function setError(assist, msg) {
     clearStatus(assist);
+    const runLabel = assist.body.querySelector(".rc-run-verb");
+    if (runLabel) runLabel.textContent = "Run failed";
     const e = document.createElement("div");
     e.className = "text err"; e.textContent = msg;
     assist.body.appendChild(e);
@@ -17841,6 +17855,9 @@ promptflow whoami</code></pre>
     // cost_factor and uses their live value to compute the new total.
     let costListener = null;
     const recompute = () => {
+      // The server prices the full step graph; a single-recipe editor
+      // cannot safely recalculate a multi-step quote from one duration.
+      if (Array.isArray(plan.steps) && plan.steps.length) return initialCost;
       let durationSec = 0;
       let speechChars = 0;
       // Default to plan's static values; override from inputs[] when
@@ -17868,6 +17885,7 @@ promptflow whoami</code></pre>
       const billUsd = upstreamUsd * markup;
       const tokens = Math.ceil(billUsd / 0.0005);
       return {
+        ...initialCost,
         fal_usd: falUsd,
         fal_per_second: falPerSec,
         elevenlabs_usd: elevUsd,
@@ -18010,22 +18028,36 @@ promptflow whoami</code></pre>
 
   // Cost card with a paint() method so we can re-render on the fly
   // when the user edits cost-affecting plan fields.
-  function renderCost(assist, cost) {
+  function renderCost(assist, cost, { status = "pending" } = {}) {
     if (!cost) return { update: () => {} };
     const c = document.createElement("div");
     c.className = "cost-card";
     function paint(co) {
-      c.innerHTML = `
-        <div class="row"><span class="k">fal.ai</span><span class="v">$${(co.fal_usd || 0).toFixed(4)}</span></div>
-        ${co.elevenlabs_usd > 0 ? `<div class="row"><span class="k">ElevenLabs TTS</span><span class="v">$${co.elevenlabs_usd.toFixed(4)}</span></div>` : ""}
-        <div class="row"><span class="k">Anthropic planner</span><span class="v">$${(co.anthropic_usd || 0).toFixed(4)}</span></div>
-        <div class="row"><span class="k">Markup (×${co.markup})</span><span class="v">—</span></div>
-        <div class="row total"><span class="k">Charged</span><span class="v">${co.tokens_charged.toLocaleString()} tokens · $${(co.bill_usd || 0).toFixed(4)}</span></div>
-      `;
+      const amount = value => Math.max(0, Number(value) || 0);
+      const row = (label, value) => `<div class="row"><span class="k">${escapeHtml(label)}</span><span class="v">${escapeHtml(value)}</span></div>`;
+      const money = value => "$" + amount(value).toFixed(4);
+      const verifiedBreakdown = co.pricing_version >= 2;
+      const rows = [];
+      if (verifiedBreakdown) {
+        for (const [key, label] of [["fal_usd", "fal.ai estimate"], ["elevenlabs_usd", "ElevenLabs estimate"], ["anthropic_usd", "Planning estimate"], ["claude_steps_usd", "Claude steps estimate"]]) {
+          if (amount(co[key]) > 0) rows.push(row(label, money(co[key])));
+        }
+        if (amount(co.markup) > 0) rows.push(row("Platform multiplier", "×" + amount(co.markup)));
+      }
+      const label = status === "complete" ? "Charged" : status === "running" ? "Run cost" : "Estimated cost";
+      rows.push(`<div class="row total"><span class="k">${label}</span><span class="v">${amount(co.tokens_charged).toLocaleString()} tokens · ${money(co.bill_usd)}</span></div>`);
+      const note = verifiedBreakdown
+        ? "Provider amounts are estimates, not measured usage." + (Array.isArray(co.estimate_notes) ? " " + co.estimate_notes.join(" ") : "")
+        : "Legacy cost record: provider breakdown is unavailable. This total does not verify which providers were used.";
+      rows.push(`<p class="cost-note" style="margin-top:10px;color:var(--text-dim);font-size:12px">${escapeHtml(note)}</p>`);
+      c.innerHTML = rows.join("");
     }
     paint(cost);
     assist.body.appendChild(c);
-    return { update: paint };
+    return { update: (nextCost, options = {}) => {
+      if (options.status) status = options.status;
+      paint(nextCost);
+    } };
   }
   function prettyModel(m) {
     return ({
@@ -18040,6 +18072,8 @@ promptflow whoami</code></pre>
   // falling back to a single-video render for older responses that only
   // had video_url. All renderers append into assist.body.
   function renderOutputs(assist, outputs, outputKind, fallbackVideoUrl) {
+    const runLabel = assist.body.querySelector(".rc-run-verb");
+    if (runLabel) runLabel.textContent = "Completed";
     if (!Array.isArray(outputs) || outputs.length === 0) {
       if (fallbackVideoUrl) {
         renderSingleVideo(assist, { url: fallbackVideoUrl, kind: "video", step_id: "main" });
@@ -18167,6 +18201,52 @@ promptflow whoami</code></pre>
     wrap.style.cssText = "padding:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center";
     wrap.innerHTML = `Text output is ready. <a href="${escAttr(o.url)}" target="_blank" rel="noopener" style="color:var(--gold)">Open in new tab</a>`;
     assist.body.appendChild(wrap);
+    // Preview our own plain-text outputs safely. Remote outputs retain
+    // their open link; never request credentials from another origin.
+    let url;
+    try { url = new URL(o.url, location.href); } catch { return; }
+    if (url.origin !== location.origin || !/^https?:$/.test(url.protocol)) return;
+    const preview = document.createElement("pre");
+    preview.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;max-height:360px;overflow:auto;margin-top:12px;color:var(--text);font:13px/1.65 var(--font-body)";
+    preview.textContent = "Loading text preview…";
+    preview.setAttribute("role", "status");
+    wrap.appendChild(preview);
+    (async () => {
+      try {
+        const response = await fetch(url.href, { signal: AbortSignal.timeout(15000) });
+        if (!response.ok || !/^(text\/plain|application\/json)(;|$)/i.test(response.headers.get("content-type") || "")) throw new Error("no_preview");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let text = "", bytes = 0, truncated = false;
+        try {
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            const remaining = 65536 - bytes;
+            text += decoder.decode(chunk.value.subarray(0, remaining), { stream: true });
+            bytes += chunk.value.byteLength;
+            if (bytes >= 65536) { truncated = true; await reader.cancel(); break; }
+          }
+          text += decoder.decode();
+        } finally { reader.releaseLock(); }
+        preview.textContent = text || "This output is empty.";
+        preview.removeAttribute("role");
+        if (truncated) {
+          const note = document.createElement("p");
+          note.textContent = "Preview shortened. Open the full output using the link above.";
+          wrap.appendChild(note);
+        }
+        const copy = document.createElement("button");
+        copy.className = "btn"; copy.type = "button"; copy.textContent = truncated ? "Copy preview" : "Copy text";
+        copy.addEventListener("click", async () => {
+          try { await navigator.clipboard.writeText(text); copy.textContent = "Copied"; }
+          catch { copy.textContent = "Select the text to copy"; }
+        });
+        wrap.appendChild(copy);
+      } catch {
+        preview.textContent = "Preview unavailable. Open the text using the link above.";
+      }
+    })();
   }
   function renderSingle3D(assist, o) {
     ensureModelViewerLoaded();
@@ -18510,44 +18590,6 @@ promptflow whoami</code></pre>
   // equivalent of the standalone process page's run section —
   // simpler (no auth chooser since user is logged in, no cascade
   // history since this is a fresh run), but the same shape.
-  // Coarse compute-cost estimate for a process, based on its output
-  // kind. Real compute cost depends on the plan recipe (which fal
-  // endpoint, what duration, what resolution) that /plan builds at
-  // run time — we can't know exact tokens before the user fires the
-  // run. But we CAN give an order-of-magnitude estimate so the user
-  // sees something useful in the run-card. Numbers are calibrated
-  // to typical fal pricing as of the cutoff (Wan 5s ≈ $0.18,
-  // ElevenLabs TTS ≈ $0.003/1k chars, Recraft v3 ≈ $0.04/image).
-  function estimateComputeTokens(proc) {
-    if (!proc) return null;
-    const outputKind = String(proc.output_kind || "").toLowerCase();
-    // Step count is a multiplier — a 5-step process burns more
-    // tokens than a 1-step process even at the same output kind.
-    let _sjLen = 0;
-    if (typeof proc.steps_json === "string") {
-      try { const _a = JSON.parse(proc.steps_json); if (Array.isArray(_a)) _sjLen = _a.length; } catch {}
-    }
-    const stepCount = Math.max(1, (proc.step_count || (proc.steps && proc.steps.length) || _sjLen || 1));
-    let base = 0;
-    if (outputKind === "video") {
-      base = 200;            // ~$0.18 fal for 5s clip
-    } else if (outputKind === "audio") {
-      base = 40;             // ~$0.03 ElevenLabs / Lyria
-    } else if (outputKind === "image") {
-      base = 12;             // ~$0.04-0.08 fal
-    } else if (outputKind === "text") {
-      base = 5;              // ~$0.003 Claude/OpenAI
-    } else {
-      base = 50;             // unknown — middle of the road
-    }
-    // Multi-step processes scale roughly linearly. Cap at 4× to
-    // avoid runaway estimates for pipelines like storyboards
-    // (which produce many images but most of cost is in 1-2
-    // expensive steps).
-    const mult = Math.min(4, 1 + (stepCount - 1) * 0.6);
-    return Math.round(base * mult);
-  }
-
   // Derive the input kinds a process ACTUALLY consumes by scanning its
   // python source and step definitions for the runtime input
   // placeholders the executor injects (<INPUT_IMAGE_URL>, {{image_url}},
@@ -18793,36 +18835,35 @@ promptflow whoami</code></pre>
           const bonusTotal = j.total_bonus_tokens || 0;
           const total = markupTotal + bonusTotal;
           if (total === 0) {
-            // Owner running their own process. The cascade is zero
-            // (no royalties owed to upstream creators), but compute
-            // costs (fal, OpenAI, ElevenLabs, etc.) still apply and
-            // are charged at run-time. We can't show the exact
-            // compute figure upfront — that depends on the plan
-            // recipe (endpoint, duration, resolution) which /plan
-            // builds at run time. But we can give a coarse estimate
-            // based on the process's output kind, so the user has
-            // an order-of-magnitude sense before committing.
-            const estimate = estimateComputeTokens(proc);
+            // Zero creator fees do not imply zero compute costs.
+            // Use the server's step-based estimate and disclose its limits.
+            const estimate = j.compute_estimate?.tokens_charged;
             const estStr = estimate
-              ? ' · ≈ <strong>' + estimate + ' tokens</strong> compute (final charge at run completion)'
-              : ' · compute charged at run time';
+              ? ' · estimated compute <strong>' + Number(estimate).toLocaleString() + ' tokens</strong>'
+              : ' · compute estimate unavailable; execution is charged separately';
             costRow.innerHTML =
-              '<span class="rc-cost-line"><strong>No royalties</strong> (you own this process)' +
+              '<span class="rc-cost-line"><strong>No creator fee</strong>' +
               estStr + '</span>';
           } else {
             const remaining = typeof j.tokens_remaining === "number" ? j.tokens_remaining : null;
             const remainingStr = remaining !== null
               ? ' · ' + remaining + ' available'
               : '';
-            const estimate = estimateComputeTokens(proc);
+            const estimate = j.compute_estimate?.tokens_charged;
             const computeStr = estimate
-              ? ' + ≈ ' + estimate + ' compute'
-              : '';
+              ? ' + ≈ ' + Number(estimate).toLocaleString() + ' compute'
+              : ' + compute priced separately';
             costRow.innerHTML =
               '<span class="rc-cost-line"><strong>' + total + ' tokens</strong> royalties' +
               computeStr +
               ' <span class="rc-cost-detail">(' + markupTotal + ' to author, ' + bonusTotal + ' bonus)</span>' +
               escapeHtml(remainingStr) + '</span>';
+          }
+          if (j.compute_estimate?.estimate_notes?.length) {
+            const note = document.createElement("p");
+            note.className = "rc-cost-line";
+            note.textContent = j.compute_estimate.estimate_notes.join(" ");
+            costRow.appendChild(note);
           }
         } else {
           costRow.innerHTML = '<span class="rc-cost-line rc-cost-error">Cost unavailable</span>';
@@ -18886,11 +18927,13 @@ promptflow whoami</code></pre>
 
       const hasAnyInput = textParts.length > 0 || stagedFiles.length > 0;
       if (!hasAnyInput) {
-        // Nothing typed/attached — flash the card border red briefly
         const cardEl = body.querySelector(".rc-card");
         if (cardEl) {
           cardEl.classList.add("rc-card-invalid");
-          setTimeout(() => cardEl.classList.remove("rc-card-invalid"), 600);
+          let error = cardEl.querySelector(".rc-input-error");
+          if (!error) { error = document.createElement("p"); error.className = "rc-input-error"; error.setAttribute("role", "alert"); error.style.color = "var(--red)"; cardEl.appendChild(error); }
+          error.textContent = "Add text or a file before running this process.";
+          controls[0]?.el.focus();
         }
         return;
       }
@@ -20680,6 +20723,7 @@ promptflow whoami</code></pre>
 
   async function openProcessEditor(pid) {
     if (busy) return;
+    if (!ME) { pendingProcessAfterAuth = pid; openAuth("signin"); return; }
     if (currentEditorProcessId === pid) return;
     // Full-screen loader covers the click → render gap. /process/get
     // can take a few seconds on cold cache + the editor render
@@ -20697,6 +20741,7 @@ promptflow whoami</code></pre>
       // redirect, edge 404) gives a useful error instead of crashing
       // with "Unexpected token '<', '<!DOCTYPE'... is not valid JSON".
       const rawText = await r.text();
+      if (r.status === 401) { pendingProcessAfterAuth = pid; openAuth("signin"); return; }
       const trimmed = rawText.trim();
       if (trimmed.startsWith("<")) {
         alert(
@@ -20935,57 +20980,6 @@ promptflow whoami</code></pre>
     openRunCard(p);
   }
 
-  function runProcessFromEditor(p) {
-    if (!p || !p.id) return;
-    if (busy || _planInFlight || _sendInProgress) return;   // don't stack a run
-    // Clear any refine binding — Run is "execute THIS", not "refine".
-    if (typeof refineBoundProcessId !== "undefined" && refineBoundProcessId) {
-      refineBoundProcessId = null;
-      if (typeof refineBoundProcessName !== "undefined") refineBoundProcessName = null;
-      try { paintRefineBindChip(); } catch {}
-      try { paintEditorDoneRow(); } catch {}
-    }
-    window._forceRunProcessId = p.id;
-    window._forceRunProcessName = p.name;
-    const typed = (textInput.value || "").trim();
-    const runInstruction = typed || `Run "${p.name}"`;
-    if (!typed) textInput.value = runInstruction;
-
-    // Build ONE run bubble that holds the whole run: a labeled inputs
-    // box at the top, then status/progress, then output — all streamed
-    // into the same bubble by send() (via _runCardBubble). This is why
-    // we DON'T let send() add a separate loose user message: the input
-    // lives inside this card instead (set _runInputsInline so send()
-    // skips addUserMsg).
-    const assist = addAssistMsg();
-    const inputsBox = document.createElement("div");
-    inputsBox.className = "run-inputs-box";
-    inputsBox.innerHTML =
-      '<div class="run-inputs-head">' +
-        '<span class="run-inputs-proc"></span>' +
-        '<span class="run-inputs-label">INPUT</span>' +
-      '</div>' +
-      '<div class="run-inputs-body"></div>';
-    inputsBox.querySelector(".run-inputs-proc").textContent = "▶ " + p.name;
-    inputsBox.querySelector(".run-inputs-body").textContent = runInstruction;
-    assist.body.appendChild(inputsBox);
-
-    window._runCardBubble = assist;
-    window._runInputsInline = true;
-
-    try {
-      send();
-    } catch (e) {
-      window._forceRunProcessId = null;
-      window._forceRunProcessName = null;
-      window._runCardBubble = null;
-      window._runInputsInline = false;
-      // eslint-disable-next-line no-console
-      console.error("[editor-run] send() threw", e);
-      alert("Could not start the run. Please try again.");
-    }
-  }
-
   function paintEditor() {
     if (!currentEditorProcess) return;
     const p = currentEditorProcess;
@@ -21032,7 +21026,7 @@ promptflow whoami</code></pre>
     // editor state. We show the path (not the full origin) since
     // the editor is itself loaded from missinglink.build, so the
     // origin is obvious from context.
-    if (p.public_url && !p.is_system) {
+    if (p.public_url && !p.is_system && !p.is_draft && (p.is_published || p.is_publicly_runnable)) {
       const liveRow = document.createElement("div");
       liveRow.className = "editor-live-url";
       liveRow.innerHTML = `
@@ -27044,17 +27038,17 @@ function dDesktopInit(){
           '</div>' +
           '<button type="button" class="pfc-back-btn" data-pfc="back">\u2190 Back</button>' +
         '</div>' +
-        '<input type="text" class="pfc-input pfc-searchbar" data-pfc="q" placeholder="Search processes \u2014 name, what it does, output\u2026" autocomplete="off">' +
+        '<input type="text" class="pfc-input pfc-searchbar" data-pfc="q" aria-label="Search processes" placeholder="Search processes \u2014 name, what it does, output\u2026" autocomplete="off">' +
         '<div class="pfc-filters">' +
           '<div class="pfc-field"><span class="pfc-field-label">Scope</span>' +
-            '<select class="pfc-select" data-pfc="scope">' +
+            '<select class="pfc-select" data-pfc="scope" aria-label="Scope">' +
               '<option value="all" selected>All</option>' +
               '<option value="published">Published</option>' +
               '<option value="mine">My processes</option>' +
               '<option value="system">System</option>' +
             '</select></div>' +
           '<div class="pfc-field"><span class="pfc-field-label">Output</span>' +
-            '<select class="pfc-select" data-pfc="okind">' +
+            '<select class="pfc-select" data-pfc="okind" aria-label="Output">' +
               '<option value="">Any</option>' +
               '<option value="video">Video</option>' +
               '<option value="image">Image</option>' +
@@ -27062,7 +27056,7 @@ function dDesktopInit(){
               '<option value="text">Text</option>' +
             '</select></div>' +
           '<div class="pfc-field"><span class="pfc-field-label">Sort</span>' +
-            '<select class="pfc-select" data-pfc="sort">' +
+            '<select class="pfc-select" data-pfc="sort" aria-label="Sort">' +
               '<option value="relevant" selected>Relevant</option>' +
               '<option value="runs">Most runs</option>' +
               '<option value="quality">Highest quality</option>' +
@@ -27070,7 +27064,8 @@ function dDesktopInit(){
             '</select></div>' +
           '<label class="pfc-toggle-row" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" data-pfc="runnable"><span class="pfc-toggle-label">Runnable only</span></label>' +
         '</div>' +
-        '<div class="pfc-find-count" data-pfc="count"></div>' +
+        '<button type="button" class="pfc-add-btn" data-pfc="reset">Clear filters</button>' +
+        '<div class="pfc-find-count" data-pfc="count" role="status" aria-live="polite"></div>' +
         '<div class="pfc-results" data-pfc="results">' +
           '<div class="pfc-empty">Loading the library\u2026</div>' +
         '</div>' +
@@ -27078,6 +27073,12 @@ function dDesktopInit(){
 
     const q = (s) => body.querySelector('[data-pfc="' + s + '"]');
     q("back").addEventListener("click", pfcReturnHome);
+    q("reset").addEventListener("click", () => {
+      q("q").value = ""; q("scope").value = "all"; q("okind").value = "";
+      q("sort").value = "relevant"; q("runnable").checked = false;
+      render(); q("q").focus();
+    });
+    if (!window.ME) q("scope").querySelector('[value="mine"]').disabled = true;
 
     let all = [];
     let loaded = false;
@@ -27111,7 +27112,7 @@ function dDesktopInit(){
 
       let rows = all.filter((p) => {
         if (scope === "mine" && !p.mine) return false;
-        if (scope === "published" && !(p.is_published && !p.mine)) return false;
+        if (scope === "published" && !p.is_published) return false;
         if (scope === "system" && !p.is_system) return false;
         if (okind && String(p.output_kind || "").toLowerCase() !== okind) return false;
         if (runnableOnly && p.runnable === false) return false;
@@ -27137,7 +27138,7 @@ function dDesktopInit(){
           '</div>';
         return;
       }
-      results.innerHTML = rows.slice(0, 60).map((p) => {
+      results.innerHTML = rows.map((p) => {
         const badge = p.mine
           ? '<span class="pfc-badge mine">Mine</span>'
           : (p.is_system ? '<span class="pfc-badge system">System</span>'
@@ -27146,7 +27147,7 @@ function dDesktopInit(){
         const meta = [];
         if (p.total_runs) meta.push(p.total_runs + " runs");
         if (typeof p.quality_score === "number" && p.quality_score > 0) meta.push("q " + p.quality_score.toFixed(2));
-        if (!p.mine && p.author_display_name) meta.push("by " + esc(p.author_display_name));
+        if (!p.mine && p.author_display_name) meta.push("by " + p.author_display_name);
         if (p.is_monetized && (p.markup_tokens || p.bonus_tokens)) meta.push(((p.markup_tokens || 0) + (p.bonus_tokens || 0)) + "t");
         return '<div class="pfc-result" data-id="' + esc(p.id) + '" tabindex="0" role="button">' +
             '<div class="pfc-result-top">' +
@@ -27174,17 +27175,28 @@ function dDesktopInit(){
     q("runnable").addEventListener("change", render);
     q("q").focus();
 
-    (async () => {
+    async function loadLibrary() {
+      loaded = false;
+      q("count").textContent = "";
+      q("results").innerHTML = '<div class="pfc-empty" role="status">Loading the library…</div>';
       try {
-        const r = await fetch("/api/promptflow/processes");
+        const r = await fetch("/api/promptflow/processes", { signal: AbortSignal.timeout(15000) });
         const j = await r.json().catch(() => ({}));
-        all = (j && j.processes) || [];
+        if (!r.ok || !j.ok || !Array.isArray(j.processes)) throw new Error("library_unavailable");
+        all = j.processes;
+        // Include the types actually returned by the catalog so multi,
+        // document, 3D, and system outputs can be found too.
+        const kinds = [...new Set(all.map(p => String(p.output_kind || "").toLowerCase()).filter(Boolean))].sort();
+        const labels = {multi:"Multiple outputs",document:"Document","3d":"3D",structured_packet:"Search results",process:"Process",evaluation_report:"Evaluation report"};
+        q("okind").innerHTML = '<option value="">Any</option>' + kinds.map(kind => '<option value="' + esc(kind) + '">' + esc(labels[kind] || kind.charAt(0).toUpperCase() + kind.slice(1)) + '</option>').join("");
         loaded = true;
         render();
       } catch {
-        q("results").innerHTML = '<div class="d-contrib-error">Couldn\u2019t load the process library.</div>';
+        q("results").innerHTML = '<div class="d-contrib-error" role="alert">Couldn’t load the process library. Check your connection and try again.</div><button type="button" class="pfc-add-btn" data-pfc="retry">Retry</button>';
+        q("retry").addEventListener("click", loadLibrary);
       }
-    })();
+    }
+    loadLibrary();
   }
   window.pfOpenFindPage = pfOpenFindPage;
 
@@ -27209,7 +27221,8 @@ function dDesktopInit(){
           '</div>' +
           '<button type="button" class="pfc-back-btn" data-pfc="back">\u2190 Back</button>' +
         '</div>' +
-        '<textarea class="pfc-textarea" data-pfc="own" rows="3" placeholder="Describe the process to build\u2026"></textarea>' +
+        '<textarea class="pfc-textarea" data-pfc="own" aria-label="Describe the process to build" aria-describedby="pfcGenerateError" rows="3" placeholder="Describe the process to build\u2026"></textarea>' +
+        '<p id="pfcGenerateError" data-pfc="error" role="alert" style="color:var(--red);margin-top:8px"></p>' +
         '<div class="pfc-run-actions" style="margin-top:10px">' +
           '<button type="button" class="pfc-add-btn" data-pfc="propose">Propose one from my library</button>' +
           '<button type="button" class="pfc-submit-btn" data-pfc="gen">Generate \u2192</button>' +
@@ -27222,9 +27235,10 @@ function dDesktopInit(){
 
     q("gen").addEventListener("click", () => {
       const t = (q("own").value || "").trim();
-      if (!t) { q("own").focus(); return; }
+      if (!t) { q("error").textContent = "Describe what this process should do before generating."; q("own").setAttribute("aria-invalid", "true"); q("own").focus(); return; }
       pfcFireGenerate(t);
     });
+    q("own").addEventListener("input", () => { q("error").textContent = ""; q("own").removeAttribute("aria-invalid"); });
     // Let the real generator invent something novel by composing
     // existing processes — no hardcoded idea injected here.
     q("propose").addEventListener("click", () => {
@@ -27264,7 +27278,7 @@ function dDesktopInit(){
       '<div class="d-agents-empty">' +
         '<div class="d-agents-empty-title">' +
           (kind === "no-agents" ? "No agents are running yet"
-           : kind === "backend-pending" ? "Agents backend not deployed yet"
+           : kind === "backend-pending" ? "Agents are coming soon"
            : "Couldn't reach the agents service") +
         '</div>' +
         '<div class="d-agents-empty-sub">' + (message || "") + '</div>' +
@@ -27363,7 +27377,9 @@ function dDesktopInit(){
       const r = await fetch("/api/promptflow/agents/list");
       if (r.status === 404) {
         dAgentsRenderEmpty("backend-pending",
-          "The /api/promptflow/agents endpoint hasn't shipped yet. This modal is the UI it will populate — agents will appear here once the backend route is deployed.");
+          "Continuous agents are coming soon. You can run a process manually from your workspace today.");
+        if (_agentsRefreshTimer) { clearInterval(_agentsRefreshTimer); _agentsRefreshTimer = null; }
+        if (D("dAgentsAutoRefresh")) D("dAgentsAutoRefresh").textContent = "Coming soon · automatic refresh paused";
         _agentsLastFetch = "404";
       } else if (r.ok) {
         const data = await r.json();
@@ -27442,7 +27458,9 @@ function dDesktopInit(){
     dCronSyncMinuteQuick();
     dCronUpdateVisibleRows();
     dCronUpdatePreview();
-    dCronSetStatus("", "");
+    dCronSetStatus("Scheduling is coming soon. This is a preview; no triggers will be created. You can run processes manually from your workspace.", "warn");
+    D("dCronSubmit").disabled = true;
+    D("dCronSubmit").textContent = "Scheduling coming soon";
     D("dCronModal").hidden = false;
   }
   function dCronClose() {
@@ -27597,40 +27615,8 @@ function dDesktopInit(){
   }
 
   async function dCronSubmit() {
-    const name = (D("dCronName") && D("dCronName").value || "").trim();
-    const processId = D("dCronProcess") && D("dCronProcess").value;
-    const cron = dCronReadSchedule();
-    const email = !!(D("dCronEmail") && D("dCronEmail").checked);
-
-    if (!name) { dCronSetStatus("Give the trigger a name first.", "err"); return; }
-    if (!processId) { dCronSetStatus("Pick a process to run.", "err"); return; }
-    if (!cron) { dCronSetStatus("Enter a cron expression for the custom schedule.", "err"); return; }
-
-    const btn = D("dCronSubmit");
-    if (btn) btn.disabled = true;
-    try {
-      const r = await fetch("/api/promptflow/cron/triggers/create", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, process_id: processId, cron, email_summary: email }),
-      });
-      if (r.status === 404) {
-        dCronSetStatus(
-          "The cron backend isn't deployed yet — your trigger wasn't saved. The form will work as-is once /api/promptflow/cron/triggers/create ships.",
-          "warn"
-        );
-      } else if (r.ok) {
-        dCronSetStatus("Trigger created. It will fire next at the scheduled time.", "ok");
-        setTimeout(dCronClose, 1000);
-      } else {
-        const txt = await r.text().catch(() => "");
-        dCronSetStatus("Server returned " + r.status + (txt ? ": " + txt.slice(0, 120) : ""), "err");
-      }
-    } catch (e) {
-      dCronSetStatus("Network error: " + (e && e.message || "couldn't reach the server"), "err");
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+    // Enable only when the scheduler's backend and lifecycle UI ship.
+    dCronSetStatus("Scheduling is coming soon. No trigger has been created.", "warn");
   }
   if (D("dCronClose")) D("dCronClose").addEventListener("click", dCronClose);
   if (D("dCronCancel")) D("dCronCancel").addEventListener("click", dCronClose);
@@ -27920,6 +27906,7 @@ function dDesktopInit(){
       dOpenPubgraph();
       return;
     }
+    dClosePubgraph();
     _dFolderActive = kind;
     document.body.classList.add("d-folder-mode");
     D("dFolderView").classList.add("active");
@@ -28744,9 +28731,13 @@ function dDesktopInit(){
 
   let _dPgItems = [];      // current rendered set
   let _dPgAllItems = [];   // last fetched full set (for client-side filter)
-  let _dPgLoading = false;
+  let _dPgRequest = 0;
+  let _dPgController = null;
 
   async function dOpenPubgraph() {
+    // Anonymous catalog browsing is supported; the graph API requires
+    // authentication. Keep discovery useful without a raw 401 screen.
+    if (!window.ME) { pfOpenFindPage(); return; }
     document.body.classList.add("d-pubgraph-mode");
     D("dPubgraphView").classList.add("active");
     D("dPgBody").innerHTML = '<div class="d-pg-loading">Loading public processes\u2026</div>';
@@ -28756,6 +28747,8 @@ function dDesktopInit(){
   }
 
   function dClosePubgraph() {
+    _dPgRequest++;
+    _dPgController?.abort();
     document.body.classList.remove("d-pubgraph-mode");
     D("dPubgraphView").classList.remove("active");
     document.querySelectorAll(".d-folder").forEach(b => b.classList.remove("active"));
@@ -28767,14 +28760,18 @@ function dDesktopInit(){
   // lessons attachment — and returns a structured packet we render
   // as a process card grid.
   async function dPgFetch(nlQuery) {
-    if (_dPgLoading) return;
-    _dPgLoading = true;
+    const request = ++_dPgRequest;
+    _dPgController?.abort();
+    const controller = new AbortController();
+    _dPgController = controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]);
     try {
       const trimmed = (nlQuery || "").trim();
       const useSearch = trimmed.length > 2;
       if (useSearch) {
         // ── Agentic search path ────────────────────────────────────
         const r = await fetch("/api/promptflow/search", {
+          signal,
           method: "POST",
           headers: { "content-type": "application/json", "accept": "application/json" },
           body: JSON.stringify({ query: trimmed }),
@@ -28790,15 +28787,22 @@ function dDesktopInit(){
         // highlighted. The picks come with relevance_reason text.
         const pickById = new Map((sr.picks || []).map(p => [p.process_id, p]));
         const candidates = sr.meta && sr.meta.shortlist_candidates || [];
-        _dPgAllItems = candidates.map(c => {
+        const catalogResponse = await fetch("/api/promptflow/processes", { signal });
+        const catalog = await catalogResponse.json();
+        if (request !== _dPgRequest) return;
+        if (!catalogResponse.ok || !catalog.ok || !Array.isArray(catalog.processes)) throw new Error("Could not load process details. Please try again.");
+        const publicById = new Map(catalog.processes.filter(p => p.is_system || p.is_published).map(p => [p.id, p]));
+        _dPgAllItems = candidates.filter(c => publicById.has(c.process_id)).map(c => {
           const pick = pickById.get(c.process_id);
+          const process = publicById.get(c.process_id);
           return {
             node: {
               id: c.process_id,
               type: "process",
-              label: c.name,
-              description: pick ? pick.description : "",
-              output_kind: pick ? pick.output_kind : "",
+              label: process.name || c.name,
+              description: process.description || pick?.description || "",
+              output_kind: process.output_kind || pick?.output_kind || "",
+              meta: process,
             },
             composes: 0, usedBy: 0, forks: 0,
             // Search-specific decoration
@@ -28807,33 +28811,28 @@ function dDesktopInit(){
             cosine: c.cosine,
             total_score: c.total_score,
           };
-        });
+        }).sort((a, b) => Number(b.picked) - Number(a.picked));
         _dPgItems = _dPgAllItems;
         dPgRender();
-        // Surface the cost / latency / fork-used info subtly under the search bar
-        const meta = sr.meta || {};
-        const cost = meta.rerank_tokens
-          ? "$" + meta.rerank_tokens.cost_usd.toFixed(4)
-          : "—";
-        const tot = meta.timings ? meta.timings.total_ms + "ms" : "—";
         D("dPgCount").textContent =
-          `${candidates.length} candidates · ${(sr.picks || []).length} selected · ${tot} · ${cost}` +
-          (meta.used_fork ? " · your fork" : "");
+          `${_dPgAllItems.length} public results · ${_dPgAllItems.filter(item => item.picked).length} recommended`;
         return;
       }
 
       // ── Default browse path (no query) ─────────────────────────
       const r = await fetch("/api/promptflow/graph/data", {
+        signal,
         method: "POST",
         headers: { "content-type": "application/json", "accept": "application/json" },
         body: JSON.stringify({ limit: 200, scope: "public" }),
       });
       const text = await r.text();
+      if (request !== _dPgRequest) return;
       if (text.trim().startsWith("<")) {
         throw new Error("Server returned HTML, not JSON. The /api/promptflow/graph route may be misconfigured.");
       }
       const graph = JSON.parse(text);
-      if (!graph || !graph.ok) {
+      if (!r.ok || !graph || !graph.ok) {
         throw new Error(graph?.message || graph?.error || "Failed to load public processes.");
       }
       const processes = (graph.nodes || []).filter(n => n.type === "process" && n.primary !== false);
@@ -28858,11 +28857,11 @@ function dDesktopInit(){
       dPgRender();
       D("dPgCount").textContent = `${_dPgAllItems.length} public processes`;
     } catch (e) {
+      if (request !== _dPgRequest || controller.signal.aborted) return;
       D("dPgBody").innerHTML =
-        '<div class="d-pg-empty"><strong>Could not load.</strong>' + dEsc(e?.message || "Try again.") +
-        '<div class="d-pg-empty-hint">Try a search query above. Or check that /api/promptflow/search and /api/promptflow/graph/data are reachable.</div></div>';
-    } finally {
-      _dPgLoading = false;
+        '<div class="d-pg-empty" role="alert"><strong>Could not load processes.</strong>' +
+        '<div class="d-pg-empty-hint">Check your connection and try again.</div><button type="button" class="btn" id="dPgRetry">Retry</button></div>';
+      D("dPgRetry").onclick = () => dPgFetch(D("dPgSearch").value);
     }
   }
 
@@ -28889,9 +28888,15 @@ function dDesktopInit(){
     const card = document.createElement("div");
     card.className = "d-pg-card";
     card.title = n.label || "";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.addEventListener("keydown", e => {
+      if (e.target.closest("details")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.click(); }
+    });
 
     // Price pill — system, paid, or free.
-    let priceLabel = "FREE", priceClass = "free";
+    let priceLabel = "NO CREATOR FEE", priceClass = "free";
     if (meta.is_system) { priceLabel = "SYS"; priceClass = "sys"; }
     else if (meta.is_monetized) { priceLabel = (meta.markup_tokens || 0) + "t"; priceClass = "paid"; }
 
@@ -28907,7 +28912,7 @@ function dDesktopInit(){
 
     // I/O kinds.
     const inK = (meta.input_kinds || ["text"]).join("+");
-    const outK = meta.output_kind || "video";
+    const outK = meta.output_kind || n.output_kind || "Not specified";
 
     // Stats line.
     const statBits = [];
@@ -28948,17 +28953,19 @@ function dDesktopInit(){
       '<div class="d-pg-card-io"><strong>' + dEsc(inK) + '</strong><span class="d-pg-arrow">\u2192</span><strong>' + dEsc(outK) + '</strong></div>' +
       (statBits.length > 0 ? '<div class="d-pg-card-stats">' + statBits.join("") + '</div>' : '') +
       (relBits.length > 0 ? '<div class="d-pg-card-rels">' + relBits.join("") + '</div>' : '') +
-      // Cosine score chip for search results — useful for debugging.
+      // Ranking diagnostics remain available on demand, away from the
+      // decision-making details (inputs, outputs, author and price).
       (typeof item.cosine === "number"
-        ? '<div class="d-pg-card-scoreline">cosine <strong>' + item.cosine.toFixed(3) + '</strong>' +
+        ? '<details class="d-pg-card-scoreline"><summary>Ranking details</summary>Similarity <strong>' + item.cosine.toFixed(3) + '</strong>' +
           (typeof item.total_score === "number"
             ? '<span class="d-pg-card-totalscore">total <strong>' + item.total_score.toFixed(3) + '</strong></span>'
-            : '') + '</div>'
+            : '') + '</details>'
         : '');
     if (item.picked) card.classList.add("d-pg-card-picked");
     else if (typeof item.cosine === "number") card.classList.add("d-pg-card-unpicked");
 
-    card.addEventListener("click", () => {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("details")) return;
       // Strip "process:" prefix from node.id to get the process id.
       const pid = (n.id || "").startsWith("process:") ? n.id.slice("process:".length) : n.id;
       if (!pid) return;
@@ -28995,10 +29002,11 @@ function dDesktopInit(){
   function dPgOnSearchInput(e) {
     const q = (e.target.value || "").trim();
     clearTimeout(_dPgSearchTimer);
+    _dPgRequest++;
+    _dPgController?.abort();
     if (!q) {
-      // Empty search — show full set.
-      _dPgItems = _dPgAllItems;
-      dPgRender();
+      // Restore the browse catalog, not the last search's shortlist.
+      dPgFetch("");
       return;
     }
     // Debounced client-side filter on the existing fetched set.
@@ -29425,7 +29433,9 @@ if (document.readyState === "loading") {
     <div class="d-pg-count" id="dPgCount"></div>
     <div class="d-pg-search-wrap">
       <input class="d-pg-search" id="dPgSearch" type="text"
-             placeholder="Search public processes: try &ldquo;video generators with high trust&rdquo;"
+             aria-label="Search public processes"
+             title="Type to filter these results. Enter at least 3 characters and press Enter to search all public processes."
+             placeholder="Filter results · press Enter to search all"
              autocomplete="off" spellcheck="false">
     </div>
   </div>
