@@ -10795,6 +10795,12 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
     --d-sidebar-w: 0px;
   }
 
+  /* The desktop shell already has #dMobileMenuBtn. The legacy chat
+     hamburger opens a second overlapping sidebar at the same top-left
+     position on ≤720px screens, so suppress it in desktop mode. Chats
+     remain available from the desktop shell's Chats folder. */
+  body.d-desktop-mode #sidebarToggle { display: none !important; }
+
   /* ── Sidebar folders ─────────────────────────────────────────
      Hidden by default on mobile (eats too much horizontal space).
      Slides in from the left when the hamburger button is tapped
@@ -12082,8 +12088,12 @@ promptflow whoami</code></pre>
   // block every future run; this guarantees the UI frees itself.
   function armBusyWatchdog(ms) {
     if (_busyWatchdog) { clearTimeout(_busyWatchdog); _busyWatchdog = null; }
+    // A stale timer from a previous plan must never unlock a newer run.
+    // Capture the controller identity and only recover the exact request
+    // cycle that armed this watchdog.
+    const controllerAtArm = currentAbortController;
     _busyWatchdog = setTimeout(() => {
-      if (busy) {
+      if (busy && currentAbortController === controllerAtArm) {
         // eslint-disable-next-line no-console
         console.warn("[PromptFlow] busy stuck >timeout — auto-recovering so runs work again.");
         busy = false;
@@ -12091,7 +12101,10 @@ promptflow whoami</code></pre>
         _sendInProgress = false;
         if (typeof updateSend === "function") updateSend();
       }
-    }, ms || 120_000);   // 120s: well past a normal plan+execute round trip
+    }, ms || 180_000);   // planning watchdog; execution re-arms with a longer bound
+  }
+  function clearBusyWatchdog() {
+    if (_busyWatchdog) { clearTimeout(_busyWatchdog); _busyWatchdog = null; }
   }
   function setBusyState(newVal) {
     busy = newVal;
@@ -12200,6 +12213,12 @@ promptflow whoami</code></pre>
       const j = await r.json();
       ME = j.logged_in ? j : null;
     } catch { ME = null; }
+    // The desktop shell runs in the same IIFE but intentionally reads
+    // auth through window.ME/window.currentUser. Keep those mirrors in
+    // sync so owner-only controls, Cron pickers, and the System popover
+    // don't treat a signed-in user as a guest.
+    window.ME = ME;
+    window.currentUser = ME;
     paintAuthUI();
     // paintGlobalStats() — disabled. The stats strip
     // ("18 processes published · 1,247 successful runs · ...") plus
@@ -16147,13 +16166,13 @@ promptflow whoami</code></pre>
 
     // Capture and reset composer.
     busy = true;
-    armBusyWatchdog();   // auto-recover if this turn hangs (e.g. /execute never returns)
     _sendInProgress = false;   // busy/_planInFlight now guard re-entry
     // Fresh abort controller for this send cycle. /plan is always
     // cancellable; once /execute starts we re-evaluate based on
     // whether the plan invokes a saved process (picked_process_id).
     currentAbortController = new AbortController();
     currentRunCancellable = true;
+    armBusyWatchdog(3 * 60_000);   // planning should never hold the composer indefinitely
     // attachedFiles / fileInput / paintAttach already cleared
     // immediately after the filesToSend snapshot above — see comment
     // there. Just clear the text composer here.
@@ -16740,7 +16759,7 @@ promptflow whoami</code></pre>
       editPickedBtn = actions.querySelector(".cf-edit-picked");
     }
 
-    busy = false; updateSend();
+    busy = false; clearBusyWatchdog(); updateSend();
 
     // Edit-picked: cancel the pending plan (no charge) and open the
     // editor for the underlying process. Subsequent chat is bound to
@@ -16824,6 +16843,7 @@ promptflow whoami</code></pre>
         // a non-interactive spinner instead of Stop.
         currentAbortController = new AbortController();
         currentRunCancellable = !planResp?.plan?.picked_process_id;
+        armBusyWatchdog(50 * 60_000);
         updateSend();
         actions.remove();
         setStatus(assist, "Starting…");
@@ -17080,7 +17100,7 @@ promptflow whoami</code></pre>
             setError(assist, "Network error: " + (e?.message || e));
           }
         } finally {
-          busy = false; updateSend();
+          busy = false; clearBusyWatchdog(); updateSend();
           stream.scrollTop = stream.scrollHeight;
         }
       };
@@ -18594,6 +18614,18 @@ promptflow whoami</code></pre>
     return { kinds: out, changed };
   }
 
+  // Normalize ownership across the two process payload shapes used by
+  // this page: /processes exposes `mine`, while /process/get exposes the
+  // owner id. Relying on created_by_user_id alone made owner-only controls
+  // disappear for healthy cache entries.
+  function pfOwnsProcess(proc) {
+    return !!(proc && ME && !proc.is_system && (
+      proc.mine === true ||
+      proc.created_by_user_id === ME.id ||
+      proc.author_user_id === ME.id
+    ));
+  }
+
   // Persist a reconciled input_kinds set back to the process when the
   // user owns it. Best-effort: updates the in-memory caches immediately
   // so the card meta / graph reflect the fix even if the network write
@@ -18607,7 +18639,7 @@ promptflow whoami</code></pre>
     if (currentEditorProcess && currentEditorProcess.id === proc.id) {
       currentEditorProcess.input_kinds = kinds.slice();
     }
-    const isOwner = !!(ME && proc.created_by_user_id === ME.id) && !proc.is_system;
+    const isOwner = pfOwnsProcess(proc);
     if (!isOwner) return;   // can't write to others' / system processes
     try {
       await fetch("/api/promptflow/process/metadata_patch", {
@@ -19026,7 +19058,7 @@ promptflow whoami</code></pre>
     // Cost-to-run pill — always shown, honest about pricing state.
     // Lets the user know upfront whether running this costs them
     // anything, instead of discovering it at the run-card step.
-    const isOwnerView = !!(ME && proc.created_by_user_id === ME.id);
+    const isOwnerView = pfOwnsProcess(proc);
     if (isOwnerView) {
       lifecyclePills.push('<span class="pc-pill pc-pill-cost pc-pill-cost-free">Free for you</span>');
     } else if (proc.is_monetized) {
@@ -19221,7 +19253,7 @@ promptflow whoami</code></pre>
     //
     // System processes, already-published processes, and other
     // people's processes don't get the nudge.
-    const isMine = proc.created_by_user_id && ME && proc.created_by_user_id === ME.id;
+    const isMine = pfOwnsProcess(proc);
     const alreadyPublished = !!proc.is_published;
     const isSystem = !!proc.is_system;
     const hasBeenRun = (proc.total_runs || 0) > 0;
@@ -19443,7 +19475,7 @@ promptflow whoami</code></pre>
   // nudge in place rather than re-rendering the whole process card —
   // less visual disruption, keeps scroll position stable.
   function flipPublishNudgeToReady(processId, proc) {
-    const isMine = proc.created_by_user_id && ME && proc.created_by_user_id === ME.id;
+    const isMine = pfOwnsProcess(proc);
     if (!isMine) return;
     if (proc.is_system) return;
     if (proc.is_published) return;
@@ -19527,7 +19559,7 @@ promptflow whoami</code></pre>
     const proc = (processesCache || []).find(p => p.id === processId);
     if (proc) {
       if (proc.is_system) return;                       // system processes
-      const isMine = proc.created_by_user_id === ME.id;
+      const isMine = pfOwnsProcess(proc);
       if (!isMine) return;                              // not the author
       if (proc.validated_at) return;                    // already validated
     }
@@ -25010,6 +25042,20 @@ function dDesktopInit(){
       const raw = localStorage.getItem(PF_SETTINGS_KEY);
       if (!raw) return dMaDefaultSettings();
       const parsed = JSON.parse(raw);
+      // Migrate model choices saved before the Claude 5.5 rollout so old
+      // localStorage values do not leave the new <select> controls blank.
+      const legacyModelMap = {
+        "anthropic:claude-opus-4-7": "anthropic:claude-opus-5-5",
+        "anthropic:claude-opus-4-6": "anthropic:claude-opus-5-5",
+        "anthropic:claude-sonnet-4-6": "anthropic:claude-sonnet-5-5",
+        "anthropic:claude-sonnet-4-5": "anthropic:claude-sonnet-5-5",
+        "anthropic:claude-haiku-4-5": "anthropic:claude-haiku-5-5",
+      };
+      if (parsed.models && typeof parsed.models === "object") {
+        for (const k of Object.keys(parsed.models)) {
+          if (legacyModelMap[parsed.models[k]]) parsed.models[k] = legacyModelMap[parsed.models[k]];
+        }
+      }
       // Merge with defaults so missing fields get sensible values.
       const def = dMaDefaultSettings();
       return {
@@ -25032,11 +25078,11 @@ function dDesktopInit(){
       // Haiku since retrieval doesn't need the smartest model; Learn
       // and Adapt to Sonnet as middle-ground.
       models: {
-        generate: "anthropic:claude-opus-4-7",
-        chat:     "anthropic:claude-sonnet-4-6",
-        adapt:    "anthropic:claude-sonnet-4-6",
-        search:   "anthropic:claude-haiku-4-5",
-        learn:    "anthropic:claude-sonnet-4-6",
+        generate: "anthropic:claude-opus-5-5",
+        chat:     "anthropic:claude-sonnet-5-5",
+        adapt:    "anthropic:claude-sonnet-5-5",
+        search:   "anthropic:claude-haiku-5-5",
+        learn:    "anthropic:claude-sonnet-5-5",
       },
     };
   }
@@ -25117,7 +25163,7 @@ function dDesktopInit(){
   // in the modal AND on initial page load from localStorage. Any code
   // making a model call should consult this for routing:
   //
-  //   const model = window.pfSettings?.models?.generate || "anthropic:claude-opus-4-7";
+  //   const model = window.pfSettings?.models?.generate || "anthropic:claude-opus-5-5";
   //   const key = window.pfSettings?.keys?.anthropic;
   //
   // Backend code can also receive these via the X-PF-Settings header
@@ -25126,7 +25172,7 @@ function dDesktopInit(){
   function dMaPublishSettings(settings) {
     window.pfSettings = settings;
     // Dispatch a DOM event so any other code that wants to react
-    // (re-render a "Using: Claude Opus 4.7" badge somewhere) can.
+    // (re-render a "Using: Claude Opus 5.5" badge somewhere) can.
     window.dispatchEvent(new CustomEvent("pf-settings-changed", { detail: settings }));
   }
 
@@ -25578,8 +25624,11 @@ function dDesktopInit(){
         statusEl.className = "d-contrib-block-status err";
         return false;
       }
-      // Update the reference-process row
-      await fetch("/api/promptflow/process/update", {
+      // Update the reference-process row. This used to ignore the
+      // response entirely, so a missing backend route could still end in
+      // a green "saved" state after lessons were written. Treat metadata
+      // persistence as part of the transaction from the user's point of view.
+      const procUpdate = await fetch("/api/promptflow/process/update", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -25589,6 +25638,14 @@ function dDesktopInit(){
           discoverability_md: state.result.reproduction_guide || "",
         }),
       });
+      if (!procUpdate.ok) {
+        const text = await procUpdate.text().catch(() => "");
+        statusEl.textContent = procUpdate.status === 404
+          ? "Save backend is out of date — process metadata was not saved."
+          : "Process save failed (" + procUpdate.status + ")" + (text ? ": " + text.slice(0, 100) : ".");
+        statusEl.className = "d-contrib-block-status err";
+        return false;
+      }
       // Save lessons with the chosen visibility. The backend currently
       // accepts an optional `visibility` field — older deployments
       // ignore it and treat all lessons as private, which is the safe
@@ -27340,29 +27397,26 @@ function dDesktopInit(){
     // Populate process picker from the user's cached private processes.
     const sel = D("dCronProcess");
     if (sel) {
-      const procs = (window.processesCache && window.processesCache.length)
-        ? window.processesCache.filter(p => !p.is_system && p.created_by_user_id === (window.ME && window.ME.id))
+      const allProcs = (window.processesCache && window.processesCache.length)
+        ? window.processesCache
         : [];
-      const sysProcs = (window.processesCache && window.processesCache.length)
-        ? window.processesCache.filter(p => p.is_system)
-        : [];
+      const procs = allProcs.filter(p => !p.is_system && p.mine === true && p.runnable !== false);
+      const publishedProcs = allProcs.filter(p => !p.is_system && p.mine !== true && p.is_published && p.runnable !== false);
+      const sysProcs = allProcs.filter(p => p.is_system && p.runnable !== false);
       let html = '<option value="">Select a process…</option>';
-      if (procs.length) {
-        html += '<optgroup label="My processes">';
-        for (const p of procs) {
-          html += '<option value="' + p.id + '">' + (p.name || "Untitled") + '</option>';
+      const addOptions = (label, items) => {
+        if (!items.length) return;
+        html += '<optgroup label="' + dEsc(label) + '">';
+        for (const p of items) {
+          html += '<option value="' + dEsc(p.id) + '">' + dEsc(p.name || "Untitled") + '</option>';
         }
         html += '</optgroup>';
-      }
-      if (sysProcs.length) {
-        html += '<optgroup label="System">';
-        for (const p of sysProcs) {
-          html += '<option value="' + p.id + '">' + (p.name || "Untitled") + '</option>';
-        }
-        html += '</optgroup>';
-      }
-      if (!procs.length && !sysProcs.length) {
-        html += '<option disabled>No processes available yet</option>';
+      };
+      addOptions("My processes", procs);
+      addOptions("Published", publishedProcs);
+      addOptions("System", sysProcs);
+      if (!procs.length && !publishedProcs.length && !sysProcs.length) {
+        html += '<option disabled>No runnable processes available yet</option>';
       }
       sel.innerHTML = html;
     }
@@ -29762,9 +29816,9 @@ if (document.readyState === "loading") {
         <select class="d-ma-activity-select" id="dMaModelGenerate">
           <option value="">Select a model…</option>
           <optgroup label="Anthropic">
-            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
-            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+            <option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option>
+            <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
+            <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
           <optgroup label="OpenAI">
             <option value="openai:gpt-4o">GPT-4o</option>
@@ -29785,9 +29839,9 @@ if (document.readyState === "loading") {
         <select class="d-ma-activity-select" id="dMaModelChat">
           <option value="">Select a model…</option>
           <optgroup label="Anthropic">
-            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
-            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+            <option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option>
+            <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
+            <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
           <optgroup label="OpenAI">
             <option value="openai:gpt-4o">GPT-4o</option>
@@ -29808,9 +29862,9 @@ if (document.readyState === "loading") {
         <select class="d-ma-activity-select" id="dMaModelAdapt">
           <option value="">Select a model…</option>
           <optgroup label="Anthropic">
-            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
-            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+            <option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option>
+            <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
+            <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
           <optgroup label="OpenAI">
             <option value="openai:gpt-4o">GPT-4o</option>
@@ -29831,9 +29885,9 @@ if (document.readyState === "loading") {
         <select class="d-ma-activity-select" id="dMaModelSearch">
           <option value="">Select a model…</option>
           <optgroup label="Anthropic">
-            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7</option>
-            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+            <option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option>
+            <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
+            <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
           <optgroup label="OpenAI">
             <option value="openai:gpt-4o">GPT-4o</option>
@@ -29854,9 +29908,9 @@ if (document.readyState === "loading") {
         <select class="d-ma-activity-select" id="dMaModelLearn">
           <option value="">Use deployment default (Opus 4.7)</option>
           <optgroup label="Anthropic">
-            <option value="anthropic:claude-opus-4-7">Claude Opus 4.7 (recommended)</option>
-            <option value="anthropic:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+            <option value="anthropic:claude-opus-5-5">Claude Opus 5.5 (recommended)</option>
+            <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
+            <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
           <optgroup label="OpenAI">
             <option value="openai:gpt-4o">GPT-4o</option>
