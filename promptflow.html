@@ -15689,7 +15689,7 @@ promptflow whoami</code></pre>
       // (or design a new one).
       const generateEscape = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
       const runEscape = /^\s*run\s+(my\s+)?["']?[^"'\n]+["']?\s+(with|using|on|for)\b/i;
-      if (generateEscape.test(userText) || runEscape.test(userText)) {
+      if (window._forceRunProcessId || generateEscape.test(userText) || runEscape.test(userText)) {
         currentEditorProcessId = null;
         currentEditorProcess = null;
         refineBoundProcessId = null;
@@ -15717,7 +15717,7 @@ promptflow whoami</code></pre>
         await refineBoundProcess(userText);
         return;
       }
-    } else if (currentEditorProcessId && !inEditableEditor) {
+    } else if (currentEditorProcessId && !inEditableEditor && !window._forceRunProcessId) {
       // Editor is open on a process that is genuinely not the user's to
       // edit (someone else's published process, or a system process).
       // This is the only case that should ever surface read-only.
@@ -20924,15 +20924,17 @@ promptflow whoami</code></pre>
     }
   }
 
-  // Run the process currently open in the editor. Reuses the chat's
-  // execution pipeline: set _forceRunProcessId so send() executes THIS
-  // process (the planner can't reinterpret), prefill a run instruction,
-  // and fire. Status + output render in the chat stream below the
-  // editor pane, which stays open. For processes that need inputs, the
-  // user can type them into the composer first (they become the run's
-  // text input); otherwise the process runs on its sample/default
-  // inputs. This is the lightweight editor-side counterpart to the
-  // full run-card input collector used from process cards.
+  // Editor Run must open the same typed-input collector as process-card Run.
+  // Never call send() here: the editor's send handler interprets messages as edits.
+  function runProcessFromEditor(p) {
+    if (!p || !p.id) return;
+    if (busy || _planInFlight || _sendInProgress) {
+      alert("Another action is in progress. Wait for it to finish before running.");
+      return;
+    }
+    openRunCard(p);
+  }
+
   function runProcessFromEditor(p) {
     if (!p || !p.id) return;
     if (busy || _planInFlight || _sendInProgress) return;   // don't stack a run
