@@ -5960,6 +5960,8 @@ body.d-desktop-mode .stream {
   .d-ma-activity { grid-template-columns: 1fr; gap: 8px; }
 }
 .d-ma-activity-info { min-width: 0; }
+.d-ma-presets { display: flex; gap: 8px; }
+.d-ma-presets button { flex: 1; }
 .d-ma-activity-name {
   font-size: 13.5px;
   font-weight: 600;
@@ -15711,6 +15713,12 @@ promptflow whoami</code></pre>
     // only ever set for the user's own editable processes). Using the
     // OR means a momentarily-missing `editable` flag can't wedge the
     // composer.
+    const directRunCommand = /^(?:please\s+)?(?:run|execute|test)\b/i.test(userText.trim())
+      || /\b(?:generate|create|synthesize|research|search|find)\b[\s\S]*\b(?:input|sample|synthetic|data|then run)\b/i.test(userText);
+    if (!window._forceRunProcessId && directRunCommand && !/^\s*(?:generate|create|design|build)\s+(?:a\s+)?(?:new\s+)?process\b/i.test(userText) && (currentEditorProcessId || refineBoundProcessId)) {
+      window._forceRunProcessId = currentEditorProcessId || refineBoundProcessId;
+      window._pendingRunOptions = {run_instructions:userText, supplied_text:""};
+    }
     const inEditableEditor = !!currentEditorProcessId && (
       currentEditorProcess?.editable === true
       || (refineBoundProcessId && refineBoundProcessId === currentEditorProcessId)
@@ -16252,6 +16260,15 @@ promptflow whoami</code></pre>
       window._forceRunProcessName = null;
     }
 
+    if (window._pendingRunOptions) {
+      const opts = window._pendingRunOptions;
+      for (const key of ["run_instructions", "run_name", "text_model", "max_run_tokens", "input_mode"]) {
+        if (opts[key] !== undefined && opts[key] !== "") fd.set(key, String(opts[key]));
+      }
+      if (opts.supplied_text !== undefined) fd.set("text", opts.supplied_text);
+      window._pendingRunOptions = null;
+    }
+
     // Generation preferences — pass the active allowlist if set. The
     // override layer wins over the persistent default when both
     // exist (per planGeneration logic). After append, consume the
@@ -16288,15 +16305,32 @@ promptflow whoami</code></pre>
     let planResp;
     _planInFlight = true;
     // New designs, adaptations, and chooser continuations share the same progress UI.
-    const useStream = !isRefinement && !window._forceRunProcessId &&
-      (designIntentRe.test(userText) || !!generationParent || isChooserContinuation);
+    const useStream = !!fd.get("run_instructions") || (!isRefinement && !fd.get("force_process_id") &&
+      (designIntentRe.test(userText) || !!generationParent || isChooserContinuation));
     let generationProgress = null;
     try {
       if (useStream) {
         clearStatus(assist);
         generationProgress = createGenerationProgress(assist, {
+          runSetup: !!fd.get("run_instructions"),
           onCancel:()=>currentAbortController.abort(),
-          onRetry:()=>{textInput.value=userText;textInput.focus();updateSend();},
+          onRetry:async()=>{
+            const processId = fd.get("force_process_id");
+            if (processId) {
+              try {
+                const response = await fetch("/api/promptflow/process/get", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:processId})});
+                const data = await response.json();
+                if (!response.ok || !data.ok || !data.process) throw new Error(data.message || data.error || "Could not reopen the run form.");
+                await openRunCard(data.process, {
+                  run_name:fd.get("run_name"), run_instructions:fd.get("run_instructions"),
+                  text_model:fd.get("text_model"), max_run_tokens:fd.get("max_run_tokens"),
+                  supplied_text:fd.get("text"), files:filesToSend,
+                });
+              } catch (e) { setError(assist,e.message || "Could not reopen the run form."); }
+              return;
+            }
+            textInput.value=userText;textInput.focus();updateSend();
+          },
         });
         const response = await fetch("/api/promptflow/plan/stream", {method:"POST",body:fd,signal:AbortSignal.any([currentAbortController.signal,AbortSignal.timeout(180000)])});
         planResp = await readGenerationStream(response, generationProgress.event);
@@ -16599,8 +16633,9 @@ promptflow whoami</code></pre>
     //     processes is misleading and for some pipelines is
     //     literally the wrong template)
     // Just run it. The user clicked Run; that was their consent.
-    const isSavedProcessRun = !!planResp?.plan?.picked_process_id;
+    const isSavedProcessRun = !!planResp?.plan?.picked_process_id && !planResp.plan.requires_confirmation;
     let planAPI, costAPI, actions, confirmBtn, cancelBtn, subBtn, editPickedBtn;
+    let pickedId = null, pickedProc = null;
     let currentCost = planResp.cost;
     if (isSavedProcessRun) {
       // No plan card. No cost card. No actions row. Just a minimal
@@ -16624,7 +16659,9 @@ promptflow whoami</code></pre>
       subBtn = null;
       editPickedBtn = null;
     } else {
-      planAPI = renderEditablePlan(assist, planResp.plan, planResp.cost);
+      planAPI = planResp.plan?.picked_process_id
+        ? renderRunReview(assist, planResp.plan)
+        : renderEditablePlan(assist, planResp.plan, planResp.cost);
       renderWorkflow(assist, planResp.plan);
       costAPI = renderCost(assist, planResp.cost);
 
@@ -16644,8 +16681,8 @@ promptflow whoami</code></pre>
       // a tweak first. Picked-process is read from the plan; editability
       // is checked against processesCache (system processes & others'
       // published processes are read-only and don't get the button).
-      const pickedId = planResp?.plan?.picked_process_id || null;
-      const pickedProc = pickedId
+      pickedId = planResp?.plan?.picked_process_id || null;
+      pickedProc = pickedId
         ? (processesCache || []).find(p => p.id === pickedId) : null;
       const canEditPicked = !!(pickedProc && pickedProc.editable !== false && !pickedProc.is_system);
 
@@ -17368,9 +17405,9 @@ promptflow whoami</code></pre>
   }
 
   // Generation progress follows server events. Elapsed time is not a completion estimate.
-  function createGenerationProgress(assist, {stage = "planning", onCancel, onRetry} = {}) {
+  function createGenerationProgress(assist, {stage = "planning", onCancel, onRetry, runSetup = false} = {}) {
     const panel = document.createElement("section"); panel.className = "generation-progress";
-    panel.setAttribute("aria-label", "Process generation progress");
+    panel.setAttribute("aria-label", runSetup ? "Run setup progress" : "Process generation progress");
     panel.innerHTML = '<div class="gp-heading"><span class="spinner"></span><strong role="status" aria-live="polite"></strong><span class="gp-time" aria-live="off"></span></div>' +
       '<ol class="gp-stages"><li data-stage="search">Find reusable work</li><li data-stage="planning">Build process</li><li data-stage="ready">Ready to review</li></ol>' +
       '<p class="gp-description" role="status" aria-live="polite"></p><div class="gp-footer"><span class="gp-connection"></span><button type="button" class="btn">Stop generating</button></div>';
@@ -17378,6 +17415,10 @@ promptflow whoami</code></pre>
     const title = panel.querySelector("strong"), description = panel.querySelector(".gp-description");
     const connection = panel.querySelector(".gp-connection"), time = panel.querySelector(".gp-time");
     const cancel = panel.querySelector("button");
+    if (runSetup) {
+      panel.querySelector('[data-stage="planning"]').textContent = "Prepare run";
+      cancel.textContent = "Stop preparing";
+    }
     const started = Date.now(); let lastSignal = started, receivedSignal = false, finished = false;
     const stages = [...panel.querySelectorAll("li")];
     // A planning-only request may have explicit source context and skip catalog search.
@@ -17386,6 +17427,7 @@ promptflow whoami</code></pre>
       stage = next;
       title.textContent = next === "search" ? "Finding reusable processes" : next === "saving" ? "Saving your draft" : "Building your process";
       description.textContent = next === "search" ? "Checking the catalog for a process you can reuse or build on." : next === "saving" ? "Preparing the process for you to review." : "Creating the steps for your request. You’ll be able to review and test the result.";
+      if (runSetup) {title.textContent = "Preparing your run"; description.textContent = "Planning how to generate or research inputs for the saved workflow.";}
       const index = next === "search" ? 0 : 1;
       stages.forEach((el,i)=>{el.dataset.state=i<index?"done":i===index?"active":"pending";if(i===index)el.setAttribute("aria-current","step");else el.removeAttribute("aria-current");});
     };
@@ -17404,6 +17446,10 @@ promptflow whoami</code></pre>
       panel.querySelector(".spinner").hidden = true; cancel.hidden = true; connection.textContent = "";
       title.textContent = state === "complete" ? "Ready to review" : state === "canceled" ? "Generation stopped" : "Couldn’t finish generating";
       description.textContent = state === "complete" ? "Review the process and choose Run process to test it." : state === "canceled" ? "The request was stopped in this browser. A draft may still finish saving on the server; check Processes before trying again." : "Your request is shown above. Try again when you’re ready.";
+      if (runSetup) {
+        title.textContent = state === "complete" ? "Run ready to review" : state === "canceled" ? "Run setup stopped" : "Couldn’t prepare the run";
+        description.textContent = state === "complete" ? "Review the inputs, models and quote below. Confirm to start this run." : "No workflow steps were started. Edit the instructions and try again.";
+      }
       stages.forEach(el=>{el.removeAttribute("aria-current");if(state==="complete")el.dataset.state="done";else if(el.dataset.state==="active")el.dataset.state="stopped";});
       if (state !== "complete" && onRetry) {
         cancel.hidden=false; cancel.disabled=false; cancel.textContent="Edit request and try again"; cancel.onclick=onRetry;
@@ -17428,7 +17474,7 @@ promptflow whoami</code></pre>
           editing:"Considering your requested changes to this process.",
           saving:"Saving the process so you can review and test it.",
         }[data?.stage];
-        if (activity) description.textContent = activity;
+        if (activity) description.textContent = runSetup ? "Mapping your instructions to input-generation and workflow steps." : activity;
       } else if (event === "thinking") {
         description.textContent = "Thinking through how the steps fit your request.";
       }
@@ -17825,6 +17871,20 @@ promptflow whoami</code></pre>
     if (model === "seedvr_upscale_video") return MODEL_SCHEMAS.topaz_video_upscale;
     if (model === "sync_lipsync_v19") return MODEL_SCHEMAS.omnihuman_lipsync;
     return DEFAULT_SCHEMA;
+  }
+
+  function renderRunReview(assist, plan) {
+    const box = document.createElement("div");
+    box.className = "rc-card";
+    const models = [...new Set((plan.steps || []).flatMap(function collect(s) {
+      return s.type === "claude" ? [s.text_model || "Deployment default"] : (s.body || []).flatMap(collect);
+    }))];
+    box.innerHTML = '<h3>' + escapeHtml(plan.run_name || 'Review run') + '</h3>' +
+      '<p>' + escapeHtml(plan.run_instructions || 'Run the saved workflow with your supplied inputs.') + '</p>' +
+      '<p>Text models: ' + escapeHtml(models.join(', ') || 'No AI text steps') + '</p>' +
+      '<p>' + (plan.max_run_tokens ? 'Maximum compute charge: ' + Number(plan.max_run_tokens).toLocaleString() + ' PromptFlow credits.' : 'No compute-credit cap set.') + '</p>';
+    assist.body.appendChild(box);
+    return {getOverrides:()=>({}),onCostChange:()=>{}};
   }
 
   function renderEditablePlan(assist, plan, initialCost) {
@@ -18762,7 +18822,7 @@ promptflow whoami</code></pre>
     } catch { /* best-effort — cache is already corrected for this session */ }
   }
 
-  async function openRunCard(proc) {
+  async function openRunCard(proc, initial = {}) {
     const cardAssist = addAssistMsg();
     const body = cardAssist.body;
 
@@ -18844,6 +18904,18 @@ promptflow whoami</code></pre>
       }
     });
 
+    fieldsHtml += '<div class="rc-field"><label class="rc-label" for="rc-run-name">Run name</label>' +
+      '<input class="rc-textarea" id="rc-run-name" maxlength="160" value="' + escapeHtml(proc.name || 'Workflow run') + '"></div>' +
+      '<div class="rc-field"><label class="rc-label" for="rc-instructions">Instructions for this run (optional)</label>' +
+      '<textarea class="rc-textarea" id="rc-instructions" rows="3" placeholder="Generate synthetic input data first, then run this workflow. Use web search if needed."></textarea>' +
+      '<p class="rc-cost-line">Provide input above, or tell PromptFlow how to prepare it. Review the named run and cost before it starts.</p></div>' +
+      '<div class="rc-field"><label class="rc-label" for="rc-text-model">AI text model for this run</label>' +
+      '<select class="rc-textarea" id="rc-text-model"><option value="">Saved step models / Settings</option>' +
+      '<option value="claude-haiku-5-5">Haiku 5.5 — lower provider cost</option><option value="claude-sonnet-5-5">Sonnet 5.5 — balanced</option><option value="claude-opus-5-5">Opus 5.5 — deeper reasoning</option></select></div>' +
+      '<div class="rc-field"><label class="rc-label" for="rc-max-tokens">Maximum compute charge (PromptFlow credits)</label>' +
+      '<input class="rc-textarea" id="rc-max-tokens" type="number" min="0" max="1000000" step="1" placeholder="0 = no cap" value="' + Number(window.pfSettings?.limits?.max_run_tokens || 0) + '">' +
+      '<p class="rc-cost-line">This caps the platform compute charge. Provider usage and creator fees are separate; model and output limits control provider usage.</p></div>';
+
     body.innerHTML =
       '<div class="rc-card">' +
         '<div class="rc-header">' +
@@ -18856,9 +18928,16 @@ promptflow whoami</code></pre>
         '</div>' +
         '<div class="rc-actions">' +
           '<button type="button" class="rc-cancel-btn">Cancel</button>' +
-          '<button type="button" class="rc-run-btn">Run →</button>' +
+          '<button type="button" class="rc-run-btn">Review run →</button>' +
         '</div>' +
       '</div>';
+
+    for (const [key, id] of [["run_name","rc-run-name"],["run_instructions","rc-instructions"],["text_model","rc-text-model"],["max_run_tokens","rc-max-tokens"]]) {
+      if (initial[key] != null) body.querySelector('#' + id).value = initial[key];
+    }
+    const firstText = body.querySelector('.rc-fields textarea[id^="rc-field-"]');
+    if (firstText && initial.supplied_text != null) firstText.value = initial.supplied_text;
+    const retainedFiles = (initial.files || []).slice();
 
     // Wire control refs after the DOM is in place. Order matters for
     // repeated kinds — the first "image" slot becomes attachedFiles[0],
@@ -18868,7 +18947,9 @@ promptflow whoami</code></pre>
       const k = String(kind).toLowerCase();
       const el = body.querySelector('#rc-field-' + idx + '-' + k);
       if (!el) return;
-      controls.push({ kind: k, el });
+      const retainedIndex = retainedFiles.findIndex(entry => entry.kind === k);
+      const retained = retainedIndex >= 0 ? retainedFiles.splice(retainedIndex, 1)[0].file : null;
+      controls.push({ kind: k, el, retained });
       // Wire change listener to update the picker label with the
       // chosen filename. Click-to-open is handled natively by the
       // label[for=fieldId] association in the HTML above — no JS
@@ -18876,6 +18957,10 @@ promptflow whoami</code></pre>
       // to open twice on label clicks).
       if (k === "image" || k === "video" || k === "audio") {
         const picker = el.closest(".rc-file-picker");
+        if (retained && picker) {
+          picker.querySelector(".rc-file-label").textContent = retained.name + " (retained for retry)";
+          picker.classList.add("rc-has-file");
+        }
         el.addEventListener("change", () => {
           const lbl = picker?.querySelector(".rc-file-label");
           if (lbl && el.files && el.files[0]) {
@@ -18991,18 +19076,32 @@ promptflow whoami</code></pre>
         } else {
           if (c.el.files && c.el.files[0]) {
             stagedFiles.push({ file: c.el.files[0], kind: c.kind });
+          } else if (c.retained) {
+            stagedFiles.push({ file:c.retained, kind:c.kind });
           }
         }
       });
 
-      const hasAnyInput = textParts.length > 0 || stagedFiles.length > 0;
+      const instructions = (body.querySelector('#rc-instructions').value || '').trim();
+      const runOptions = {
+        run_name: body.querySelector('#rc-run-name').value.trim() || proc.name,
+        run_instructions: instructions,
+        supplied_text: textParts.join("\n\n"),
+        text_model: body.querySelector('#rc-text-model').value,
+        max_run_tokens: body.querySelector('#rc-max-tokens').value || '0',
+        input_mode: instructions ? 'instructions' : 'data',
+      };
+      if (!/^\d+$/.test(runOptions.max_run_tokens) || Number(runOptions.max_run_tokens) > 1000000) {
+        body.querySelector('#rc-max-tokens').reportValidity(); return;
+      }
+      const hasAnyInput = textParts.length > 0 || stagedFiles.length > 0 || instructions || inputKinds.length === 0;
       if (!hasAnyInput) {
         const cardEl = body.querySelector(".rc-card");
         if (cardEl) {
           cardEl.classList.add("rc-card-invalid");
           let error = cardEl.querySelector(".rc-input-error");
           if (!error) { error = document.createElement("p"); error.className = "rc-input-error"; error.setAttribute("role", "alert"); error.style.color = "var(--red)"; cardEl.appendChild(error); }
-          error.textContent = "Add text or a file before running this process.";
+          error.textContent = "Add input data, a file, or instructions to prepare the input.";
           controls[0]?.el.focus();
         }
         return;
@@ -19034,8 +19133,8 @@ promptflow whoami</code></pre>
       //      header — one continuous timeline.
       body.innerHTML =
         '<div class="rc-run-header">' +
-          '<span class="rc-run-verb">▶ Running</span> ' +
-          '<span class="rc-run-name">' + escapeHtml(proc.name) + '</span>' +
+          '<span class="rc-run-verb">Preparing run</span> ' +
+          '<span class="rc-run-name">' + escapeHtml(runOptions.run_name) + '</span>' +
         '</div>';
       // Hand the SAME bubble off to send() so its status + output
       // render here, below the header, in one continuous timeline.
@@ -19060,11 +19159,12 @@ promptflow whoami</code></pre>
         try { paintRefineBindChip(); } catch {}
         try { paintEditorDoneRow(); } catch {}
       }
+      window._pendingRunOptions = runOptions;
       window._forceRunProcessId = proc.id;
       window._forceRunProcessName = proc.name;
       textInput.value = textParts.length > 0
         ? textParts.join("\n\n")
-        : `Run "${proc.name}"`;
+        : instructions || `Run "${proc.name}"`;
       attachedFiles = attachedFiles || [];
       // eslint-disable-next-line no-console
       console.log("[run-card] staging files", { count: stagedFiles.length, kinds: stagedFiles.map(s => s.kind) });
@@ -19549,17 +19649,18 @@ promptflow whoami</code></pre>
   // Render a compact preview of multi-step plan steps so the user
   // can see what they're about to confirm.
   function renderStepsPreview(assist, steps) {
+    steps = steps.filter(s => s.recipe_id !== "__promptflow_value");
     const wrap = document.createElement("div");
     wrap.className = "plan-card";
     const rows = steps.map((s, i) => {
       let summary = "";
       if (s.type === "claude") {
         const up = (s.user_prompt || "").slice(0, 90);
-        summary = `Claude · ${escapeHtml(up)}${up.length === 90 ? "…" : ""}`;
+        summary = `${escapeHtml(s.text_model || "Claude")} · ${escapeHtml(up)}${up.length === 90 ? "…" : ""}`;
       } else if (s.type === "recipe") {
         summary = `Recipe · ${escapeHtml(s.recipe_id || s.model || "?")}`;
       } else if (s.type === "loop") {
-        summary = `Loop · over ${escapeHtml(s.iterate_over || "?")}`;
+        summary = `Repeat for each item · up to ${Number(s.max_iterations) || 50} items`;
       } else {
         summary = escapeHtml(s.type);
       }
@@ -21126,7 +21227,7 @@ promptflow whoami</code></pre>
     pane.appendChild(actions);
     const hint = document.createElement("p"); hint.className = "editor-action-hint";
     hint.textContent = p.editable
-      ? "Run process opens the inputs for a test run. Messages below change the process itself."
+      ? "Run process opens the inputs for a test run. Ask for edits below, or say “run it” with instructions to prepare inputs."
       : "Run process opens its inputs. This process is read-only.";
     pane.appendChild(hint);
     if (p.is_draft) {
@@ -25077,12 +25178,15 @@ function dDesktopInit(){
       if (parsed.models && typeof parsed.models === "object") {
         for (const k of Object.keys(parsed.models)) {
           if (legacyModelMap[parsed.models[k]]) parsed.models[k] = legacyModelMap[parsed.models[k]];
+          if (/^claude-/.test(parsed.models[k])) parsed.models[k] = 'anthropic:' + parsed.models[k];
+          if (!/^anthropic:claude-(haiku|sonnet|opus)-5-5$/.test(parsed.models[k] || '')) parsed.models[k] = '';
         }
       }
       // Merge with defaults so missing fields get sensible values.
       const def = dMaDefaultSettings();
       return {
-        access_mode: parsed.access_mode || def.access_mode,
+        access_mode: "tokens",
+        limits: {...def.limits, ...(parsed.limits || {})},
         keys: { ...def.keys, ...(parsed.keys || {}) },
         models: { ...def.models, ...(parsed.models || {}) },
       };
@@ -25094,6 +25198,7 @@ function dDesktopInit(){
     return {
       access_mode: "tokens",  // safe default: existing users keep token behavior
       keys: { anthropic: "", openai: "", google: "" },
+      limits: {planning_output_tokens:16000, step_output_tokens:4096, max_run_tokens:0, max_loop_items:50},
       // Sensible defaults so a fresh user gets a working setup
       // without having to pick anything. Generate defaults to Opus
       // because it's the safest model for code/process generation;
@@ -25106,6 +25211,7 @@ function dDesktopInit(){
         adapt:    "anthropic:claude-sonnet-5-5",
         search:   "anthropic:claude-haiku-5-5",
         learn:    "anthropic:claude-sonnet-5-5",
+        run:      "anthropic:claude-sonnet-5-5",
       },
     };
   }
@@ -25128,13 +25234,24 @@ function dDesktopInit(){
     if (D("dMaModelAdapt")) D("dMaModelAdapt").value = s.models.adapt || "";
     if (D("dMaModelSearch")) D("dMaModelSearch").value = s.models.search || "";
     if (D("dMaModelLearn")) D("dMaModelLearn").value = s.models.learn || "";
+    if (D("dMaModelRun")) D("dMaModelRun").value = s.models.run || "";
+    if (D("dMaPlanningLimit")) D("dMaPlanningLimit").value = s.limits?.planning_output_tokens || 16000;
+    if (D("dMaStepLimit")) D("dMaStepLimit").value = s.limits?.step_output_tokens || 4096;
+    if (D("dMaLoopLimit")) D("dMaLoopLimit").value = s.limits?.max_loop_items || 50;
+    if (D("dMaRunLimit")) D("dMaRunLimit").value = s.limits?.max_run_tokens || 0;
     // Dim keys section when in tokens mode
     dMaUpdateKeySection();
   }
 
   function dMaReadFromForm() {
     return {
-      access_mode: D("dMaModeByok") && D("dMaModeByok").checked ? "byok" : "tokens",
+      access_mode: "tokens",
+      limits: {
+        planning_output_tokens: Number(D("dMaPlanningLimit")?.value || 16000),
+        step_output_tokens: Number(D("dMaStepLimit")?.value || 4096),
+        max_run_tokens: Number(D("dMaRunLimit")?.value || 0),
+        max_loop_items: Number(D("dMaLoopLimit")?.value || 50),
+      },
       keys: {
         anthropic: (D("dMaKeyAnthropic") && D("dMaKeyAnthropic").value || "").trim(),
         openai:    (D("dMaKeyOpenai")    && D("dMaKeyOpenai").value    || "").trim(),
@@ -25145,6 +25262,7 @@ function dDesktopInit(){
         chat:     (D("dMaModelChat")     && D("dMaModelChat").value)     || "",
         adapt:    (D("dMaModelAdapt")    && D("dMaModelAdapt").value)    || "",
         search:   (D("dMaModelSearch")   && D("dMaModelSearch").value)   || "",
+        run:      D("dMaModelRun")?.value || "",
         learn:    (D("dMaModelLearn")    && D("dMaModelLearn").value)    || "",
       },
     };
@@ -25169,7 +25287,8 @@ function dDesktopInit(){
     el.textContent = text;
   }
 
-  function dMaOpen() {
+  async function dMaOpen() {
+    await dMaRemoteSettings;
     const s = dMaLoadSettings();
     dMaApplyToForm(s);
     dMaSetStatus("", "");
@@ -25201,6 +25320,20 @@ function dDesktopInit(){
 
   // Read settings → publish on first call (page load).
   dMaPublishSettings(dMaLoadSettings());
+  const dMaRemoteSettings = (async () => {
+    // Existing browser choices remain local overrides. A fresh browser first
+    // loads account choices instead of sending defaults that mask them.
+    if (localStorage.getItem(PF_SETTINGS_KEY)) return;
+    try {
+      const response = await fetch('/api/promptflow/me/settings');
+      const result = await response.json();
+      if (result.ok && result.settings && (result.settings.models || result.settings.limits)) {
+        localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify({...result.settings,keys:undefined}));
+        dMaPublishSettings(dMaLoadSettings());
+      }
+    } catch { /* deployment defaults remain available */ }
+  })();
+
 
   // Auto-save: every change to any settings field persists immediately
   // (to localStorage + window.pfSettings). The Save button still
@@ -25227,9 +25360,9 @@ function dDesktopInit(){
       try {
         const url = typeof input === "string" ? input : (input && input.url) || "";
         // Only attach to our own API; never leak to third-party hosts.
-        if (url.indexOf("/api/promptflow/") !== -1 && window.pfSettings) {
+        if (new URL(url, location.href).origin === location.origin && new URL(url, location.href).pathname.startsWith("/api/promptflow/") && window.pfSettings && localStorage.getItem(PF_SETTINGS_KEY)) {
           init = init || {};
-          init.headers = new Headers(init.headers || {});
+          init.headers = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
           // Encode as a single compact JSON header; backend parses on
           // its side. Keys are sent only when access_mode is "byok"
           // and stripped to a presence-bit otherwise.
@@ -25237,6 +25370,7 @@ function dDesktopInit(){
           const wire = {
             access_mode: s.access_mode,
             models: s.models,
+            limits: s.limits,
             // Don't send actual key material in a header that may be
             // logged. Send a presence map; backend uses its own key
             // store when access_mode = tokens, or the user submits
@@ -25255,6 +25389,7 @@ function dDesktopInit(){
   })();
 
   async function dMaSave() {
+    if (D('dMaRunLimit') && !D('dMaRunLimit').reportValidity()) return;
     const settings = dMaReadFromForm();
     const saveBtn = D("dMaSave");
     if (saveBtn) saveBtn.disabled = true;
@@ -25275,7 +25410,7 @@ function dDesktopInit(){
       const r = await fetch("/api/promptflow/me/settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({...settings, keys:undefined}),
       });
       if (r.status === 404) {
         dMaSetStatus(
@@ -25304,6 +25439,18 @@ function dDesktopInit(){
     }
   }
 
+  for (const [id, economical] of [["dMaEconomy",true],["dMaBalanced",false]]) {
+    D(id)?.addEventListener("click", () => {
+      const settings = dMaReadFromForm();
+      settings.models = {generate:"anthropic:claude-sonnet-5-5",adapt:"anthropic:claude-sonnet-5-5",learn:"anthropic:claude-sonnet-5-5",search:"anthropic:claude-haiku-5-5",chat: economical ? "anthropic:claude-haiku-5-5" : "anthropic:claude-sonnet-5-5",run:economical ? "anthropic:claude-haiku-5-5" : "anthropic:claude-sonnet-5-5"};
+      settings.limits.planning_output_tokens = economical ? 8192 : 16000;
+      settings.limits.step_output_tokens = economical ? 2048 : 4096;
+      settings.limits.max_loop_items = economical ? 5 : 20;
+      dMaApplyToForm(settings); dMaAutoSave();
+      dMaSetStatus('Preset applied in this browser. Save settings to use it from the CLI and other browsers.', 'info');
+    });
+  }
+
   // Wire the open/close + form interactions.
   if (D("dSpModelAccess")) D("dSpModelAccess").addEventListener("click", () => {
     dCloseSystem();
@@ -25320,7 +25467,7 @@ function dDesktopInit(){
   // immediately to the current session (window.pfSettings + the
   // fetch header). They can still click Save for server-side persist.
   ["dMaKeyAnthropic","dMaKeyOpenai","dMaKeyGoogle",
-   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn"]
+   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaRunLimit","dMaLoopLimit"]
     .forEach(id => {
       const el = D(id);
       if (!el) return;
@@ -27833,7 +27980,7 @@ function dDesktopInit(){
   if (_dDockSystemOld) {
     const fresh = _dDockSystemOld.cloneNode(true);
     _dDockSystemOld.parentNode.replaceChild(fresh, _dDockSystemOld);
-    fresh.title = "Model & API access — assign LLMs to system activities, paste keys, choose token billing";
+    fresh.title = "Model & API access — choose models, output limits and run budgets";
     fresh.addEventListener("click", (e) => {
       e.stopPropagation();
       if (typeof dMaOpen === "function") {
@@ -29772,11 +29919,11 @@ if (document.readyState === "loading") {
       </div>
       <div class="d-ma-mode-options">
         <label class="d-ma-mode-option">
-          <input type="radio" name="accessMode" value="byok" id="dMaModeByok">
+          <input type="radio" name="accessMode" value="byok" id="dMaModeByok" disabled>
           <div class="d-ma-mode-body">
             <div class="d-ma-mode-name">Bring your own keys</div>
             <div class="d-ma-mode-desc">
-              Use your own provider API keys. No PromptFlow tokens charged for model calls. You pay providers directly at their published rates.
+              Hosted bring-your-own-key execution is not available yet. Download a workflow and use the CLI with your provider keys for direct billing.
             </div>
           </div>
         </label>
@@ -29785,7 +29932,7 @@ if (document.readyState === "loading") {
           <div class="d-ma-mode-body">
             <div class="d-ma-mode-name">Use PromptFlow tokens</div>
             <div class="d-ma-mode-desc">
-              PromptFlow uses its provider keys and charges your token allowance for each model call. Simpler to start, no setup required.
+              Hosted runs use platform credentials. PromptFlow credits are distinct from provider input/output tokens; lower-cost models reduce provider usage costs but do not change the current flat text-step credit charge.
             </div>
           </div>
         </label>
@@ -29793,7 +29940,7 @@ if (document.readyState === "loading") {
     </section>
 
     <!-- ── API keys ── -->
-    <section class="d-ma-section" id="dMaKeysSection">
+    <section class="d-ma-section" id="dMaKeysSection" hidden>
       <div class="d-ma-section-head">
         <h3>API keys</h3>
         <p>Paste keys for the providers you want to use. Keys are encrypted at rest and never logged. You can leave any field blank — PromptFlow will only use the providers you've configured.</p>
@@ -29846,8 +29993,18 @@ if (document.readyState === "loading") {
     <section class="d-ma-section">
       <div class="d-ma-section-head">
         <h3>System process model assignment</h3>
-        <p>PromptFlow's protected system processes do different jobs. Pick the LLM for each, and which billing path it should use. Per-process toggles override the global access-mode choice above when you want a mix.</p>
+        <p>Choose the Claude model for each activity. Run settings apply to AI text steps; image, video and search tools keep the models defined in the workflow. A run-specific model overrides saved text-step models.</p>
       </div>
+
+      <div class="d-ma-activity"><div class="d-ma-activity-info"><div class="d-ma-activity-name">Cost preset</div><div class="d-ma-activity-desc">Apply a starting point, then customize each activity.</div></div>
+        <div class="d-ma-presets"><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaEconomy">Economy</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaBalanced">Balanced</button></div></div>
+      <div class="d-ma-activity"><div class="d-ma-activity-info"><label class="d-ma-activity-name" for="dMaModelRun">Workflow text steps</label><div class="d-ma-activity-desc">Default for steps without a saved text model. Override all text steps in the Run form.</div></div>
+        <select class="d-ma-activity-select" id="dMaModelRun"><option value="">Deployment default</option><option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option><option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option><option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option></select></div>
+      <div class="d-ma-activity"><label for="dMaPlanningLimit">Planning output-token limit</label><select class="d-ma-activity-select" id="dMaPlanningLimit"><option value="8192">8,192 — lower cost</option><option value="16000">16,000 — balanced</option><option value="32000">32,000 — complex designs</option></select></div>
+      <div class="d-ma-activity"><label for="dMaStepLimit">Output-token limit per AI step</label><select class="d-ma-activity-select" id="dMaStepLimit"><option value="1024">1,024 — short outputs</option><option value="2048">2,048</option><option value="4096">4,096</option><option value="8192">8,192</option></select></div>
+      <div class="d-ma-activity"><label for="dMaLoopLimit">Maximum items per loop</label><select class="d-ma-activity-select" id="dMaLoopLimit"><option value="5">5 — small test</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select></div>
+      <div class="d-ma-activity"><label for="dMaRunLimit">Maximum compute credits per run</label><input class="d-ma-activity-select" id="dMaRunLimit" type="number" min="0" max="1000000" step="1" placeholder="0 = no cap"></div>
+      <p class="d-ma-activity-desc">Output limits include provider reasoning tokens where applicable. A limit that is too low can truncate a result; the run will stop with an error. Loops exceeding the item limit stop before processing any of their items. The credit cap covers hosted compute, not provider bills or creator fees. Each run shows its quote before execution.</p>
 
       <div class="d-ma-activity">
         <div class="d-ma-activity-info">
@@ -29860,14 +30017,6 @@ if (document.readyState === "loading") {
             <option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option>
             <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
             <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
-          </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openai:gpt-4o">GPT-4o</option>
-            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
-          </optgroup>
-          <optgroup label="Google">
-            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
           </optgroup>
         </select>
       </div>
@@ -29884,14 +30033,6 @@ if (document.readyState === "loading") {
             <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
             <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openai:gpt-4o">GPT-4o</option>
-            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
-          </optgroup>
-          <optgroup label="Google">
-            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
-          </optgroup>
         </select>
       </div>
 
@@ -29906,14 +30047,6 @@ if (document.readyState === "loading") {
             <option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option>
             <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
             <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
-          </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openai:gpt-4o">GPT-4o</option>
-            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
-          </optgroup>
-          <optgroup label="Google">
-            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
           </optgroup>
         </select>
       </div>
@@ -29930,36 +30063,20 @@ if (document.readyState === "loading") {
             <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
             <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
           </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openai:gpt-4o">GPT-4o</option>
-            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
-          </optgroup>
-          <optgroup label="Google">
-            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
-          </optgroup>
         </select>
       </div>
 
       <div class="d-ma-activity">
         <div class="d-ma-activity-info">
           <div class="d-ma-activity-name">Learn</div>
-          <div class="d-ma-activity-desc">Lesson extraction from contributed builds. Defaults to Opus because extraction quality compounds — every future generation retrieves these lessons. Override server-wide via the <code>ANTHROPIC_EXTRACTION_MODEL</code> env var, or per-account here.</div>
+          <div class="d-ma-activity-desc">Lesson extraction from contributed builds. Select a model for extracting reusable lessons.</div>
         </div>
         <select class="d-ma-activity-select" id="dMaModelLearn">
-          <option value="">Use deployment default (Opus 4.7)</option>
+          <option value="">Use deployment default</option>
           <optgroup label="Anthropic">
             <option value="anthropic:claude-opus-5-5">Claude Opus 5.5 (recommended)</option>
             <option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option>
             <option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option>
-          </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openai:gpt-4o">GPT-4o</option>
-            <option value="openai:gpt-4o-mini">GPT-4o mini</option>
-          </optgroup>
-          <optgroup label="Google">
-            <option value="google:gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="google:gemini-2.5-flash">Gemini 2.5 Flash</option>
           </optgroup>
         </select>
       </div>
