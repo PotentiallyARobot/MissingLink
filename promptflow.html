@@ -16755,7 +16755,7 @@ promptflow whoami</code></pre>
         armBusyWatchdog(50 * 60_000);
         updateSend();
         actions.remove();
-        setStatus(assist, "Starting…");
+        setStatus(assist, "Running workflow…");
 
         // Send any user-edited fields as plan_overrides. Server
         // re-validates, recomputes cost from the merged plan, and
@@ -16784,6 +16784,7 @@ promptflow whoami</code></pre>
         let lastErrorMessage = "";
         let lastFailurePlan = null;
         let lastRefunded = 0;
+        let stopExecutionActivity = () => {};
 
         try {
           while (true) {
@@ -16793,16 +16794,9 @@ promptflow whoami</code></pre>
             }
 
             // ── Phase 2a: /execute ─────────────────────────────
-            const r = await fetch("/api/promptflow/execute", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                plan_id: activePlanId,
-                ...(activeOverrides ? { plan_overrides: activeOverrides } : {}),
-              }),
-              signal: currentAbortController.signal,
-            });
-            const j = await r.json();
+            stopExecutionActivity();
+            stopExecutionActivity = watchExecutionActivity(assist, activePlanId, planResp.plan?.steps || []);
+            const j = await requestProcessExecution(activePlanId, activeOverrides, currentAbortController.signal);
             if (!j.ok) {
               // /execute itself rejected (insufficient tokens, missing
               // image input, etc.) — these are NOT model-side errors so
@@ -16843,11 +16837,12 @@ promptflow whoami</code></pre>
               }
               if (!s.ok) {
                 lastErrorMessage = s.message || s.error || "Lost the job.";
-                pollOutcome = "failed";
+                pollOutcome = "unknown";
                 break;
               }
               lastStatus = s.status;
               if (s.status === "complete") {
+                stopExecutionActivity();
                 clearStatus(assist);
                 if (s.cost) costAPI.update(s.cost, { status: "complete" });
                 renderOutputs(assist, s.outputs, s.output_kind, s.video_url);
@@ -16917,12 +16912,14 @@ promptflow whoami</code></pre>
                 : `Generating retry ${retryCount}… ${elapsed}s elapsed`);
             }
             if (pollOutcome === "running" && Date.now() >= pollDeadline) {
-              lastErrorMessage = "Timed out waiting for the worker.";
-              pollOutcome = "failed";
+              lastErrorMessage = "Could not confirm the result. Check this run in Chats before starting another run.";
+              pollOutcome = "unknown";
             }
+            stopExecutionActivity();
 
             if (pollOutcome === "complete") { outcome = "complete"; break; }
             if (pollOutcome === "aborted")  { outcome = "aborted";  break; }
+            if (pollOutcome === "unknown")  { outcome = "unknown";  break; }
 
             // pollOutcome === "failed" — decide retry vs terminal.
             if (retryCount >= MAX_RETRIES) {
@@ -16991,6 +16988,10 @@ promptflow whoami</code></pre>
                 body: JSON.stringify({ plan_id: activePlanId }),
               });
             } catch {}
+          } else if (outcome === "unknown") {
+            setStatus(assist, lastErrorMessage);
+            const runLabel = assist.body.querySelector(".rc-run-verb");
+            if (runLabel) runLabel.textContent = "Status unavailable";
           } else if (outcome === "failed") {
             setError(assist, lastErrorMessage || "Generation failed after all retries.");
             if (lastFailurePlan) renderWorkflow(assist, lastFailurePlan);
@@ -17010,6 +17011,7 @@ promptflow whoami</code></pre>
             setError(assist, "Network error: " + (e?.message || e));
           }
         } finally {
+          stopExecutionActivity();
           busy = false; clearBusyWatchdog(); updateSend();
           stream.scrollTop = stream.scrollHeight;
         }
@@ -17461,6 +17463,76 @@ promptflow whoami</code></pre>
         if(done)throw new Error("The connection ended before the process was ready. Check Processes for a saved draft before trying again.");
       }
     } finally { await reader.cancel().catch(()=>{}); reader.releaseLock(); }
+  }
+
+  // A lost HTTP response does not prove that paid execution failed. Recover
+  // the same plan through status polling; never replay /execute here.
+  async function requestProcessExecution(planId, overrides, signal) {
+    try {
+      const response = await fetch("/api/promptflow/execute/stream", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ plan_id: planId, ...(overrides ? { plan_overrides: overrides } : {}) }),
+        signal,
+      });
+      if (response.status >= 500) return { ok: true, reconnecting: true };
+      if (response.status === 404 || response.status === 405) return {
+        ok: false, message: "The execution service needs an update. Deploy the matching backend before running this version.",
+      };
+      const result = response.headers?.get("content-type")?.includes("text/event-stream")
+        ? await readGenerationStream(response, () => {})
+        : await response.json();
+      if (result.error === "plan_already_used") return { ok: true, reconnecting: true };
+      return result;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return { ok: true, reconnecting: true };
+    }
+  }
+
+  function executionActivityLabel(rows, steps) {
+    const active = rows.find(row => row.status === "running");
+    if (!active) return rows.length && rows.every(row => row.status === "complete")
+      ? "Preparing the next step or final output" : "Waiting for the worker's next update";
+    const index = steps.findIndex(step => step.id === active.step_id);
+    const step = index >= 0 ? steps[index] : {};
+    const recipe = step.recipe_id || "";
+    const activity = recipe.startsWith("brave_") ? "Searching sources"
+      : recipe === "gpt_image_2" ? "Generating an image with OpenAI"
+      : recipe === "assemble_document" ? "Assembling the document"
+      : (step.type || active.type) === "claude" ? "Writing or reviewing text"
+      : (step.type || active.type) === "process" ? "Running a nested process"
+      : "Running a workflow step";
+    return `${activity}${index >= 0 ? ` · Step ${index + 1} of ${steps.length}` : ""}`;
+  }
+
+  // Read-only progress runs alongside /execute, which may remain open while
+  // several text/image calls complete. It never advances or restarts a job.
+  function watchExecutionActivity(assist, planId, steps) {
+    const node = document.createElement("div");
+    node.className = "execution-activity editor-action-hint";
+    node.setAttribute("role", "status");
+    assist.body.appendChild(node);
+    const controller = new AbortController();
+    const started = Date.now();
+    let stopped = false, timer;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/promptflow/status/steps", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ plan_id: planId }), signal: controller.signal,
+        });
+        const data = await response.json();
+        if (!stopped) node.textContent = `${data.ok
+          ? executionActivityLabel(data.steps || [], steps)
+          : "Waiting for a progress update"} · ${Math.floor((Date.now() - started) / 1000)}s elapsed`;
+      } catch {
+        if (!stopped) node.textContent = `Progress temporarily unavailable · ${Math.floor((Date.now() - started) / 1000)}s elapsed`;
+      }
+      if (!stopped) timer = setTimeout(poll, 4000);
+    };
+    node.textContent = "Checking execution progress…";
+    void poll();
+    return () => { stopped = true; clearTimeout(timer); controller.abort(); node.remove(); };
   }
 
   function setStatus(assist, label) {
@@ -18586,13 +18658,13 @@ promptflow whoami</code></pre>
   // equivalent of the standalone process page's run section —
   // simpler (no auth chooser since user is logged in, no cascade
   // history since this is a fresh run), but the same shape.
-  // Derive the input kinds a process ACTUALLY consumes by scanning its
-  // python source and step definitions for the runtime input
+  // Derive the input kinds a process consumes by scanning executable
+  // step definitions (or legacy source without a graph) for runtime input
   // placeholders the executor injects (<INPUT_IMAGE_URL>, {{image_url}},
   // <USER_TEXT>, {{user_text}}, etc.). The model-declared input_kinds
   // are unreliable — a generated image→video process often forgets to
   // list "image" — so the run form (and the persisted metadata) should
-  // reflect what the code references, not just what was declared.
+  // reflect what the executable graph references, not just what was declared.
   //
   // Strategy: start from the declared kinds (preserves intent + ordering
   // the author chose), then add any media kind the content references
@@ -18605,15 +18677,17 @@ promptflow whoami</code></pre>
       .map(k => String(k).toLowerCase())
       .filter(Boolean);
 
-    // Gather all stringy content from python_text + steps.
-    let hay = String(proc.python_text || "");
+    // Executable steps are authoritative. Reference Python includes unused
+    // input scaffolding, and examples describe data rather than requirements.
+    // Only legacy processes without a graph need source-based inference.
+    const hasSteps = Array.isArray(proc.steps) && proc.steps.length > 0;
+    let hay = hasSteps ? "" : String(proc.python_text || "");
     const walk = (v) => {
       if (typeof v === "string") hay += "\n" + v;
       else if (Array.isArray(v)) v.forEach(walk);
       else if (v && typeof v === "object") Object.values(v).forEach(walk);
     };
     if (proc.steps) walk(proc.steps);
-    if (proc.sample_inputs) walk(proc.sample_inputs);
 
     const refs = {
       image: /<INPUT_IMAGE_URL>|INPUT_IMAGE_URL|\{\{\s*image_url\b|\{\{\s*image\b/i.test(hay),
