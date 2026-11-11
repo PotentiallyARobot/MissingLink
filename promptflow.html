@@ -12170,6 +12170,7 @@ promptflow whoami</code></pre>
   // exits by clicking the chip's × OR by typing a "Generate process …"
   // command which always escapes back to fresh-plan mode.
   let refineBoundProcessId = null;
+  let interpreterProcessContext = null;
   let refineBoundProcessName = null;
   // Chain-navigation parent. Set when the user clicks ✦ Compose or
   // ✱ Adapt on an existing process card — captures the SOURCE
@@ -13160,6 +13161,7 @@ promptflow whoami</code></pre>
   // a server-side row — the conversation gets created when the user
   // sends their first /plan request.
   function startNewConversation() {
+    interpreterProcessContext = null;
     currentConversationId = null;
     currentEditorProcessId = null;
     currentEditorProcess = null;
@@ -13200,27 +13202,15 @@ promptflow whoami</code></pre>
   // an existing one a text-only refinement is fine.
   function updateComposerHint() {
     const label = document.getElementById("dInputModeLabel");
-    const inEditMode = !!((currentEditorProcessId && currentEditorProcess?.editable) || refineBoundProcessId);
-    textInput.dataset.mode = inEditMode ? "edit" : currentEditorProcessId ? "readonly" : currentConversationId ? "conversation" : "new";
-    if (inEditMode) {
-      textInput.placeholder = `Describe a change to "${currentEditorProcess?.name || refineBoundProcessName}"…`;
-    } else if (currentEditorProcessId) {
-      textInput.placeholder = `(read-only — close to start a new conversation)`;
-    } else if (currentConversationId) {
-      textInput.placeholder = "Refine the previous plan, attach more, or text-only…";
-    } else {
-      textInput.placeholder = `Describe anything. Attach image / video / audio, or none. Try "make me a process for…"`;
-    }
+    const context = activeInterpreterProcess();
+    textInput.dataset.mode = context ? "process" : currentConversationId ? "conversation" : "new";
+    textInput.placeholder = context
+      ? 'Ask about "' + context.name + '", run it, or describe a specific change…'
+      : 'Ask a question or describe what you want to do…';
     textInput.dispatchEvent(new Event("pf-composer-mode"));
-    // Make the effect of sending a message explicit while editing.
     if (label) {
-      if (inEditMode) {
-        label.textContent = "Edit process";
-        label.classList.add("d-input-mode-label-edit");
-      } else {
-        label.textContent = "Interpreter";
-        label.classList.remove("d-input-mode-label-edit");
-      }
+      label.textContent = "Interpreter";
+      label.classList.remove("d-input-mode-label-edit");
     }
   }
 
@@ -13263,6 +13253,8 @@ promptflow whoami</code></pre>
     clearStream();
     empty.style.display = "none"; setHeroGraphVisible(false);
     for (const turn of resp.turns) renderHistoricalTurn(turn);
+    const lastProcessTurn = [...resp.turns].reverse().find(t => t.plan?.picked_process_id);
+    interpreterProcessContext = lastProcessTurn ? {id:lastProcessTurn.plan.picked_process_id, name:lastProcessTurn.plan.run_name || (processesCache || []).find(p => p.id === lastProcessTurn.plan.picked_process_id)?.name || "the previous workflow"} : null;
     stream.scrollTop = stream.scrollHeight;
     paintConversationList();
     paintProcessList();
@@ -15450,6 +15442,13 @@ promptflow whoami</code></pre>
     // it up front guarantees every send path tears it down.
     closeSuggestions();
 
+    const earlyIntent = interpreterMessageIntent(userText);
+    if (!window._forceRunProcessId && earlyIntent === "clarify" && !pendingContrib?.zip) {
+      _sendInProgress = false;
+      clarifyInterpreterMessage(userText, activeInterpreterProcess());
+      return;
+    }
+
     // ── Discuss-intent fast path ─────────────────────────────────
     //
     // Question-like text routes directly to the streaming Opus 4.7
@@ -15494,7 +15493,9 @@ promptflow whoami</code></pre>
       && !window._forceRunProcessId
       && !pendingParentProcess
       && !refineBoundProcessId
-      && !currentEditorProcessId;
+      && !currentEditorProcessId
+      && !interpreterProcessContext
+      && !["edit","run","create"].includes(earlyIntent);
     if (shouldStreamDiscuss) {
       _sendInProgress = false;   // discuss path manages its own state
       await streamDiscussAnswer(userText);
@@ -15701,116 +15702,46 @@ promptflow whoami</code></pre>
     // crowded by a stale panel underneath the new turn.
     closeSuggestions();
 
-    // Editor mode — every chat message becomes a refinement to the
-    // currently-open process. Falls through to the normal /plan flow
-    // if the user types "Generate process …" so they can break out
-    // of editor mode without manually closing it. Editor pane stays
-    // visible above the chat stream so refinement results render
-    // inline as chat bubbles below the structured editor view.
-    // Editor mode — a process is open in the editor pane. Treat the
-    // process as editable if EITHER the loaded process reports it OR
-    // the conversation is refine-bound to this same id (that binding is
-    // only ever set for the user's own editable processes). Using the
-    // OR means a momentarily-missing `editable` flag can't wedge the
-    // composer.
-    const directRunCommand = /^(?:please\s+)?(?:run|execute|test)\b/i.test(userText.trim())
-      || /\b(?:generate|create|synthesize|research|search|find)\b[\s\S]*\b(?:input|sample|synthetic|data|then run)\b/i.test(userText);
-    if (!window._forceRunProcessId && directRunCommand && !/^\s*(?:generate|create|design|build)\s+(?:a\s+)?(?:new\s+)?process\b/i.test(userText) && (currentEditorProcessId || refineBoundProcessId)) {
-      window._forceRunProcessId = currentEditorProcessId || refineBoundProcessId;
-      window._pendingRunOptions = {run_instructions:userText, supplied_text:""};
-    }
-    const inEditableEditor = !!currentEditorProcessId && (
-      currentEditorProcess?.editable === true
-      || (refineBoundProcessId && refineBoundProcessId === currentEditorProcessId)
-    );
-    if (inEditableEditor) {
-      // Two ways to escape editor mode without manually closing it:
-      //   1. "Generate process …" / "Generate a new process …"
-      //      → user wants to start a fresh process from scratch
-      //   2. "Run my X with …" / "Run \"X\" with …" / "Run X using …"
-      //      → user is invoking an existing process, not refining
-      // Both clear the editor + refine bind and fall through to the
-      // normal /plan flow so the planner can pick a different process
-      // (or design a new one).
-      const generateEscape = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
-      const runEscape = /^\s*run\s+(my\s+)?["']?[^"'\n]+["']?\s+(with|using|on|for)\b/i;
-      if (window._forceRunProcessId || generateEscape.test(userText) || runEscape.test(userText)) {
-        currentEditorProcessId = null;
-        currentEditorProcess = null;
-        refineBoundProcessId = null;
-        refineBoundProcessName = null;
-        paintRefineBindChip();
-        paintEditorDoneRow();
-        paintProcessList();
-        // Keep the run card mounted: send() adopts its body for errors,
-        // progress and results. Clearing it here made runs disappear.
-        if (window._forceRunProcessId && window._runCardBubble) {
-          stream.querySelector("#editorPane")?.remove();
+    // An open process supplies context, not permission to edit it.
+    const targetProcess = activeInterpreterProcess();
+    const messageIntent = interpreterMessageIntent(userText);
+    if (!window._forceRunProcessId && targetProcess?.id) {
+      if (messageIntent === "run") {
+        if (runUsesSelectedProcess(userText,targetProcess)) {
+          window._forceRunProcessId = targetProcess.id;
+          window._pendingRunOptions = {run_instructions:userText, supplied_text:""};
+        } else interpreterProcessContext = null;
+      } else if (messageIntent === "edit") {
+        if (attachedFiles.length) {
+          _sendInProgress = false;
+          clarifyInterpreterMessage(userText, targetProcess);
+          return;
+        }
+        const target = currentEditorProcessId ? currentEditorProcess : (processesCache || []).find(p => p.id === targetProcess.id);
+        if (target?.editable === true || refineBoundProcessId === targetProcess.id) {
+          refineBoundProcessId = targetProcess.id; refineBoundProcessName = targetProcess.name;
+          textInput.value = ""; textInput.style.height = "auto"; updateSend();
+          _sendInProgress = false;
+          await refineBoundProcess(userText);
         } else {
-          clearStream();
+          _sendInProgress = false;
+          await streamDiscussAnswer(userText, targetProcess);
         }
-        // Fall through to normal /plan path.
-      } else {
-        // Normal editor refinement — chat-driven, same flow as
-        // refineBoundProcess. Resets composer, adds user/assistant
-        // bubbles to the stream below the editor pane.
-        // Safety net: refineBoundProcess() no-ops if refineBoundProcessId
-        // is null. We're in an editable editor, so bind it to the open
-        // process if the bind somehow went missing — guarantees the
-        // message is never silently dropped.
-        if (!refineBoundProcessId && currentEditorProcessId) {
-          refineBoundProcessId = currentEditorProcessId;
-          refineBoundProcessName = currentEditorProcess?.name || "";
-          paintRefineBindChip();
-        }
-        textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        return;
+      } else if (messageIntent !== "create") {
         _sendInProgress = false;
-        await refineBoundProcess(userText);
+        if (attachedFiles.length) clarifyInterpreterMessage(userText, targetProcess);
+        else await streamDiscussAnswer(userText, targetProcess);
         return;
       }
-    } else if (currentEditorProcessId && !inEditableEditor && !window._forceRunProcessId) {
-      // Editor is open on a process that is genuinely not the user's to
-      // edit (someone else's published process, or a system process).
-      // This is the only case that should ever surface read-only.
-      _sendInProgress = false;
-      alert("This process is read-only — it belongs to someone else. Close the editor (top right) to start a new conversation, or fork it to make your own editable copy.");
-      return;
     }
-
-    // Refine-bound mode — the conversation is pinned to a process that
-    // was just saved/updated (no editor pane open). Same chat-driven
-    // refinement; user escapes by typing "Generate process …" OR a
-    // "Run X with …" invocation, in which case we drop the bind and
-    // route normally so the planner picks the named process.
-    //
-    // _forceRunProcessId is also an escape — when set, the user
-    // clicked Run on a specific process card and wants to execute
-    // THAT process, not refine the currently-bound one. We clear
-    // the bind so the planner can route to the forced process.
-    if (refineBoundProcessId) {
-      const generateEscape = /^\s*generate\s+(a\s+)?(new\s+)?process\b/i;
-      const runEscape = /^\s*run\s+(my\s+)?["']?[^"'\n]+["']?\s+(with|using|on|for)\b/i;
-      const forcedRunEscape = !!window._forceRunProcessId;
-      if (forcedRunEscape || generateEscape.test(userText) || runEscape.test(userText)) {
-        refineBoundProcessId = null;
-        refineBoundProcessName = null;
-        paintRefineBindChip();
-        paintEditorDoneRow();
-        // Fall through to the normal /plan flow below.
-      } else {
-        textInput.value = ""; textInput.style.height = "auto";
-        // Clear staged attachments — same reasoning as the main send
-        // path. Refine-bind consumes this turn; the next turn starts
-        // clean. Without this, files attached to a refine message
-        // pollute subsequent messages.
-        attachedFiles = [];
-        fileInput.value = "";
-        paintAttach();
-        updateSend();
-        _sendInProgress = false;   // refineBoundProcess manages its own state
-        await refineBoundProcess(userText);
-        return;
-      }
+    if (window._forceRunProcessId || messageIntent === "create" || messageIntent === "run") {
+      currentEditorProcessId = null; currentEditorProcess = null;
+      refineBoundProcessId = null; refineBoundProcessName = null;
+      if (messageIntent === "create") interpreterProcessContext = null;
+      paintRefineBindChip(); paintEditorDoneRow(); paintProcessList(); updateComposerHint();
+      // Preserve questions, answers and the run form while leaving the editor.
+      stream.querySelector("#editorPane")?.remove();
     }
 
     // Classify attachments. Each goes into a specific FormData slot:
@@ -15835,7 +15766,7 @@ promptflow whoami</code></pre>
     fileInput.value = "";
     paintAttach();
 
-    const isRefinement = !primaryImage && !primaryVideo && !primaryAudio && !!currentConversationId;
+    const isRefinement = messageIntent === "edit" && !!currentConversationId;
     const userImg = primaryImage?.dataUrl || null;
     const userImgName = primaryImage?.file?.name || null;
     // Build the thumbnail array for any image_2..N extras the user
@@ -16457,6 +16388,11 @@ promptflow whoami</code></pre>
       currentConversationId = planResp.conversation_id;
       refreshConversations();
       updateComposerHint();
+    }
+
+    if (planResp?.plan?.picked_process_id) {
+      const id = planResp.plan.picked_process_id;
+      interpreterProcessContext = {id, name:(processesCache || []).find(p => p.id === id)?.name || planResp.plan.run_name || "this workflow"};
     }
 
     // ── INTENT: design_process / update_process ────────────────
@@ -17206,13 +17142,84 @@ promptflow whoami</code></pre>
   // sideways — without that guarantee, a mid-stream throw would
   // leave busy=true forever and silently swallow every subsequent
   // Enter keypress at the `if (busy) return` guard in send().
-  async function streamDiscussAnswer(userText) {
+  function interpreterMessageIntent(text) {
+    const original = String(text || "").trim();
+    let command = original.toLowerCase().replace(/[’]/g, "'").replace(/^[?!\s]+/, "");
+    // Questions, hypotheticals and negative instructions never authorize an edit.
+    if (/^(?:what|why|how|when|where|who|which|is|are|does|did|should|would it|can (?:this|it|the)|could (?:this|it|the))\b/.test(command)
+        || /^(?:explain|describe|help|tell me|show me|do not|don't|never|stop|if|suppose)\b/.test(command)) return "discuss";
+    command = command.replace(/^(?:(?:can|could|would|will) you(?: please)?|(?:i want|i need|i'd like)(?: you)? to|please)\s+/, "").replace(/^please\s+/, "");
+    command = command.replace(/^(?:genreate|genrate|geneate)\b/, "generate");
+    if (/^(?:do not|don't|never|stop|explain|describe|help|tell me|show me)\b/.test(command)) return "discuss";
+    if (/^(?:generate|create|make|build|do|fix|improve|change|update|retry|try again|yes|ok|okay)(?:\s+(?:it|this|that|something|better|again|please|for me))*[.!?]*$/.test(command)) return "clarify";
+    if (/^(?:generate|create|design|build|make)\s+(?:(?:a|an|the|new|another)\s+)*(?:process|workflow)\b/.test(command)) return "create";
+    if (/^(?:edit|refine|modify|change|update|replace|remove|rename|add|adjust|switch|fix|improve|shorten|expand|rewrite)\b/.test(command)) return "edit";
+    if (/^(?:run|execute|test)\b/.test(command)
+        || /^(?:generate|create|synthesize|research|search|find|prepare|use)\b[\s\S]*\b(?:input|sample|synthetic|data|then run)\b/.test(command)) return "run";
+    if (/^(?:explain|describe|help|tell|show|list)\b/.test(command) || /\?\s*$/.test(original)) return "discuss";
+    return "request";
+  }
+
+  function activeInterpreterProcess() {
+    return currentEditorProcessId ? currentEditorProcess
+      : refineBoundProcessId ? {id:refineBoundProcessId,name:refineBoundProcessName}
+      : interpreterProcessContext;
+  }
+
+  function runUsesSelectedProcess(text, process) {
+    const command = String(text).trim().toLowerCase().replace(/^(?:(?:can|could|would|will) you(?: please)?|(?:i want|i need|i'd like)(?: you)? to|please)\s+/, "").replace(/^please\s+/, "");
+    const run = /^(?:run|execute|test)\b\s*(.*)/.exec(command);
+    if (!run) return true; // Input preparation for the selected workflow.
+    const target = run[1].replace(/^(?:my\s+)?["']?/, "");
+    if (!target || /^(?:it|this|that|again|with|using|on|for)\b/.test(target) || /^(?:the\s+)?(?:process|workflow)\b/.test(target)) return true;
+    const name = String(process?.name || "").toLowerCase();
+    return !!name && target.startsWith(name);
+  }
+
+  function clarifyInterpreterMessage(userText, process) {
+    addUserMsg(userText, null, null, []);
+    const assist = addAssistMsg();
+    const note = document.createElement("p");
+    note.textContent = process
+      ? 'What would you like to do with "' + process.name + '" — run it, prepare input data, or change its steps?'
+      : "What would you like to generate — an output, input data for a workflow, or a new process? Describe the result you want.";
+    assist.body.appendChild(note);
+    const status = document.createElement("p"); status.className = "status";
+    status.textContent = "No process was changed or started.";
+    assist.body.appendChild(status);
+    if (process?.id) {
+      const action = document.createElement("button"); action.className = "btn"; action.textContent = "Set up a run";
+      action.onclick = async () => {
+        if (busy) return;
+        action.disabled = true;
+        try {
+          const r = await fetch("/api/promptflow/process/get",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:process.id})});
+          const data = await r.json();
+          if (!r.ok || !data.ok) throw new Error(data.message || data.error || "Could not load the workflow.");
+          await openRunCard(data.process);
+        } catch(e) { setError(assist,e.message); }
+        finally { action.disabled = false; }
+      };
+      assist.body.appendChild(action);
+    }
+    textInput.value = ""; textInput.style.height = "auto"; updateSend();
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  async function streamDiscussAnswer(userText, process = null) {
+    const recentMessages = buildConversationHistoryForRefine(true).slice(-6).map(turn => ({role:turn.role,content:turn.content.slice(0,2000)}));
+    const discussionController = new AbortController();
+    currentAbortController = discussionController; currentRunCancellable = true;
     busy = true; updateSend();
     try {
       // User bubble. No image/media for discuss path.
       addUserMsg(userText, null, null, []);
       const assist = addAssistMsg();
       const body = assist.body;
+
+      const mode = document.createElement("p"); mode.className = "status";
+      mode.textContent = process ? 'Discussing "' + process.name + '" · no process changes' : "Answering your message";
+      body.appendChild(mode);
 
       // Mount three surfaces inside the assist bubble. They're
       // appended in render order (thinking, search rows, answer)
@@ -17252,7 +17259,10 @@ promptflow whoami</code></pre>
           body: JSON.stringify({
             text: userText,
             conversation_id: currentConversationId || null,
+            process_id: process?.id || null,
+            conversation_history: recentMessages,
           }),
+          signal: AbortSignal.any([discussionController.signal,AbortSignal.timeout(120000)]),
         });
       } catch (e) {
         setError(assist, "Network error: " + (e?.message || e));
@@ -17298,9 +17308,10 @@ promptflow whoami</code></pre>
       // Maps content_block index → partial input_json string for tool_use
       // blocks. Assembled across input_json_delta events.
       const toolInputs = new Map();
+      let discussionComplete = false;
 
       try {
-        while (true) {
+        while (!discussionComplete) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -17321,6 +17332,8 @@ promptflow whoami</code></pre>
             }
           }
         }
+        if (discussionComplete) await reader.cancel();
+        else setError(assist,"The response was interrupted. No workflow was changed or started.");
       } catch (e) {
         // Stream broke mid-response. Surface what we have plus a note.
         if (!answerEl.textContent && !thinkingBody.textContent) {
@@ -17387,8 +17400,9 @@ promptflow whoami</code></pre>
             }
           }
         } else if (t === "message_stop") {
-          // Stream ended naturally.
+          discussionComplete = true;
         } else if (t === "error" || (evt.error)) {
+          discussionComplete = true;
           const msg = evt.error?.message || evt.message || "Stream error";
           if (!answerEl.textContent) {
             setError(assist, msg);
@@ -17405,9 +17419,9 @@ promptflow whoami</code></pre>
   }
 
   // Generation progress follows server events. Elapsed time is not a completion estimate.
-  function createGenerationProgress(assist, {stage = "planning", onCancel, onRetry, runSetup = false} = {}) {
+  function createGenerationProgress(assist, {stage = "planning", onCancel, onRetry, runSetup = false, editSetup = false} = {}) {
     const panel = document.createElement("section"); panel.className = "generation-progress";
-    panel.setAttribute("aria-label", runSetup ? "Run setup progress" : "Process generation progress");
+    panel.setAttribute("aria-label", runSetup ? "Run setup progress" : editSetup ? "Process edit progress" : "Process generation progress");
     panel.innerHTML = '<div class="gp-heading"><span class="spinner"></span><strong role="status" aria-live="polite"></strong><span class="gp-time" aria-live="off"></span></div>' +
       '<ol class="gp-stages"><li data-stage="search">Find reusable work</li><li data-stage="planning">Build process</li><li data-stage="ready">Ready to review</li></ol>' +
       '<p class="gp-description" role="status" aria-live="polite"></p><div class="gp-footer"><span class="gp-connection"></span><button type="button" class="btn">Stop generating</button></div>';
@@ -17419,6 +17433,10 @@ promptflow whoami</code></pre>
       panel.querySelector('[data-stage="planning"]').textContent = "Prepare run";
       cancel.textContent = "Stop preparing";
     }
+    if (editSetup) {
+      panel.querySelector('[data-stage="planning"]').textContent = "Update process";
+      cancel.textContent = "Stop editing";
+    }
     const started = Date.now(); let lastSignal = started, receivedSignal = false, finished = false;
     const stages = [...panel.querySelectorAll("li")];
     // A planning-only request may have explicit source context and skip catalog search.
@@ -17428,6 +17446,7 @@ promptflow whoami</code></pre>
       title.textContent = next === "search" ? "Finding reusable processes" : next === "saving" ? "Saving your draft" : "Building your process";
       description.textContent = next === "search" ? "Checking the catalog for a process you can reuse or build on." : next === "saving" ? "Preparing the process for you to review." : "Creating the steps for your request. You’ll be able to review and test the result.";
       if (runSetup) {title.textContent = "Preparing your run"; description.textContent = "Planning how to generate or research inputs for the saved workflow.";}
+      if (editSetup) {title.textContent = "Updating your process"; description.textContent = "Applying your requested changes to the saved workflow.";}
       const index = next === "search" ? 0 : 1;
       stages.forEach((el,i)=>{el.dataset.state=i<index?"done":i===index?"active":"pending";if(i===index)el.setAttribute("aria-current","step");else el.removeAttribute("aria-current");});
     };
@@ -17449,6 +17468,10 @@ promptflow whoami</code></pre>
       if (runSetup) {
         title.textContent = state === "complete" ? "Run ready to review" : state === "canceled" ? "Run setup stopped" : "Couldn’t prepare the run";
         description.textContent = state === "complete" ? "Review the inputs, models and quote below. Confirm to start this run." : "No workflow steps were started. Edit the instructions and try again.";
+      }
+      if (editSetup) {
+        title.textContent = state === "complete" ? "Process updated" : state === "canceled" ? "Edit request stopped" : "Couldn’t update the process";
+        description.textContent = state === "complete" ? "Review the changes below. Run the process when you want to test it." : "Check the process before retrying; the server may still finish saving the edit.";
       }
       stages.forEach(el=>{el.removeAttribute("aria-current");if(state==="complete")el.dataset.state="done";else if(el.dataset.state==="active")el.dataset.state="stopped";});
       if (state !== "complete" && onRetry) {
@@ -17889,6 +17912,8 @@ promptflow whoami</code></pre>
 
   function renderEditablePlan(assist, plan, initialCost) {
     if (!plan) return { getOverrides: () => ({}), onCostChange: () => {} };
+    // Legacy history can contain a stale video model on a non-fal tool.
+    if (/^(?:brave_|gpt_image_|assemble_document$)/.test(plan.recipe_id || "")) return renderRunReview(assist,{...plan,steps:plan.steps || [{type:"recipe",recipe_id:plan.recipe_id}]});
     const card = document.createElement("div");
     card.className = "plan-card editable";
 
@@ -20997,6 +21022,7 @@ promptflow whoami</code></pre>
   }
 
   function closeProcessEditor() {
+    interpreterProcessContext = null;
     currentEditorProcessId = null;
     currentEditorProcess = null;
     refineBoundProcessId = null;
@@ -21213,7 +21239,8 @@ promptflow whoami</code></pre>
     }
     if (p.editable) {
       actions.appendChild(button("Edit with instructions", () => {
-        textInput.focus(); textInput.scrollIntoView({block:"nearest",behavior:"smooth"});
+        if (!textInput.value.trim()) textInput.value = "Edit this process to ";
+        updateSend(); textInput.focus(); textInput.scrollIntoView({block:"nearest",behavior:"smooth"});
       }));
     }
     if (p.is_draft && p.editable && !p.is_system) {
@@ -21227,8 +21254,8 @@ promptflow whoami</code></pre>
     pane.appendChild(actions);
     const hint = document.createElement("p"); hint.className = "editor-action-hint";
     hint.textContent = p.editable
-      ? "Run process opens the inputs for a test run. Ask for edits below, or say “run it” with instructions to prepare inputs."
-      : "Run process opens its inputs. This process is read-only.";
+      ? "Ask questions below, say “run it” to prepare a run, or describe a specific edit. Unclear requests ask for clarification."
+      : "Ask questions or run this process below. Changes require your own editable copy.";
     pane.appendChild(hint);
     if (p.is_draft) {
       const banner = document.createElement("div"); banner.className = "editor-draft-banner";
@@ -21804,7 +21831,7 @@ promptflow whoami</code></pre>
     clearStatus(assist);
     const controller = new AbortController();
     currentAbortController = controller; currentRunCancellable = true; updateSend();
-    const progress = createGenerationProgress(assist, {onCancel:()=>controller.abort()});
+    const progress = createGenerationProgress(assist, {editSetup:true,onCancel:()=>controller.abort()});
     progress.event("stage",{stage:"editing"});
     assist.el.scrollIntoView({block:"start",behavior:"smooth"});
     try {
@@ -21874,12 +21901,12 @@ promptflow whoami</code></pre>
   // to send) is excluded — refineBoundProcess handles that one
   // separately as the new "instruction". History is capped at the
   // last 20 turns; older ones are dropped.
-  function buildConversationHistoryForRefine() {
+  function buildConversationHistoryForRefine(includeLastAssistant = false) {
     const turns = [];
     const nodes = stream.querySelectorAll(".msg");
     nodes.forEach((node, i) => {
       // Skip the last node — that's the in-flight assistant bubble.
-      if (i === nodes.length - 1 && node.classList.contains("assist")) return;
+      if (!includeLastAssistant && i === nodes.length - 1 && node.classList.contains("assist")) return;
       const isUser = node.classList.contains("user");
       const textEl = node.querySelector(".text") || node.querySelector(".body");
       if (!textEl) return;
