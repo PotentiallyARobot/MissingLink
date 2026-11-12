@@ -387,3 +387,5 @@ Validation: 43 backend pricing/runtime/privacy tests and 32 frontend UX tests pa
 Live verification: the historical panorama report opens for its owner; fresh anonymous GET requests to both report and image return 404 with private/no-store headers. Artifact reads bypass schema seeding, reducing the observed anonymous authorization response from about 9 seconds to 0.3–0.4 seconds. Processes shows 74 items with no duplicate hidden-list cards, no panel blur, and working filtering/list mode. A fresh panorama quote shows 362 tokens with an OpenAI line item.
 
 Remaining presentation recommendation: the review card hides the internal value-binding step (showing two steps) while execution counts all three; align visible step numbering and replace the stale “Preparing run” heading as soon as execution starts.
+
+Final bounded live test: “Private panorama verification” completed; quoted/charged 362 tokens and the displayed balance fell by exactly 362. Its newly generated image and report loaded in the authenticated UI; fresh anonymous GET and HEAD requests to both returned 404/private/no-store. No real Marketplace unlock purchase was performed.
