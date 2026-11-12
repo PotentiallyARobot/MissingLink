@@ -6,8 +6,11 @@ Progress describes observable work, never private model reasoning or credentials
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import base64
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import html
 import importlib.util
 import importlib.metadata
@@ -25,6 +28,40 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen, url2pathname
 import zipfile
 
+
+PARALLEL_RECIPES = {'__promptflow_value','brave_web_search','brave_news_search','brave_image_search','gpt_image_2','assemble_document','assemble_website','assemble_files'}
+
+def validate_parallel_groups(steps, root=None):
+    def materialize(value):
+        if isinstance(value, dict): return {k:materialize(v) for k,v in value.items()}
+        if isinstance(value, list): return [materialize(v) for v in value]
+        if root and isinstance(value, str) and value.startswith('__PROMPT_REF__:'):
+            return safe_path(root, 'prompts/' + value.split(':', 1)[1] + '.txt').read_text('utf-8')
+        return value
+    steps = materialize(steps)
+    positions = {step.get('id'): i for i, step in enumerate(steps)}
+    seen = set()
+    i = 0
+    while i < len(steps):
+        step = steps[i]
+        if step.get('body'): validate_parallel_groups(step['body'], root)
+        group = step.get('parallel_group')
+        if not group:
+            i += 1
+            continue
+        if not isinstance(group, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,180}', group) or group in seen:
+            raise RunError('Parallel groups must be named, contiguous batches: ' + str(group))
+        seen.add(group)
+        end = i
+        while end < len(steps) and steps[end].get('parallel_group') == group:
+            member = steps[end]
+            if member['type'] != 'claude' and not (member['type'] == 'recipe' and member.get('recipe_id') in PARALLEL_RECIPES):
+                raise RunError('Step cannot run in parallel: ' + member['id'])
+            for dependency in re.findall(r'\{\{\s*([\w-]+)', json.dumps(member)):
+                if positions.get(dependency, -1) >= i:
+                    raise RunError('Parallel dependency is not ready: ' + member['id'] + ' needs ' + dependency)
+            end += 1
+        i = end
 
 class RunError(Exception):
     pass
@@ -112,6 +149,8 @@ def resolve(value, scope, root):
         return {k: resolve(v, scope, root) for k, v in value.items()}
     if not isinstance(value, str):
         return value
+    if value.startswith('__RESOURCE_REF__:'):
+        return safe_path(root, value.split(':', 1)[1]).read_text('utf-8')
     if value.startswith('__PROMPT_REF__:'):
         value = safe_path(root, 'prompts/' + value.split(':', 1)[1] + '.txt').read_text('utf-8')
     value = re.sub(r'__SECRET_REF__:([A-Za-z_][A-Za-z0-9_]*)', lambda m: secret(m[1]), value)
@@ -168,7 +207,7 @@ class Runtime:
                         safe_path(self.root, self.custom[recipe]['module']).read_text('utf-8')
                     elif recipe.startswith('brave_') and recipe.endswith('_search'): needs.add('BRAVE_API_KEY')
                     elif recipe == 'gpt_image_2': needs.add('OPENAI_API_KEY')
-                    elif recipe in ('assemble_document', '__promptflow_value'): pass
+                    elif recipe in ('assemble_document', 'assemble_website', 'assemble_files', '__promptflow_value'): pass
                     elif step.get('endpoint') or '/' in step.get('model', ''):
                         needs.add('FAL_KEY')
                         if importlib.util.find_spec('fal_client') is None:
@@ -278,7 +317,32 @@ class Runtime:
 
     def steps(self, steps, scope):
         outputs = {}
-        for i, step in enumerate(steps):
+        validate_parallel_groups(steps, self.root)
+        i = 0
+        while i < len(steps):
+            step = steps[i]
+            if step.get('parallel_group'):
+                end = i
+                while end < len(steps) and steps[end].get('parallel_group') == step['parallel_group']: end += 1
+                members = steps[i:end]
+                progress(f"Running {len(members)} independent steps in parallel (up to 3 at a time)")
+                failed = threading.Event()
+                def run_member(member):
+                    if failed.is_set(): return None
+                    isolated = dict(member)
+                    isolated.pop('parallel_group', None)
+                    try: return self.steps([isolated], dict(scope))[member['id']]
+                    except BaseException:
+                        failed.set()
+                        raise
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    futures = [pool.submit(run_member, member) for member in members]
+                    results = [future.result() for future in futures]
+                for member, result in zip(members, results):
+                    scope[member['id']] = result
+                    outputs[member['id']] = result
+                i = end
+                continue
             scope.update(step.get('loop_scope', {}))
             sid = step.get('id') or f'step_{i}'
             kind = step['type']
@@ -314,6 +378,7 @@ class Runtime:
             scope[sid] = result
             outputs[sid] = result
             progress(f'{sid}: complete')
+            i += 1
         return outputs
 
     def claude(self, step, scope):
@@ -368,6 +433,53 @@ class Runtime:
                          'width':r.get('properties',{}).get('width'), 'height':r.get('properties',{}).get('height')} for r in rows]
             text = '\n\n'.join(as_text(r.get('title','')) + '\n' + as_text(r.get('image_url',r.get('url',''))) + '\n' + as_text(r.get('description','')) for r in rows)
             return {'results':rows, 'query':query, 'text':text or f'No results for "{query}".'}
+        if rid == 'assemble_files':
+            files=params.get('files',[])
+            if not isinstance(files,list) or not 1<=len(files)<=16: raise RunError('A file pack needs 1–16 files.')
+            entries={}
+            for file in files:
+                name=str(file.get('name',''))
+                if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*\.(md|txt|csv|json)',name) or name in entries: raise RunError('Invalid or duplicate export filename.')
+                if name.endswith('.csv'):
+                    records=file.get('records');columns=file.get('columns')
+                    if not isinstance(records,list) or len(records)>1000 or not isinstance(columns,list) or not 1<=len(columns)<=32: raise RunError('CSV exports require records and named columns.')
+                    def cell(v):
+                        s='' if v is None else json.dumps(v,ensure_ascii=False) if isinstance(v,(dict,list)) else str(v)
+                        return "'"+s if re.match(r'^\s*[=+@-]',s) else s
+                    buffer=io.StringIO();writer=csv.writer(buffer,quoting=csv.QUOTE_ALL)
+                    writer.writerow([cell(x) for x in columns]);writer.writerows([[cell(row.get(k)) for k in columns] for row in records]);content=buffer.getvalue()
+                elif name.endswith('.json'): content=json.dumps(file.get('data',{}),indent=2,ensure_ascii=False)
+                else: content=str(file.get('text',''))
+                if not content.strip() or len(content)>150000: raise RunError('An export is empty or exceeds its size limit: '+name)
+                entries[name]=content
+            if sum(map(len,entries.values()))>600000: raise RunError('The export exceeds its total size limit.')
+            data=io.BytesIO()
+            with zipfile.ZipFile(data,'w',zipfile.ZIP_DEFLATED) as archive:
+                for name,content in entries.items(): archive.writestr(name,content)
+            path=self.artifact(step['id'],'.zip',data.getvalue())
+            body='<!doctype html><meta charset="utf-8"><title>Workflow files</title><style>body{max-width:850px;margin:3em auto;font:16px/1.6 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>'+html.escape(str(params.get('title','Workflow files')))+'</h1>'+''.join('<h2>'+html.escape(name)+'</h2><pre>'+html.escape(content)+'</pre>' for name,content in entries.items())
+            preview=self.artifact(step['id'],'.html',body.encode('utf-8'))
+            return {'html_url':preview.as_uri(),'download_url':path.as_uri(),'download_name':'workflow-files.zip','download_label':'Download files (.zip)','path':str(path)}
+        if rid == 'assemble_website':
+            source = re.sub(r'^```(?:html)?\s*|\s*```$', '', str(params.get('html', '')), flags=re.I)
+            if len(source) < 100 or len(source) > 300000 or not re.search(r'<html[\s>]',source,re.I) or not re.search(r'<head[\s>]',source,re.I):
+                raise RunError('The generated page is incomplete. Expected a complete HTML document.')
+            image = str(params.get('image_url',''))
+            if not image.startswith('data:image/'):
+                if image.startswith('https://'):
+                    with urlopen(image, timeout=60) as response:
+                        data = response.read(15*1024*1024+1)
+                    if len(data) > 15*1024*1024: raise RunError('Image exceeds the packaging limit.')
+                    image = 'data:image/png;base64,' + base64.b64encode(data).decode()
+                else:
+                    path = media_path(image)
+                    image = 'data:' + (mimetypes.guess_type(path.name)[0] or 'image/png') + ';base64,' + base64.b64encode(path.read_bytes()).decode()
+            if not re.fullmatch(r'data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+', image): raise RunError('A generated image is required to package this page offline.')
+            source = source.replace('__HERO_IMAGE__', image)
+            policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+            source = re.sub(r'<head([^>]*)>', lambda m: m.group(0)+'<meta http-equiv="Content-Security-Policy" content="'+policy+'"><meta name="referrer" content="no-referrer">',source,count=1,flags=re.I)
+            path = self.artifact(step['id'], '.html', source.encode('utf-8'))
+            return {'html_url':path.as_uri(),'download_url':path.as_uri(),'path':str(path),'web_app':True}
         if rid == 'assemble_document':
             sections = params.get('sections') or [{'body':params.get('body',params.get('text',''))}]
             if isinstance(sections,str): sections = parse_json_text(sections)

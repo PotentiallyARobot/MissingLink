@@ -3,7 +3,7 @@
 The config is a single JSON file at ~/.promptflow/config.json:
 
     {
-      "server":  "https://www.missinglink.build",
+      "server":  "https://missinglink.build",
       "api_key": "pf_live_..."
     }
 
@@ -20,9 +20,8 @@ import stat
 from pathlib import Path
 from typing import Any, Dict
 
-# The deployed backend. Override with --server or PROMPTFLOW_SERVER until the
-# final domain is settled.
-DEFAULT_SERVER = "https://www.missinglink.build"
+# The API is served on the apex domain; www serves the static website.
+DEFAULT_SERVER = "https://missinglink.build"
 
 
 def config_dir() -> Path:
@@ -68,7 +67,9 @@ def resolve_server(cli_override: str | None = None) -> str:
     if env:
         return env.rstrip("/")
     cfg = load_config()
-    return str(cfg.get("server") or DEFAULT_SERVER).rstrip("/")
+    server = str(cfg.get("server") or DEFAULT_SERVER).rstrip("/")
+    # Migrate the former packaged default without rewriting a user's config.
+    return DEFAULT_SERVER if server == "https://www.missinglink.build" else server
 
 
 def resolve_api_key() -> str | None:

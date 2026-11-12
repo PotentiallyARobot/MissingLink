@@ -14,12 +14,13 @@ registerHooks({
   resolve(specifier,context,next){if(specifier.startsWith('./promptflow_')&&!specifier.endsWith('.ts'))specifier+='.ts';return next(specifier,context);},
   load(url,context,next){if(url.endsWith('.ts'))return {format:'module',source:stripTypeScriptTypes(readFileSync(fileURLToPath(url),'utf8')),shortCircuit:true};return next(url,context);}
 });
-const importBackend=async file=>import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(await readFile(path.join(backendRoot,'src',file),'utf8'))).toString('base64'));
+const importBackend=async file=>import(pathToFileURL(path.join(backendRoot,'src',file)).href);
 const marketplaceStore=await import(pathToFileURL(path.join(backendRoot,'src/promptflow_marketplace_store.ts')).href);
 const marketSql=new DatabaseSync(':memory:');
 marketSql.exec(`CREATE TABLE studio_users(id TEXT PRIMARY KEY,tokens INTEGER,total_spent INTEGER,subscription_remaining INTEGER,subscription_status TEXT);
 INSERT INTO studio_users VALUES('market-buyer',30000,0,0,NULL),('ux-test',5000,0,0,NULL),('market-member',30000,0,30000,'active');
 CREATE TABLE promptflow_processes(id TEXT PRIMARY KEY,name TEXT,description TEXT,steps_json TEXT,input_schema_json TEXT,output_kind TEXT,created_by_user_id TEXT,is_system INTEGER,enabled INTEGER,priority INTEGER,created_at INTEGER,updated_at INTEGER,design_intent TEXT,utility_md TEXT,sample_inputs_json TEXT);`);
+marketSql.exec('ALTER TABLE studio_users ADD COLUMN subscription_trialing INTEGER DEFAULT 0');
 marketSql.exec(marketplaceStore.MARKETPLACE_SCHEMA);
 const marketDb={prepare(query){let params=[];return{bind(...v){params=v;return this;},run(){return{meta:{changes:Number(marketSql.prepare(query).run(...params).changes)}};},first(){return marketSql.prepare(query).get(...params)||null;},all(){return{results:marketSql.prepare(query).all(...params)};}};},async batch(statements){marketSql.exec('BEGIN');try{const r=statements.map(s=>s.run());marketSql.exec('COMMIT');return r;}catch(e){marketSql.exec('ROLLBACK');throw e;}}};
 const sample = {
@@ -88,7 +89,8 @@ const server = http.createServer(async (req,res) => {
   if(ref.searchParams.has('marketplace_test') || ref.searchParams.has('subscriber')) {
     if(['/api/promptflow/plan','/api/promptflow/plan/stream'].includes(url.pathname)) {
       const form=await new Response(raw,{headers:{'content-type':req.headers['content-type']}}).formData();
-      const p=library.find(p=>p.id===form.get('force_process_id'));
+      const forced=String(form.get('force_process_id'));
+      const p=forced.startsWith('marketplace-')?(await importBackend('promptflow_marketplace.ts')).marketplaceProcess(forced.slice(12)):library.find(p=>p.id===forced);
       if(!p)return send({ok:false,message:'Choose a Marketplace workflow first.'},400);
       if(p.input_kinds.includes('image') && !form.get('image'))return send({ok:false,message:'Upload an image first.'},400);
       reviewedPlan={...p,picked_process_id:p.id,run_name:'Marketplace fixture run',requires_confirmation:true,is_text_only:!p.input_kinds.includes('image')};

@@ -326,8 +326,29 @@ class PromptFlowClient:
         return self._unwrap(r)
 
     def execute(self, plan_id: str) -> Dict[str, Any]:
-        """POST /execute — start running a plan (charges tokens)."""
-        return self._post_json("/api/promptflow/execute", {"plan_id": plan_id})
+        """Start once over SSE; recover a lost connection by inspecting that run.
+
+        Heartbeats keep long image calls alive through idle proxies. Never
+        replay the paid POST when a stream ends or a transport error occurs.
+        """
+        try:
+            with httpx.Client(timeout=self._plan_timeout) as c:
+                with c.stream("POST", self._url("/api/promptflow/execute/stream"),
+                              json={"plan_id": plan_id}, headers=self._headers()) as r:
+                    if r.status_code >= 400:
+                        r.read()
+                        return self._unwrap(r)
+                    for event, data in stream_events(r.iter_lines()):
+                        if event in ("done", "error"):
+                            if data.get("ok") is False or event == "error":
+                                raise ApiError(data.get("message") or data.get("error") or "Execution failed.",
+                                               code=data.get("error"), status=502)
+                            if not data.get("reconnecting"):
+                                return data
+                            break
+        except httpx.HTTPError:
+            pass
+        return self.status(plan_id)
 
     def status(self, plan_id: str) -> Dict[str, Any]:
         """POST /status — poll execution progress for a plan."""

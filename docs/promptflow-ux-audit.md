@@ -389,3 +389,17 @@ Live verification: the historical panorama report opens for its owner; fresh ano
 Remaining presentation recommendation: the review card hides the internal value-binding step (showing two steps) while execution counts all three; align visible step numbering and replace the stale “Preparing run” heading as soon as execution starts.
 
 Final bounded live test: “Private panorama verification” completed; quoted/charged 362 tokens and the displayed balance fell by exactly 362. Its newly generated image and report loaded in the authenticated UI; fresh anonymous GET and HEAD requests to both returned 404/private/no-store. No real Marketplace unlock purchase was performed.
+
+## Catalog delivery and real-run verification — 12 November 2026
+
+| ID | Priority | Issue | Resolution / evidence |
+| --- | --- | --- | --- |
+| PF-084 | P1 | Inline execution returned a text placeholder even after creating an image, website or file pack. | Execution now returns actual preview/download artifacts and updated balance; regression test exercises the completion branch. |
+| PF-085 | P1 | Real website/game and long text outputs exceeded their model output limits. | Compact structured briefs, bounded deliverable lengths, direct HTML instead of JSON-wrapped code, and 4,096-token step limits. All 12 catalog workflows completed real provider runs after corrections. |
+| PF-086 | P1 | CLI image execution lost its idle HTTP connection and could leave a permanent running state. | SSE heartbeats, status-only transport recovery, bounded image calls, execution lease and transactional one-time refunds for abandoned runs. Durable queue/resume remains a recommendation. |
+| PF-087 | P2 | Marketplace covers resembled the platform and did not demonstrate outcomes. | Regenerated all 12 distinct covers; each detail view now has actual synthetic sample input/output images, independently labeled from concept artwork. |
+| PF-088 | P2 | Catalog workflows lacked reusable implementation and useful editable deliverables. | Website/game templates include editable starter code; independent code/art and campaign images run in parallel; five text workflows export validated ZIP file packs with CSV/JSON/Markdown. Game controls, collision, timer and restart tested against real generated code. |
+| PF-089 | P1 | Account creation and paid subscription actions were conflated. | Separate account/payment actions. Trial/free accounts do not count as paid subscribers; free users run with tokens, unlocks govern keeping/downloading. |
+| PF-090 | P2 | Public listings included system processes and omitted useful provenance. | Public view filters system/draft entries and includes users' own published processes; cards expose available version, model, steps, runs and votes without inventing historical values. |
+
+The existing PF-083 panorama accuracy issue remains open. A successfully generated square image is not proof of calibrated equirectangular geometry. The Marketplace describes the current result as AI-assisted and approximate.

@@ -240,10 +240,15 @@ test('late discovery responses cannot replace the newest search',async()=>{
   const old=context.search('');
   const newest=context.search('');
   assert.equal(requests[0].options.signal.aborted,true);
-  const response=name=>({ok:true,text:async()=>JSON.stringify({ok:true,nodes:[{type:'process',id:name,label:name}],edges:[]})});
+  const response=name=>({ok:true,text:async()=>JSON.stringify({ok:true,nodes:[
+    {type:'process',id:name,label:name,meta:{is_published:true,is_system:false}},
+    {type:'process',id:'system',label:'Internal',meta:{is_published:true,is_system:true}},
+    {type:'process',id:'private',label:'Private',meta:{is_published:false,is_system:false}},
+  ],edges:[]})});
   requests[1].resolve(response('newest'));await newest;
   requests[0].resolve(response('stale'));await old;
   assert.equal(context.items()[0].node.label,'newest');
+  assert.equal(context.items().length,1);
 });
 
 test('opening a conversation clears the previous process refinement target',async()=>{

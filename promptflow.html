@@ -11275,8 +11275,9 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
 }
 
 </style>
-<link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-3-2">
-<script defer src="assets/promptflow-marketplace.js?v=20261112-3"></script>
+<link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
+<script defer src="assets/promptflow-marketplace.js?v=20261112-5"></script>
+<style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
 </head>
 <body class="d-desktop-mode">
 
@@ -14048,7 +14049,7 @@ promptflow whoami</code></pre>
     const balEl = $("pfBuyBalance");
     if (balEl) balEl.textContent = (bal || 0).toLocaleString();
     // Flip subscribe option vs. active-status panel based on ME.
-    const active = !!(["active", "past_due"].includes(ME.subscription_status)
+    const active = !ME.subscription_trialing && !!(["active", "past_due"].includes(ME.subscription_status)
       || ME.subscription_active || ME.is_subscriber);
     const sub = $("pfBuySubscribe"), div = $("pfBuyDivider"), stat = $("pfBuyStatus");
     if (sub) sub.style.display = active ? "none" : "";
@@ -14060,7 +14061,11 @@ promptflow whoami</code></pre>
     const modal = $("pfBuyModal");
     if (modal) modal.classList.remove("open");
   }
-  window.openPromptflowSubscription = () => pfOpenBuyModal({marketplace:true});
+  window.openPromptflowAccount = () => openAuth('signup');
+  window.openPromptflowSubscription = () => {
+    if(!ME){location.href='promptflow_learn_more.html#get-started';return;}
+    pfOpenBuyModal({marketplace:true});
+  };
   window.openPromptflowTokens = () => pfOpenBuyModal();
 
   {
@@ -17626,7 +17631,9 @@ promptflow whoami</code></pre>
   }
 
   function executionActivityLabel(rows, steps) {
-    const active = rows.find(row => row.status === "running");
+    const running = rows.filter(row => row.status === "running");
+    if (running.length > 1) return `Running ${running.length} steps in parallel · ${running.map(row => steps.find(s => s.id === row.step_id)?.name || row.step_id).join(" · ")}`;
+    const active = running[0];
     if (!active) return rows.length && rows.every(row => row.status === "complete")
       ? "Preparing the next step or final output" : "Waiting for the worker's next update";
     const index = steps.findIndex(step => step.id === active.step_id);
@@ -18378,10 +18385,12 @@ promptflow whoami</code></pre>
   function renderDocument(assist, outputs) {
     const o = (outputs || []).find(x => x && (x.html_url || x.pdf_url)) || outputs[0] || {};
     const htmlUrl = o.html_url || null;
-    const pdfUrl = o.pdf_url || (htmlUrl ? htmlUrl + "?print=1" : null);
+    const pdfUrl = o.web_app || o.download_name?.endsWith('.zip') ? null : o.pdf_url || (htmlUrl ? htmlUrl + "?print=1" : null);
     if (htmlUrl) {
       const frame = document.createElement("iframe");
       frame.src = htmlUrl;
+      frame.title = o.web_app ? "Generated website or game preview" : "Document preview";
+      frame.setAttribute("sandbox", "allow-scripts allow-downloads allow-modals");
       frame.style.cssText = "width:100%;height:520px;border:1px solid var(--border);border-radius:7px;background:#fff";
       assist.body.appendChild(frame);
     }
@@ -18391,6 +18400,7 @@ promptflow whoami</code></pre>
       open.removeAttribute("download");
       nodes.push(open);
     }
+    if (o.download_url) nodes.push(downloadButton(o.download_url, o.download_name || "generated-page.html", o.download_label || "Download HTML"));
     if (pdfUrl) {
       const pdf = downloadButton(pdfUrl, "", "⬇ Download PDF");
       pdf.removeAttribute("download");  // print mode, not a file download
@@ -23140,7 +23150,7 @@ new process. Compare its output to the current one before replacing.
 
     // Filter to processes (the actual library content); recipes and
     // users are infrastructure that don't belong in the library view.
-    let processes = (graph.nodes || []).filter(n => n.type === "process" && n.primary !== false);
+    let processes = (graph.nodes || []).filter(n => n.type === "process" && n.primary !== false && !n.meta?.is_system && n.meta?.is_published && !n.meta?.is_draft);
 
     // Apply the "Hide monetized" toggle if active. This is a CLIENT-side
     // filter because it's a viewer preference, not a query change —
@@ -24872,6 +24882,11 @@ new process. Compare its output to the current one before replacing.
     if (currentEditorProcessId !== id || !currentEditorProcess) throw new Error('Could not open this workflow. Please try again.');
     window.PFMarketplace?.close();
     runProcessFromEditor(currentEditorProcess);
+  };
+  window.prepareMarketplaceRun = function(process) {
+    if (busy || _planInFlight || _sendInProgress) throw new Error('Finish the current action before opening another run.');
+    window.PFMarketplace?.close();
+    runProcessFromEditor(process);
   };
   window.startNewConversation = startNewConversation;
   window.goHome = (typeof goHome === "function") ? goHome : null;
@@ -29110,7 +29125,7 @@ function dDesktopInit(){
         const catalog = await catalogResponse.json();
         if (request !== _dPgRequest) return;
         if (!catalogResponse.ok || !catalog.ok || !Array.isArray(catalog.processes)) throw new Error("Could not load process details. Please try again.");
-        const publicById = new Map(catalog.processes.filter(p => p.is_system || p.is_published).map(p => [p.id, p]));
+        const publicById = new Map(catalog.processes.filter(p => !p.is_system && p.is_published && !p.is_draft).map(p => [p.id, p]));
         _dPgAllItems = candidates.filter(c => publicById.has(c.process_id)).map(c => {
           const pick = pickById.get(c.process_id);
           const process = publicById.get(c.process_id);
@@ -29154,7 +29169,7 @@ function dDesktopInit(){
       if (!r.ok || !graph || !graph.ok) {
         throw new Error(graph?.message || graph?.error || "Failed to load public processes.");
       }
-      const processes = (graph.nodes || []).filter(n => n.type === "process" && n.primary !== false);
+      const processes = (graph.nodes || []).filter(n => n.type === "process" && n.primary !== false && !n.meta?.is_system && n.meta?.is_published && !n.meta?.is_draft);
       const composesCount = new Map();
       const usedByCount = new Map();
       const forksCount = new Map();
@@ -29188,7 +29203,7 @@ function dDesktopInit(){
     const body = D("dPgBody");
     D("dPgCount").textContent = _dPgItems.length + (_dPgItems.length === 1 ? " process" : " processes");
     if (_dPgItems.length === 0) {
-      body.innerHTML = '<div class="d-pg-empty"><strong>No matches.</strong>Try a different search term.</div>';
+      body.innerHTML = '<div class="d-pg-empty"><strong>No published workflows match.</strong>Published workflows appear here when their creators choose to share them. Try another search, or publish a tested process from your workspace.</div>';
       return;
     }
     const grid = document.createElement("div");
@@ -29233,11 +29248,22 @@ function dDesktopInit(){
     const inK = (meta.input_kinds || ["text"]).join("+");
     const outK = meta.output_kind || n.output_kind || "Not specified";
 
-    // Stats line.
-    const statBits = [];
-    if (stats.runs != null) statBits.push('<span class="d-pg-card-stat"><strong>' + stats.runs + '</strong> runs</span>');
-    if (stats.helpful > 0) statBits.push('<span class="d-pg-card-stat"><strong>' + stats.helpful + '</strong> \ud83d\udc4d</span>');
-    if (stats.quality != null) statBits.push('<span class="d-pg-card-stat d-pg-card-stat-quality">quality <strong>' + Number(stats.quality).toFixed(2) + '</strong></span>');
+    const info = meta.metadata || {};
+    const runs = stats.runs ?? meta.total_runs ?? 0;
+    const helpful = stats.helpful ?? meta.total_helpful ?? 0;
+    const unhelpful = stats.unhelpful ?? meta.total_unhelpful ?? 0;
+    const statBits = [
+      '<span class="d-pg-card-stat"><strong>'+Number(runs)+'</strong> runs</span>',
+      '<span class="d-pg-card-stat"><strong>'+Number(helpful)+'</strong> 👍</span>',
+      '<span class="d-pg-card-stat"><strong>'+Number(unhelpful)+'</strong> 👎</span>'
+    ];
+    if (stats.failed > 0) statBits.push('<span class="d-pg-card-stat">'+Number(stats.failed)+' failed</span>');
+    const metadataHtml='<div class="d-pg-card-metadata">'+
+      (info.step_count!=null?'<span>'+Number(info.step_count)+' steps</span>':'')+
+      (info.revision?'<span>Revision '+Number(info.revision)+'</span>':'<span>Revision not recorded</span>')+
+      '<span>Created with PromptFlow '+dEsc(info.created_with_version || '— not recorded')+'</span>'+
+      (info.models?.length?'<span>'+info.models.map(dEsc).join(' · ')+'</span>':'')+
+      (info.parallel_groups?'<span>'+Number(info.parallel_groups)+' parallel groups</span>':'')+'</div>';
 
     // Relationship chips.
     const relBits = [];
@@ -29270,6 +29296,7 @@ function dDesktopInit(){
         ? '<div class="d-pg-card-desc">' + dEsc(n.description || meta.description) + '</div>'
         : '') +
       '<div class="d-pg-card-io"><strong>' + dEsc(inK) + '</strong><span class="d-pg-arrow">\u2192</span><strong>' + dEsc(outK) + '</strong></div>' +
+      metadataHtml +
       (statBits.length > 0 ? '<div class="d-pg-card-stats">' + statBits.join("") + '</div>' : '') +
       (relBits.length > 0 ? '<div class="d-pg-card-rels">' + relBits.join("") + '</div>' : '') +
       // Ranking diagnostics remain available on demand, away from the

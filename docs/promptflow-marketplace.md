@@ -63,3 +63,30 @@ First build refreshes the backend runtime; second exports matching examples; fin
 - Provider image requests use embedded data, not public links. Providers that require non-image URLs receive a file-specific, ten-minute capability generated only at dispatch. These capabilities are not saved as user-facing output links. Already downloaded copies cannot be recalled.
 - Processes/Explore no longer blur the full window; offscreen cards defer rendering, the hidden legacy process list is skipped, and stale folder requests cannot replace the current view.
 - [Accuracy-focused panorama workflow design](promptflow-panorama-workflow.md) distinguishes the present prompt-only conversion from the recommended calibrated, masked, reprojected workflow. It is an implementation specification, not a claim that the geometric pipeline is already deployed.
+
+## November 12 completed catalog verification
+
+The catalog now contains 12 workflows. Each completed a hosted run with real providers and a synthetic input. The public sample manifest under `assets/promptflow-marketplace/samples/` identifies the resulting input/output previews. These are separate from the 12 newly generated concept covers. The website sample shows its generated hero artwork; the game sample renders its actual canvas; text previews show excerpts from the actual exported files.
+
+| Workflow | Verified deliverable |
+| --- | --- |
+| Image to 180° Equirectangular | Square image and private review sheet; projection accuracy remains approximate |
+| Research Brief | Source-linked brief and source-evidence JSON in a ZIP |
+| Meeting Action Plan | Actions CSV, decisions JSON and reviewed recap |
+| Feedback Compass | Themes CSV, evidence JSON and prioritized backlog |
+| Launch Campaign Kit | Reviewed campaign, positioning and separate channel drafts |
+| Visual Lesson Pack | Sourced lesson, generated teaching diagram and handout |
+| Client Proposal Builder | Proposal and requirements/decisions files |
+| Website Rebrand | Self-contained branded HTML with embedded generated artwork |
+| Browser Game Builder | Playable HTML with keyboard/touch controls, scoring, collisions, timer and restart |
+| Product Photo to Campaign Scene | Product-reference image edit and fidelity review |
+| Instructions to Visual Guide | Illustrated procedure card and full text |
+| Coordinated Campaign Visuals | Two images generated in parallel from a shared brief and accompanying copy |
+
+Live tests exposed and corrected output-token truncation, an execution response that discarded finished artifacts, and a CLI connection timeout during a long image edit. The CLI now uses execution heartbeats and status recovery without replaying paid requests. Abandoned inline work is recoverable after its lease and step-activity grace period expire; refund and terminal state updates are atomic. This is not a durable queue: interrupted runs are refunded, not resumed mid-provider call.
+
+Validation: 79 backend runtime/cost/access/recovery tests, 11 export tests including an installed CLI, 23 CLI tests, 40 frontend tests, and two checks against the actual generated website/game passed. All 12 real runs completed. QA reserved 3,226 tokens including failed/repeated attempts, plus the earlier 362-token image verification, within the user's 5,000-token limit. Reservations are a conservative test budget, not a claim of final net charges.
+
+Account creation does not start a paid subscription. Signed-in free users can prepare and run workflows with their balance. A paid subscription or a one-time token unlock grants download/keep access. Personal artifacts remain owner-only; only these deliberately synthetic sample images are public. HTML games and websites are displayed in opaque sandboxed frames with network access denied; exported file packs restrict filenames and escape spreadsheet formulas.
+
+Remaining recommendations: implement the calibrated panorama pipeline described above; add durable execution jobs for resuming long runs across browser closure; reconcile estimates against measured provider usage; extend source-grounding checks and batch-data handling for the text workflows. Real execution and useful exports do not imply error-free model content. Agents and the Cron UI remain outside this change.

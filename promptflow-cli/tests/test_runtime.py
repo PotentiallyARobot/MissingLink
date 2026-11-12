@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -18,6 +20,45 @@ from rich.console import Console
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_parallel_steps_overlap_then_join_in_order(self):
+        r=self.runner([{'id':str(i),'type':'recipe','recipe_id':'__promptflow_value','parallel_group':'work','params':{'value':i}} for i in range(6)])
+        barrier=threading.Barrier(3,timeout=3)
+        lock=threading.Lock()
+        active=0
+        peak=0
+        def work(step,scope):
+            nonlocal active,peak
+            with lock:
+                active+=1
+                peak=max(peak,active)
+            barrier.wait()
+            time.sleep(.01)
+            with lock: active-=1
+            return {'value':step['params']['value']}
+        with patch.object(r,'recipe',side_effect=work): result=r.execute({'text':'input'})
+        self.assertEqual(peak,3)
+        self.assertEqual([row['value'] for row in result.values()],list(range(6)))
+
+    def test_parallel_rejects_dependencies_hidden_in_prompt_files(self):
+        (self.root/'prompts').mkdir()
+        (self.root/'prompts/b.txt').write_text('Use {{a.text}}',encoding='utf-8')
+        r=self.runner([{'id':'a','type':'claude','parallel_group':'work'},{'id':'b','type':'claude','parallel_group':'work','user_prompt':'__PROMPT_REF__:b'}])
+        with patch.object(runtime,'request_json') as provider:
+            with self.assertRaisesRegex(runtime.RunError,'dependency is not ready'): r.execute({'text':'input'})
+            provider.assert_not_called()
+
+    def test_starter_resource_is_editable_and_cannot_escape_bundle(self):
+        (self.root/'resources').mkdir()
+        (self.root/'resources/starter.html').write_text('<html>My edited starter</html>',encoding='utf-8')
+        self.assertEqual(runtime.resolve('__RESOURCE_REF__:resources/starter.html',{},self.root),'<html>My edited starter</html>')
+        with self.assertRaises(runtime.RunError): runtime.resolve('__RESOURCE_REF__:../outside.html',{},self.root)
+
+    def test_cli_uses_canonical_api_and_migrates_old_default(self):
+        from promptflow_cli import config
+        with patch.dict(os.environ,{},clear=True),patch.object(config,'load_config',return_value={'server':'https://www.missinglink.build/'}):
+            self.assertEqual(config.resolve_server(),'https://missinglink.build')
+            self.assertEqual(config.resolve_server('http://localhost:8787/'),'http://localhost:8787')
+
     def test_named_input_preparation_generates_then_runs_saved_workflow(self):
         r=self.runner([{'id':'summary','type':'claude','user_prompt':'Summarize {{user_text}}'}])
         plan_json={'name':'Synthetic labels demo','steps':[{'id':'seed','type':'claude','user_prompt':'Generate labeled synthetic examples'}], 'inputs_map':{'text':'{{seed.text}}'}}

@@ -3,6 +3,44 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const source=readFileSync(new URL('../assets/promptflow-marketplace.js',import.meta.url),'utf8');
+test('all twelve catalog entries include real sample pairs with no private artifact links',()=>{
+  const samples=JSON.parse(readFileSync(new URL('../assets/promptflow-marketplace/samples/manifest.json',import.meta.url),'utf8'));
+  assert.equal(Object.keys(samples).length,12);
+  for(const item of Object.values(samples)) {
+    for(const key of ['input_image','output_image']){
+      assert.match(item[key],/^\/assets\/promptflow-marketplace\/samples\/[a-z0-9-]+\.png$/);
+      const bytes=readFileSync(new URL('..'+item[key],import.meta.url));
+      assert.equal(bytes.subarray(1,4).toString(),'PNG');
+    }
+    assert.match(item.source,/Live workflow run/);
+  }
+  assert.doesNotMatch(JSON.stringify(samples),/api\/promptflow|plan_id|pf_live_/);
+  assert.match(source,/pf-market-samples/);
+});
+test('free account actions never open subscription checkout',async()=>{
+  let account=0,payment=0;
+  const c=vm.createContext({window:{openPromptflowAccount:()=>account++,openPromptflowSubscription:()=>payment++},document:{},Date});
+  vm.runInContext(source.replace('window.PFMarketplace={open,close};','close=()=>{};window.PFMarketplace={prepareRun,reviewPurchase,openSubscription};'),c);
+  await c.window.PFMarketplace.prepareRun({id:'test'});
+  c.window.PFMarketplace.reviewPurchase({id:'test'});
+  assert.equal(account,2);assert.equal(payment,0);
+  c.window.PFMarketplace.openSubscription();assert.equal(payment,1);
+});
+
+test('Learn More distinguishes account creation from an explicit payment request',async()=>{
+  const page=readFileSync(new URL('../promptflow_learn_more.html',import.meta.url),'utf8');
+  const code=page.slice(page.lastIndexOf('<script>')+8,page.lastIndexOf('</script>'));
+  const elements=new Map();let click;
+  const el=id=>{if(!elements.has(id))elements.set(id,{hidden:true,style:{},setAttribute(){},removeAttribute(){},addEventListener(_event,handler){click=handler;}});return elements.get(id);};
+  const redirects=[];let response=new Response(JSON.stringify({error:'not_logged_in'}),{status:401});
+  const c=vm.createContext({document:{getElementById:el},window:{location:{assign:url=>redirects.push(url)}},fetch:async()=>response});
+  vm.runInContext(code.replace('startCheckout();','return startCheckout();'),c);
+  await click({preventDefault(){}});
+  assert.equal(redirects.length,0);assert.equal(el('promptflowCheckoutAccount').hidden,false);
+  assert.match(el('promptflowCheckoutStatus').textContent,/does not start a subscription/);
+  response=Response.json({ok:true,url:'https://checkout.stripe.test/session'});
+  await click({preventDefault(){}});assert.deepEqual(redirects,['https://checkout.stripe.test/session']);
+});
 function context(fetch) {
   const elements=new Map();
   const element=id=>{if(!elements.has(id))elements.set(id,{textContent:'',children:[],appendChild(x){this.children.push(x);}});return elements.get(id);};
