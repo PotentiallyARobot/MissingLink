@@ -36,6 +36,10 @@ Output is an **AI-assisted approximate** 1024×1024 monoscopic half-equirectangu
 
 ## Deployment
 
+The live frontend is **GitHub Pages** for `PotentiallyARobot/MissingLink`, published from `main` at `/` to `www.missinglink.build`. The Cloudflare backend forwards frontend requests on `missinglink.build` to that site. Running `npx wrangler deploy` in `C:/missinglink-backend` updates only the backend; the untracked frontend `wrangler.jsonc` is not the production Pages publishing configuration.
+
+Push the frontend commit, then check the repository's [Pages build and deployment workflow](https://github.com/PotentiallyARobot/MissingLink/actions/workflows/pages/pages-build-deployment). A successful push is not confirmation that Pages published it. Verify the workflow's commit, the Marketplace button at `/promptflow`, and HTTP 200 for `/assets/promptflow-marketplace.js`. If Pages reports a stale `building` state without an Actions run, request a fresh Pages build through the GitHub Pages API (`POST /repos/PotentiallyARobot/MissingLink/pages/builds`) and follow it through deployment. Do not rerun an older successful workflow, which would publish its older commit.
+
 Deploy the backend with `promptflow_marketplace.ts`, `promptflow_marketplace_store.ts`, `promptflow_vr180_asset.ts`, updated core/routes/runtime and generated `promptflow_local_runtime.ts`. Schema bootstrap creates `promptflow_marketplace_purchases`; no Stripe product or checkout setup is needed for workflow purchases.
 
 Deploy frontend `promptflow.html`, `promptflow_learn_more.html`, both `assets/promptflow-marketplace.*` files, the entire `assets/promptflow-marketplace/` image folder, `promptflow_icons_transparent/16_marketplace_folder_storefront.png`, `promptflow-cli.zip` and `examples/text-summary.promptflow`. Existing provider secrets continue to apply; the image workflow uses OPENAI_API_KEY.

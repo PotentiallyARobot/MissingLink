@@ -75,7 +75,12 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(response.status,Object.fromEntries(response.headers));return res.end(Buffer.from(await response.arrayBuffer()));
   }
   if(url.pathname==='/api/promptflow/processes') return ref.searchParams.has('library_error') ? send({ok:false,error:'unavailable'},503) : send({ok:true,processes:guest?library.filter(p=>p.is_published||p.is_system).map(p=>({...p,mine:false,editable:false})):library});
-  if(url.pathname==='/api/promptflow/process/get') return send({ok:true,process:library.find(p=>p.id===(body.id||url.searchParams.get('id')))||sample});
+  if(url.pathname==='/api/promptflow/process/get') {
+    if(req.method!=='POST')return send({ok:false,message:'Use POST to load a workflow.'},405);
+    if(guest)return send({ok:false,error:'not_logged_in'},401);
+    const process=library.find(p=>p.id===body.id);
+    return process?send({ok:true,process}):send({ok:false,error:'not_found'},404);
+  }
   if(url.pathname==='/api/promptflow/conversations') return send({ok:true,conversations:[{id:'ux-history',title:'Completed research run',turn_count:1,updated_at:1794344400}],has_more:false});
   if(url.pathname==='/api/promptflow/conversation/get') return send({ok:true,conversation:{id:'ux-history',title:'Completed research run'},turns:[{user_text:'Research holographic displays',plan:{...sample,picked_process_id:sample.id},status:'complete',cost:legacyCost,outputs:[{kind:'text',url:'/api/promptflow/outputs/ux-preview.txt'}],output_kind:'text'}]});
   if(url.pathname==='/api/promptflow/outputs/ux-preview.txt') {res.writeHead(200,{'content-type':'text/plain'});return res.end('- A completed research result.\n- Provider labels should reflect actual usage.\n- Show the result in the conversation.');}

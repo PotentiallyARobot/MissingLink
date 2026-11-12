@@ -7,6 +7,56 @@ const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].m
 test('every inline script parses',()=>{for(const source of scripts)new vm.Script(source);});
 const extract=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
 
+function marketplaceLauncher(response, overrides={}) {
+  const events=[], alerts=[], requests=[];
+  const context=vm.createContext({
+    busy:false,_planInFlight:false,_sendInProgress:false,ME:{id:'member'},
+    currentEditorProcessId:'previous',currentEditorProcess:{id:'previous'},currentAbortController:null,
+    currentConversationId:null,currentRunCancellable:true,refineBoundProcessId:null,refineBoundProcessName:null,
+    window:{PFMarketplace:{close:()=>events.push('close')}},
+    showFullScreenLoader(){},hideFullScreenLoader(){},paintRefineBindChip(){},paintEditorDoneRow(){},
+    paintConversationList(){},paintProcessList(){},paintEditor(){},updateComposerHint(){},updateSend(){},
+    openAuth:()=>events.push('auth'),alert:message=>alerts.push(message),console,
+    openRunCard:process=>events.push(process),
+    fetch:async(url,options)=>{
+      requests.push({url,options});
+      // Production only supports POST with the process id in its JSON body.
+      assert.equal(url,'/api/promptflow/process/get');
+      assert.equal(options?.method,'POST');
+      assert.equal(JSON.parse(options.body).id,'panorama');
+      return response.clone();
+    },...overrides
+  });
+  vm.runInContext(
+    extract('  async function openProcessEditor(', '  function closeProcessEditor(')+
+    extract('  function runProcessFromEditor(', '  function paintEditor(')+
+    extract('  window.openMarketplaceWorkflow =', '  window.startNewConversation ='),context);
+  return {context,events,alerts,requests};
+}
+
+test('Marketplace loads its private process via POST and opens its image collector',async()=>{
+  const {context,events,alerts,requests}=marketplaceLauncher(Response.json({ok:true,process:{id:'panorama',name:'Image to 180° Equirectangular',mine:true,editable:true,input_kinds:['image'],steps:[]}}));
+  await context.window.openMarketplaceWorkflow('panorama');
+  assert.equal(requests.length,1);
+  assert.deepEqual(alerts,[]);
+  assert.equal(events[0],'close');
+  assert.equal(events[1].id,'panorama');
+  assert.equal(events[1].input_kinds[0],'image');
+  assert.equal(context.currentEditorProcessId,'panorama');
+});
+
+test('Marketplace never starts a stale process after load failure or during another action',async()=>{
+  for(const response of [new Response('<!DOCTYPE html><html>Not found</html>',{status:404}),Response.json({ok:false,error:'not_found'},{status:404}),Response.json({ok:false},{status:401})]) {
+    const {context,events}=marketplaceLauncher(response);
+    await assert.rejects(context.window.openMarketplaceWorkflow('panorama'),/Could not open this workflow/);
+    assert.equal(context.currentEditorProcessId,'previous');
+    assert.ok(events.every(event=>event==='auth'));
+  }
+  const {context,events,requests}=marketplaceLauncher(Response.json({}),{busy:true});
+  await assert.rejects(context.window.openMarketplaceWorkflow('panorama'),/Finish the current action/);
+  assert.equal(requests.length,0);assert.equal(events.length,0);
+});
+
 test('interpreter distinguishes questions, edits, runs and ambiguous follow-ups',()=>{
   const context=vm.createContext({});
   vm.runInContext(extract('  function interpreterMessageIntent(', '  function activeInterpreterProcess(')+'\nglobalThis.intent=interpreterMessageIntent;',context);

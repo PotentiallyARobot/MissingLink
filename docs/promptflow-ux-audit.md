@@ -355,6 +355,13 @@ Full implementation, prices, deployment inventory and remaining limitations: [Ma
 
 ![Mobile wordmark after the clipping fix](qa/marketplace/mobile-wordmark.jpg)
 
+## Production deployment and Marketplace launcher — November 12, 2026
+
+| ID | Priority | Observed issue | Resolution | Verification |
+|---|---|---|---|---|
+| PF-077 | P1 | The Marketplace commit was pushed, but GitHub Pages remained `building` from November 11 at 22:46 UTC without an Actions run. Production served the preceding commit and returned 404 for the new script. | Requested a fresh Pages build for `bd2eacc`. Corrected deployment notes: the frontend uses GitHub Pages, while Wrangler deploys the backend. | [Pages deployment succeeded](https://github.com/PotentiallyARobot/MissingLink/actions/runs/43260300441). Live sidebar, seven covers, subscriber access and download-start confirmation verified; mobile wordmark top was 75px at 664×532. |
+| PF-078 | P1 | “Upload image & prepare run” failed with an HTML/JSON parsing error. Marketplace called `GET /process/get?id=…`, while production accepts POST. The preview incorrectly accepted both. | Reuse the existing editor's POST loader, then open the loaded process's input collector. Keep Marketplace open on failure and prevent a stale process from running. Preview now rejects GET, missing IDs and unauthenticated requests. | 29 frontend tests pass, including the actual launcher + editor loader with the production HTTP contract, HTML/404/401 failure handling and the busy guard. Live upload/review verification follows deployment. |
+
 ## Recommended next work
 
 1. **Money and trust:** reconcile historical charges and retries; implement actual usage/charge/refund records; unify entitlement copy and cost confirmation. Acceptance: a text/search run has no fal usage or fal charge, and its receipt matches the token ledger.
