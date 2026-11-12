@@ -119,6 +119,25 @@ test('unconfirmed quote never says Charged or fabricates a fal provider',()=>{
   const markup=render({pricing_version:2,anthropic_usd:0.005,claude_steps_usd:0.005,tokens_charged:40,bill_usd:0.02,markup:2},'pending');
   assert.match(markup,/Estimated cost/);assert.doesNotMatch(markup,/Charged|fal.ai/);
 });
+
+test('OpenAI image quote displays its provider calculation before confirmation',()=>{
+  const markup=render({pricing_version:3,openai_images_usd:0.090448,tokens_charged:362,bill_usd:0.1809,markup:2},'pending');
+  assert.match(markup,/OpenAI images estimate/);assert.match(markup,/362 tokens/);
+  assert.doesNotMatch(markup,/fal.ai|Charged/);
+});
+
+test('late folder responses cannot replace the folder opened afterwards',async()=>{
+  const pending=[],paint=[];
+  const c=vm.createContext({_dFolderLoadVersion:0,_dFolderActive:'processes',_dFolderItems:{},window:{},
+    dFetchJson:()=>new Promise(resolve=>pending.push(resolve)),dMapProcess:p=>p,dMapConversation:p=>p,
+    dRenderFolderItems:(items)=>paint.push(items),D:()=>({value:''}),dEsc:s=>s});
+  vm.runInContext(extract('  async function dLoadFolderItems(', '  function dRenderFolderItems(')+';globalThis.load=dLoadFolderItems;',c);
+  const old=c.load('processes');c._dFolderActive='chats';const current=c.load('chats');
+  pending[1]({conversations:[{name:'New chat'}]});await current;
+  pending[0]({processes:[{name:'Old process'}]});await old;
+  assert.equal(paint.length,1);assert.equal(paint[0][0].name,'New chat');
+  assert.equal(c._dFolderItems.processes[0].name,'Old process');
+});
 test('historical totals survive without repeating unverified legacy provider labels',()=>{
   const markup=render({fal_usd:0.3,tokens_charged:1260,bill_usd:0.63},'complete');
   assert.match(markup,/Charged/);assert.match(markup,/1,260/);assert.match(markup,/Legacy cost record/);assert.doesNotMatch(markup,/fal.ai/);

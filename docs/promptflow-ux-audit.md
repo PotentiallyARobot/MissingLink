@@ -369,3 +369,16 @@ Full implementation, prices, deployment inventory and remaining limitations: [Ma
 3. **Execution staging:** add deterministic provider stubs and test create → run → successful output → reload, failure/refund, retry, stop, nested processes, loops, uploads, export/import, and commit/publish permission gates. Verify modified frontend and backend together before release.
 4. **Discovery and authoring:** unify public/private semantics, correct old metadata, paginate conversations, improve composition relevance, and validate draft metadata and server cancellation across real authoring sessions. The local editor now prioritizes running with optional technical details.
 5. **Accessibility and launch readiness:** complete keyboard/dialog/screen-reader and mobile checks; implement scheduler/agent backends before enabling submission; test timezone and recurring-cost expectations.
+
+
+## Cost, privacy and navigation follow-up — November 12, 2026
+
+| ID | Priority | Issue | Fix / status |
+|---|---|---|---|
+| PF-079 | P1 | OpenAI image runs unnecessarily uploaded through fal and failed with invalid fal credentials. | Upload only for actual fal steps, including nested ones. Real OpenAI panorama run completed. |
+| PF-080 | P1 | Paid OpenAI image steps showed a zero quote. | Calculate image output by size/quality plus input allowances; show OpenAI separately; block an increased stale quote before charging. Provider costs remain estimated. |
+| PF-081 | P1 | Personal uploads and generated results were served without account checks. | Authenticated owner checks, no-store headers, owner metadata, historical run lookup; direct provider image data and expiring non-image media capabilities. Anonymous and cross-account tests cover GET/HEAD, expiry and tampering. R2 public endpoints disabled. |
+| PF-082 | P2 | Processes/Explore navigation and hover were choppy; late folder requests could paint the wrong view. | Removed full-panel blur and hover movement, defer offscreen card rendering, skip hidden duplicate list, batch search per frame, reject stale responses. No numerical FPS improvement claimed. |
+| PF-083 | P1 | One image edit prompt cannot guarantee equirectangular geometry or consistent directional views. | User confirmed square 180° mono. Detailed geometry-first workflow specified in promptflow-panorama-workflow.md; current conversion remains approximate pending implementation and visual validation. |
+
+Validation: 42 backend pricing/runtime/privacy tests and 31 frontend UX tests passed; Worker build passed. The pricing reference is https://developers.openai.com/api/docs/guides/image-generation (checked 2026-11-12). Broader measured billing, loop reconciliation, and provider retention controls remain recommendations.

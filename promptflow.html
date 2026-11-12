@@ -9570,9 +9570,9 @@ body.d-desktop-mode .stream {
   top: 40px;
   bottom: var(--d-dock-h);
   z-index: 15;
-  background: rgba(10,10,11,0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: #0a0a0b;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .d-folder-view.active { display: flex; }
 
@@ -9863,6 +9863,7 @@ body.d-desktop-mode .d-dock-runtime {
   gap: 2px;
 }
 .d-fv-grid.d-fv-list .d-fv-item {
+  contain-intrinsic-block-size: auto 50px;
   flex-direction: row;
   align-items: center;
   text-align: left;
@@ -9929,13 +9930,14 @@ body.d-desktop-mode .d-dock-runtime {
   text-align: center;
   cursor: pointer;
   position: relative;
-  transition: border-color .15s ease, background .15s ease, transform .1s ease;
+  transition: border-color .08s ease, background .08s ease;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 150px;
   min-height: 140px;
 }
 .d-fv-item:hover {
   border-color: rgba(232,169,23,0.32);
   background: rgba(36,36,42,0.75);
-  transform: translateY(-1px);
 }
 .d-fv-item.selected {
   border-color: rgba(232,169,23,0.55);
@@ -10447,9 +10449,9 @@ body.d-desktop-mode .d-dock-runtime {
   top: 56px;
   bottom: var(--d-dock-h);
   z-index: 15;
-  background: rgba(10,10,11,0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: #0a0a0b;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .d-pubgraph-view.active { display: flex; }
 
@@ -10542,13 +10544,14 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  transition: border-color .15s ease, background .15s ease, transform .1s ease;
+  transition: border-color .08s ease, background .08s ease;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 240px;
   position: relative;
 }
 .d-pg-card:hover {
   border-color: rgba(232,169,23,0.32);
   background: rgba(36,36,42,0.85);
-  transform: translateY(-1px);
 }
 
 .d-pg-card-head {
@@ -18256,7 +18259,7 @@ promptflow whoami</code></pre>
       const verifiedBreakdown = co.pricing_version >= 2;
       const rows = [];
       if (verifiedBreakdown) {
-        for (const [key, label] of [["fal_usd", "fal.ai estimate"], ["elevenlabs_usd", "ElevenLabs estimate"], ["anthropic_usd", "Planning estimate"], ["claude_steps_usd", "Claude steps estimate"]]) {
+        for (const [key, label] of [["openai_images_usd", "OpenAI images estimate"], ["fal_usd", "fal.ai estimate"], ["elevenlabs_usd", "ElevenLabs estimate"], ["anthropic_usd", "Planning estimate"], ["claude_steps_usd", "Claude steps estimate"]]) {
           if (amount(co[key]) > 0) rows.push(row(label, money(co[key])));
         }
         if (amount(co.markup) > 0) rows.push(row("Platform multiplier", "×" + amount(co.markup)));
@@ -20443,6 +20446,8 @@ promptflow whoami</code></pre>
     const list = $("processList");
     if (!list) return;
     list.innerHTML = "";
+    // Desktop navigation replaces this permanently hidden legacy sidebar.
+    if (document.body.classList.contains("d-desktop-mode")) return;
 
     if (processesCache.length === 0) {
       list.innerHTML = `<div class="convo-empty">No processes yet. Try "create a process for…"</div>`;
@@ -28136,6 +28141,8 @@ function dDesktopInit(){
   // Currently-open folder name (matches data-folder values: system,
   // chats, processes, graph). null means folder view is closed.
   let _dFolderActive = null;
+  let _dFolderLoadVersion = 0;
+  let _dFolderSearchFrame = 0;
   // Cached items per folder. We refetch on every open so deletions
   // and new items propagate naturally; cache is just to avoid jank
   // between renders.
@@ -28205,6 +28212,8 @@ function dDesktopInit(){
   function dCloseFolderView() {
     window.PFMarketplace?.close();
     _dFolderActive = null;
+    ++_dFolderLoadVersion;
+    cancelAnimationFrame(_dFolderSearchFrame);
     document.body.classList.remove("d-folder-mode");
     D("dFolderView").classList.remove("active");
     dHideContextMenu();
@@ -28267,6 +28276,8 @@ function dDesktopInit(){
   }
 
   async function dLoadFolderItems(kind) {
+    const version = ++_dFolderLoadVersion;
+    const isCurrent = () => _dFolderActive === kind && version === _dFolderLoadVersion;
     // ── Step 1: paint from the existing app's in-memory cache if it's
     // already populated. The original app loads processes and the
     // first page of conversations at boot, so for repeat folder opens
@@ -28302,7 +28313,7 @@ function dDesktopInit(){
               const filtered = kind === "system"
                 ? all.filter(p => p.is_system).map(p => dMapProcess(p, "system"))
                 : all.filter(p => !p.is_system).map(p => dMapProcess(p, "process"));
-              if (_dFolderActive === kind) {
+              if (isCurrent()) {
                 _dFolderItems[kind] = filtered;
                 dRenderFolderItems(filtered, D("dFvSearch").value || "");
               }
@@ -28327,6 +28338,7 @@ function dDesktopInit(){
         items = (j.processes || []).filter(p => p.is_system).map(p => dMapProcess(p, "system"));
       }
     } catch (e) {
+      if (!isCurrent()) return;
       const isAbort = e?.name === "AbortError";
       const msg = isAbort
         ? "Timed out after 10 seconds. Check your connection or try again."
@@ -28337,6 +28349,7 @@ function dDesktopInit(){
       return;
     }
     _dFolderItems[kind] = items;
+    if (!isCurrent()) return;
     dRenderFolderItems(items, "");
   }
 
@@ -28770,9 +28783,13 @@ function dDesktopInit(){
   // Folder view back button + search
   if (D("dFvBack")) D("dFvBack").addEventListener("click", dCloseFolderView);
   if (D("dFvSearch")) D("dFvSearch").addEventListener("input", (e) => {
-    if (_dFolderActive && _dFolderItems[_dFolderActive]) {
-      dRenderFolderItems(_dFolderItems[_dFolderActive], e.target.value);
-    }
+    cancelAnimationFrame(_dFolderSearchFrame);
+    _dFolderSearchFrame = requestAnimationFrame(() => {
+      _dFolderSearchFrame = 0;
+      if (_dFolderActive && _dFolderItems[_dFolderActive]) {
+        dRenderFolderItems(_dFolderItems[_dFolderActive], D("dFvSearch").value);
+      }
+    });
   });
 
   // View-mode toggle buttons (icon / list)

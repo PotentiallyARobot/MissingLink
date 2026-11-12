@@ -1,6 +1,6 @@
 # Marketplace implementation — November 11, 2026
 
-Local changes; not deployed. Individual purchases use the existing PromptFlow token balance. Subscribers retain included downloads. Run costs are separate from the one-time unlock, and a purchase does not start a run.
+Marketplace deployed and verified November 12, 2026. Individual purchases use the existing PromptFlow token balance. Subscribers retain included downloads. Run costs are separate from the one-time unlock, and a purchase does not start a run.
 
 | Workflow | One-time tokens | Input / useful output |
 |---|---:|---|
@@ -53,3 +53,13 @@ python scripts/build-promptflow-cli.py --backend C:/missinglink-backend
 ```
 
 First build refreshes the backend runtime; second exports matching examples; final build includes those examples in the CLI ZIP. Verify a signed-in public deployment, one token unlock/re-download, subscriber inclusion and a bounded real image conversion before calling production verified. Capture trademark evidence only from the deployed real offering; see [statement-of-use notes](promptflow-statement-of-use-notes.md).
+
+
+## November 12 follow-up
+
+- Live upload → prepare → execute → image/report completed with OpenAI after removing the unnecessary fal upload dependency. Successful execution does not establish projection accuracy.
+- OpenAI image pricing now includes the documented GPT Image 2.6 output-token calculation ($30/M), text inputs ($5/M), and an explicitly estimated 2,048 tokens per source/reference image ($8/M). The current high-quality square panorama quotes 362 PromptFlow tokens at 2× markup. Provider amounts remain estimates; this is not a measured-usage receipt. Quotes made before the correction must be prepared again if their cost increases. No retrospective charges.
+- Personal images, audio/video, text outputs and HTML reports require their owner's session or API key. New R2 objects record owner metadata; historical outputs use recorded run ownership. Unauthenticated access and another account fail closed. Responses are private/no-store. Public Marketplace covers remain public. The R2 bucket has neither a public development URL nor a custom domain.
+- Provider image requests use embedded data, not public links. Providers that require non-image URLs receive a file-specific, ten-minute capability generated only at dispatch. These capabilities are not saved as user-facing output links. Already downloaded copies cannot be recalled.
+- Processes/Explore no longer blur the full window; offscreen cards defer rendering, the hidden legacy process list is skipped, and stale folder requests cannot replace the current view.
+- [Accuracy-focused panorama workflow design](promptflow-panorama-workflow.md) distinguishes the present prompt-only conversion from the recommended calibrated, masked, reprojected workflow. It is an implementation specification, not a claim that the geometric pipeline is already deployed.
