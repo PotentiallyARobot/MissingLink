@@ -126,6 +126,16 @@ test('OpenAI image quote displays its provider calculation before confirmation',
   assert.doesNotMatch(markup,/fal.ai|Charged/);
 });
 
+test('only account-protected PromptFlow files receive the private output label',()=>{
+  for(const [url,expected] of [['https://missinglink.build/api/promptflow/image/test.png',true],['https://example.test/api/promptflow/image/test.png',false]]) {
+    const notes=[];const body={querySelector:()=>null,appendChild:node=>notes.push(node)};
+    const c=vm.createContext({URL,location:{origin:'https://missinglink.build'},document:{createElement:()=>({style:{}})},renderSingleImage(){}});
+    vm.runInContext(extract('  function renderOutputs(', '  // Lazy-load model-viewer')+';globalThis.render=renderOutputs;',c);
+    c.render({body},[{url}],'image');assert.equal(notes.length,expected?1:0);
+    if(expected)assert.match(notes[0].textContent,/only accessible to your account/);
+  }
+});
+
 test('late folder responses cannot replace the folder opened afterwards',async()=>{
   const pending=[],paint=[];
   const c=vm.createContext({_dFolderLoadVersion:0,_dFolderActive:'processes',_dFolderItems:{},window:{},

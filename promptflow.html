@@ -18294,6 +18294,20 @@ promptflow whoami</code></pre>
   function renderOutputs(assist, outputs, outputKind, fallbackVideoUrl) {
     const runLabel = assist.body.querySelector(".rc-run-verb");
     if (runLabel) runLabel.textContent = "Completed";
+    const links = [fallbackVideoUrl, ...(Array.isArray(outputs) ? outputs.flatMap(o => [o?.url, o?.image_url, o?.html_url, o?.pdf_url]) : [])];
+    const hasPrivateFile = links.some(link => {
+      try {
+        const u = new URL(link, location.origin);
+        return u.origin === location.origin && /^\/api\/promptflow\/(image|audio|video|outputs|documents)\//.test(u.pathname);
+      } catch { return false; }
+    });
+    if (hasPrivateFile && !assist.body.querySelector(".output-privacy-note")) {
+      const note = document.createElement("p");
+      note.className = "output-privacy-note";
+      note.style.cssText = "color:var(--text-dim);font-size:12px;margin:8px 0";
+      note.textContent = "Private output · These PromptFlow files are only accessible to your account.";
+      assist.body.appendChild(note);
+    }
     if (!Array.isArray(outputs) || outputs.length === 0) {
       if (fallbackVideoUrl) {
         renderSingleVideo(assist, { url: fallbackVideoUrl, kind: "video", step_id: "main" });

@@ -381,4 +381,9 @@ Full implementation, prices, deployment inventory and remaining limitations: [Ma
 | PF-082 | P2 | Processes/Explore navigation and hover were choppy; late folder requests could paint the wrong view. | Removed full-panel blur and hover movement, defer offscreen card rendering, skip hidden duplicate list, batch search per frame, reject stale responses. No numerical FPS improvement claimed. |
 | PF-083 | P1 | One image edit prompt cannot guarantee equirectangular geometry or consistent directional views. | User confirmed square 180° mono. Detailed geometry-first workflow specified in promptflow-panorama-workflow.md; current conversion remains approximate pending implementation and visual validation. |
 
-Validation: 42 backend pricing/runtime/privacy tests and 31 frontend UX tests passed; Worker build passed. The pricing reference is https://developers.openai.com/api/docs/guides/image-generation (checked 2026-11-12). Broader measured billing, loop reconciliation, and provider retention controls remain recommendations.
+Validation: 43 backend pricing/runtime/privacy tests and 32 frontend UX tests passed; Worker build passed. The pricing reference is https://developers.openai.com/api/docs/guides/image-generation (checked 2026-11-12). Broader measured billing, loop reconciliation, and provider retention controls remain recommendations.
+
+
+Live verification: the historical panorama report opens for its owner; fresh anonymous GET requests to both report and image return 404 with private/no-store headers. Artifact reads bypass schema seeding, reducing the observed anonymous authorization response from about 9 seconds to 0.3–0.4 seconds. Processes shows 74 items with no duplicate hidden-list cards, no panel blur, and working filtering/list mode. A fresh panorama quote shows 362 tokens with an OpenAI line item.
+
+Remaining presentation recommendation: the review card hides the internal value-binding step (showing two steps) while execution counts all three; align visible step numbering and replace the stale “Preparing run” heading as soon as execution starts.
