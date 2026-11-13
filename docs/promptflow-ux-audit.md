@@ -403,3 +403,7 @@ Final bounded live test: “Private panorama verification” completed; quoted/c
 | PF-090 | P2 | Public listings included system processes and omitted useful provenance. | Public view filters system/draft entries and includes users' own published processes; cards expose available version, model, steps, runs and votes without inventing historical values. |
 
 The existing PF-083 panorama accuracy issue remains open. A successfully generated square image is not proof of calibrated equirectangular geometry. The Marketplace describes the current result as AI-assisted and approximate.
+
+## Run form overlap — 13 November 2026
+
+- **PF-091, P1:** Opening Marketplace → Research Brief → Prepare run from the home screen left the landing hero visible over the form. Only user-message creation hid the empty state; the direct run path starts with an assistant card. The shared assistant-card function now hides the empty state and hero graph before inserting content. Existing conversation content stays intact, and Home restores the landing screen. A lifecycle regression test covers first-card creation, returning home, and reopening; all 41 frontend tests pass.

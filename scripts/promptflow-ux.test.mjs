@@ -7,6 +7,24 @@ const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].m
 test('every inline script parses',()=>{for(const source of scripts)new vm.Script(source);});
 const extract=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
 
+test('a run form hides the home screen even without a preceding user message',()=>{
+  const empty={id:'empty',style:{display:''}},history={id:'history'};
+  let children=[empty,history],graphVisible=true;
+  history.remove=()=>{children=children.filter(el=>el!==history);};
+  const stream={scrollTop:0,scrollHeight:80,querySelectorAll:()=>[...children],appendChild(el){
+    assert.equal(empty.style.display,'none','Home must be hidden before the card is appended');
+    assert.equal(graphVisible,false);children.push(el);
+  }};
+  const c=vm.createContext({empty,stream,setHeroGraphVisible:v=>{graphVisible=v;},setConversationTitle(){},document:{createElement(){
+    const body={},el={querySelector:()=>body};el.remove=()=>{children=children.filter(x=>x!==el);};return el;
+  }}});
+  vm.runInContext(extract('  function addAssistMsg()', '  // ── Streaming discuss answer')+
+    extract('  function clearStream()', '  // The composer placeholder')+'\nglobalThis.open=addAssistMsg;globalThis.home=clearStream;',c);
+  const first=c.open();assert.ok(children.includes(first.el));assert.ok(children.includes(history));
+  c.home();assert.deepEqual(children,[empty]);assert.equal(empty.style.display,'');assert.equal(graphVisible,true);
+  c.open();assert.equal(empty.style.display,'none');assert.equal(graphVisible,false);assert.equal(children.length,2);
+});
+
 function marketplaceLauncher(response, overrides={}) {
   const events=[], alerts=[], requests=[];
   const context=vm.createContext({
