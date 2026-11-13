@@ -19037,6 +19037,9 @@ promptflow whoami</code></pre>
     const cardAssist = addAssistMsg();
     updateSend();
     const body = cardAssist.body;
+    const fieldPrefix = 'run-' + crypto.randomUUID() + '-';
+    const runField = selector => body.querySelector(selector.replace(/#(rc-[\w-]+)/g, '#' + fieldPrefix + '$1').replace('id^="rc-field-"', 'id^="' + fieldPrefix + 'rc-field-"'));
+
 
     // Skeleton paint — render fields immediately, fetch cost in
     // parallel and update the cost line when it arrives.
@@ -19143,11 +19146,12 @@ promptflow whoami</code></pre>
           '<button type="button" class="rc-run-btn">Review run →</button>' +
         '</div>' +
       '</div>';
+    body.innerHTML = body.innerHTML.replace(/\b(id|for)="(rc-[^"]+)"/g, (_, attribute, id) => attribute + '="' + fieldPrefix + id + '"');
 
     for (const [key, id] of [["run_name","rc-run-name"],["run_instructions","rc-instructions"],["text_model","rc-text-model"],["max_run_tokens","rc-max-tokens"]]) {
-      if (initial[key] != null) body.querySelector('#' + id).value = initial[key];
+      if (initial[key] != null) runField('#' + id).value = initial[key];
     }
-    const firstText = body.querySelector('.rc-fields textarea[id^="rc-field-"]');
+    const firstText = runField('.rc-fields textarea[id^="rc-field-"]');
     if (firstText && initial.supplied_text != null) firstText.value = initial.supplied_text;
     const retainedFiles = (initial.files || []).slice();
 
@@ -19157,7 +19161,7 @@ promptflow whoami</code></pre>
     // as `image` and `image_2` in FormData.
     inputKinds.forEach((kind, idx) => {
       const k = String(kind).toLowerCase();
-      const el = body.querySelector('#rc-field-' + idx + '-' + k);
+      const el = runField('#rc-field-' + idx + '-' + k);
       if (!el) return;
       const retainedIndex = retainedFiles.findIndex(entry => entry.kind === k);
       const retained = retainedIndex >= 0 ? retainedFiles.splice(retainedIndex, 1)[0].file : null;
@@ -19195,7 +19199,7 @@ promptflow whoami</code></pre>
           body: JSON.stringify({ id: proc.id }),
         });
         const j = await r.json();
-        const costRow = body.querySelector("#rc-cost-row");
+        const costRow = runField("#rc-cost-row");
         if (!costRow) return;
         if (j.ok) {
           const markupTotal = j.total_markup_tokens || 0;
@@ -19236,13 +19240,13 @@ promptflow whoami</code></pre>
           costRow.innerHTML = '<span class="rc-cost-line rc-cost-error">Cost unavailable</span>';
         }
       } catch {
-        const costRow = body.querySelector("#rc-cost-row");
+        const costRow = runField("#rc-cost-row");
         if (costRow) costRow.innerHTML = '<span class="rc-cost-line rc-cost-error">Cost unavailable</span>';
       }
     })();
 
     // Cancel — collapse to a one-line summary.
-    const cancelBtn = body.querySelector(".rc-cancel-btn");
+    const cancelBtn = runField(".rc-cancel-btn");
     cancelBtn.addEventListener("click", () => {
       body.innerHTML =
         '<div class="rc-card rc-card-cancelled">' +
@@ -19254,14 +19258,14 @@ promptflow whoami</code></pre>
     // _forceRunProcessId set. Reuses the existing /plan → /execute
     // → /status pipeline that all other run paths use, so the result
     // renders in a new bubble below the (now-collapsed) run-card.
-    const runBtnEl = body.querySelector(".rc-run-btn");
+    const runBtnEl = runField(".rc-run-btn");
     runBtnEl.addEventListener("click", async () => {
       // eslint-disable-next-line no-console
       console.log("[run-card] Run clicked", { busy, procId: proc.id });
       if (busy) {
         // Don't silently swallow — surface why nothing happened so the
         // user can recover (Escape resets busy state).
-        const cardEl = body.querySelector(".rc-card");
+        const cardEl = runField(".rc-card");
         if (cardEl) {
           const note = document.createElement("div");
           note.className = "rc-cost-line rc-cost-error";
@@ -19294,21 +19298,21 @@ promptflow whoami</code></pre>
         }
       });
 
-      const instructions = (body.querySelector('#rc-instructions').value || '').trim();
+      const instructions = (runField('#rc-instructions').value || '').trim();
       const runOptions = {
-        run_name: body.querySelector('#rc-run-name').value.trim() || proc.name,
+        run_name: runField('#rc-run-name').value.trim() || proc.name,
         run_instructions: instructions,
         supplied_text: textParts.join("\n\n"),
-        text_model: body.querySelector('#rc-text-model').value,
-        max_run_tokens: body.querySelector('#rc-max-tokens').value || '0',
+        text_model: runField('#rc-text-model').value,
+        max_run_tokens: runField('#rc-max-tokens').value || '0',
         input_mode: instructions ? 'instructions' : 'data',
       };
       if (!/^\d+$/.test(runOptions.max_run_tokens) || Number(runOptions.max_run_tokens) > 1000000) {
-        body.querySelector('#rc-max-tokens').reportValidity(); return;
+        runField('#rc-max-tokens').reportValidity(); return;
       }
       const hasAnyInput = textParts.length > 0 || stagedFiles.length > 0 || instructions || inputKinds.length === 0;
       if (!hasAnyInput) {
-        const cardEl = body.querySelector(".rc-card");
+        const cardEl = runField(".rc-card");
         if (cardEl) {
           cardEl.classList.add("rc-card-invalid");
           let error = cardEl.querySelector(".rc-input-error");
@@ -19324,7 +19328,7 @@ promptflow whoami</code></pre>
       // with no status and the composer un-cleared. Tell the user to
       // wait instead of painting a stuck bubble.
       if (busy || _planInFlight || _sendInProgress) {
-        const costRow = body.querySelector("#rc-cost-row");
+        const costRow = runField("#rc-cost-row");
         if (costRow) {
           costRow.innerHTML = '<span class="rc-cost-line" style="color:var(--gold)">Another run is in progress — wait for it to finish, then Run again.</span>';
         }
