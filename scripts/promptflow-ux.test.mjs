@@ -83,17 +83,62 @@ test('interpreter distinguishes questions, edits, runs and ambiguous follow-ups'
   for(const text of ['Run it but generate synthetic data first','Can you run it?','Generate five synthetic input records first']) assert.equal(context.intent(text),'run',text);
   for(const text of ['Add a web search step','Can you change the output to JSON?','Change this process to generate synthetic data first']) assert.equal(context.intent(text),'edit',text);
   assert.equal(context.intent('Build a new workflow for summarizing invoices'),'create');
+  assert.equal(context.intent('try again',true),'retry');
+  assert.equal(context.intent('you needed to get the information on the headquarters also this should have been a much more specific process you should have first looked for all the companies with ai agent products in texas',true),'edit');
+  assert.equal(context.intent('Why should you have searched Texas first?',true),'discuss');
+  assert.equal(context.intent('Do not change the headquarters step',true),'discuss');
 });
 
 test('open workflow messages only call refinement for a specific edit',async()=>{
   for(const [message,expected] of [['Why did this fail?','discuss'],['hello','discuss'],['Can this generate synthetic data?','discuss'],['Can you add a search step?','edit'],['Run it but generate synthetic input first','run']]) {
     const calls=[];
     const c=vm.createContext({userText:message,window:{},currentEditorProcessId:'chosen',currentEditorProcess:{id:'chosen',name:'Selected',editable:true},refineBoundProcessId:'chosen',refineBoundProcessName:'Selected',interpreterProcessContext:null,attachedFiles:[],processesCache:[],textInput:{value:message,style:{}},stream:{querySelector:()=>null},updateSend(){},paintRefineBindChip(){},paintEditorDoneRow(){},paintProcessList(){},updateComposerHint(){},streamDiscussAnswer:async(t,p)=>calls.push(['discuss',t,p.id]),refineBoundProcess:async t=>calls.push(['edit',t])});
+    Object.assign(c,{AbortSignal,setStatus(){},addAssistMsg:()=>({el:{remove(){}}}),buildConversationHistoryForRefine:()=>[],fetch:async()=>({ok:true,json:async()=>({ok:true,intent:'discuss'})}),setError:(_a,error)=>assert.fail(error)});
     vm.runInContext(extract('  function interpreterMessageIntent(', '  function clarifyInterpreterMessage(')+ '\nglobalThis.route=async()=>{'+extract('    // An open process supplies context', '    // Classify attachments.')+'};',c);
     await c.route();
     if(expected==='run') {assert.equal(c.window._forceRunProcessId,'chosen');assert.equal(c.window._pendingRunOptions.run_instructions,message);assert.equal(calls.length,0);}
     else {assert.equal(calls.length,1);assert.equal(calls[0][0],expected,message);}
   }
+});
+
+test('retry reopens the selected workflow with prior inputs and never executes it',async()=>{
+  const inputs={supplied_text:'Texas companies and headquarters',run_name:'Research',run_instructions:'Use primary sources',files:[{kind:'image',name:'reference.png'}]};
+  const calls=[];
+  const c=vm.createContext({AbortSignal,interpreterProcessContext:{id:'marketplace-research-brief',runOptions:inputs},textInput:{value:'try again',style:{}},
+    addUserMsg:t=>calls.push(['message',t]),addAssistMsg:()=>({el:{remove(){}}}),setStatus(){},updateSend(){},
+    fetch:async(url,options)=>{calls.push(['fetch',url,JSON.parse(options.body)]);return {ok:true,json:async()=>({ok:true,process:{id:'marketplace-research-brief'}})};},
+    openRunCard:async(p,i)=>calls.push(['review',p,i]),setError:(_a,e)=>assert.fail(e)});
+  vm.runInContext(extract('  async function reviewPreviousRun(', '  function runUsesSelectedProcess(')+'\nglobalThis.retry=reviewPreviousRun;',c);
+  await c.retry('try again',{id:'marketplace-research-brief'});
+  assert.equal(calls[1][1],'/api/promptflow/process/get');assert.equal(calls[2][0],'review');assert.equal(calls[2][2],inputs);assert.equal(c.busy,false);
+});
+
+test('clearing a chat requires confirmation and deletes only its conversation record',async()=>{
+  for(const confirmed of [false,true]) {
+    const calls=[];
+    const c=vm.createContext({busy:false,_planInFlight:false,_sendInProgress:false,currentConversationId:'chat',currentConversationTitle:'Research',conversationsCache:[{id:'chat'},{id:'keep'}],
+      pfConfirm:async()=>confirmed,updateSend(){},paintAttach(){},fileInput:{value:''},textInput:{value:'unfinished'},window:{},
+      startNewConversation:()=>calls.push('new'),refreshConversations:()=>calls.push('refresh'),
+      fetch:async(url,options)=>{calls.push([url,JSON.parse(options.body)]);return {ok:true,json:async()=>({ok:true})};},setError:(_a,e)=>assert.fail(e)});
+    vm.runInContext(extract('  async function clearConversation(', "  document.getElementById('clearConversationBtn')")+'\nglobalThis.clear=clearConversation;',c);
+    await c.clear();
+    if(!confirmed)assert.deepEqual(calls,[]);
+    else {assert.deepEqual(calls[0],['/api/promptflow/conversation/delete',{id:'chat'}]);assert.equal(calls[1],'new');assert.equal(c.conversationsCache.length,1);assert.equal(c.conversationsCache[0].id,'keep');assert.equal(c.textInput.value,'');}
+  }
+});
+
+test('a catalog adaptation binds to its private copy and displays the revised steps',async()=>{
+  const element=()=>({children:[],appendChild(e){this.children.push(e);}}),body=element(),calls=[];
+  const process={id:'private-copy',name:'Texas research',steps:[{name:'Discover companies'},{name:'Verify headquarters'}]};
+  const c=vm.createContext({refineBoundProcessId:'marketplace-research-brief',currentConversationId:'chat',currentEditorProcessId:null,processesCache:[],interpreterProcessContext:{runOptions:{supplied_text:'Original brief'}},
+    document:{createElement:element},addUserMsg(){},addAssistMsg:()=>({body}),setStatus(){},clearStatus(){},updateSend(){},paintProcessList(){},paintRefineBindChip(){},updateComposerHint(){},
+    buildConversationHistoryForRefine:()=>[],requestProcessRefinement:async p=>{assert.equal(p.conversation_id,'chat');return {ok:true,copied:true,process,rationale:'Added evidence checks.'};},
+    renderProcessCard:(_a,p)=>calls.push(p.id),setError:(_a,e)=>assert.fail(e),openRunCard:(p,o)=>calls.push([p.id,o.supplied_text])});
+  vm.runInContext(extract('  async function refineBoundProcess(', '  // ── Graph view')+'\nglobalThis.edit=refineBoundProcess;',c);
+  await c.edit('you needed to verify headquarters');
+  assert.equal(c.refineBoundProcessId,'private-copy');assert.equal(c.interpreterProcessContext.id,'private-copy');assert.equal(c.processesCache[0].id,'private-copy');
+  assert.deepEqual(body.children.find(e=>e.className==='updated-workflow-steps').children.map(e=>e.textContent),['Discover companies','Verify headquarters']);
+  body.children.find(e=>e.textContent==='Review updated run').onclick();assert.deepEqual(calls.at(-1),['private-copy','Original brief']);
 });
 
 test('read-only discussion carries workflow context and stops at the terminal event',async()=>{

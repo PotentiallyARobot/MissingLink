@@ -11265,6 +11265,14 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .conversation-title[hidden] { display: none; }
+.conversation-clear { position:absolute; right:12px; top:-30px; padding:3px 8px; border:0; border-radius:5px; background:var(--bg); color:var(--text-muted); font-family:inherit; font-size:12px; line-height:1.5; cursor:pointer; }
+.conversation-clear:hover { color:var(--text); background:var(--surface-2); }
+.conversation-clear:disabled { opacity:.5; cursor:default; }
+.convo-entry { display:flex; align-items:center; gap:4px; }
+.convo-entry .convo-row { flex:1; min-width:0; }
+.convo-delete { flex:none; border:0; background:transparent; color:var(--text-muted); cursor:pointer; padding:8px; border-radius:6px; }
+.convo-delete:hover { color:var(--red); background:var(--surface-2); }
+.updated-workflow-steps { padding-left:24px; line-height:1.6; }
 @media (max-width: 768px) {
   .conversation-title { top: 20px; left: 52px; max-width: calc(100vw - 295px); }
 }
@@ -11686,6 +11694,7 @@ python -m venv .venv
            Doesn't affect the layout of the bar's children since
            it's pulled out of normal flow with position:absolute. -->
       <span class="d-input-mode-label" id="dInputModeLabel" aria-hidden="true">Interpreter</span>
+      <button type="button" id="clearConversationBtn" class="conversation-clear" hidden>Clear conversation</button>
       <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.zip,.json,.txt,.md" multiple hidden>
       <button class="icon-btn" id="attachBtn" title="Attach files — image/video/audio for processing, or upload a .zip + chat (.md/.txt/.json) to contribute lessons">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -13125,7 +13134,11 @@ promptflow whoami</code></pre>
       btn.querySelector(".convo-meta").textContent =
         `${turns} turn${turns === 1 ? "" : "s"} · ${ago}`;
       btn.onclick = () => loadConversation(c.id);
-      convoList.appendChild(btn);
+      const row = document.createElement('div'); row.className = 'convo-entry';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'convo-delete';
+      remove.textContent = '×'; remove.title = 'Delete conversation'; remove.setAttribute('aria-label','Delete conversation: ' + title);
+      remove.onclick = () => clearConversation(c.id, title);
+      row.appendChild(btn); row.appendChild(remove); convoList.appendChild(row);
     }
 
     // Bottom indicator: spinner while a page is in flight, "Load more"
@@ -13231,6 +13244,30 @@ promptflow whoami</code></pre>
     textInput.focus();
   }
 
+  async function clearConversation(id = currentConversationId, title = currentConversationTitle) {
+    if (busy || _planInFlight || _sendInProgress) return;
+    if (!await pfConfirm(id ? 'Delete "' + (title || 'this conversation') + '" from Chats? Saved workflows will remain.' : 'Clear the messages in this conversation? Saved workflows will remain.', {title:'Clear conversation',confirmLabel:'Clear conversation',cancelLabel:'Cancel',danger:true})) return;
+    const clearingActive = !id || id === currentConversationId;
+    busy = true; updateSend();
+    try {
+      if (id) {
+        const response = await fetch('/api/promptflow/conversation/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.message || 'Could not clear the conversation. Please try again.');
+        conversationsCache = conversationsCache.filter(c => c.id !== id);
+      }
+      if (clearingActive) {
+        attachedFiles = []; fileInput.value = ''; paintAttach();
+        textInput.value = ''; lastUserText = '';
+        window._forceRunProcessId = null; window._pendingRunOptions = null;
+        startNewConversation();
+      } else paintConversationList();
+      refreshConversations();
+    } catch(error) { setError(addAssistMsg(),error.message); }
+    finally { busy = false; updateSend(); }
+  }
+  document.getElementById('clearConversationBtn')?.addEventListener('click', () => clearConversation());
+
   // Paint the refine-bind chip. Currently a no-op: we removed the
   // separate chip widget because it duplicated the editor pane's
   // own affordance (the editor is visible above the chat — that IS
@@ -13309,7 +13346,9 @@ promptflow whoami</code></pre>
     setConversationTitle(resp.conversation?.title || titleFromRequest(resp.turns?.[0]?.user_text));
     for (const turn of resp.turns) renderHistoricalTurn(turn);
     const lastProcessTurn = [...resp.turns].reverse().find(t => t.plan?.picked_process_id);
-    interpreterProcessContext = lastProcessTurn ? {id:lastProcessTurn.plan.picked_process_id, name:lastProcessTurn.plan.run_name || (processesCache || []).find(p => p.id === lastProcessTurn.plan.picked_process_id)?.name || "the previous workflow"} : null;
+    const previousRunTurn = [...resp.turns].reverse().find(t => t.plan?.picked_process_id && t.plan.intent !== 'update_process');
+    interpreterProcessContext = lastProcessTurn ? {id:lastProcessTurn.plan.picked_process_id, name:lastProcessTurn.plan.run_name || (processesCache || []).find(p => p.id === lastProcessTurn.plan.picked_process_id)?.name || "the previous workflow",
+      runOptions:{supplied_text:previousRunTurn?.user_text || '',run_name:lastProcessTurn.plan.run_name,run_instructions:previousRunTurn?.plan.run_instructions || ''}} : null;
     stream.scrollTop = stream.scrollHeight;
     paintConversationList();
     paintProcessList();
@@ -13382,6 +13421,11 @@ promptflow whoami</code></pre>
     addUserMsg(turn.user_text || "", turn.image_public_url || null, null);
 
     const assist = addAssistMsg();
+    if (turn.plan?.intent === 'update_process' && turn.plan.process) {
+      const note = document.createElement('p'); note.textContent = 'Updated workflow: ' + turn.plan.process.name + '. ' + (turn.plan.rationale || '');
+      assist.body.appendChild(note); renderProcessCard(assist,turn.plan.process,'updated');
+      return;
+    }
     if (turn.plan?.rationale) {
       const r = document.createElement("div");
       r.className = "text"; r.textContent = turn.plan.rationale;
@@ -15404,6 +15448,8 @@ promptflow whoami</code></pre>
   const RUN_ICON  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="6 4"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.4s" repeatCount="indefinite"/></circle></svg>`;
 
   function updateSend() {
+    const clearButton = document.getElementById('clearConversationBtn');
+    if (clearButton) { clearButton.hidden = !currentConversationId && !stream.querySelector('.msg'); clearButton.disabled = busy || _planInFlight || _sendInProgress; }
     // Three-state button: Send (idle), Stop (busy + cancellable),
     // Running (busy + locked-in process run, no abort possible).
     const hasText = !!textInput.value.trim();
@@ -15509,7 +15555,12 @@ promptflow whoami</code></pre>
     // it up front guarantees every send path tears it down.
     closeSuggestions();
 
-    const earlyIntent = interpreterMessageIntent(userText);
+    const earlyIntent = interpreterMessageIntent(userText, !!activeInterpreterProcess()?.id);
+    if (!window._forceRunProcessId && earlyIntent === "retry") {
+      _sendInProgress = false;
+      await reviewPreviousRun(userText, activeInterpreterProcess());
+      return;
+    }
     if (!window._forceRunProcessId && earlyIntent === "clarify" && !pendingContrib?.zip) {
       _sendInProgress = false;
       clarifyInterpreterMessage(userText, activeInterpreterProcess());
@@ -15771,12 +15822,28 @@ promptflow whoami</code></pre>
 
     // An open process supplies context, not permission to edit it.
     const targetProcess = activeInterpreterProcess();
-    const messageIntent = interpreterMessageIntent(userText);
+    let messageIntent = interpreterMessageIntent(userText, !!targetProcess?.id);
+    if (!window._forceRunProcessId && targetProcess?.id && messageIntent === "request") {
+      busy = true; updateSend();
+      const routing = addAssistMsg(); setStatus(routing, "Understanding your request…");
+      try {
+        const response = await fetch('/api/promptflow/interpreter/intent', {method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({text:userText,process_id:targetProcess.id,conversation_history:buildConversationHistoryForRefine(true)}),signal:AbortSignal.timeout(30000)});
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.message || 'Could not interpret the request. Try a specific run or edit instruction.');
+        messageIntent = result.intent;
+        routing.el.remove();
+      } catch(error) {
+        setError(routing,error.message); _sendInProgress = false; busy = false; updateSend(); return;
+      }
+      busy = false; updateSend();
+    }
     if (!window._forceRunProcessId && targetProcess?.id) {
       if (messageIntent === "run") {
         if (runUsesSelectedProcess(userText,targetProcess)) {
           window._forceRunProcessId = targetProcess.id;
-          window._pendingRunOptions = {run_instructions:userText, supplied_text:""};
+          const prepareInputs = /\b(?:input|sample|synthetic|test data|then run)\b/i.test(userText) || /^(?:please\s+)?(?:run|execute|test)\b/i.test(userText);
+          window._pendingRunOptions = {run_instructions:prepareInputs ? userText : "", supplied_text:prepareInputs ? "" : userText};
         } else interpreterProcessContext = null;
       } else if (messageIntent === "edit") {
         if (attachedFiles.length) {
@@ -15784,17 +15851,15 @@ promptflow whoami</code></pre>
           clarifyInterpreterMessage(userText, targetProcess);
           return;
         }
-        const target = currentEditorProcessId ? currentEditorProcess : (processesCache || []).find(p => p.id === targetProcess.id);
-        if (target?.editable === true || refineBoundProcessId === targetProcess.id) {
-          refineBoundProcessId = targetProcess.id; refineBoundProcessName = targetProcess.name;
-          textInput.value = ""; textInput.style.height = "auto"; updateSend();
-          _sendInProgress = false;
-          await refineBoundProcess(userText);
-        } else {
-          _sendInProgress = false;
-          await streamDiscussAnswer(userText, targetProcess);
-        }
+        // The server checks access and creates a private copy when the selected
+        // workflow is a Marketplace or public template.
+        refineBoundProcessId = targetProcess.id; refineBoundProcessName = targetProcess.name;
+        textInput.value = ""; textInput.style.height = "auto"; updateSend();
+        _sendInProgress = false;
+        await refineBoundProcess(userText);
         return;
+      } else if (messageIntent === "clarify") {
+        _sendInProgress = false; clarifyInterpreterMessage(userText, targetProcess); return;
       } else if (messageIntent !== "create") {
         _sendInProgress = false;
         if (attachedFiles.length) clarifyInterpreterMessage(userText, targetProcess);
@@ -16461,7 +16526,9 @@ promptflow whoami</code></pre>
 
     if (planResp?.plan?.picked_process_id) {
       const id = planResp.plan.picked_process_id;
-      interpreterProcessContext = {id, name:(processesCache || []).find(p => p.id === id)?.name || planResp.plan.run_name || "this workflow"};
+      interpreterProcessContext = {id, name:(processesCache || []).find(p => p.id === id)?.name || planResp.plan.run_name || "this workflow",
+        runOptions:{supplied_text:String(fd.get('text') || ''),run_instructions:String(fd.get('run_instructions') || ''),run_name:planResp.plan.run_name,
+          text_model:fd.get('text_model') || '',max_run_tokens:fd.get('max_run_tokens') || '',files:filesToSend}};
     }
 
     if (!currentConversationId && planResp.process?.name) setConversationTitle(planResp.process.name);
@@ -16966,7 +17033,7 @@ promptflow whoami</code></pre>
             if (pollOutcome === "unknown")  { outcome = "unknown";  break; }
 
             // pollOutcome === "failed" — decide retry vs terminal.
-            if (retryCount >= MAX_RETRIES) {
+            if (retryCount >= MAX_RETRIES || providerAccountFailure(lastErrorMessage)) {
               outcome = "failed";
               break;
             }
@@ -17216,7 +17283,7 @@ promptflow whoami</code></pre>
   // sideways — without that guarantee, a mid-stream throw would
   // leave busy=true forever and silently swallow every subsequent
   // Enter keypress at the `if (busy) return` guard in send().
-  function interpreterMessageIntent(text) {
+  function interpreterMessageIntent(text, hasProcess = false) {
     const original = String(text || "").trim();
     let command = original.toLowerCase().replace(/[’]/g, "'").replace(/^[?!\s]+/, "");
     // Questions, hypotheticals and negative instructions never authorize an edit.
@@ -17225,6 +17292,8 @@ promptflow whoami</code></pre>
     command = command.replace(/^(?:(?:can|could|would|will) you(?: please)?|(?:i want|i need|i'd like)(?: you)? to|please)\s+/, "").replace(/^please\s+/, "");
     command = command.replace(/^(?:genreate|genrate|geneate)\b/, "generate");
     if (/^(?:do not|don't|never|stop|explain|describe|help|tell me|show me)\b/.test(command)) return "discuss";
+    if (hasProcess && /^(?:retry|try again|run (?:it )?again)[.!?]*$/.test(command)) return "retry";
+    if (hasProcess && /^(?:you (?:needed to|need to|should have)|(?:it|this|the (?:process|workflow)) (?:needs to|should (?:have|first|also)))\s+\S/.test(command)) return "edit";
     if (/^(?:generate|create|make|build|do|fix|improve|change|update|retry|try again|yes|ok|okay)(?:\s+(?:it|this|that|something|better|again|please|for me))*[.!?]*$/.test(command)) return "clarify";
     if (/^(?:generate|create|design|build|make)\s+(?:(?:a|an|the|new|another)\s+)*(?:process|workflow)\b/.test(command)) return "create";
     if (/^(?:edit|refine|modify|change|update|replace|remove|rename|add|adjust|switch|fix|improve|shorten|expand|rewrite)\b/.test(command)) return "edit";
@@ -17238,6 +17307,23 @@ promptflow whoami</code></pre>
     return currentEditorProcessId ? currentEditorProcess
       : refineBoundProcessId ? {id:refineBoundProcessId,name:refineBoundProcessName}
       : interpreterProcessContext;
+  }
+
+  async function reviewPreviousRun(userText, process) {
+    if (!process?.id) { clarifyInterpreterMessage(userText, null); return; }
+    const initial = interpreterProcessContext?.id === process.id ? interpreterProcessContext.runOptions || {} : {};
+    addUserMsg(userText, null, null, []);
+    const assist = addAssistMsg(); setStatus(assist, 'Restoring the workflow and previous inputs…');
+    busy = true; updateSend();
+    try {
+      const response = await fetch('/api/promptflow/process/get', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:process.id}),signal:AbortSignal.timeout(30000)});
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.message || 'Could not reopen this workflow. Your previous inputs are still in the conversation.');
+      assist.el.remove();
+      await openRunCard(result.process, initial);
+      textInput.value = ''; textInput.style.height = 'auto';
+    } catch(error) { setError(assist,error.message); }
+    finally { busy = false; updateSend(); }
   }
 
   function runUsesSelectedProcess(text, process) {
@@ -17739,9 +17825,15 @@ promptflow whoami</code></pre>
     clearStatus(assist);
     const runLabel = assist.body.querySelector(".rc-run-verb");
     if (runLabel) runLabel.textContent = "Run failed";
-    const e = document.createElement("div");
-    e.className = "text err"; e.textContent = msg;
-    assist.body.appendChild(e);
+    let e = assist.body.querySelector('.text.err');
+    if (!e) { e = document.createElement("div"); e.className = "text err"; assist.body.appendChild(e); }
+    e.textContent = providerAccountFailure(msg)
+      ? "The site’s AI provider account cannot accept requests. This is separate from your PromptFlow tokens. The site operator needs to restore provider billing or credentials. Your workflow and inputs are unchanged; retry after access is restored."
+      : msg === 'not_found' ? 'Could not find this workflow. Reopen it from Marketplace or Processes.' : msg;
+  }
+
+  function providerAccountFailure(message) {
+    return /provider_account_unavailable|credit balance is too low|insufficient[_ ](?:credit|quota)|billing[_ ](?:hard[_ ]limit|not[_ ]active)|(?:anthropic|openai)_(?:401|403)/i.test(String(message || ''));
   }
 
   // Editable plan card. Renders each plan field as an input, returns
@@ -18941,7 +19033,9 @@ promptflow whoami</code></pre>
   }
 
   async function openRunCard(proc, initial = {}) {
+    interpreterProcessContext = {id:proc.id,name:proc.name,runOptions:initial};
     const cardAssist = addAssistMsg();
+    updateSend();
     const body = cardAssist.body;
 
     // Skeleton paint — render fields immediately, fetch cost in
@@ -21939,6 +22033,7 @@ promptflow whoami</code></pre>
         result=await response.json();
       } else result=await readGenerationStream(response,(event,data)=>progress.event(event,data));
       progress.finish(result.ok?"complete":"failed");
+      if (result.ok) assist.body.querySelector('.generation-progress')?.remove();
       return result;
     } catch(error) {
       progress.finish(controller.signal.aborted?"canceled":"failed");
@@ -22026,25 +22121,24 @@ promptflow whoami</code></pre>
     busy = true; updateSend();
     try {
       const history = buildConversationHistoryForRefine();
-      const j = await requestProcessRefinement({id,instruction,conversation_history:history},assist);
+      const j = await requestProcessRefinement({id,instruction,conversation_history:history,conversation_id:currentConversationId},assist);
       if (!j.ok) {
         setError(assist, j.message || j.error || "Refine failed.");
         busy = false; updateSend();
         return;
       }
       // Patch sidebar cache for the updated row.
-      const cached = processesCache.find(p => p.id === id);
-      if (cached) {
-        cached.name = j.process.name;
-        cached.description = j.process.description;
-        cached.input_kinds = j.process.input_kinds;
-        cached.output_kind = j.process.output_kind;
-        cached.has_python = !!j.process.python_text;
-      }
+      const cached = processesCache.find(p => p.id === j.process.id);
+      if (cached) Object.assign(cached,j.process);
+      else processesCache.push(j.process);
+      const previousOptions = interpreterProcessContext?.runOptions || {};
+      interpreterProcessContext = {id:j.process.id,name:j.process.name,runOptions:previousOptions};
+      refineBoundProcessId = j.process.id;
       paintProcessList();
-      // Update the binding name in case Claude renamed the process.
+      // Bind to the returned private copy, not the catalog's virtual ID.
       refineBoundProcessName = j.process.name;
       paintRefineBindChip();
+      updateComposerHint();
       // If the editor pane is open for this process, patch its
       // visible fields in place without re-painting (which would
       // nuke the chat stream below). The fields most likely to
@@ -22052,6 +22146,7 @@ promptflow whoami</code></pre>
       // viewer. Step list also updates if Claude added/removed
       // steps, so we do a partial replace of just the steps section.
       if (currentEditorProcessId === id) {
+        currentEditorProcessId = j.process.id;
         currentEditorProcess = j.process;
         const pane = $("editorPane");
         if (pane) {
@@ -22080,6 +22175,16 @@ promptflow whoami</code></pre>
       // no editor pane), we still want to show the process card in
       // the chat as the visible representation of what was built.
       clearStatus(assist);
+      const steps = document.createElement('ol'); steps.className = 'updated-workflow-steps';
+      for (const step of j.process.steps || []) {
+        const item = document.createElement('li'); item.textContent = step.name || step.id || step.type; steps.appendChild(item);
+      }
+      const heading = document.createElement('p');
+      heading.textContent = (j.copied ? 'Created your private workflow: ' : 'Updated workflow: ') + j.process.name + ' · ' + (j.process.steps || []).length + ' steps';
+      assist.body.appendChild(heading); assist.body.appendChild(steps);
+      const review = document.createElement('button'); review.className = 'btn'; review.textContent = 'Review updated run';
+      review.onclick = () => { if (!busy) openRunCard(j.process,previousOptions); };
+      assist.body.appendChild(review);
       if (currentEditorProcessId === id) {
         // Editor open — short status only.
         const r2 = document.createElement("div");
@@ -22099,6 +22204,7 @@ promptflow whoami</code></pre>
         note.textContent = `Updated "${j.process.name}". Keep going, or type "Generate process …" to start fresh.`;
         assist.body.appendChild(note);
       }
+      heading.scrollIntoView?.({block:'start',behavior:'smooth'});
     } catch (e) {
       setError(assist, "Network error: " + (e?.message || e));
     } finally {

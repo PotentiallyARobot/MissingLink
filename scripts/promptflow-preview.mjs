@@ -30,6 +30,7 @@ const sample = {
   steps:[{id:'summary',type:'claude',user_prompt:'Summarize {{user_text}}',output_format:'text'}],
   python_text:'INPUT_IMAGE_URL = "<INPUT_IMAGE_URL>"\nINPUT_VIDEO_URL = "<INPUT_VIDEO_URL>"\nUPLOADED_AUDIO_URL = "<UPLOADED_AUDIO_URL>"\nprint("Synthetic preview only")',public_url:'/api/promptflow/p/qa/summary',updated_at:1794344400,
 };
+const deletedConversations = new Set();
 const library = [sample, {...sample,id:'ux-published',name:'Research Paper Web Search',is_draft:false,is_published:true,is_monetized:true,markup_tokens:200,mine:false,editable:false,author_display_name:'Research team',output_kind:'multi'},
   {...sample,id:'ux-system',name:'Generate a process',is_draft:false,is_system:true,mine:false,editable:false,output_kind:'process'},
   ...Array.from({length:62},(_,i)=>({...sample,id:`ux-fixture-${i}`,name:`Sample text process ${i+1}`,is_draft:false,is_published:true,output_kind:i%2?'text':'document'}))];
@@ -82,7 +83,9 @@ const server = http.createServer(async (req,res) => {
     const process=library.find(p=>p.id===body.id);
     return process?send({ok:true,process}):send({ok:false,error:'not_found'},404);
   }
-  if(url.pathname==='/api/promptflow/conversations') return send({ok:true,conversations:[{id:'ux-history',title:'Completed research run',turn_count:1,updated_at:1794344400}],has_more:false});
+  if(url.pathname==='/api/promptflow/conversations') return send({ok:true,conversations:deletedConversations.has('ux-history')?[]:[{id:'ux-history',title:'Completed research run',turn_count:1,updated_at:1794344400}],has_more:false});
+  if(url.pathname==='/api/promptflow/conversation/delete') {deletedConversations.add(body.id);return send({ok:true,deleted:true});}
+  if(url.pathname==='/api/promptflow/interpreter/intent') return send({ok:true,intent:/find|research|summarize/i.test(body.text)?'run':'discuss'});
   if(url.pathname==='/api/promptflow/conversation/get') return send({ok:true,conversation:{id:'ux-history',title:'Completed research run'},turns:[{user_text:'Research holographic displays',plan:{...sample,picked_process_id:sample.id},status:'complete',cost:legacyCost,outputs:[{kind:'text',url:'/api/promptflow/outputs/ux-preview.txt'}],output_kind:'text'}]});
   if(url.pathname==='/api/promptflow/outputs/ux-preview.txt') {res.writeHead(200,{'content-type':'text/plain'});return res.end('- A completed research result.\n- Provider labels should reflect actual usage.\n- Show the result in the conversation.');}
   if(url.pathname==='/api/promptflow/process/quote') return send({ok:true,total_markup_tokens:0,total_bonus_tokens:0,tokens_remaining:5000,compute_estimate:cost});
@@ -155,7 +158,7 @@ const server = http.createServer(async (req,res) => {
     [1200,'stage',{stage:'reasoning'}],
     [1200,'stage',{stage:'validating'}],
     [500,'stage',{stage:'saving'}],
-    [400,'done',{ok:true,process:{...sample,description:'Updated summary process: concise and ready to review.'},rationale:'Updated the description.'}],
+    [400,'done',{ok:true,process:{...sample,name:'Company Research with Location Checks',description:'Research companies and verify headquarters from sources.',steps:[{id:'discover',name:'Discover companies matching the brief',type:'claude'},{id:'location',name:'Verify headquarters with source evidence',type:'claude'},{id:'report',name:'Write the sourced research brief',type:'claude'}]},rationale:'Added a separate headquarters verification step before the final brief.'}],
   ]);
   if(url.pathname==='/api/promptflow/process/commit_draft'){sample.is_draft=false;return send({ok:true});}
   if(url.pathname==='/api/promptflow/plan') return send({ok:false,message:'Preview only: execution is disabled. No tokens were charged.'},503);
