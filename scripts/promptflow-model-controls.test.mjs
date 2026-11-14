@@ -38,7 +38,7 @@ test('saved OpenAI choices survive the actual storage loader and the reopened fo
   }
 });
 test('home-page list requests enter streaming discussion before recipe planning',async()=>{
-  for(const userText of ['generate a list of processes that are extremely usefu;','create five useful workflow ideas','suggest useful workflows']) {
+  for(const userText of ['generate a list of processes that are extremely usefu;','create five useful workflow ideas','suggest useful workflows','Question only, do not build or run a workflow: in two sentences, explain why a higher reasoning effort can help check a CSV for inconsistent totals without requiring a longer final answer.','Quick question: explain how to run a workflow','Just a question: what does this step do']) {
     const calls=[];const c=vm.createContext({userText,window:{},attachedFiles:[],pendingContrib:null,pendingParentProcess:null,refineBoundProcessId:null,currentEditorProcessId:null,interpreterProcessContext:null,activeInterpreterProcess:()=>null,streamDiscussAnswer:t=>calls.push(t)});
     vm.runInContext(extract('  function interpreterMessageIntent(', '  function activeInterpreterProcess(')+'\nglobalThis.route=async()=>{'+extract('    const earlyIntent = interpreterMessageIntent(', '    // ── Verb dispatcher')+'};',c);
     await c.route();assert.deepEqual(calls,[userText]);
