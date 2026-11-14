@@ -1,9 +1,9 @@
-# PromptFlow™ CLI and interpreter 0.3.1
+# PromptFlow™ CLI and interpreter 0.4.1
 
 PromptFlow™ is a programming language for prompting neural networks. This
 download contains the CLI, interpreter and `examples/text-summary.promptflow`.
-Version 0.3.1 adds source-image editing and packaged reference images, including
-the Marketplace 180° panorama workflow. A workflow unlock and provider usage
+Version 0.4.1 adds optional OpenAI text models and output allowances up to each
+supported model's 128,000-token maximum. A workflow unlock and provider usage
 are separate: local runs use your own provider keys.
 
 Download `promptflow-cli.zip`, extract it, and open a terminal in the extracted
@@ -47,7 +47,8 @@ provider calls. It does not prove a credential is valid or a model is available.
 
 | Step | Required environment variable / dependency |
 | --- | --- |
-| AI text or image analysis | `ANTHROPIC_API_KEY` |
+| Claude text or image analysis | `ANTHROPIC_API_KEY` |
+| OpenAI text or image analysis | `OPENAI_API_KEY` |
 | Brave web, news, or image search | `BRAVE_API_KEY` |
 | fal media | `FAL_KEY`; `python -m pip install fal-client` |
 | OpenAI image | `OPENAI_API_KEY` |
@@ -69,15 +70,16 @@ promptflow run "my-process.promptflow" --text "your input" --output-dir ./result
 promptflow run "my-process.promptflow" --text "your input" --model claude-sonnet-5-5
 ```
 
-Use `--model` or `PROMPTFLOW_TEXT_MODEL` to select a compatible Anthropic model.
+Use `--model` or `PROMPTFLOW_TEXT_MODEL` to select a supported Claude or OpenAI model.
 Activity describes the current work: searching sources, analyzing inputs, running
 a tool, or assembling a document. Long-running steps report elapsed time.
 JSON results go to stdout and a new file in `promptflow-output/`; progress goes to
 stderr. The runner does not print key values or private model deliberation.
 
 Ctrl+C stops the local runner. Submitted provider jobs may still complete and be
-billed. The CLI limits runs to ten minutes and does not automatically replay
-failed paid steps. Inspect failures before retrying.
+billed. The CLI allows ten minutes by default, increasing with the selected
+output allowance up to two hours. It does not automatically replay failed paid
+steps. Inspect failures before retrying.
 
 ## Named runs and input preparation
 
@@ -86,6 +88,14 @@ do before running the saved workflow. For example:
 
 ```sh
 promptflow run "search-policy.promptflow" --name "Synthetic Product Labels" --instructions "Generate five clearly labeled synthetic product records first, then run the workflow" --model claude-sonnet-5-5 --max-output-tokens 4096
+```
+
+Text responses can use up to 128,000 output tokens with the supported Claude 5.5 and OpenAI GPT-6 models. OpenAI text options are `gpt-6-luna`, `gpt-6.1-terra`, `gpt-6.1-sol` and `gpt-6-astra`; selecting one requires `OPENAI_API_KEY`. Output limits include reasoning tokens. Larger limits permit longer answers and higher provider spend; they do not force the model to use the whole allowance.
+
+To replace a downloaded workflow's saved step limits as well as raising the overall allowance:
+
+```powershell
+promptflow run "my-process.promptflow" --text "Your input" --model gpt-6.1-sol --max-output-tokens 128000 --override-step-limits
 ```
 
 The interpreter first makes one AI call to plan the preparation. It shows the run
@@ -115,8 +125,10 @@ apply to local runs, which bill provider accounts directly. Use `--model` and
 and repeated calls still incur their own provider charges.
 
 In the web app, **Model & API access → Economy** selects lower-cost text models,
-8,192 planning output tokens, 2,048 output tokens per AI step, and at most five
-items per loop. Customize these limits for larger jobs. A loop that exceeds its
+8,192 planning output tokens and 2,048 output tokens per chat response or AI step.
+Balanced, Detailed, Deep work and Model maximum provide larger allowances.
+Model maximum preserves your selected models; presets preserve your run-credit
+and loop caps. Customize these limits for larger jobs. A loop that exceeds its
 limit fails before processing any of its items; it does not silently drop data.
 The downloaded runner respects a loop's saved `max_iterations` (up to 50).
 Changing web settings does not retroactively change an already downloaded file.

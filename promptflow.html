@@ -5960,7 +5960,7 @@ body.d-desktop-mode .stream {
   .d-ma-activity { grid-template-columns: 1fr; gap: 8px; }
 }
 .d-ma-activity-info { min-width: 0; }
-.d-ma-presets { display: flex; gap: 8px; }
+.d-ma-presets { display: flex; flex-wrap: wrap; gap: 8px; max-width: 430px; }
 .d-ma-presets button { flex: 1; }
 .d-ma-activity-name {
   font-size: 13.5px;
@@ -11284,6 +11284,7 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
 
 </style>
 <link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
+<script src="assets/promptflow-text-models.js?v=20261114-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261112-5"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
 </head>
@@ -12184,7 +12185,7 @@ promptflow whoami</code></pre>
         _sendInProgress = false;
         if (typeof updateSend === "function") updateSend();
       }
-    }, ms || 180_000);   // planning watchdog; execution re-arms with a longer bound
+    }, ms || Math.max(180_000, window.PFTextModels?.timeout({chat_output_tokens:Math.max(window.pfSettings?.limits?.chat_output_tokens || 4096,window.pfSettings?.limits?.planning_output_tokens || 16000)}) || 180_000));
   }
   function clearBusyWatchdog() {
     if (_busyWatchdog) { clearTimeout(_busyWatchdog); _busyWatchdog = null; }
@@ -15587,6 +15588,7 @@ promptflow whoami</code></pre>
     //     a question ("generate", "run", "build", etc.)
     const isDiscussLike = (() => {
       if (!userText) return false;
+      if (earlyIntent === "discuss") return true;
       const lower = userText.toLowerCase();
       // Hard-block: leading action verb wants the planner.
       if (/^\s*(generate|design|build|make|create|run|adapt|compose|fork|search|update|extract|distill|learn|upload|contribute|capture)\b/i.test(userText)) return false;
@@ -16265,7 +16267,7 @@ promptflow whoami</code></pre>
     // whether the plan invokes a saved process (picked_process_id).
     currentAbortController = new AbortController();
     currentRunCancellable = true;
-    armBusyWatchdog(3 * 60_000);   // planning should never hold the composer indefinitely
+    armBusyWatchdog(window.PFTextModels?.timeout({chat_output_tokens:window.pfSettings?.limits?.planning_output_tokens}) || 180000);
     // attachedFiles / fileInput / paintAttach already cleared
     // immediately after the filesToSend snapshot above — see comment
     // there. Just clear the text composer here.
@@ -16396,7 +16398,7 @@ promptflow whoami</code></pre>
             textInput.value=userText;textInput.focus();updateSend();
           },
         });
-        const response = await fetch("/api/promptflow/plan/stream", {method:"POST",body:fd,signal:AbortSignal.any([currentAbortController.signal,AbortSignal.timeout(180000)])});
+        const response = await fetch("/api/promptflow/plan/stream", {method:"POST",body:fd,signal:AbortSignal.any([currentAbortController.signal,AbortSignal.timeout(window.PFTextModels?.timeout({chat_output_tokens:window.pfSettings?.limits?.planning_output_tokens}) || 180000)])});
         planResp = await readGenerationStream(response, generationProgress.event);
         _planInFlight = false;
         generationProgress.finish(planResp?.ok ? "complete" : "failed");
@@ -16404,7 +16406,7 @@ promptflow whoami</code></pre>
       } else {
       const r = await fetch("/api/promptflow/plan", {
         method: "POST", body: fd,
-        signal: AbortSignal.any([currentAbortController.signal, AbortSignal.timeout(180000)]),
+        signal: AbortSignal.any([currentAbortController.signal, AbortSignal.timeout(window.PFTextModels?.timeout({chat_output_tokens:window.pfSettings?.limits?.planning_output_tokens}) || 180000)]),
       });
       // Read as text first so we can give useful errors when the
       // server returns HTML (404 from edge, Worker error page, auth
@@ -17292,6 +17294,11 @@ promptflow whoami</code></pre>
     command = command.replace(/^(?:(?:can|could|would|will) you(?: please)?|(?:i want|i need|i'd like)(?: you)? to|please)\s+/, "").replace(/^please\s+/, "");
     command = command.replace(/^(?:genreate|genrate|geneate)\b/, "generate");
     if (/^(?:do not|don't|never|stop|explain|describe|help|tell me|show me)\b/.test(command)) return "discuss";
+    // Generating suggestions is a conversation, not permission to build them.
+    const ideaObject = command.replace(/^(?:generate|create|make|write|give(?: me)?|produce)\s+/, "");
+    if (/^(?:suggest|recommend|brainstorm|list|compare|rank)\b/.test(command)
+        || (ideaObject !== command && /\b(?:process(?:es)?|workflows?|automations?)\b/.test(ideaObject)
+          && /^(?:(?:a|an|the|some|several|few|new|useful|practical|valuable|interesting|best|top|potential|\d+|five|ten)\s+)*(?:list|ideas?|suggestions?|recommendations?|examples?|options?|comparison|overview|(?:process|workflow|automation)\s+(?:ideas?|examples?|suggestions?|names?|recommendations?))\b/.test(ideaObject))) return "discuss";
     if (hasProcess && /^(?:retry|try again|run (?:it )?again)[.!?]*$/.test(command)) return "retry";
     if (hasProcess && /^(?:you (?:needed to|need to|should have)|(?:it|this|the (?:process|workflow)) (?:needs to|should (?:have|first|also)))\s+\S/.test(command)) return "edit";
     if (/^(?:generate|create|make|build|do|fix|improve|change|update|retry|try again|yes|ok|okay)(?:\s+(?:it|this|that|something|better|again|please|for me))*[.!?]*$/.test(command)) return "clarify";
@@ -17405,6 +17412,13 @@ promptflow whoami</code></pre>
       const answerEl = document.createElement("div");
       answerEl.className = "d-discuss-answer";
       body.appendChild(answerEl);
+      const answerText = document.createTextNode("");
+      answerEl.appendChild(answerText);
+      let scrollFrame = null;
+      const scrollAnswer = () => {
+        if (scrollFrame !== null) return;
+        scrollFrame = requestAnimationFrame(() => {scrollFrame = null; stream.scrollTop = stream.scrollHeight;});
+      };
 
       // Reset textInput so the user sees the input clear immediately.
       // (busy=true keeps further Enters from re-firing send() — we
@@ -17422,7 +17436,7 @@ promptflow whoami</code></pre>
             process_id: process?.id || null,
             conversation_history: recentMessages,
           }),
-          signal: AbortSignal.any([discussionController.signal,AbortSignal.timeout(120000)]),
+          signal: AbortSignal.any([discussionController.signal,AbortSignal.timeout(window.PFTextModels?.timeout(window.pfSettings?.limits) || 120000)]),
         });
       } catch (e) {
         setError(assist, "Network error: " + (e?.message || e));
@@ -17496,9 +17510,7 @@ promptflow whoami</code></pre>
         else setError(assist,"The response was interrupted. No workflow was changed or started.");
       } catch (e) {
         // Stream broke mid-response. Surface what we have plus a note.
-        if (!answerEl.textContent && !thinkingBody.textContent) {
-          setError(assist, "Stream interrupted: " + (e?.message || e));
-        }
+        setError(assist, "Stream interrupted: " + (e?.message || e));
       } finally {
         // Finalize the thinking spinner so it doesn't keep spinning.
         thinkingSpinner.style.display = "none";
@@ -17543,10 +17555,10 @@ promptflow whoami</code></pre>
           const delta = evt.delta || {};
           if (delta.type === "thinking_delta" && kind === "thinking") {
             thinkingBody.textContent = "Considering your request and the available information.";
-            stream.scrollTop = stream.scrollHeight;
+            scrollAnswer();
           } else if (delta.type === "text_delta" && kind === "text") {
-            answerEl.textContent += (delta.text || "");
-            stream.scrollTop = stream.scrollHeight;
+            answerText.appendData(delta.text || "");
+            scrollAnswer();
           } else if (delta.type === "input_json_delta" && kind === "server_tool_use") {
             const partial = (toolInputs.get(idx) || "") + (delta.partial_json || "");
             toolInputs.set(idx, partial);
@@ -17559,14 +17571,14 @@ promptflow whoami</code></pre>
               }
             }
           }
+        } else if (t === "message_delta" && evt.delta?.stop_reason === "max_tokens") {
+          setError(assist, "The response reached its output limit. Increase the chat response limit in Model & API access for a longer answer.");
         } else if (t === "message_stop") {
           discussionComplete = true;
         } else if (t === "error" || (evt.error)) {
           discussionComplete = true;
           const msg = evt.error?.message || evt.message || "Stream error";
-          if (!answerEl.textContent) {
-            setError(assist, msg);
-          }
+          setError(assist, msg);
         }
       }
     } finally {
@@ -18360,7 +18372,7 @@ promptflow whoami</code></pre>
       const verifiedBreakdown = co.pricing_version >= 2;
       const rows = [];
       if (verifiedBreakdown) {
-        for (const [key, label] of [["openai_images_usd", "OpenAI images estimate"], ["fal_usd", "fal.ai estimate"], ["elevenlabs_usd", "ElevenLabs estimate"], ["anthropic_usd", "Planning estimate"], ["claude_steps_usd", "Claude steps estimate"]]) {
+        for (const [key, label] of [["openai_images_usd", "OpenAI images estimate"], ["fal_usd", "fal.ai estimate"], ["elevenlabs_usd", "ElevenLabs estimate"], ["anthropic_usd", "Planning estimate"], ["claude_steps_usd", "AI text steps estimate"]]) {
           if (amount(co[key]) > 0) rows.push(row(label, money(co[key])));
         }
         if (amount(co.markup) > 0) rows.push(row("Platform multiplier", "×" + amount(co.markup)));
@@ -19126,7 +19138,7 @@ promptflow whoami</code></pre>
       '<p class="rc-cost-line">Provide input above, or tell PromptFlow how to prepare it. Review the named run and cost before it starts.</p></div>' +
       '<div class="rc-field"><label class="rc-label" for="rc-text-model">AI text model for this run</label>' +
       '<select class="rc-textarea" id="rc-text-model"><option value="">Saved step models / Settings</option>' +
-      '<option value="claude-haiku-5-5">Haiku 5.5 — lower provider cost</option><option value="claude-sonnet-5-5">Sonnet 5.5 — balanced</option><option value="claude-opus-5-5">Opus 5.5 — deeper reasoning</option></select></div>' +
+      window.PFTextModels.options(false) + '</select></div>' +
       '<div class="rc-field"><label class="rc-label" for="rc-max-tokens">Maximum compute charge (PromptFlow credits)</label>' +
       '<input class="rc-textarea" id="rc-max-tokens" type="number" min="0" max="1000000" step="1" placeholder="0 = no cap" value="' + Number(window.pfSettings?.limits?.max_run_tokens || 0) + '">' +
       '<p class="rc-cost-line">This caps the platform compute charge. Provider usage and creator fees are separate; model and output limits control provider usage.</p></div>';
@@ -22028,7 +22040,7 @@ promptflow whoami</code></pre>
     progress.event("stage",{stage:"editing"});
     assist.el.scrollIntoView({block:"start",behavior:"smooth"});
     try {
-      const options={method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(180000)])};
+      const options={method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(window.PFTextModels?.timeout({chat_output_tokens:window.pfSettings?.limits?.planning_output_tokens}) || 180000)])};
       let response=await fetch("/api/promptflow/process/refine/stream",options);
       let result;
       if(response.status===404) {
@@ -25447,7 +25459,7 @@ function dDesktopInit(){
     return {
       access_mode: "tokens",  // safe default: existing users keep token behavior
       keys: { anthropic: "", openai: "", google: "" },
-      limits: {planning_output_tokens:16000, step_output_tokens:4096, max_run_tokens:0, max_loop_items:50},
+      limits: {planning_output_tokens:16000, chat_output_tokens:4096, step_output_tokens:4096, override_step_limits:false, max_run_tokens:0, max_loop_items:50},
       // Sensible defaults so a fresh user gets a working setup
       // without having to pick anything. Generate defaults to Opus
       // because it's the safest model for code/process generation;
@@ -25477,19 +25489,36 @@ function dDesktopInit(){
     if (D("dMaKeyAnthropic")) D("dMaKeyAnthropic").value = s.keys.anthropic || "";
     if (D("dMaKeyOpenai")) D("dMaKeyOpenai").value = s.keys.openai || "";
     if (D("dMaKeyGoogle")) D("dMaKeyGoogle").value = s.keys.google || "";
+    // Use the same provider choices for each activity.
+    for (const activity of ['Generate','Chat','Adapt','Search','Learn','Run']) {
+      const select = D('dMaModel'+activity);
+      if (select) select.innerHTML = '<option value="">Deployment default</option>'+window.PFTextModels.options();
+    }
+    if (D('dMaPresetProvider')) D('dMaPresetProvider').value = String(s.models.chat || '').startsWith('openai:') || String(s.models.chat || '').startsWith('gpt-') ? 'openai' : 'anthropic';
     // Models
-    if (D("dMaModelGenerate")) D("dMaModelGenerate").value = s.models.generate || "";
-    if (D("dMaModelChat")) D("dMaModelChat").value = s.models.chat || "";
-    if (D("dMaModelAdapt")) D("dMaModelAdapt").value = s.models.adapt || "";
-    if (D("dMaModelSearch")) D("dMaModelSearch").value = s.models.search || "";
-    if (D("dMaModelLearn")) D("dMaModelLearn").value = s.models.learn || "";
-    if (D("dMaModelRun")) D("dMaModelRun").value = s.models.run || "";
+    if (D("dMaModelGenerate")) D("dMaModelGenerate").value = s.models.generate ? (window.PFTextModels.find(s.models.generate)?.provider || "anthropic")+":"+String(s.models.generate).replace(/^(anthropic|openai):/, "") : "";
+    if (D("dMaModelChat")) D("dMaModelChat").value = s.models.chat ? (window.PFTextModels.find(s.models.chat)?.provider || "anthropic")+":"+String(s.models.chat).replace(/^(anthropic|openai):/, "") : "";
+    if (D("dMaModelAdapt")) D("dMaModelAdapt").value = s.models.adapt ? (window.PFTextModels.find(s.models.adapt)?.provider || "anthropic")+":"+String(s.models.adapt).replace(/^(anthropic|openai):/, "") : "";
+    if (D("dMaModelSearch")) D("dMaModelSearch").value = s.models.search ? (window.PFTextModels.find(s.models.search)?.provider || "anthropic")+":"+String(s.models.search).replace(/^(anthropic|openai):/, "") : "";
+    if (D("dMaModelLearn")) D("dMaModelLearn").value = s.models.learn ? (window.PFTextModels.find(s.models.learn)?.provider || "anthropic")+":"+String(s.models.learn).replace(/^(anthropic|openai):/, "") : "";
+    if (D("dMaModelRun")) D("dMaModelRun").value = s.models.run ? (window.PFTextModels.find(s.models.run)?.provider || "anthropic")+":"+String(s.models.run).replace(/^(anthropic|openai):/, "") : "";
     if (D("dMaPlanningLimit")) D("dMaPlanningLimit").value = s.limits?.planning_output_tokens || 16000;
+    if (D("dMaChatLimit")) D("dMaChatLimit").value = s.limits?.chat_output_tokens || 4096;
+    if (D("dMaOverrideLimits")) D("dMaOverrideLimits").checked = s.limits?.override_step_limits === true;
     if (D("dMaStepLimit")) D("dMaStepLimit").value = s.limits?.step_output_tokens || 4096;
     if (D("dMaLoopLimit")) D("dMaLoopLimit").value = s.limits?.max_loop_items || 50;
     if (D("dMaRunLimit")) D("dMaRunLimit").value = s.limits?.max_run_tokens || 0;
     // Dim keys section when in tokens mode
     dMaUpdateKeySection();
+    dMaBudgetSummary(s);
+  }
+
+  function dMaBudgetSummary(settings) {
+    const model = window.PFTextModels.find(settings.models?.chat);
+    const node = D('dMaBudgetSummary');
+    if (!node || !model) return;
+    const limit = Math.min(model.max,Number(settings.limits?.chat_output_tokens || 4096));
+    node.textContent = model.name+' permits up to '+model.max.toLocaleString()+' output tokens per response. Your '+limit.toLocaleString()+'-token chat allowance represents up to $'+(limit*model.output/1000000).toFixed(4)+' in generated-token usage, plus input and tool usage. Actual usage may be lower.';
   }
 
   function dMaReadFromForm() {
@@ -25498,6 +25527,8 @@ function dDesktopInit(){
       limits: {
         planning_output_tokens: Number(D("dMaPlanningLimit")?.value || 16000),
         step_output_tokens: Number(D("dMaStepLimit")?.value || 4096),
+        chat_output_tokens: Number(D("dMaChatLimit")?.value || 4096),
+        override_step_limits: !!D("dMaOverrideLimits")?.checked,
         max_run_tokens: Number(D("dMaRunLimit")?.value || 0),
         max_loop_items: Number(D("dMaLoopLimit")?.value || 50),
       },
@@ -25589,7 +25620,9 @@ function dDesktopInit(){
   // exists for explicit server-side persistence, but the user no
   // longer has to click it to make their choice take effect locally.
   function dMaAutoSave() {
+    for (const id of ['dMaRunLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).checkValidity()) return;
     const settings = dMaReadFromForm();
+    dMaBudgetSummary(settings);
     try {
       localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify(settings));
     } catch {}
@@ -25638,7 +25671,7 @@ function dDesktopInit(){
   })();
 
   async function dMaSave() {
-    if (D('dMaRunLimit') && !D('dMaRunLimit').reportValidity()) return;
+    for (const id of ['dMaRunLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).reportValidity()) return;
     const settings = dMaReadFromForm();
     const saveBtn = D("dMaSave");
     if (saveBtn) saveBtn.disabled = true;
@@ -25688,15 +25721,11 @@ function dDesktopInit(){
     }
   }
 
-  for (const [id, economical] of [["dMaEconomy",true],["dMaBalanced",false]]) {
-    D(id)?.addEventListener("click", () => {
-      const settings = dMaReadFromForm();
-      settings.models = {generate:"anthropic:claude-sonnet-5-5",adapt:"anthropic:claude-sonnet-5-5",learn:"anthropic:claude-sonnet-5-5",search:"anthropic:claude-haiku-5-5",chat: economical ? "anthropic:claude-haiku-5-5" : "anthropic:claude-sonnet-5-5",run:economical ? "anthropic:claude-haiku-5-5" : "anthropic:claude-sonnet-5-5"};
-      settings.limits.planning_output_tokens = economical ? 8192 : 16000;
-      settings.limits.step_output_tokens = economical ? 2048 : 4096;
-      settings.limits.max_loop_items = economical ? 5 : 20;
+  for (const [id, key] of [['dMaEconomy','economy'],['dMaBalanced','balanced'],['dMaDetailed','detailed'],['dMaDeep','deep'],['dMaMaximum','maximum']]) {
+    D(id)?.addEventListener('click', () => {
+      const settings = window.PFTextModels.preset(dMaReadFromForm(),key,D('dMaPresetProvider').value);
       dMaApplyToForm(settings); dMaAutoSave();
-      dMaSetStatus('Preset applied in this browser. Save settings to use it from the CLI and other browsers.', 'info');
+      dMaSetStatus(window.PFTextModels.presets[key].name+' applied in this browser. Save settings to sync across devices.', 'info');
     });
   }
 
@@ -25716,7 +25745,7 @@ function dDesktopInit(){
   // immediately to the current session (window.pfSettings + the
   // fetch header). They can still click Save for server-side persist.
   ["dMaKeyAnthropic","dMaKeyOpenai","dMaKeyGoogle",
-   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaRunLimit","dMaLoopLimit"]
+   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaChatLimit","dMaOverrideLimits","dMaRunLimit","dMaLoopLimit"]
     .forEach(id => {
       const el = D(id);
       if (!el) return;
@@ -30277,23 +30306,27 @@ if (document.readyState === "loading") {
     <section class="d-ma-section">
       <div class="d-ma-section-head">
         <h3>System process model assignment</h3>
-        <p>Choose the Claude model for each activity. Run settings apply to AI text steps; image, video and search tools keep the models defined in the workflow. A run-specific model overrides saved text-step models.</p>
+        <p>Choose Claude or an optional OpenAI model for each activity. Run settings apply to AI text steps; image, video and search tools keep the models defined in the workflow. A run-specific model overrides saved text-step models.</p>
       </div>
 
-      <div class="d-ma-activity"><div class="d-ma-activity-info"><div class="d-ma-activity-name">Cost preset</div><div class="d-ma-activity-desc">Apply a starting point, then customize each activity.</div></div>
-        <div class="d-ma-presets"><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaEconomy">Economy</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaBalanced">Balanced</button></div></div>
+      <div class="d-ma-activity"><div class="d-ma-activity-info"><div class="d-ma-activity-name">Cost preset</div><div class="d-ma-activity-desc">Apply a starting point, then customize each activity. Model maximum keeps your selected models.</div></div>
+        <div><label for="dMaPresetProvider">Preset provider</label> <select id="dMaPresetProvider" class="d-ma-activity-select"><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select><div class="d-ma-presets"><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaEconomy">Economy</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaBalanced">Balanced</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaDetailed">Detailed</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaDeep">Deep work</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaMaximum">Model maximum</button></div></div></div>
       <div class="d-ma-activity"><div class="d-ma-activity-info"><label class="d-ma-activity-name" for="dMaModelRun">Workflow text steps</label><div class="d-ma-activity-desc">Default for steps without a saved text model. Override all text steps in the Run form.</div></div>
         <select class="d-ma-activity-select" id="dMaModelRun"><option value="">Deployment default</option><option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option><option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option><option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option></select></div>
-      <div class="d-ma-activity"><label for="dMaPlanningLimit">Planning output-token limit</label><select class="d-ma-activity-select" id="dMaPlanningLimit"><option value="8192">8,192 — lower cost</option><option value="16000">16,000 — balanced</option><option value="32000">32,000 — complex designs</option></select></div>
-      <div class="d-ma-activity"><label for="dMaStepLimit">Output-token limit per AI step</label><select class="d-ma-activity-select" id="dMaStepLimit"><option value="1024">1,024 — short outputs</option><option value="2048">2,048</option><option value="4096">4,096</option><option value="8192">8,192</option></select></div>
+      <div class="d-ma-activity"><label for="dMaPlanningLimit">Planning and editing output-token limit</label><input class="d-ma-activity-select" id="dMaPlanningLimit" type="number" min="2048" max="128000" step="1" value="16000" list="dMaTokenChoices"></div>
+      <p class="d-ma-activity-desc" id="dMaBudgetSummary" aria-live="polite"></p>
+      <datalist id="dMaTokenChoices"><option value="2048"><option value="4096"><option value="8192"><option value="16000"><option value="32000"><option value="64000"><option value="128000"></datalist>
+      <div class="d-ma-activity"><label for="dMaChatLimit">Chat response output-token limit</label><input class="d-ma-activity-select" id="dMaChatLimit" type="number" min="256" max="128000" step="1" value="4096" list="dMaTokenChoices"></div>
+      <div class="d-ma-activity"><label for="dMaStepLimit">Output-token limit per AI step</label><input class="d-ma-activity-select" id="dMaStepLimit" type="number" min="256" max="128000" step="1" value="4096" list="dMaTokenChoices"></div>
+      <div class="d-ma-activity"><label for="dMaOverrideLimits">Use this AI-step limit instead of saved step limits</label><input id="dMaOverrideLimits" type="checkbox"></div>
       <div class="d-ma-activity"><label for="dMaLoopLimit">Maximum items per loop</label><select class="d-ma-activity-select" id="dMaLoopLimit"><option value="5">5 — small test</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select></div>
       <div class="d-ma-activity"><label for="dMaRunLimit">Maximum compute credits per run</label><input class="d-ma-activity-select" id="dMaRunLimit" type="number" min="0" max="1000000" step="1" placeholder="0 = no cap"></div>
-      <p class="d-ma-activity-desc">Output limits include provider reasoning tokens where applicable. A limit that is too low can truncate a result; the run will stop with an error. Loops exceeding the item limit stop before processing any of their items. The credit cap covers hosted compute, not provider bills or creator fees. Each run shows its quote before execution.</p>
+      <p class="d-ma-activity-desc">Choose up to 128,000 output tokens for the listed models, or use Model maximum. This is an allowance, not a requested response length; ask for the detail you want. Limits include provider reasoning tokens where applicable. Higher allowances can cost more. A limit that is too low can truncate a result; the run will stop with an error. Loops exceeding the item limit stop before processing any of their items. The credit cap covers hosted compute, not provider bills or creator fees. Each run shows its quote before execution.</p>
 
       <div class="d-ma-activity">
         <div class="d-ma-activity-info">
           <div class="d-ma-activity-name">Generate</div>
-          <div class="d-ma-activity-desc">Building new processes from a prompt. The primary action — "Generate a process that…" Opus is the safe default; Sonnet is faster and cheaper.</div>
+          <div class="d-ma-activity-desc">Designing new workflows from your instructions.</div>
         </div>
         <select class="d-ma-activity-select" id="dMaModelGenerate">
           <option value="">Select a model…</option>
@@ -30308,7 +30341,7 @@ if (document.readyState === "loading") {
       <div class="d-ma-activity">
         <div class="d-ma-activity-info">
           <div class="d-ma-activity-name">Chat</div>
-          <div class="d-ma-activity-desc">Conversational responses, planning, the default reasoning model.</div>
+          <div class="d-ma-activity-desc">Answers, workflow discussions and preparing inputs for a run.</div>
         </div>
         <select class="d-ma-activity-select" id="dMaModelChat">
           <option value="">Select a model…</option>

@@ -175,7 +175,7 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});return res.end(html);
   }
   // Only serve public image assets used by this page; never repository files.
-  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js'].includes(url.pathname)) {
+  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js'].includes(url.pathname)) {
     res.writeHead(200,{'content-type':url.pathname.endsWith('.css')?'text/css':'text/javascript'});return res.end(await readFile(path.join(root,url.pathname)));
   }
   if(url.pathname==='/promptflow-cli.zip') {res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="promptflow-cli.zip"'});return res.end(await readFile(path.join(root,'promptflow-cli.zip')));}

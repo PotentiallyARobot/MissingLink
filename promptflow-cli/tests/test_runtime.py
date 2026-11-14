@@ -20,6 +20,31 @@ from rich.console import Console
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_openai_text_uses_its_own_key_and_full_selected_allowance(self):
+        r=self.runner([{'id':'answer','type':'claude','max_tokens':1024,'user_prompt':'Answer {{user_text}}'}])
+        r.model='gpt-6.1-sol';r.max_output_tokens=128000;r.override_step_limits=True
+        result={'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':'Useful result'}]}]}
+        with patch.dict(os.environ,{'OPENAI_API_KEY':'fixture'},clear=True),patch.object(runtime,'request_json',return_value=result) as provider:
+            r.preflight()
+            output=r.execute({'text':'test'})
+        self.assertEqual(output['answer']['text'],'Useful result')
+        url,headers,body=provider.call_args.args
+        self.assertEqual(url,'https://api.openai.com/v1/responses')
+        self.assertEqual(headers['authorization'],'Bearer fixture')
+        self.assertEqual(body['max_output_tokens'],128000)
+        self.assertFalse(body['store'])
+
+    def test_text_stream_requires_terminal_event_and_keeps_truncation(self):
+        events=[{'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}},
+                {'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'partial'}},
+                {'type':'message_delta','delta':{'stop_reason':'max_tokens'}},{'type':'message_stop'}]
+        payload=b''.join(('data: '+json.dumps(e)+'\n\n').encode() for e in events)
+        with patch.object(runtime,'urlopen',return_value=contextlib.closing(io.BytesIO(payload))):
+            result=runtime.request_json('https://example.test',{}, {'stream':True})
+        self.assertEqual(result['content'][0]['text'],'partial');self.assertEqual(result['stop_reason'],'max_tokens')
+        with patch.object(runtime,'urlopen',return_value=contextlib.closing(io.BytesIO(b''))):
+            with self.assertRaisesRegex(runtime.RunError,'before completion'):runtime.request_json('https://example.test',{}, {'stream':True})
+
     def test_parallel_steps_overlap_then_join_in_order(self):
         r=self.runner([{'id':str(i),'type':'recipe','recipe_id':'__promptflow_value','parallel_group':'work','params':{'value':i}} for i in range(6)])
         barrier=threading.Barrier(3,timeout=3)

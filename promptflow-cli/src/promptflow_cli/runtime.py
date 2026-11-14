@@ -92,6 +92,25 @@ def request_json(url, headers, payload=None):
     data = None if payload is None else json.dumps(payload).encode('utf-8')
     try:
         with urlopen(Request(url, data=data, headers=headers), timeout=120) as response:
+            if payload and payload.get('stream'):
+                blocks, usage, stop_reason = {}, {}, None
+                for line in response:
+                    if not line.startswith(b'data:'): continue
+                    raw = line[5:].strip()
+                    if raw == b'[DONE]': continue
+                    event = json.loads(raw)
+                    kind = event.get('type')
+                    if kind in ('error','response.failed'):
+                        raise RunError('The text provider could not complete the response. Check provider status before retrying.')
+                    if kind in ('response.completed','response.incomplete'): return event['response']
+                    if kind == 'content_block_start': blocks[event['index']] = dict(event['content_block'])
+                    if kind == 'content_block_delta' and event.get('delta',{}).get('type') == 'text_delta':
+                        block = blocks[event['index']]
+                        block['text'] = block.get('text','') + event['delta'].get('text','')
+                    if kind == 'message_delta':
+                        usage.update(event.get('usage',{})); stop_reason = event.get('delta',{}).get('stop_reason',stop_reason)
+                    if kind == 'message_stop': return {'content':list(blocks.values()),'usage':usage,'stop_reason':stop_reason}
+                raise RunError('The provider stream ended before completion.')
             return json.load(response)
     except HTTPError as exc:
         # Provider error bodies can echo user input or secrets. Keep diagnostics bounded.
@@ -112,6 +131,47 @@ def lookup(scope, path):
         else:
             raise RunError(f'Unresolved input or step reference: {path}')
     return value
+
+
+OPENAI_TEXT_MODELS = {'gpt-6-luna','gpt-6.1-terra','gpt-6.1-sol','gpt-6-astra'}
+
+def text_model(model):
+    return re.sub(r'^(?:anthropic|openai):', '', model)
+
+def text_key(model):
+    return 'OPENAI_API_KEY' if text_model(model) in OPENAI_TEXT_MODELS else 'ANTHROPIC_API_KEY'
+
+def text_request(body):
+    body = dict(body)
+    body['model'] = text_model(body['model'])
+    body['max_tokens'] = min(128000,body['max_tokens'])
+    key = text_key(body['model'])
+    if not os.environ.get(key): raise RunError('Missing API key: set ' + key + '.')
+    if key == 'ANTHROPIC_API_KEY':
+        if body['max_tokens'] > 8192: body['stream'] = True
+        return request_json('https://api.anthropic.com/v1/messages', {
+            'x-api-key':os.environ[key], 'anthropic-version':'2023-06-01', 'content-type':'application/json'},body)
+    messages = []
+    for message in body['messages']:
+        content = message['content']
+        if isinstance(content,list):
+            converted = []
+            for block in content:
+                if block['type'] == 'text': converted.append({'type':'input_text','text':block['text']})
+                elif block['type'] == 'image':
+                    source = block['source']
+                    converted.append({'type':'input_image','image_url':source['url'] if source['type']=='url' else 'data:'+source['media_type']+';base64,'+source['data']})
+                else: raise RunError('Unsupported input for the selected OpenAI model.')
+            content = converted
+        messages.append({'role':message['role'],'content':content})
+    data = request_json('https://api.openai.com/v1/responses',{'authorization':'Bearer '+os.environ[key],'content-type':'application/json'}, {
+        'model':body['model'],'input':messages,'instructions':body.get('system',''),
+        'max_output_tokens':body['max_tokens'],'reasoning':{'effort':'medium'},'store':False,'stream':True})
+    if data.get('status') not in ('completed','incomplete'): raise RunError('The OpenAI response did not complete.')
+    limited = data.get('incomplete_details',{}).get('reason') == 'max_output_tokens' if data.get('incomplete_details') else False
+    if data.get('status') == 'incomplete' and not limited: raise RunError('The OpenAI response was incomplete.')
+    return {'content':[{'type':'text','text':block.get('text') or block.get('refusal','')} for item in data.get('output',[]) if item.get('type')=='message' for block in item.get('content',[]) if block.get('type') in ('output_text','refusal')],
+        'usage':data.get('usage',{}),'stop_reason':'max_tokens' if limited else 'end_turn'}
 
 
 def as_text(value):
@@ -173,13 +233,14 @@ def parse_json_text(text):
 
 
 class Runtime:
-    def __init__(self, root, output, model=None, depth=0, max_output_tokens=4096):
+    def __init__(self, root, output, model=None, depth=0, max_output_tokens=4096, override_step_limits=False):
         self.root, self.output, self.model, self.depth = Path(root), Path(output), model, depth
         self.manifest = json.loads((self.root / 'manifest.json').read_text('utf-8'))
         if self.manifest.get('format') != 'promptflow/1' or not isinstance(self.manifest.get('steps'), list):
             raise RunError('This export has no executable step graph. Download it again from the updated app.')
         self.custom = {r['id']: r for r in self.manifest.get('custom_recipes', [])}
         self.max_output_tokens = max_output_tokens
+        self.override_step_limits = override_step_limits
 
     def preflight(self):
         needs = set()
@@ -196,7 +257,7 @@ class Runtime:
         def walk(steps):
             for step in steps:
                 kind, recipe = step.get('type'), step.get('recipe_id', '')
-                if kind == 'claude': needs.add('ANTHROPIC_API_KEY')
+                if kind == 'claude': needs.add(text_key(self.model or step.get('text_model') or step.get('model') or self.manifest.get('default_text_model') or 'claude-sonnet-5-5'))
                 elif kind == 'loop': walk(step.get('body', []))
                 elif kind == 'process':
                     if self.depth >= 6: raise RunError('Nested process depth exceeds 6.')
@@ -222,7 +283,7 @@ class Runtime:
     def child(self, step):
         rel = self.manifest.get('processes', {}).get(step.get('process_id'))
         if not rel: raise RunError('A nested process is missing from this export. Download the process again.')
-        return Runtime(safe_path(self.root, rel), self.output, self.model, self.depth + 1, self.max_output_tokens)
+        return Runtime(safe_path(self.root, rel), self.output, self.model, self.depth + 1, self.max_output_tokens, self.override_step_limits)
 
     def input_scope(self, inputs, validate=True):
         scope = dict(inputs)
@@ -243,8 +304,8 @@ class Runtime:
 
     def plan_inputs(self, inputs, instructions, name=None):
         """Plan input preparation with the same executable tools as the runner."""
-        if not os.environ.get('ANTHROPIC_API_KEY'):
-            raise RunError('Input preparation needs ANTHROPIC_API_KEY.')
+        key = text_key(self.model or self.manifest.get('default_text_model') or 'claude-sonnet-5-5')
+        if not os.environ.get(key): raise RunError('Input preparation needs ' + key + '.')
         tools = ['assemble_document']
         if os.environ.get('BRAVE_API_KEY'): tools += ['brave_web_search', 'brave_news_search', 'brave_image_search']
         if os.environ.get('OPENAI_API_KEY'): tools += ['gpt_image_2']
@@ -271,10 +332,9 @@ class Runtime:
             'No code execution, secrets, or new external endpoints.'
         )
         with activity('Planning input preparation (one provider call; no workflow steps started)'):
-            data = request_json('https://api.anthropic.com/v1/messages', {
-                'x-api-key':os.environ['ANTHROPIC_API_KEY'], 'anthropic-version':'2023-06-01', 'content-type':'application/json'}, {
+            data = text_request({
                 'model':self.model or self.manifest.get('default_text_model') or 'claude-sonnet-5-5',
-                'max_tokens':min(8192,self.max_output_tokens), 'system':system,
+                'max_tokens':self.max_output_tokens, 'system':system,
                 'messages':[{'role':'user','content':json.dumps({
                     'workflow':self.manifest.get('name'), 'description':self.manifest.get('description'),
                     'required_inputs':self.manifest.get('input_kinds',[]), 'instructions':instructions,
@@ -394,9 +454,8 @@ class Runtime:
                 source = {'type':'base64','media_type':mimetypes.guess_type(path.name)[0] or 'image/png','data':base64.b64encode(path.read_bytes()).decode()}
             content.insert(0, {'type':'image', 'source':source})
         model = self.model or step.get('text_model') or step.get('model') or self.manifest.get('default_text_model') or 'claude-sonnet-5-5'
-        data = request_json('https://api.anthropic.com/v1/messages', {
-            'x-api-key':os.environ['ANTHROPIC_API_KEY'], 'anthropic-version':'2023-06-01', 'content-type':'application/json'}, {
-            'model':model, 'max_tokens':min(int(step.get('max_tokens',self.max_output_tokens)),self.max_output_tokens),
+        data = text_request({
+            'model':model, 'max_tokens':self.max_output_tokens if self.override_step_limits else min(int(step.get('max_tokens',self.max_output_tokens)),self.max_output_tokens),
             'system':as_text(resolve(step.get('system_prompt',''),scope,self.root)),
             'messages':[{'role':'user','content':content}]})
         if data.get('stop_reason') == 'max_tokens': raise RunError('AI output reached its token limit. Increase max_tokens in the step before retrying.')
@@ -585,7 +644,8 @@ def main(bundle=None, argv=None):
     parser.add_argument('--model', help='Override the text model for AI steps')
     parser.add_argument('--instructions', help='Generate or research inputs before running the saved workflow')
     parser.add_argument('--name', help='Name this run')
-    parser.add_argument('--max-output-tokens', type=int, default=4096, help='AI output-token limit per call (256–8192)')
+    parser.add_argument('--max-output-tokens', type=int, default=4096, help='AI output-token limit per call (256–128000)')
+    parser.add_argument('--override-step-limits', action='store_true', help='Use the selected token allowance instead of saved step limits')
     parser.add_argument('--yes', action='store_true', help='Accept the generated input-preparation plan without prompting')
     parser.add_argument('--check', action='store_true',help='Check inputs, keys, and dependencies without calling providers')
     args = parser.parse_args(argv)
@@ -599,8 +659,8 @@ def main(bundle=None, argv=None):
             inputs[key] = value
         if args.text is not None: inputs['text'] = args.text
         with bundle_root(bundle or args.bundle) as root:
-            if not 256 <= args.max_output_tokens <= 8192: raise RunError('--max-output-tokens must be between 256 and 8192.')
-            runtime = Runtime(root, args.output_dir, args.model or os.environ.get('PROMPTFLOW_TEXT_MODEL'), max_output_tokens=args.max_output_tokens)
+            if not 256 <= args.max_output_tokens <= 128000: raise RunError('--max-output-tokens must be between 256 and 128000.')
+            runtime = Runtime(root, args.output_dir, args.model or os.environ.get('PROMPTFLOW_TEXT_MODEL'), max_output_tokens=args.max_output_tokens, override_step_limits=args.override_step_limits)
             progress('Checking bundle, required credentials, and dependencies')
             runtime.input_scope(inputs, validate=not bool(args.instructions))
             runtime.preflight()

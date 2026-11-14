@@ -146,7 +146,7 @@ def register(app: typer.Typer, console, err) -> None:
         raise typer.Exit(execute_bundle(process_file, [], text, dry_run))
 
 
-def execute_bundle(process_file, inputs=None, text=None, check=False, output_dir="promptflow-output", model=None, instructions=None, name=None, yes=False, max_output_tokens=4096):
+def execute_bundle(process_file, inputs=None, text=None, check=False, output_dir="promptflow-output", model=None, instructions=None, name=None, yes=False, max_output_tokens=4096, override_step_limits=False):
     """Use a child process so Ctrl+C, output streams, and working paths behave normally."""
     from promptflow_cli import runtime
     p = Path(process_file).expanduser().resolve()
@@ -165,11 +165,12 @@ def execute_bundle(process_file, inputs=None, text=None, check=False, output_dir
     if name: cmd.extend(["--name",name])
     if yes: cmd.append("--yes")
     cmd.extend(["--max-output-tokens",str(max_output_tokens)])
+    if override_step_limits: cmd.append('--override-step-limits')
     try:
         # Inherit stdout/stderr: live progress must not be buffered until completion.
-        return subprocess.run(cmd,env=env,timeout=600).returncode
+        return subprocess.run(cmd,env=env,timeout=max(600,min(7200,max_output_tokens//20))).returncode
     except subprocess.TimeoutExpired:
-        print("Run timed out after 10 minutes. A submitted provider job may still complete.",file=sys.stderr)
+        print("Run reached its time limit. A submitted provider job may still complete.",file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130

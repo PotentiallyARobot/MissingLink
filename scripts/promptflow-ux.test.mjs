@@ -90,7 +90,7 @@ test('interpreter distinguishes questions, edits, runs and ambiguous follow-ups'
 });
 
 test('open workflow messages only call refinement for a specific edit',async()=>{
-  for(const [message,expected] of [['Why did this fail?','discuss'],['hello','discuss'],['Can this generate synthetic data?','discuss'],['Can you add a search step?','edit'],['Run it but generate synthetic input first','run']]) {
+  for(const [message,expected] of [['generate a list of processes that are extremely usefu;','discuss'],['Why did this fail?','discuss'],['hello','discuss'],['Can this generate synthetic data?','discuss'],['Can you add a search step?','edit'],['Run it but generate synthetic input first','run']]) {
     const calls=[];
     const c=vm.createContext({userText:message,window:{},currentEditorProcessId:'chosen',currentEditorProcess:{id:'chosen',name:'Selected',editable:true},refineBoundProcessId:'chosen',refineBoundProcessName:'Selected',interpreterProcessContext:null,attachedFiles:[],processesCache:[],textInput:{value:message,style:{}},stream:{querySelector:()=>null},updateSend(){},paintRefineBindChip(){},paintEditorDoneRow(){},paintProcessList(){},updateComposerHint(){},streamDiscussAnswer:async(t,p)=>calls.push(['discuss',t,p.id]),refineBoundProcess:async t=>calls.push(['edit',t])});
     Object.assign(c,{AbortSignal,setStatus(){},addAssistMsg:()=>({el:{remove(){}}}),buildConversationHistoryForRefine:()=>[],fetch:async()=>({ok:true,json:async()=>({ok:true,intent:'discuss'})}),setError:(_a,error)=>assert.fail(error)});
@@ -143,8 +143,8 @@ test('a catalog adaptation binds to its private copy and displays the revised st
 
 test('read-only discussion carries workflow context and stops at the terminal event',async()=>{
   const element=()=>({style:{},textContent:'',innerHTML:'',appendChild(){},querySelector(){return element();}});
-  let request,canceled=false;
-  const c=vm.createContext({AbortController,AbortSignal,TextDecoder,document:{createElement:element},textInput:{value:'Why?',style:{}},stream:{scrollHeight:0},currentConversationId:null,buildConversationHistoryForRefine:()=>[{role:'assistant',content:'The workflow needs input text.'}],addUserMsg(){},addAssistMsg:()=>({body:element()}),updateSend(){},setError:(_a,e)=>assert.fail(e),fetch:async(_url,options)=>{
+  let request,canceled=false,rendered='';
+  const c=vm.createContext({window:{},AbortController,AbortSignal,TextDecoder,requestAnimationFrame:fn=>{fn();return 1;},document:{createElement:element,createTextNode:()=>({appendData:t=>{rendered+=t;}})},textInput:{value:'Why?',style:{}},stream:{scrollHeight:0},currentConversationId:null,buildConversationHistoryForRefine:()=>[{role:'assistant',content:'The workflow needs input text.'}],addUserMsg(){},addAssistMsg:()=>({body:element()}),updateSend(){},setError:(_a,e)=>assert.fail(e),fetch:async(_url,options)=>{
     request=JSON.parse(options.body);
     return new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}\n\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"This workflow summarizes text."}}\n\ndata: {"type":"message_stop"}\n\n'));},cancel(){canceled=true;}}));
   }});
@@ -152,6 +152,7 @@ test('read-only discussion carries workflow context and stops at the terminal ev
   await c.discuss('Why does it need text?',{id:'selected',name:'Summary'});
   assert.equal(request.process_id,'selected');assert.equal(request.text,'Why does it need text?');assert.equal(canceled,true);assert.equal(c.busy,false);
   assert.equal(request.conversation_history[0].content,'The workflow needs input text.');
+  assert.equal(rendered,'This workflow summarizes text.');
 });
 
 test('an explicitly named different run is not forced onto the open workflow',()=>{
@@ -400,7 +401,7 @@ test('graph dragging is scoped to its stage and stops after pointer capture is l
 
 test('planning watchdog aborts the exact request instead of leaving a zombie spinner',()=>{
   const first=new AbortController();let fire;
-  const c=vm.createContext({DOMException,console:{warn(){}},setTimeout:fn=>{fire=fn;return 1;},clearTimeout(){},_busyWatchdog:null,currentAbortController:first,currentRunCancellable:true,busy:true,_planInFlight:true,_sendInProgress:false,updateSend(){}});
+  const c=vm.createContext({window:{},DOMException,console:{warn(){}},setTimeout:fn=>{fire=fn;return 1;},clearTimeout(){},_busyWatchdog:null,currentAbortController:first,currentRunCancellable:true,busy:true,_planInFlight:true,_sendInProgress:false,updateSend(){}});
   vm.runInContext(extract('  function armBusyWatchdog(', '  // Stop-generation infrastructure.')+'\nglobalThis.arm=armBusyWatchdog;',c);
   c.arm();fire();assert.equal(first.signal.reason.name,'TimeoutError');
   assert.equal(c.busy,true); // the aborted fetch owns terminal rendering and unlocking
