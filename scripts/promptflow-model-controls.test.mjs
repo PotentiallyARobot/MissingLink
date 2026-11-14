@@ -44,3 +44,31 @@ test('home-page list requests enter streaming discussion before recipe planning'
     await c.route();assert.deepEqual(calls,[userText]);
   }
 });
+
+test('quality presets change models and effort while preserving every output and spending limit',()=>{
+  const {c,D}=harness();
+  for(const provider of ['anthropic','openai']) for(const key of ['draft','everyday','high','maximum']) {
+    const before={keys:{},models:{chat:'claude-sonnet-5-5'},limits:{chat_output_tokens:64000,planning_output_tokens:32000,step_output_tokens:8192,max_run_tokens:500,max_loop_items:5,override_step_limits:false}};
+    const preset=c.window.PFTextModels.qualityPreset(before,key,provider);
+    assert.deepEqual(preset.limits,before.limits);
+    c.apply(preset); const read=c.read();
+    assert.equal(read.reasoning_effort,c.window.PFTextModels.qualityPresets[key].effort);
+    assert.equal(read.override_step_models,true);assert.equal(read.limits.chat_output_tokens,64000);
+    assert.equal(D('dMaQualityPreset').value,key);assert.equal(c.window.PFTextModels.find(read.models.chat).provider,provider);
+    read.models.chat='';assert.equal(c.window.PFTextModels.selectedQuality(read),'');
+  }
+});
+
+test('quality survives storage and is sent with live requests without keys',()=>{
+  const {c,D}=harness();
+  const settings=c.window.PFTextModels.qualityPreset({keys:{},limits:{chat_output_tokens:32000}},'maximum','openai');
+  c.PF_SETTINGS_KEY='test'; c.localStorage={getItem:()=>JSON.stringify(settings)};
+  vm.runInContext(extract('  function dMaLoadSettings(', '  function dMaApplyToForm(')+'\nglobalThis.loadSettings=dMaLoadSettings;',c);
+  c.apply(c.loadSettings());assert.equal(D('dMaQualityPreset').value,'maximum');
+  let sent;
+  c.Headers=Headers;c.URL=URL;c.location={href:'https://example.test/promptflow',origin:'https://example.test'};
+  c.window.pfSettings=c.read();c.window.fetch=async(_url,init)=>{sent=JSON.parse(init.headers.get('X-PF-Settings'));};
+  vm.runInContext(extract('  (function installSettingsFetchHeader()', '  async function dMaSave('),c);
+  c.window.fetch('/api/promptflow/discuss/stream',{});
+  assert.equal(sent.reasoning_effort,'max');assert.equal(sent.override_step_models,true);assert.equal(sent.keys,undefined);
+});

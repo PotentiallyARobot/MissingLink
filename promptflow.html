@@ -11284,7 +11284,7 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
 
 </style>
 <link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
-<script src="assets/promptflow-text-models.js?v=20261114-1"></script>
+<script src="assets/promptflow-text-models.js?v=20261114-2"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261112-5"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
 </head>
@@ -25447,6 +25447,8 @@ function dDesktopInit(){
       const def = dMaDefaultSettings();
       return {
         access_mode: "tokens",
+        reasoning_effort: ['auto','low','medium','high','xhigh','max'].includes(parsed.reasoning_effort) ? parsed.reasoning_effort : 'auto',
+        override_step_models: parsed.override_step_models === true,
         limits: {...def.limits, ...(parsed.limits || {})},
         keys: { ...def.keys, ...(parsed.keys || {}) },
         models: { ...def.models, ...(parsed.models || {}) },
@@ -25458,6 +25460,7 @@ function dDesktopInit(){
   function dMaDefaultSettings() {
     return {
       access_mode: "tokens",  // safe default: existing users keep token behavior
+      reasoning_effort:'auto', override_step_models:false,
       keys: { anthropic: "", openai: "", google: "" },
       limits: {planning_output_tokens:16000, chat_output_tokens:4096, step_output_tokens:4096, override_step_limits:false, max_run_tokens:0, max_loop_items:50},
       // Sensible defaults so a fresh user gets a working setup
@@ -25508,9 +25511,20 @@ function dDesktopInit(){
     if (D("dMaStepLimit")) D("dMaStepLimit").value = s.limits?.step_output_tokens || 4096;
     if (D("dMaLoopLimit")) D("dMaLoopLimit").value = s.limits?.max_loop_items || 50;
     if (D("dMaRunLimit")) D("dMaRunLimit").value = s.limits?.max_run_tokens || 0;
+    if (D('dMaReasoningEffort')) D('dMaReasoningEffort').value=s.reasoning_effort || 'auto';
+    if (D('dMaOverrideModels')) D('dMaOverrideModels').checked=s.override_step_models===true;
     // Dim keys section when in tokens mode
     dMaUpdateKeySection();
     dMaBudgetSummary(s);
+    dMaQualitySummary(s);
+  }
+
+  function dMaQualitySummary(settings) {
+    const key=window.PFTextModels.selectedQuality(settings);
+    if (D('dMaQualityPreset')) D('dMaQualityPreset').value=key;
+    if (D('dMaQualitySummary')) D('dMaQualitySummary').textContent=key
+      ? window.PFTextModels.qualityPresets[key].description+' Your output allowances and spending caps stay unchanged.'
+      : 'Custom model and reasoning settings. Quality presets select models and reasoning effort; output length and spending caps are separate.';
   }
 
   function dMaBudgetSummary(settings) {
@@ -25524,6 +25538,8 @@ function dDesktopInit(){
   function dMaReadFromForm() {
     return {
       access_mode: "tokens",
+      reasoning_effort:D('dMaReasoningEffort')?.value || 'auto',
+      override_step_models:!!D('dMaOverrideModels')?.checked,
       limits: {
         planning_output_tokens: Number(D("dMaPlanningLimit")?.value || 16000),
         step_output_tokens: Number(D("dMaStepLimit")?.value || 4096),
@@ -25623,6 +25639,7 @@ function dDesktopInit(){
     for (const id of ['dMaRunLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).checkValidity()) return;
     const settings = dMaReadFromForm();
     dMaBudgetSummary(settings);
+    dMaQualitySummary(settings);
     try {
       localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify(settings));
     } catch {}
@@ -25651,6 +25668,8 @@ function dDesktopInit(){
           const s = window.pfSettings;
           const wire = {
             access_mode: s.access_mode,
+            reasoning_effort:s.reasoning_effort,
+            override_step_models:s.override_step_models,
             models: s.models,
             limits: s.limits,
             // Don't send actual key material in a header that may be
@@ -25728,6 +25747,13 @@ function dDesktopInit(){
       dMaSetStatus(window.PFTextModels.presets[key].name+' applied in this browser. Save settings to sync across devices.', 'info');
     });
   }
+  D('dMaQualityPreset')?.addEventListener('change', () => {
+    const key=D('dMaQualityPreset').value;
+    if (!window.PFTextModels.qualityPresets[key]) return;
+    const settings=window.PFTextModels.qualityPreset(dMaReadFromForm(),key,D('dMaPresetProvider').value);
+    dMaApplyToForm(settings); dMaAutoSave();
+    dMaSetStatus(window.PFTextModels.qualityPresets[key].name+' applied. Output allowances and spending caps are unchanged. Save settings to sync across devices.','info');
+  });
 
   // Wire the open/close + form interactions.
   if (D("dSpModelAccess")) D("dSpModelAccess").addEventListener("click", () => {
@@ -25745,7 +25771,7 @@ function dDesktopInit(){
   // immediately to the current session (window.pfSettings + the
   // fetch header). They can still click Save for server-side persist.
   ["dMaKeyAnthropic","dMaKeyOpenai","dMaKeyGoogle",
-   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaChatLimit","dMaOverrideLimits","dMaRunLimit","dMaLoopLimit"]
+   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaChatLimit","dMaOverrideLimits","dMaRunLimit","dMaLoopLimit","dMaReasoningEffort","dMaOverrideModels"]
     .forEach(id => {
       const el = D(id);
       if (!el) return;
@@ -30311,7 +30337,12 @@ if (document.readyState === "loading") {
 
       <div class="d-ma-activity"><div class="d-ma-activity-info"><div class="d-ma-activity-name">Cost preset</div><div class="d-ma-activity-desc">Apply a starting point, then customize each activity. Model maximum keeps your selected models.</div></div>
         <div><label for="dMaPresetProvider">Preset provider</label> <select id="dMaPresetProvider" class="d-ma-activity-select"><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select><div class="d-ma-presets"><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaEconomy">Economy</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaBalanced">Balanced</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaDetailed">Detailed</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaDeep">Deep work</button><button type="button" class="d-ma-btn d-ma-btn-secondary" id="dMaMaximum">Model maximum</button></div></div></div>
-      <div class="d-ma-activity"><div class="d-ma-activity-info"><label class="d-ma-activity-name" for="dMaModelRun">Workflow text steps</label><div class="d-ma-activity-desc">Default for steps without a saved text model. Override all text steps in the Run form.</div></div>
+      <div class="d-ma-activity"><div class="d-ma-activity-info"><label class="d-ma-activity-name" for="dMaQualityPreset">Quality preset</label><div class="d-ma-activity-desc">Uses the preset provider selected above. Changes text models and reasoning effort without changing output allowances.</div></div>
+        <select class="d-ma-activity-select" id="dMaQualityPreset"><option value="">Custom / current settings</option><option value="draft">Fast draft</option><option value="everyday">Everyday</option><option value="high">High quality</option><option value="maximum">Maximum quality</option></select></div>
+      <p class="d-ma-activity-desc" id="dMaQualitySummary" aria-live="polite"></p>
+      <div class="d-ma-activity"><label for="dMaReasoningEffort">Reasoning effort</label><select class="d-ma-activity-select" id="dMaReasoningEffort"><option value="auto">Model default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Maximum</option></select></div>
+      <p class="d-ma-activity-desc">Higher effort gives the model more room to reason within your output limit and can take longer or cost more. Raise the output allowance if complex work is cut short. Routing and retrieval ranking use low effort. Image and video settings are unchanged.</p>
+      <div class="d-ma-activity"><div class="d-ma-activity-info"><label class="d-ma-activity-name" for="dMaModelRun">Workflow text steps</label><div class="d-ma-activity-desc">Choose the text model for workflow execution. A model selected in the Run form takes priority.</div></div>
         <select class="d-ma-activity-select" id="dMaModelRun"><option value="">Deployment default</option><option value="anthropic:claude-haiku-5-5">Claude Haiku 5.5</option><option value="anthropic:claude-sonnet-5-5">Claude Sonnet 5.5</option><option value="anthropic:claude-opus-5-5">Claude Opus 5.5</option></select></div>
       <div class="d-ma-activity"><label for="dMaPlanningLimit">Planning and editing output-token limit</label><input class="d-ma-activity-select" id="dMaPlanningLimit" type="number" min="2048" max="128000" step="1" value="16000" list="dMaTokenChoices"></div>
       <p class="d-ma-activity-desc" id="dMaBudgetSummary" aria-live="polite"></p>
@@ -30319,6 +30350,7 @@ if (document.readyState === "loading") {
       <div class="d-ma-activity"><label for="dMaChatLimit">Chat response output-token limit</label><input class="d-ma-activity-select" id="dMaChatLimit" type="number" min="256" max="128000" step="1" value="4096" list="dMaTokenChoices"></div>
       <div class="d-ma-activity"><label for="dMaStepLimit">Output-token limit per AI step</label><input class="d-ma-activity-select" id="dMaStepLimit" type="number" min="256" max="128000" step="1" value="4096" list="dMaTokenChoices"></div>
       <div class="d-ma-activity"><label for="dMaOverrideLimits">Use this AI-step limit instead of saved step limits</label><input id="dMaOverrideLimits" type="checkbox"></div>
+      <div class="d-ma-activity"><label for="dMaOverrideModels">Use the selected workflow model instead of saved AI-step models</label><input id="dMaOverrideModels" type="checkbox"></div>
       <div class="d-ma-activity"><label for="dMaLoopLimit">Maximum items per loop</label><select class="d-ma-activity-select" id="dMaLoopLimit"><option value="5">5 — small test</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select></div>
       <div class="d-ma-activity"><label for="dMaRunLimit">Maximum compute credits per run</label><input class="d-ma-activity-select" id="dMaRunLimit" type="number" min="0" max="1000000" step="1" placeholder="0 = no cap"></div>
       <p class="d-ma-activity-desc">Choose up to 128,000 output tokens for the listed models, or use Model maximum. This is an allowance, not a requested response length; ask for the detail you want. Limits include provider reasoning tokens where applicable. Higher allowances can cost more. A limit that is too low can truncate a result; the run will stop with an error. Loops exceeding the item limit stop before processing any of their items. The credit cap covers hosted compute, not provider bills or creator fees. Each run shows its quote before execution.</p>

@@ -16,6 +16,12 @@ window.PFTextModels = (() => {
     deep:{name:'Deep work',planning:64000,chat:32000,step:32000,tier:2},
     maximum:{name:'Model maximum',planning:128000,chat:128000,step:128000,tier:2},
   };
+  const qualityPresets = {
+    draft:{name:'Fast draft',tier:0,effort:'low',description:'Quick drafts and routine extraction. Lowest model cost and less reasoning.'},
+    everyday:{name:'Everyday',tier:1,effort:'medium',description:'General writing, analysis and everyday workflows. Moderate cost and reasoning.'},
+    high:{name:'High quality',tier:2,effort:'high',description:'Stronger models and deeper reasoning for difficult work. Higher cost and latency.'},
+    maximum:{name:'Maximum quality',tier:2,effort:'max',description:'Strongest listed models at maximum reasoning effort. Highest potential cost and latency; results still need review.'},
+  };
   const find = id=>models.find(m=>m.id === String(id || '').replace(/^(anthropic|openai):/,''));
   function options(prefixed=true) {
     return ['anthropic','openai'].map(provider=>'<optgroup label="'+(provider === 'openai' ? 'OpenAI (optional)' : 'Anthropic')+'">'+models.filter(m=>m.provider===provider).map(m=>'<option value="'+(prefixed?m.provider+':':'')+m.id+'">'+m.name+' · $'+m.output+'/1M output</option>').join('')+'</optgroup>').join('');
@@ -26,9 +32,25 @@ window.PFTextModels = (() => {
     const main=provider+':'+family[p.tier], cheap=provider+':'+family[0];
     if (key === 'maximum') return {...settings,limits:{...settings.limits,
       planning_output_tokens:p.planning,chat_output_tokens:p.chat,step_output_tokens:p.step,override_step_limits:true}};
-    return {...settings,models:{generate:main,adapt:main,chat:main,run:main,learn:main,search:cheap},limits:{...settings.limits,
+    return {...settings,reasoning_effort:key==='economy'?'low':key==='balanced'?'medium':'high',models:{generate:main,adapt:main,chat:main,run:main,learn:main,search:cheap},limits:{...settings.limits,
       planning_output_tokens:p.planning,chat_output_tokens:p.chat,step_output_tokens:p.step,override_step_limits:true}};
   }
+  function qualityPreset(settings,key,provider) {
+    const p=qualityPresets[key]; if (!p) return settings;
+    provider=provider==='openai'?'openai':'anthropic';
+    const family=provider==='openai'?['gpt-6-luna','gpt-6.1-sol','gpt-6-astra']:['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5'];
+    const model=provider+':'+family[p.tier];
+    return {...settings,reasoning_effort:p.effort,override_step_models:true,
+      models:{...settings.models,generate:model,chat:model,adapt:model,run:model,learn:model,search:provider+':'+family[0]}};
+  }
+  function selectedQuality(settings) {
+    const provider=find(settings.models?.chat)?.provider || 'anthropic';
+    return Object.keys(qualityPresets).find(key=>{
+      const expected=qualityPreset(settings,key,provider);
+      return settings.override_step_models===true && settings.reasoning_effort===expected.reasoning_effort
+        && Object.keys(expected.models).every(k=>find(settings.models?.[k])?.id===find(expected.models[k])?.id);
+    }) || '';
+  }
   function timeout(limits={}) { return Math.min(3600000,Math.max(120000,Number(limits.chat_output_tokens || 4096)*30)); }
-  return {models,presets,find,options,preset,timeout};
+  return {models,presets,qualityPresets,find,options,preset,qualityPreset,selectedQuality,timeout};
 })();
