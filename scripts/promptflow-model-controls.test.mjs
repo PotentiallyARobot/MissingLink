@@ -24,6 +24,19 @@ test('custom budgets and canonical server model names survive reopening settings
   assert.equal(D('dMaModelChat').value,'openai:gpt-6.1-sol');assert.equal(c.read().limits.chat_output_tokens,90000);assert.equal(c.read().limits.planning_output_tokens,75000);
   assert.equal(c.window.PFTextModels.timeout({chat_output_tokens:128000}),3600000);
 });
+
+test('saved OpenAI choices survive the actual storage loader and the reopened form',()=>{
+  const {c,D}=harness();
+  for (const chat of ['openai:gpt-6-luna','gpt-6.1-sol','anthropic:claude-sonnet-4-6']) {
+    c.PF_SETTINGS_KEY='test';
+    c.localStorage={getItem:()=>JSON.stringify({models:{chat},limits:{chat_output_tokens:128000}})};
+    vm.runInContext(extract('  function dMaLoadSettings(', '  function dMaApplyToForm(')+'\nglobalThis.loadSettings=dMaLoadSettings;',c);
+    c.apply(c.loadSettings());
+    const expected=chat.includes('claude')?'anthropic:claude-sonnet-5-5':chat.startsWith('openai:')?chat:'openai:'+chat;
+    assert.equal(D('dMaModelChat').value,expected);
+    assert.equal(c.read().limits.chat_output_tokens,128000);
+  }
+});
 test('home-page list requests enter streaming discussion before recipe planning',async()=>{
   for(const userText of ['generate a list of processes that are extremely usefu;','create five useful workflow ideas','suggest useful workflows']) {
     const calls=[];const c=vm.createContext({userText,window:{},attachedFiles:[],pendingContrib:null,pendingParentProcess:null,refineBoundProcessId:null,currentEditorProcessId:null,interpreterProcessContext:null,activeInterpreterProcess:()=>null,streamDiscussAnswer:t=>calls.push(t)});
