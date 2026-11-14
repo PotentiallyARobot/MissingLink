@@ -16,6 +16,7 @@ import importlib.util
 import importlib.metadata
 import json
 import mimetypes
+import math
 import os
 from pathlib import Path
 import re
@@ -30,6 +31,54 @@ import zipfile
 
 
 PARALLEL_RECIPES = {'__promptflow_value','brave_web_search','brave_news_search','brave_image_search','gpt_image_2','assemble_document','assemble_website','assemble_files'}
+
+# Kept in parity with backend promptflow_report.ts; no third-party rendering code.
+REPORT_STYLE = '*{box-sizing:border-box}body{margin:0 auto;max-width:1040px;padding:48px 36px 64px;background:#fff;color:#202b35;font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}header{border-bottom:2px solid #243d49;padding-bottom:24px;margin-bottom:32px}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;margin:0 0 12px}h2{font-size:22px;line-height:1.3;margin:32px 0 12px}h3,h4{font-size:17px;line-height:1.4;margin:24px 0 8px}p{margin:0 0 16px}a{color:#15566e;text-underline-offset:3px}ul,ol{padding-left:24px;margin:12px 0 20px}li{margin:5px 0}section{margin-bottom:36px}.filename,.report-meta,summary{font:13px/1.5 system-ui;color:#596670}.filename{margin-top:-4px;margin-bottom:18px}pre{padding:18px;background:#f4f6f7;border:1px solid #dde3e6;white-space:pre-wrap;font:13px/1.6 ui-monospace,Consolas,monospace}code{font-size:.9em;background:#f4f6f7;padding:2px 4px}.table-wrap{overflow:auto;margin:16px 0 24px}table{border-collapse:collapse;width:100%;font-size:14px}th{text-align:left;background:#edf2f4;font-weight:600;text-transform:capitalize;overflow-wrap:normal}th,td{min-width:90px;overflow-wrap:break-word;padding:12px 14px;border:1px solid #dce3e7;vertical-align:top}tbody tr:nth-child(even){background:#fafbfc}details{border:1px solid #dce3e7;padding:14px 18px;margin:18px 0}summary{cursor:pointer;font-weight:600}img{max-width:100%;height:auto}footer{border-top:1px solid #dce3e7;margin-top:40px;padding-top:16px;color:#596670;font-size:12px}@media(max-width:600px){body{padding:28px 20px}h1{font-size:27px}.table-wrap{margin-left:-4px;margin-right:-4px}}@media print{body{max-width:none;padding:0;font-size:11pt}h1,h2,h3,h4{break-after:avoid}tr,figure{break-inside:avoid}.doc-section{break-inside:auto}.table-wrap{overflow:visible}a{color:inherit}summary{display:none}details>pre{display:block}@page{margin:18mm}}'
+
+def report_inline(text):
+    text=html.escape(str(text),quote=True)
+    text=re.sub(r'\[([^\]\n]+)\]\((https?://[^\s)]+)\)',r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>',text)
+    text=re.sub(r'\*\*([^*\n]+)\*\*',r'<strong>\1</strong>',text)
+    return re.sub(r'`([^`\n]+)`',r'<code>\1</code>',text)
+
+def report_table(columns,rows):
+    def cell(value):
+        return html.escape('—' if value is None else json.dumps(value,ensure_ascii=False) if isinstance(value,(dict,list)) else str(value))
+    return '<div class="table-wrap"><table><thead><tr>'+''.join('<th scope="col">'+cell(v)+'</th>' for v in columns)+'</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+cell(v)+'</td>' for v in row)+'</tr>' for row in rows)+'</tbody></table></div>'
+
+def report_markdown(source):
+    lines=str(source or '').replace('\r\n','\n').split('\n');out=[];i=0
+    def split(line): return [c.strip() for c in line.strip().strip('|').split('|')]
+    def table_at(n): return '|' in lines[n] and n+1<len(lines) and all(re.fullmatch(r':?-{3,}:?',c) for c in split(lines[n+1]))
+    while i<len(lines):
+        line=lines[i]
+        if not line.strip(): i+=1;continue
+        if line.startswith('```'):
+            code=[];i+=1
+            while i<len(lines) and not lines[i].startswith('```'): code.append(lines[i]);i+=1
+            i+=1;out.append('<pre><code>'+html.escape('\n'.join(code))+'</code></pre>');continue
+        heading=re.match(r'^(#{1,6})\s+(.+)$',line)
+        if heading:
+            level=min(len(heading[1])+1,6);out.append(f'<h{level}>'+report_inline(heading[2])+f'</h{level}>');i+=1;continue
+        if table_at(i):
+            columns=split(line);rows=[];i+=2
+            while i<len(lines) and '|' in lines[i] and lines[i].strip(): rows.append(split(lines[i]));i+=1
+            out.append(report_table(columns,rows));continue
+        item=re.match(r'^\s*(?:([-*])|\d+[.)])\s+(.+)$',line)
+        if item:
+            ordered=not item[1];tag='ol' if ordered else 'ul';items=[]
+            while i<len(lines):
+                match=re.match(r'^\s*\d+[.)]\s+(.+)$' if ordered else r'^\s*[-*]\s+(.+)$',lines[i])
+                if not match: break
+                items.append('<li>'+report_inline(match[1])+'</li>');i+=1
+            out.append('<'+tag+'>'+''.join(items)+'</'+tag+'>');continue
+        paragraph=[line];i+=1
+        while i<len(lines) and lines[i].strip() and not re.match(r'^(?:#{1,6}\s|```|\s*[-*]\s|\s*\d+[.)]\s)',lines[i]) and not table_at(i): paragraph.append(lines[i]);i+=1
+        out.append('<p>'+'<br>'.join(report_inline(x) for x in paragraph)+'</p>')
+    return '\n'.join(out)
+
+def report_document(title,body,subtitle=''):
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>'+html.escape(str(title))+'</title><style>'+REPORT_STYLE+'</style></head><body><header><h1>'+html.escape(str(title))+'</h1>'+('<p class="report-meta">'+html.escape(subtitle)+'</p>' if subtitle else '')+'</header><main>'+body+'</main><footer>Prepared with PromptFlow™</footer></body></html>'
 
 def validate_parallel_groups(steps, root=None):
     def materialize(value):
@@ -230,6 +279,49 @@ def parse_json_text(text):
         return json.loads(text)
     except ValueError:
         raise RunError('The AI step returned invalid JSON. No later steps were run.') from None
+
+
+def validate_output_contract(value, contract):
+    """Portable shape, source-excerpt and count checks; not a truth guarantee."""
+    if not contract: return
+    def fail(path, reason):
+        raise RunError(f'output_check_failed: {path} {reason}. No later steps were run.')
+    def strings(v, depth=0):
+        if depth > 20: return []
+        if isinstance(v, str): return [v]
+        if isinstance(v, dict): v = list(v.values())
+        return [s for x in v for s in strings(x, depth+1)] if isinstance(v, list) else []
+    normalize = lambda v: ' '.join(v.split())
+    sources = [normalize(s) for s in strings(contract.get('source'))]
+    visited = [0]
+    def visit(v, schema, path, parent, depth):
+        visited[0] += 1
+        if visited[0] > 20000 or depth > 20: fail(path, 'exceeds the output validation limit')
+        if not isinstance(schema, dict): fail(path, 'has an invalid output contract')
+        types = schema.get('type'); types = types if isinstance(types, list) else [types]
+        actual = 'null' if v is None else 'boolean' if isinstance(v, bool) else 'string' if isinstance(v, str) else 'array' if isinstance(v, list) else 'object' if isinstance(v, dict) else 'number' if isinstance(v, (int,float)) else 'unknown'
+        if actual not in types and not ('integer' in types and actual == 'number' and int(v) == v): fail(path, 'has the wrong type')
+        if 'enum' in schema and v not in schema['enum']: fail(path, 'has an unsupported value')
+        if isinstance(v, str):
+            if len(v.strip()) < schema.get('minLength',0): fail(path, 'is empty or too short')
+            if schema.get('maxLength') and len(v) > schema['maxLength']: fail(path, 'is too long')
+            if schema.get('source_quote') and (not normalize(v) or not any(normalize(v) in s for s in sources)): fail(path, 'does not match the supplied source')
+        if actual == 'number':
+            if not math.isfinite(v): fail(path, 'has an invalid number')
+            if schema.get('minimum') is not None and v < schema['minimum']: fail(path, 'has an invalid number')
+            sibling = schema.get('equals_length_of')
+            if sibling and (not isinstance(parent.get(sibling),list) or v != len(parent[sibling])): fail(path, 'does not match its evidence count')
+        if isinstance(v,list):
+            if len(v) < schema.get('minItems',0) or len(v) > schema.get('maxItems',1000): fail(path,'has an invalid number of items')
+            if schema.get('uniqueItems') and len({json.dumps(x,sort_keys=True) for x in v}) != len(v): fail(path,'contains duplicate evidence')
+            for i,item in enumerate(v): visit(item,schema.get('items'),f'{path}[{i}]',v,depth+1)
+        elif isinstance(v,dict):
+            for key in schema.get('required',[]):
+                if key not in v: fail(path+'.'+key,'is missing')
+            for key,item in v.items():
+                if key in schema.get('properties',{}): visit(item,schema['properties'][key],path+'.'+key,v,depth+1)
+                elif schema.get('additionalProperties') is False: fail(path+'.'+key,'is not part of the requested output')
+    visit(value,contract.get('schema'),'result',None,0)
 
 
 class Runtime:
@@ -443,16 +535,30 @@ class Runtime:
 
     def claude(self, step, scope):
         prompt = as_text(resolve(step.get('user_prompt') or '{{user_text}}', scope, self.root))
+        if step.get('output_contract'):
+            prompt += '\n\nRequired JSON output contract (return these field types exactly; source_quote means an exact contiguous source excerpt):\n'+json.dumps(step['output_contract']['schema'],ensure_ascii=False)
         content = [{'type':'text', 'text':prompt}]
         # Vision steps can use a supplied image, just as they do in the web runner.
-        image = scope.get('image') or scope.get('INPUT_IMAGE_URL')
-        if image:
+        explicit_images = step.get('input_image_urls') or ([step['input_image_url']] if step.get('input_image_url') else [])
+        images = [resolve(v,scope,self.root) for v in explicit_images] if explicit_images else [scope.get('image') or scope.get('INPUT_IMAGE_URL')]
+        if len(images) > 16: raise RunError('A vision step accepts at most 16 images.')
+        image_blocks = []
+        for image in images:
+            if not image:
+                if explicit_images: raise RunError('A required review image is missing. No later steps were run.')
+                continue
             if str(image).startswith(('https://','http://')):
                 source = {'type':'url', 'url':str(image)}
+            elif str(image).startswith('data:image/'):
+                match = re.fullmatch(r'data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)',str(image))
+                if not match: raise RunError('Invalid image data for a vision step.')
+                source = {'type':'base64','media_type':match[1],'data':match[2]}
             else:
                 path = media_path(image)
+                if path.stat().st_size > 14 * 1024 * 1024: raise RunError('Vision image exceeds 14 MB.')
                 source = {'type':'base64','media_type':mimetypes.guess_type(path.name)[0] or 'image/png','data':base64.b64encode(path.read_bytes()).decode()}
-            content.insert(0, {'type':'image', 'source':source})
+            image_blocks.append({'type':'image', 'source':source})
+        content = image_blocks + content
         model = self.model or step.get('text_model') or step.get('model') or self.manifest.get('default_text_model') or 'claude-sonnet-5-5'
         data = text_request({
             'model':model, 'max_tokens':self.max_output_tokens if self.override_step_limits else min(int(step.get('max_tokens',self.max_output_tokens)),self.max_output_tokens),
@@ -461,7 +567,11 @@ class Runtime:
         if data.get('stop_reason') == 'max_tokens': raise RunError('AI output reached its token limit. Increase max_tokens in the step before retrying.')
         text = ''.join(b.get('text','') for b in data.get('content',[]) if b.get('type') == 'text')
         if not text: raise RunError('The AI provider returned no text output.')
-        return {'text':text, **({'parsed':parse_json_text(text)} if step.get('output_format') == 'json' else {})}
+        output = {'text':text, **({'parsed':parse_json_text(text)} if step.get('output_format') == 'json' else {})}
+        if step.get('output_contract'):
+            progress(step['id'] + ': checking output fields and source evidence')
+            validate_output_contract(output.get('parsed',text),resolve(step['output_contract'],scope,self.root))
+        return output
 
     def recipe(self, step, scope):
         rid = step.get('recipe_id','')
@@ -512,11 +622,20 @@ class Runtime:
                 if not content.strip() or len(content)>150000: raise RunError('An export is empty or exceeds its size limit: '+name)
                 entries[name]=content
             if sum(map(len,entries.values()))>600000: raise RunError('The export exceeds its total size limit.')
+            sections=[]
+            for file in files:
+                name=str(file['name']);content=entries[name]
+                if name.endswith('.json'):
+                    sections.append('<details><summary>'+html.escape(name)+' · source data</summary><pre>'+html.escape(content)+'</pre></details>');continue
+                heading=re.sub(r'[-_]',' ',name.rsplit('.',1)[0]).capitalize()
+                rendered=report_table(file['columns'],[[row.get(k) for k in file['columns']] for row in file['records']]) if name.endswith('.csv') else report_markdown(content)
+                sections.append('<section><h2>'+html.escape(heading)+'</h2><p class="filename">'+html.escape(name)+'</p>'+rendered+'</section>')
+            body=report_document(params.get('title','Workflow files'),''.join(sections),'Editable source files and this report are included in the download.')
             data=io.BytesIO()
             with zipfile.ZipFile(data,'w',zipfile.ZIP_DEFLATED) as archive:
                 for name,content in entries.items(): archive.writestr(name,content)
+                archive.writestr('report.html',body)
             path=self.artifact(step['id'],'.zip',data.getvalue())
-            body='<!doctype html><meta charset="utf-8"><title>Workflow files</title><style>body{max-width:850px;margin:3em auto;font:16px/1.6 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>'+html.escape(str(params.get('title','Workflow files')))+'</h1>'+''.join('<h2>'+html.escape(name)+'</h2><pre>'+html.escape(content)+'</pre>' for name,content in entries.items())
             preview=self.artifact(step['id'],'.html',body.encode('utf-8'))
             return {'html_url':preview.as_uri(),'download_url':path.as_uri(),'download_name':'workflow-files.zip','download_label':'Download files (.zip)','path':str(path)}
         if rid == 'assemble_website':
@@ -542,10 +661,23 @@ class Runtime:
         if rid == 'assemble_document':
             sections = params.get('sections') or [{'body':params.get('body',params.get('text',''))}]
             if isinstance(sections,str): sections = parse_json_text(sections)
-            body = '<!doctype html><meta charset="utf-8"><title>' + html.escape(str(params.get('title','Document'))) + '</title><style>body{max-width:850px;margin:3em auto;font:16px/1.6 system-ui}img{max-width:100%}p{white-space:pre-wrap}</style><h1>' + html.escape(str(params.get('title','Document'))) + '</h1>'
+            body = ''
             for section in sections:
-                body += '<h2>' + html.escape(str(section.get('heading',''))) + '</h2><p>' + html.escape(str(section.get('body',''))) + '</p>'
-                if section.get('image_url'): body += '<img src="' + html.escape(str(section['image_url']),quote=True) + '">'
+                body += '<section><h2>' + html.escape(str(section.get('heading',''))) + '</h2>' + report_markdown(section.get('body',''))
+                if section.get('image_url'):
+                    image = str(section['image_url'])
+                    if not image.startswith('data:image/'):
+                        if image.startswith('https://'):
+                            with urlopen(image,timeout=60) as response: data=response.read(14*1024*1024+1)
+                        else: data=media_path(image).read_bytes()
+                        if len(data)>14*1024*1024: raise RunError('Document image exceeds 14 MB.')
+                        mime='image/png' if data.startswith(b'\x89PNG') else 'image/jpeg' if data.startswith(b'\xff\xd8') else 'image/webp' if data[:4]==b'RIFF' and data[8:12]==b'WEBP' else None
+                        if not mime: raise RunError('Use PNG, JPEG or WebP document images.')
+                        image='data:'+mime+';base64,'+base64.b64encode(data).decode()
+                    if not re.fullmatch(r'data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+',image): raise RunError('Invalid document image.')
+                    body += '<figure><img src="' + image + '" alt="'+html.escape(str(section.get('heading','Figure')),quote=True)+'"></figure>'
+                body += '</section>'
+            body=report_document(params.get('title','Document'),body)
             path = self.artifact(step['id'], '.html', body.encode('utf-8'))
             return {'html_url':path.as_uri(), 'html':body, 'path':str(path)}
         if rid == 'gpt_image_2':

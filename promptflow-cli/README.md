@@ -1,8 +1,15 @@
-# PromptFlow™ CLI and interpreter 0.4.1
+# PromptFlow™ CLI and interpreter 0.4.2
 
 PromptFlow™ is a programming language for prompting neural networks. This
 download contains the CLI, interpreter and `examples/text-summary.promptflow`.
-Version 0.4.1 adds optional OpenAI text models and output allowances up to each
+Version 0.4.2 adds output contracts and multi-image review steps. The interpreter
+checks required fields, exact source excerpts and evidence counts before passing
+results downstream. Image reviews receive the declared original and generated
+images in order. HTML reports embed their images so they remain usable offline
+when moved or shared. File packs include a formatted, printable `report.html`
+alongside the editable CSV/JSON/Markdown sources. Re-download a workflow to get its revised prompts and checks.
+
+Version 0.4.1 added optional OpenAI text models and output allowances up to each
 supported model's 128,000-token maximum. A workflow unlock and provider usage
 are separate: local runs use your own provider keys.
 

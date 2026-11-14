@@ -20,6 +20,27 @@ from rich.console import Console
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_review_receives_original_and_generated_images_in_order(self):
+        image='data:image/png;base64,aGVsbG8='
+        r=self.runner([{'id':'review','type':'claude','input_image_urls':['{{INPUT_IMAGE_URL}}','{{generated}}'],'user_prompt':'Compare both images'}])
+        with patch.dict(os.environ,{'ANTHROPIC_API_KEY':'fixture'},clear=True),patch.object(runtime,'request_json',return_value={'content':[{'type':'text','text':'The closure changed.'}]}) as provider:
+            r.execute({'text':'Compare','image':image,'generated':'https://example.test/result.png'})
+        blocks=provider.call_args.args[2]['messages'][0]['content']
+        self.assertEqual([b['type'] for b in blocks],['image','image','text'])
+        self.assertEqual(blocks[0]['source']['data'],'aGVsbG8=')
+        self.assertEqual(blocks[1]['source']['url'],'https://example.test/result.png')
+        with patch.dict(os.environ,{'ANTHROPIC_API_KEY':'fixture'},clear=True),patch.object(runtime,'request_json') as provider:
+            with self.assertRaisesRegex(runtime.RunError,'review image is missing|Unresolved input'): r.execute({'text':'Compare','image':image})
+            provider.assert_not_called()
+
+    def test_unfounded_evidence_stops_before_packaging(self):
+        contract={'source':'{{user_text}}','schema':{'type':'object','required':['evidence'],'properties':{'evidence':{'type':'string','source_quote':True}}}}
+        r=self.runner([{'id':'review','type':'claude','output_format':'json','output_contract':contract},
+                       {'id':'pack','type':'recipe','recipe_id':'assemble_files','params':{}}])
+        with patch.dict(os.environ,{'ANTHROPIC_API_KEY':'fixture'},clear=True),patch.object(runtime,'request_json',return_value={'content':[{'type':'text','text':'{"evidence":"An invented deadline"}'}]}),patch.object(r,'recipe') as pack:
+            with self.assertRaisesRegex(runtime.RunError,'does not match the supplied source'): r.execute({'text':'No deadline was agreed.'})
+            pack.assert_not_called()
+
     def test_openai_text_uses_its_own_key_and_full_selected_allowance(self):
         r=self.runner([{'id':'answer','type':'claude','max_tokens':1024,'user_prompt':'Answer {{user_text}}'}])
         r.model='gpt-6.1-sol';r.max_output_tokens=128000;r.override_step_limits=True
@@ -236,6 +257,15 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(Path(result['path']).is_file())
         self.assertIn('&lt;script&gt;',result['html'])
         self.assertNotIn('<script>bad()',result['html'])
+
+    def test_document_embeds_local_images_for_portable_offline_download(self):
+        photo=self.root/'source.png';photo.write_bytes(b'\x89PNG\r\n\x1a\nfixture')
+        r=self.runner([{'id':'doc','type':'recipe','recipe_id':'assemble_document','params':{'title':'Review','sections':[{'heading':'Image','image_url':photo.as_uri()}]}}])
+        result=r.execute({'text':'test'})['doc']
+        self.assertIn('data:image/png;base64,iVBORw0KGgpmaXh0dXJl',result['html'])
+        self.assertNotIn('file://',result['html'])
+        photo.unlink()
+        self.assertEqual(Path(result['path']).read_text('utf-8'),result['html'])
 
     def test_missing_media_fails_without_provider_calls(self):
         r=self.runner([],input_kinds=['image'])

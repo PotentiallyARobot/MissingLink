@@ -443,3 +443,13 @@ Live reopening exposed an older storage migration that erased OpenAI selections.
 The implementation follows [OpenAI model capabilities](https://developers.openai.com/api/docs/models) and [Anthropic effort controls](https://platform.claude.com/docs/en/build-with-claude/effort). All 50 frontend, 40 focused backend and 33 backend integration tests passed, as did an isolated Worker build. Provider request fixtures verify maximum effort, saved-model overrides, explicit Run-form precedence and preserved output limits. Local Chrome checks verified Maximum quality survives saving and reloading, plus usable controls without horizontal overflow at 390px.
 
 - **PF-102, P1:** Live verification found that an explicit “Question only, do not build or run a workflow…” prefix missed the discussion gate and reached recipe planning. Explicit question labels now take precedence in both browser and backend routing, including Quick question and Just a question. Added the failing input to regression coverage; 42 affected frontend and 21 affected backend checks plus the Worker build passed after the correction.
+
+
+## Deliverable quality and interpreter parity — 14 November 2026
+
+- **PF-103, P1:** Exported CSV/JSON and channel files could bypass the final review. All five file packs now consume corrected final fields; required-field, source-excerpt and count checks reject inconsistent structured output.
+- **PF-104, P1:** The local interpreter ignored declared review images, and hosted loop/resumed paths omitted vision attachments. Both now pass declared images in order and fail before provider calls when a required image is missing.
+- **PF-105, P2:** Local image reports broke when moved, and file previews showed raw Markdown/CSV. Reports embed local images, render headings/links/tables safely, collapse source JSON, and include a printable report in each file ZIP.
+- **PF-106, P2:** Generic prompts and unreviewed media produced repetitive copy and unverified illustrations. Added task-specific evidence and scope rules, actual image reviews, one bounded instruction-card correction, and a separate website/game code review. Real tests caught and corrected schema failures and excessive qualification. Remaining image defects are recorded rather than labeled approved.
+
+[Full quality matrix, real-provider evidence and remaining recommendations](promptflow-workflow-quality.md). PF-083 remains open: the panorama test completes but does not achieve calibrated geometry.

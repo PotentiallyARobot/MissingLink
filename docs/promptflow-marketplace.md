@@ -1,4 +1,8 @@
-# Marketplace implementation — November 11, 2026
+# Marketplace implementation
+
+Current release: **catalog 1.3 / interpreter 0.4.2**. See [the November 14 quality review](promptflow-workflow-quality.md) for the current workflow contracts, real-run evidence and known limits. The dated sections below preserve earlier implementation history; their older test counts and runtime versions are not the current release.
+
+## Initial implementation — November 11, 2026
 
 Marketplace deployed and verified November 12, 2026. Individual purchases use the existing PromptFlow token balance. Subscribers retain included downloads. Run costs are separate from the one-time unlock, and a purchase does not start a run.
 
