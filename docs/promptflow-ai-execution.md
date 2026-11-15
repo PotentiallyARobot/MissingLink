@@ -71,6 +71,12 @@ source-linked research and a migration checklist. Regression checks cover public
 event filtering, reasoning settings, search allowances, quoting, interrupted
 streams, archive execution, and the existing marketplace workflows.
 
+Production UI validation: Astra created Source Check Brief with a Sol research
+step and an Astra synthesis step. The hosted run completed, streamed page-reading
+actions, source links and a public reasoning summary, and displayed the final
+brief with its evidence gaps. The confirmed charge was 1,418 platform tokens.
+The deployed CLI ZIP installed successfully as version 0.5.0.
+
 Provider contracts: [reasoning summaries](https://developers.openai.com/api/docs/guides/reasoning),
 [web search](https://developers.openai.com/api/docs/guides/tools-web-search),
 [Responses streaming](https://developers.openai.com/api/reference/resources/responses/streaming-events).

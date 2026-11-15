@@ -7,6 +7,18 @@ const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].m
 test('every inline script parses',()=>{for(const source of scripts)new vm.Script(source);});
 const extract=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
 
+test('output citations are clickable while untrusted HTML and unsafe URLs stay inert',()=>{
+  const children=[];
+  const c=vm.createContext({URL,document:{createTextNode:text=>({textContent:text}),createElement:tag=>({tag})}});
+  vm.runInContext(extract('  function renderTextCitations(', '  function renderSingleText(')+';globalThis.render=renderTextCitations;',c);
+  c.render({append:node=>children.push(node)},'<img src=x onerror=alert(1)> [Docs](https://example.com/docs) [Unsafe](javascript:alert) [Credential](https://user:secret@example.com)');
+  const links=children.filter(n=>n.tag==='a');
+  assert.equal(links.length,1);assert.equal(links[0].href,'https://example.com/docs');
+  assert.equal(links[0].rel,'noopener noreferrer');
+  assert.ok(children.some(n=>n.textContent.includes('<img src=x onerror=alert(1)>')));
+  assert.ok(children.some(n=>n.textContent.includes('[Credential]')));
+});
+
 test('a run form hides the home screen even without a preceding user message',()=>{
   const empty={id:'empty',style:{display:''}},history={id:'history'};
   let children=[empty,history],graphVisible=true;

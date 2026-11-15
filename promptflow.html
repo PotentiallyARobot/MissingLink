@@ -18557,16 +18557,25 @@ promptflow whoami</code></pre>
     assist.body.appendChild(wrap);
     assist.body.appendChild(actionsRow(downloadButton(o.url, filenameFromUrl(o.url, "wav"), "Download audio")));
   }
+  function renderTextCitations(preview, text) {
+    preview.textContent = '';
+    let cursor = 0;
+    for (const match of text.matchAll(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
+      let url; try { url = new URL(match[2]); } catch { continue; }
+      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) continue;
+      preview.append(document.createTextNode(text.slice(cursor, match.index)));
+      const link = document.createElement('a');
+      link.textContent = match[1]; link.href = url.href;
+      link.target = '_blank'; link.rel = 'noopener noreferrer';
+      preview.append(link); cursor = match.index + match[0].length;
+    }
+    preview.append(document.createTextNode(text.slice(cursor)));
+  }
   function renderSingleText(assist, o) {
     if (typeof o.text === 'string') {
       const wrap=document.createElement('div');wrap.className='pf-live-activity';
       const preview=document.createElement('pre');
-      let cursor=0;
-      for(const match of o.text.matchAll(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
-        preview.append(document.createTextNode(o.text.slice(cursor,match.index)));
-        const link=document.createElement('a');link.textContent=match[1];link.href=match[2];link.target='_blank';link.rel='noopener noreferrer';preview.append(link);cursor=match.index+match[0].length;
-      }
-      preview.append(document.createTextNode(o.text.slice(cursor)));wrap.append(preview);
+      renderTextCitations(preview, o.text);wrap.append(preview);
       const copy=document.createElement('button');copy.type='button';copy.className='btn';copy.textContent='Copy output';
       copy.onclick=async()=>{try{await navigator.clipboard.writeText(o.text);copy.textContent='Copied';}catch{copy.textContent='Select text to copy';}};
       wrap.append(copy);
@@ -18609,7 +18618,7 @@ promptflow whoami</code></pre>
           }
           text += decoder.decode();
         } finally { reader.releaseLock(); }
-        preview.textContent = text || "This output is empty.";
+        renderTextCitations(preview, text || "This output is empty.");
         preview.removeAttribute("role");
         if (truncated) {
           const note = document.createElement("p");
