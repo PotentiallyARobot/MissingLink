@@ -23,6 +23,9 @@ def consume(events, console):
             if key in MESSAGES and key != stage:
                 stage = key
                 console.print('  ' + MESSAGES[key] + '…', markup=False)
+        elif event == 'activity' and data.get('kind') in ('reasoning_summary_delta','tool_started','tool_completed','source'):
+            label={'reasoning_summary_delta':'Reasoning summary','tool_started':'Action','tool_completed':'Completed','source':'Source'}[data['kind']]
+            console.print('  '+label+': '+str(data.get('text') or data.get('query') or data.get('url') or data.get('tool') or ''),markup=False)
         elif event == 'heartbeat' and time.monotonic() - last_heartbeat >= 10:
             console.print(f'  Still working: {MESSAGES.get(stage,"processing the request")} ({int(time.monotonic()-started)}s)', markup=False)
             last_heartbeat = time.monotonic()

@@ -20,6 +20,21 @@ from rich.console import Console
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_saved_reasoning_search_and_public_stream_are_portable(self):
+        step={'id':'research','type':'claude','text_model':'gpt-6-astra','reasoning_effort':'xhigh','verbosity':'high','web_search':{'enabled':True,'max_calls':5,'context_size':'high','allowed_domains':['example.com']},'user_prompt':'Find a fact'}
+        r=self.runner([step]);result={'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':'Verified fact','annotations':[{'type':'url_citation','url':'https://example.com','title':'Source'}]}]}]}
+        with patch.dict(os.environ,{'OPENAI_API_KEY':'fixture'},clear=True),patch.object(runtime,'request_json',return_value=result) as provider:
+            output=r.execute({'text':'Example'})
+        body=provider.call_args.args[2]
+        self.assertEqual(body['reasoning'],{'effort':'xhigh','summary':'auto'})
+        self.assertEqual(body['max_tool_calls'],5);self.assertEqual(body['tools'][0]['filters']['allowed_domains'],['example.com'])
+        self.assertEqual(output['research']['sources'][0]['url'],'https://example.com')
+        events=[{'type':'response.reasoning_summary_text.delta','delta':'Checking sources'}, {'type':'response.reasoning_text.delta','delta':'PRIVATE'}, {'type':'response.completed','response':result}]
+        payload=b''.join(('data: '+json.dumps(e)+'\n\n').encode() for e in events);seen=[]
+        with patch.object(runtime,'urlopen',return_value=contextlib.closing(io.BytesIO(payload))):
+            runtime.request_json('https://example.test',{}, {'stream':True},lambda k,t:seen.append((k,t)))
+        self.assertEqual(seen,[('Reasoning summary','Checking sources')])
+
     def test_review_receives_original_and_generated_images_in_order(self):
         image='data:image/png;base64,aGVsbG8='
         r=self.runner([{'id':'review','type':'claude','input_image_urls':['{{INPUT_IMAGE_URL}}','{{generated}}'],'user_prompt':'Compare both images'}])
@@ -49,7 +64,7 @@ class RuntimeTests(unittest.TestCase):
             r.preflight()
             output=r.execute({'text':'test'})
         self.assertEqual(output['answer']['text'],'Useful result')
-        url,headers,body=provider.call_args.args
+        url,headers,body=provider.call_args.args[:3]
         self.assertEqual(url,'https://api.openai.com/v1/responses')
         self.assertEqual(headers['authorization'],'Bearer fixture')
         self.assertEqual(body['max_output_tokens'],128000)
@@ -159,7 +174,7 @@ class RuntimeTests(unittest.TestCase):
             {'id':'summary','type':'claude','user_prompt':'__PROMPT_REF__:summary','output_format':'text'},
         ])
         calls=[]
-        def provider(url,headers,payload=None):
+        def provider(url,headers,payload=None,on_activity=None):
             calls.append((url,headers,payload))
             if 'brave.com' in url: return {'web':{'results':[{'title':'Paper','url':'https://example.org','description':'Evidence'}]}}
             return {'content':[{'type':'thinking','thinking':'PRIVATE'}, {'type':'text','text':'Three useful bullets'}]}

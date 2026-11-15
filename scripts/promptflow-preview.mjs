@@ -146,6 +146,11 @@ const server = http.createServer(async (req,res) => {
       [0,'stage',{stage:'planning'}],
       [delay,'thinking',{text:'PRIVATE_MODEL_NARRATIVE: this must never be rendered in the UI.'}],
       [delay,'heartbeat',{seconds:3}],
+      [100,'activity',{kind:'reasoning_summary_delta',text:'I’m separating source research from synthesis so each claim can be checked before the report is assembled.'}],
+      [100,'activity',{kind:'tool_started',call_id:'search-1',tool:'web_search',action:'search'}],
+      [300,'activity',{kind:'tool_completed',call_id:'search-1',tool:'web_search',action:'search',query:'official API streaming documentation'}],
+      [100,'activity',{kind:'source',title:'OpenAI Responses API',url:'https://developers.openai.com/api/docs/guides/streaming-responses'}],
+      [100,'activity',{kind:'response_delta',text:'{"name":"API Migration Readiness Brief","steps":["Research","Verify","Report"]}'}],
     ];
     if(ref.searchParams.has('generation_error'))frames.push([delay,'error',{message:'The generation service is temporarily unavailable. Please try again.'}]);
     else if(!ref.searchParams.has('generation_disconnect'))frames.push([delay,'done',{ok:true,intent:'design_process',process:{...sample,is_draft:true},message:'Draft created.'}]);
@@ -175,7 +180,7 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});return res.end(html);
   }
   // Only serve public image assets used by this page; never repository files.
-  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js'].includes(url.pathname)) {
+  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-activity.js'].includes(url.pathname)) {
     res.writeHead(200,{'content-type':url.pathname.endsWith('.css')?'text/css':'text/javascript'});return res.end(await readFile(path.join(root,url.pathname)));
   }
   if(url.pathname==='/promptflow-cli.zip') {res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="promptflow-cli.zip"'});return res.end(await readFile(path.join(root,'promptflow-cli.zip')));}

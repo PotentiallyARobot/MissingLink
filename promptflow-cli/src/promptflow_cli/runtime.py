@@ -137,7 +137,7 @@ def activity(message):
         worker.join()
 
 
-def request_json(url, headers, payload=None):
+def request_json(url, headers, payload=None, on_activity=None):
     data = None if payload is None else json.dumps(payload).encode('utf-8')
     try:
         with urlopen(Request(url, data=data, headers=headers), timeout=120) as response:
@@ -149,6 +149,17 @@ def request_json(url, headers, payload=None):
                     if raw == b'[DONE]': continue
                     event = json.loads(raw)
                     kind = event.get('type')
+                    if on_activity:
+                        if kind == 'response.reasoning_summary_text.delta': on_activity('Reasoning summary',event.get('delta',''))
+                        elif kind == 'response.output_text.delta': on_activity('Response',event.get('delta',''))
+                        elif kind == 'response.web_search_call.searching': on_activity('Action','Searching the web\n')
+                        elif kind == 'response.output_item.done' and event.get('item',{}).get('type') == 'web_search_call':
+                            action=event['item'].get('action',{})
+                            on_activity('Action',action.get('type','search')+': '+str(action.get('queries') or action.get('url') or '')+'\n')
+                            for source in action.get('sources',[]):
+                                if source.get('url'): on_activity('Source',source['url']+'\n')
+                        elif kind == 'response.output_text.annotation.added' and event.get('annotation',{}).get('type') == 'url_citation':
+                            on_activity('Source',event['annotation'].get('url','')+'\n')
                     if kind in ('error','response.failed'):
                         raise RunError('The text provider could not complete the response. Check provider status before retrying.')
                     if kind in ('response.completed','response.incomplete'): return event['response']
@@ -156,6 +167,7 @@ def request_json(url, headers, payload=None):
                     if kind == 'content_block_delta' and event.get('delta',{}).get('type') == 'text_delta':
                         block = blocks[event['index']]
                         block['text'] = block.get('text','') + event['delta'].get('text','')
+                        if on_activity: on_activity('Response',event['delta'].get('text',''))
                     if kind == 'message_delta':
                         usage.update(event.get('usage',{})); stop_reason = event.get('delta',{}).get('stop_reason',stop_reason)
                     if kind == 'message_stop': return {'content':list(blocks.values()),'usage':usage,'stop_reason':stop_reason}
@@ -190,16 +202,20 @@ def text_model(model):
 def text_key(model):
     return 'OPENAI_API_KEY' if text_model(model) in OPENAI_TEXT_MODELS else 'ANTHROPIC_API_KEY'
 
-def text_request(body):
+def text_request(body, on_activity=None):
     body = dict(body)
     body['model'] = text_model(body['model'])
     body['max_tokens'] = min(128000,body['max_tokens'])
     key = text_key(body['model'])
     if not os.environ.get(key): raise RunError('Missing API key: set ' + key + '.')
     if key == 'ANTHROPIC_API_KEY':
-        if body['max_tokens'] > 8192: body['stream'] = True
+        body.pop('text',None)
+        for tool in body.get('tools',[]): tool.pop('search_context_size',None)
+        if body.get('output_config',{}).get('effort') == 'auto': body.pop('output_config')
+        if body.get('output_config'): body['thinking']={'type':'adaptive','display':'summarized'}
+        body['stream'] = True
         return request_json('https://api.anthropic.com/v1/messages', {
-            'x-api-key':os.environ[key], 'anthropic-version':'2023-06-01', 'content-type':'application/json'},body)
+            'x-api-key':os.environ[key], 'anthropic-version':'2023-06-01', 'content-type':'application/json'},body,on_activity)
     messages = []
     for message in body['messages']:
         content = message['content']
@@ -213,13 +229,21 @@ def text_request(body):
                 else: raise RunError('Unsupported input for the selected OpenAI model.')
             content = converted
         messages.append({'role':message['role'],'content':content})
+    search=next((t for t in body.get('tools',[]) if t.get('name')=='web_search'),None)
+    tool={'type':'web_search','search_context_size':search.get('search_context_size','medium')} if search else None
+    if search and search.get('allowed_domains'): tool['filters']={'allowed_domains':search['allowed_domains']}
+    effort=body.get('output_config',{}).get('effort','medium')
+    if effort not in ('low','medium','high','xhigh','max'): effort='medium'
     data = request_json('https://api.openai.com/v1/responses',{'authorization':'Bearer '+os.environ[key],'content-type':'application/json'}, {
         'model':body['model'],'input':messages,'instructions':body.get('system',''),
-        'max_output_tokens':body['max_tokens'],'reasoning':{'effort':'medium'},'store':False,'stream':True})
+        'max_output_tokens':body['max_tokens'],'reasoning':{'effort':effort,'summary':'auto'},
+        'text':body.get('text',{'verbosity':'medium'}),'store':False,'stream':True,
+        **({'tools':[tool],'tool_choice':'auto','max_tool_calls':max(1,min(10,int(search.get('max_uses',3)))), 'include':['web_search_call.action.sources']} if tool else {})},on_activity)
     if data.get('status') not in ('completed','incomplete'): raise RunError('The OpenAI response did not complete.')
     limited = data.get('incomplete_details',{}).get('reason') == 'max_output_tokens' if data.get('incomplete_details') else False
     if data.get('status') == 'incomplete' and not limited: raise RunError('The OpenAI response was incomplete.')
     return {'content':[{'type':'text','text':block.get('text') or block.get('refusal','')} for item in data.get('output',[]) if item.get('type')=='message' for block in item.get('content',[]) if block.get('type') in ('output_text','refusal')],
+        'sources':[{'url':a['url'],'title':a.get('title',a['url'])} for item in data.get('output',[]) for a in ([a for block in item.get('content',[]) for a in block.get('annotations',[]) if a.get('type')=='url_citation'] + item.get('action',{}).get('sources',[])) if a.get('url')],
         'usage':data.get('usage',{}),'stop_reason':'max_tokens' if limited else 'end_turn'}
 
 
@@ -560,14 +584,34 @@ class Runtime:
             image_blocks.append({'type':'image', 'source':source})
         content = image_blocks + content
         model = self.model or step.get('text_model') or step.get('model') or self.manifest.get('default_text_model') or 'claude-sonnet-5-5'
+        search=step.get('web_search') or {}
+        effort=step.get('reasoning_effort','medium')
+        if effort not in ('low','medium','high','xhigh','max'): effort='medium'
+        verbosity=step.get('verbosity','medium')
+        if verbosity not in ('low','medium','high'): verbosity='medium'
+        buffers={}
+        def observe(kind,text):
+            # Terminal-safe public summaries and response drafts, never private reasoning.
+            text=re.sub(r'[\x00-\x08\x0b-\x1f\x7f]','',str(text))
+            buffers[kind]=buffers.get(kind,'')+text
+            if '\n' in buffers[kind] or len(buffers[kind])>=240:
+                progress(step['id']+' · '+kind+': '+buffers[kind].rstrip());buffers[kind]=''
         data = text_request({
             'model':model, 'max_tokens':self.max_output_tokens if self.override_step_limits else min(int(step.get('max_tokens',self.max_output_tokens)),self.max_output_tokens),
+            'output_config':{'effort':effort},'text':{'verbosity':verbosity},
+            **({'tools':[{'type':'web_search_20260318','name':'web_search','max_uses':max(1,min(10,int(search.get('max_calls',3)))),
+                'search_context_size':search.get('context_size','medium'),
+                **({'allowed_domains':search['allowed_domains']} if search.get('allowed_domains') else {})}]} if search.get('enabled') is True else {}),
             'system':as_text(resolve(step.get('system_prompt',''),scope,self.root)),
-            'messages':[{'role':'user','content':content}]})
+            'messages':[{'role':'user','content':content}]},observe)
+        for kind,text in buffers.items():
+            if text: progress(step['id']+' · '+kind+': '+text)
         if data.get('stop_reason') == 'max_tokens': raise RunError('AI output reached its token limit. Increase max_tokens in the step before retrying.')
         text = ''.join(b.get('text','') for b in data.get('content',[]) if b.get('type') == 'text')
         if not text: raise RunError('The AI provider returned no text output.')
         output = {'text':text, **({'parsed':parse_json_text(text)} if step.get('output_format') == 'json' else {})}
+        if data.get('sources'): output['sources']=data['sources']
+        output['usage']={'model':model,'input_tokens':data.get('usage',{}).get('input_tokens',0),'output_tokens':data.get('usage',{}).get('output_tokens',0)}
         if step.get('output_contract'):
             progress(step['id'] + ': checking output fields and source evidence')
             validate_output_contract(output.get('parsed',text),resolve(step['output_contract'],scope,self.root))
