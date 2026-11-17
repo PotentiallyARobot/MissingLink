@@ -66,7 +66,8 @@ window.PFAutoChat = (() => {
     } else hooks.outputs({body:parent},data.outputs||[],data.output_kind,data.video_url);
   }
   function workflow(parent,process,temporary) {
-    parent.replaceChildren();const detail=text(parent,'details','','chat-workflow-detail');withIcon(text(detail,'summary',process.name+' · '+(process.steps||[]).length+' steps'+(temporary?' · draft':'')),'workflow');
+    const count=(process.steps||[]).length;
+    parent.replaceChildren();const detail=text(parent,'details','','chat-workflow-detail');withIcon(text(detail,'summary',process.name+' · '+count+' step'+(count===1?'':'s')+(temporary?' · draft':'')),'workflow');
     const list=document.createElement('ol');detail.append(list);
     for(const step of (process.steps||[]).slice(0,40))text(list,'li',step.name||step.purpose||step.id);
   }
@@ -100,7 +101,7 @@ window.PFAutoChat = (() => {
     const explanation=text(trail,'p','','chat-task-note');
     const work=document.createElement('div');work.className='chat-workflow';trail.append(work);
     const cost=text(trail,'p','','chat-task-note'),activity=window.PFActivity?.mount(trail,{compact:true})||(()=>{});
-    let lastSignal=Date.now(),outputSeen=false,verificationSeen=false;const started=lastSignal;
+    let lastSignal=Date.now(),outputSeen=false,verificationSeen=false,lastWorkflow=null;const started=lastSignal;
     const timer=setInterval(()=>{connection.textContent=Math.floor((Date.now()-started)/1000)+'s'+(Date.now()-lastSignal>20000?' · waiting for connection':'');},1000);
     const event=(name,data)=>{
       const follow=hooks.atBottom?.();
@@ -109,11 +110,11 @@ window.PFAutoChat = (() => {
       if(name==='stage'){title.textContent=data.message||'Working…';setIcon(({matching:'search',search:'search',designing:'design',planning:'design',preparing:'workflow',testing:'terminal',verifying:'check',validating:'check'})[data.stage]||'workflow');}
       if(name==='decision')explanation.textContent=data.message||'Choosing the next action.';
       if(name==='activity'){activity(data);if(data.kind==='tool_started'){setIcon('globe');title.textContent=(({search:'Searching the web',open_page:'Reading a page',find_in_page:'Finding a passage'})[data.action]||'Using '+(data.tool||'a tool'))+(data.query?' · '+data.query.slice(0,120):'');}}
-      if(name==='workflow')workflow(work,data.process,data.temporary);
+      if(name==='workflow'){lastWorkflow=data.process;workflow(work,data.process,data.temporary);}
       if(name==='quote')cost.textContent='Run '+data.attempt+': '+Number(data.cost.tokens_charged).toLocaleString()+' credits · task limit '+Number(data.limit).toLocaleString();
       if(name==='outputs'){const output=document.createElement('div');output.className='chat-test-output';assist.body.append(output);outputs(output,data,hooks);outputSeen=true;hooks.balance(data.tokens_remaining);}
       if(name==='verification'){title.textContent=data.passed?'Output checks passed':'Checking improvements';verification(trail,data);verificationSeen=true;}
-      if(name==='saved')title.textContent='Verified workflow saved';
+      if(name==='saved'){title.textContent='Verified workflow saved';if(lastWorkflow)workflow(work,lastWorkflow,false);}
       if(name!=='heartbeat')hooks.scroll?.(follow);
     };
     try {
