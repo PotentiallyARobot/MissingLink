@@ -11268,6 +11268,21 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
 .conversation-clear { position:absolute; right:12px; top:-30px; padding:3px 8px; border:0; border-radius:5px; background:var(--bg); color:var(--text-muted); font-family:inherit; font-size:12px; line-height:1.5; cursor:pointer; }
 .conversation-clear:hover { color:var(--text); background:var(--surface-2); }
 .conversation-clear:disabled { opacity:.5; cursor:default; }
+.d-input-mode-label { display:flex; align-items:center; gap:8px; opacity:1; pointer-events:auto; background:var(--bg); border-radius:5px; }
+.d-input-mode-label button { border:0; background:transparent; color:var(--text-muted); padding:4px 6px; font:inherit; font-size:12px; cursor:pointer; letter-spacing:.02em; }
+.d-input-mode-label button[aria-pressed="true"] { color:var(--gold); box-shadow:inset 0 -1px var(--gold); }
+.d-input-mode-label button:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.d-input-mode-label button:disabled { cursor:wait; opacity:.6; }
+.d-input-mode-label small { font-size:9px; opacity:.75; }
+.chat-task,.chat-verification { border:1px solid var(--border); border-radius:10px; padding:16px; margin:8px 0; }
+.chat-task-time { float:right; color:var(--text-muted); font-size:12px; }
+.chat-workflow ol { padding-left:24px; margin:10px 0; color:var(--text-muted); }
+.chat-workflow:empty { display:none; }
+.chat-verification li { margin:7px 0; }
+.chat-answer { white-space:pre-wrap; overflow-wrap:anywhere; }
+.chat-saved { display:flex; align-items:center; gap:12px; flex-wrap:wrap; color:var(--gold); padding:12px 0; }
+.chat-test-output { margin:18px 0; }
+@media(max-width:500px) { .conversation-clear { font-size:10px; max-width:116px; } .d-input-mode-label { left:8px; gap:3px; } }
 .convo-entry { display:flex; align-items:center; gap:4px; }
 .convo-entry .convo-row { flex:1; min-width:0; }
 .convo-delete { flex:none; border:0; background:transparent; color:var(--text-muted); cursor:pointer; padding:8px; border-radius:6px; }
@@ -11288,6 +11303,7 @@ body.d-pubgraph-mode .d-folder-view { display: none !important; }
 .pf-live-activity{margin:12px 0;border:1px solid #333;border-radius:10px;padding:12px 16px;font:13px/1.55 system-ui;color:#c9cbd0;max-width:100%;overflow-wrap:anywhere}.pf-live-activity summary{cursor:pointer;min-height:28px}.pf-live-activity details{margin:8px 0}.pf-live-activity>div{max-height:380px;overflow:auto;overscroll-behavior:contain}.pf-live-activity pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 system-ui;margin:8px 0;padding:10px;background:#141416;border-radius:6px;max-height:220px;overflow:auto}.pf-activity-status{color:#9397a0;font-size:12px}.pf-activity-source a{color:#e8bf64;text-decoration:underline}.pf-activity-source{margin:5px 0}
 </style>
 <script src="assets/promptflow-activity.js?v=20261115-1"></script>
+<script src="assets/promptflow-chat.js?v=20261117-1"></script>
 <script src="assets/promptflow-text-models.js?v=20261115-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261114-1"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
@@ -11698,7 +11714,10 @@ python -m venv .venv
            sitting just above the input bar's top-left edge.
            Doesn't affect the layout of the bar's children since
            it's pulled out of normal flow with position:absolute. -->
-      <span class="d-input-mode-label" id="dInputModeLabel" aria-hidden="true">Interpreter</span>
+      <div class="d-input-mode-label" id="dInputModeLabel" role="group" aria-label="Conversation mode">
+        <button type="button" id="interpreterModeBtn" aria-pressed="true">Interpreter</button>
+        <button type="button" id="chatModeBtn" aria-pressed="false" title="Automatically find or create workflows, run them, verify results and save successful drafts">Chat <small>Auto</small></button>
+      </div>
       <button type="button" id="clearConversationBtn" class="conversation-clear" hidden>Clear conversation</button>
       <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.zip,.json,.txt,.md" multiple hidden>
       <button class="icon-btn" id="attachBtn" title="Attach files — image/video/audio for processing, or upload a .zip + chat (.md/.txt/.json) to contribute lessons">
@@ -13296,16 +13315,53 @@ promptflow whoami</code></pre>
   // The composer placeholder gives a hint about whether attaching an
   // image is required. In a fresh conversation we need an image; in
   // an existing one a text-only refinement is fine.
+  var composerMode = 'interpreter';
+  function setComposerMode(mode) {
+    if(busy || _planInFlight || _sendInProgress)return;
+    composerMode=mode==='chat'?'chat':'interpreter';
+    closeSuggestions();updateComposerHint();textInput.focus();
+  }
+  document.getElementById('interpreterModeBtn')?.addEventListener('click',()=>setComposerMode('interpreter'));
+  document.getElementById('chatModeBtn')?.addEventListener('click',()=>setComposerMode('chat'));
+  function autoChatHooks() {
+    return {outputs:renderOutputs,open:openProcessEditor,
+      session:data=>{currentConversationId=data.conversation_id;setConversationTitle(currentConversationTitle || data.conversation_title);updateComposerHint();},
+      balance:tokens=>{if(typeof tokens==='number'&&ME){ME.tokens=tokens;paintAuthUI();}}
+    };
+  }
+  async function sendAutoChat(userText) {
+    if(!window.PFAutoChat) {setError(addAssistMsg(),'Chat could not load. Refresh the page and try again.');return;}
+    if(pendingContrib?.zip) {const note=addAssistMsg();setError(note,'Use Interpreter to contribute this ZIP, or remove it before starting a Chat task.');return;}
+    const history=buildConversationHistoryForRefine(true);
+    const files=attachedFiles.slice(),selected=activeInterpreterProcess();
+    const form=new FormData();form.set('text',userText);form.set('turn_id','chat_'+crypto.randomUUID());
+    if(currentConversationId)form.set('conversation_id',currentConversationId);
+    if(selected?.id)form.set('process_id',selected.id);
+    form.set('conversation_history',JSON.stringify(history));
+    const preferences=getActiveGenPrefs();if(preferences?.ids?.length)form.set('process_overrides',JSON.stringify(preferences));consumeGenPrefsOverride();
+    let images=0;for(const file of files) {const key=file.kind==='image'?(++images===1?'image':'image_'+images):file.kind;if(['image','video','audio'].includes(file.kind))form.append(key,file.file);}
+    addUserMsg(userText,files.find(f=>f.kind==='image')?.dataUrl || null,null,[]);
+    const assist=addAssistMsg();
+    const controller=new AbortController();currentAbortController=controller;currentRunCancellable=true;
+    busy=true;textInput.value='';textInput.style.height='auto';attachedFiles=[];fileInput.value='';paintAttach();updateSend();
+    armBusyWatchdog(21*60*1000);
+    try {
+      const completed=await window.PFAutoChat.send(form,assist,autoChatHooks(),controller.signal);
+      if(completed?.result?.process?.id)interpreterProcessContext={id:completed.result.process.id,name:completed.result.process.name};
+      refreshConversations();refreshProcesses();
+    } finally {busy=false;currentRunCancellable=false;currentAbortController=null;updateSend();updateComposerHint();}
+  }
   function updateComposerHint() {
     const label = document.getElementById("dInputModeLabel");
     const context = activeInterpreterProcess();
-    textInput.dataset.mode = context ? "process" : currentConversationId ? "conversation" : "new";
-    textInput.placeholder = context
+    textInput.dataset.mode = composerMode === 'chat' ? 'chat' : context ? "process" : currentConversationId ? "conversation" : "new";
+    textInput.placeholder = composerMode === 'chat' ? 'Describe the result you want. Chat finds, runs, tests and saves workflows…' : context
       ? 'Ask about "' + context.name + '", run it, or describe a specific change…'
       : 'Ask a question or describe what you want to do…';
     textInput.dispatchEvent(new Event("pf-composer-mode"));
     if (label) {
-      label.textContent = "Interpreter";
+      document.getElementById('interpreterModeBtn')?.setAttribute('aria-pressed',String(composerMode !== 'chat'));
+      document.getElementById('chatModeBtn')?.setAttribute('aria-pressed',String(composerMode === 'chat'));
       label.classList.remove("d-input-mode-label-edit");
     }
   }
@@ -13339,6 +13395,7 @@ promptflow whoami</code></pre>
     if (!resp?.ok) { paintConversationList(); return; }
 
     currentConversationId = cid;
+    composerMode = resp.turns?.some(turn=>turn.plan?.intent==='auto_chat') ? 'chat' : 'interpreter';
     currentEditorProcessId = null;
     currentEditorProcess = null;
     currentGraphProcessId = null;
@@ -13426,6 +13483,11 @@ promptflow whoami</code></pre>
     addUserMsg(turn.user_text || "", turn.image_public_url || null, null);
 
     const assist = addAssistMsg();
+    if(turn.plan?.intent === 'auto_chat') {
+      if(turn.plan.result) window.PFAutoChat.result(assist.body,turn.plan.result,autoChatHooks());
+      else { const note=document.createElement('p');note.textContent='This Chat task has not recorded a final result yet.';assist.body.append(note); }
+      return;
+    }
     if (turn.plan?.intent === 'update_process' && turn.plan.process) {
       const note = document.createElement('p'); note.textContent = 'Updated workflow: ' + turn.plan.process.name + '. ' + (turn.plan.rationale || '');
       assist.body.appendChild(note); renderProcessCard(assist,turn.plan.process,'updated');
@@ -15453,6 +15515,7 @@ promptflow whoami</code></pre>
   const RUN_ICON  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="6 4"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.4s" repeatCount="indefinite"/></circle></svg>`;
 
   function updateSend() {
+    for(const id of ['interpreterModeBtn','chatModeBtn']) {const button=document.getElementById(id);if(button)button.disabled=busy||_planInFlight||_sendInProgress;}
     const clearButton = document.getElementById('clearConversationBtn');
     if (clearButton) { clearButton.hidden = !currentConversationId && !stream.querySelector('.msg'); clearButton.disabled = busy || _planInFlight || _sendInProgress; }
     // Three-state button: Send (idle), Stop (busy + cancellable),
@@ -15560,6 +15623,11 @@ promptflow whoami</code></pre>
     // it up front guarantees every send path tears it down.
     closeSuggestions();
 
+    if (composerMode === 'chat' && !window._forceRunProcessId) {
+      _sendInProgress = false;
+      if(userText) await sendAutoChat(userText);
+      return;
+    }
     const earlyIntent = interpreterMessageIntent(userText, !!activeInterpreterProcess()?.id);
     if (!window._forceRunProcessId && earlyIntent === "retry") {
       _sendInProgress = false;
@@ -25507,7 +25575,7 @@ function dDesktopInit(){
       access_mode: "tokens",  // safe default: existing users keep token behavior
       reasoning_effort:'high', verbosity:'medium', web_search:{enabled:true,max_calls:3,context_size:'medium'}, override_step_models:false,
       keys: { anthropic: "", openai: "", google: "" },
-      limits: {planning_output_tokens:16000, chat_output_tokens:4096, step_output_tokens:4096, override_step_limits:false, max_run_tokens:0, max_loop_items:50},
+      limits: {planning_output_tokens:16000, chat_output_tokens:4096, step_output_tokens:4096, override_step_limits:false, max_run_tokens:0, auto_chat_max_tokens:5000, max_loop_items:50},
       // Sensible defaults so a fresh user gets a working setup
       // without having to pick anything. Generate defaults to Opus
       // because it's the safest model for code/process generation;
@@ -25556,6 +25624,7 @@ function dDesktopInit(){
     if (D("dMaStepLimit")) D("dMaStepLimit").value = s.limits?.step_output_tokens || 4096;
     if (D("dMaLoopLimit")) D("dMaLoopLimit").value = s.limits?.max_loop_items || 50;
     if (D("dMaRunLimit")) D("dMaRunLimit").value = s.limits?.max_run_tokens || 0;
+    if (D("dMaAutoChatLimit")) D("dMaAutoChatLimit").value = s.limits?.auto_chat_max_tokens || 5000;
     if (D('dMaWebSearch')) D('dMaWebSearch').checked=s.web_search?.enabled!==false;
     if (D('dMaSearchCalls')) D('dMaSearchCalls').value=s.web_search?.max_calls || 3;
     if (D('dMaVerbosity')) D('dMaVerbosity').value=s.verbosity || 'medium';
@@ -25596,6 +25665,7 @@ function dDesktopInit(){
         chat_output_tokens: Number(D("dMaChatLimit")?.value || 4096),
         override_step_limits: !!D("dMaOverrideLimits")?.checked,
         max_run_tokens: Number(D("dMaRunLimit")?.value || 0),
+        auto_chat_max_tokens: Number(D("dMaAutoChatLimit")?.value || 5000),
         max_loop_items: Number(D("dMaLoopLimit")?.value || 50),
       },
       keys: {
@@ -25686,7 +25756,7 @@ function dDesktopInit(){
   // exists for explicit server-side persistence, but the user no
   // longer has to click it to make their choice take effect locally.
   function dMaAutoSave() {
-    for (const id of ['dMaRunLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).checkValidity()) return;
+    for (const id of ['dMaRunLimit','dMaAutoChatLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).checkValidity()) return;
     const settings = dMaReadFromForm();
     dMaBudgetSummary(settings);
     dMaQualitySummary(settings);
@@ -25740,7 +25810,7 @@ function dDesktopInit(){
   })();
 
   async function dMaSave() {
-    for (const id of ['dMaRunLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).reportValidity()) return;
+    for (const id of ['dMaRunLimit','dMaAutoChatLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).reportValidity()) return;
     const settings = dMaReadFromForm();
     const saveBtn = D("dMaSave");
     if (saveBtn) saveBtn.disabled = true;
@@ -25821,7 +25891,7 @@ function dDesktopInit(){
   // immediately to the current session (window.pfSettings + the
   // fetch header). They can still click Save for server-side persist.
   ["dMaKeyAnthropic","dMaKeyOpenai","dMaKeyGoogle",
-   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaChatLimit","dMaOverrideLimits","dMaRunLimit","dMaLoopLimit","dMaReasoningEffort","dMaOverrideModels","dMaWebSearch","dMaSearchCalls","dMaVerbosity"]
+   "dMaModelGenerate","dMaModelChat","dMaModelAdapt","dMaModelSearch","dMaModelLearn","dMaModelRun","dMaPlanningLimit","dMaStepLimit","dMaChatLimit","dMaOverrideLimits","dMaRunLimit","dMaAutoChatLimit","dMaLoopLimit","dMaReasoningEffort","dMaOverrideModels","dMaWebSearch","dMaSearchCalls","dMaVerbosity"]
     .forEach(id => {
       const el = D(id);
       if (!el) return;
@@ -30406,6 +30476,8 @@ if (document.readyState === "loading") {
       <div class="d-ma-activity"><label for="dMaOverrideModels">Use the selected workflow model instead of saved AI-step models</label><input id="dMaOverrideModels" type="checkbox"></div>
       <div class="d-ma-activity"><label for="dMaLoopLimit">Maximum items per loop</label><select class="d-ma-activity-select" id="dMaLoopLimit"><option value="5">5 — small test</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select></div>
       <div class="d-ma-activity"><label for="dMaRunLimit">Maximum compute credits per run</label><input class="d-ma-activity-select" id="dMaRunLimit" type="number" min="0" max="1000000" step="1" placeholder="0 = no cap"></div>
+      <div class="d-ma-activity"><label for="dMaAutoChatLimit">Chat auto task credit limit</label><input class="d-ma-activity-select" id="dMaAutoChatLimit" type="number" min="1" max="1000000" step="1" value="5000"></div>
+      <p class="d-ma-help">Chat automatically runs workflows without a confirmation step. This limit covers the combined run estimates for the task, including one revision and retest. It also respects your per-run cap and available balance. Only drafts whose completed output passes the agent’s checks enter your private library.</p>
       <p class="d-ma-activity-desc">Choose up to 128,000 output tokens for the listed models, or use Model maximum. This is an allowance, not a requested response length; ask for the detail you want. Limits include provider reasoning tokens where applicable. Higher allowances can cost more. A limit that is too low can truncate a result; the run will stop with an error. Loops exceeding the item limit stop before processing any of their items. The credit cap covers hosted compute, not provider bills or creator fees. Each run shows its quote before execution.</p>
 
       <div class="d-ma-activity">

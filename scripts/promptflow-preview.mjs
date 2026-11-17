@@ -56,6 +56,20 @@ const server = http.createServer(async (req,res) => {
   };
   let raw=''; for await (const chunk of req) raw+=chunk;
   let body={};try{body=JSON.parse(raw);}catch{}
+  if(url.pathname==='/api/promptflow/chat/stream') {
+    const workflow={...sample,is_draft:false,auto_chat_draft:true,name:'Meeting actions with owner checks'};
+    const verification={passed:true,summary:'All action items have an owner, due date and supporting quote.',checks:[{name:'Required fields',passed:true,evidence:'Three actions contain owners, dates and source quotes.'}],limitations:['Synthetic preview fixture; no provider calls.']};
+    const run={outputs:[{kind:'text',text:'Owner: Maya\nAction: Send the revised proposal\nDue: Friday\nSource: “Maya will send the revised proposal by Friday.”'}],output_kind:'text',tokens_remaining:4960};
+    return events([[0,'session',{turn_id:'fixture',conversation_id:'qa-chat',conversation_title:'Meeting actions',limit:5000}],
+      [200,'stage',{message:'Matching your request to available workflows'}],
+      [200,'decision',{message:'A structured extraction workflow can check every action against the transcript.'}],
+      [200,'workflow',{process:workflow,temporary:true}],
+      [200,'activity',{kind:'reasoning_summary_delta',text:'I am checking that each action has explicit source evidence and preserving unknown owners rather than guessing.',step_id:'agent',step_name:'Checking the request'}],
+      [200,'quote',{cost:{tokens_charged:40},spent:0,limit:5000,attempt:1}],
+      [200,'stage',{message:'Running the workflow'}],[200,'outputs',run],[200,'verification',verification],
+      [200,'saved',{process_id:workflow.id,name:workflow.name}],
+      [0,'done',{ok:true,result:{action:'complete',answer:'The action list is ready.',created:true,saved:true,process:workflow,verification,run},tokens_remaining:4960}]]);
+  }
   if(ref.searchParams.has('interpreter_routing') && req.method==='POST') console.log('Routing QA:',url.pathname,body.process_id || body.id || '');
   if(url.pathname==='/api/promptflow/discuss/stream') {
     const answer=body.process_id
@@ -180,7 +194,7 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});return res.end(html);
   }
   // Only serve public image assets used by this page; never repository files.
-  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-activity.js'].includes(url.pathname)) {
+  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js'].includes(url.pathname)) {
     res.writeHead(200,{'content-type':url.pathname.endsWith('.css')?'text/css':'text/javascript'});return res.end(await readFile(path.join(root,url.pathname)));
   }
   if(url.pathname==='/promptflow-cli.zip') {res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="promptflow-cli.zip"'});return res.end(await readFile(path.join(root,'promptflow-cli.zip')));}

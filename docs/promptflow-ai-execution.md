@@ -1,5 +1,33 @@
 # Model settings and live execution — 0.5.0
 
+## Automatic Chat mode
+
+The composer has Interpreter and Chat buttons. Chat is automatic: it matches a
+request to an available saved/public workflow, or designs a temporary private
+workflow, runs it, and reviews the actual output. A failed quality check permits
+one revised draft and retest. Passing drafts enter the user's private library;
+failed or stopped drafts remain hidden and disabled. Nothing is auto-published.
+Agent verification is separate from the author's human validation for publishing.
+
+Questions and requests for ideas receive answers without creating workflows.
+Essential missing inputs produce a focused question. Explicitly requested sample
+inputs can be generated as part of preparation. Follow-ups include recent chat
+history and the selected workflow. Workflow steps, output checks, public reasoning
+summaries, tool actions and artifacts are visible in the conversation.
+
+Chat auto task credit limit defaults to 5,000 and applies cumulatively to the
+workflow run estimates across both attempts. The account's per-run cap and balance
+remain enforced. Planning and review follow the existing hosted model billing
+policy; the limit does not represent provider input/output token usage. Task IDs
+are idempotent, and connection recovery only reads the existing task. Stop prevents
+subsequent agent actions; already dispatched provider work can still finish.
+Tasks have a 20-minute deadline and never register cron jobs or autonomous agents.
+
+The agent's checks inspect the completed step outputs and generated images when
+applicable. They are an AI review, not a guarantee of correctness or a claim that
+generated applications were exercised in a real browser. Unverified essential
+requirements must fail the review. The transcript records the checks and limitations.
+
 Workflow creation defaults to GPT-6 Astra when OpenAI is configured. Existing
 explicit account choices remain respected. GPT-6.1 Sol is the general-purpose
 OpenAI step model; Luna can handle extraction. Model selection and output budgets
