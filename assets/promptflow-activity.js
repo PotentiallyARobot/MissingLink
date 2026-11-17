@@ -1,6 +1,24 @@
 // Only explicitly public events are rendered. Legacy thinking is never accepted.
 window.PFActivity = (() => {
   const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source']);
+  const paths={
+    search:'M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
+    globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18',
+    workflow:'M3 3h6v6H3zM15 15h6v6h-6zM15 3h6v6h-6zM9 6h6M6 9v9h9',
+    design:'M15 4l5 5M4 20l4-1L21 6l-3-3L5 16z',
+    terminal:'M3 4h18v16H3zM7 9l3 3-3 3M13 15h4',
+    check:'M21 12a9 9 0 1 1-3-7M8 11l4 4L22 5',
+    save:'M5 3h12l4 4v14H3V3zM7 3v6h10V3M7 21v-8h10v8',
+    copy:'M9 9h12v12H9zM5 15H3V3h12v2',
+    open:'M14 3h7v7M21 3L10 14M10 3H3v18h18v-7',
+    message:'M21 11a9 8 0 0 1-9 8H7l-5 3 2-6a8 8 0 0 1-1-5 9 8 0 0 1 18 0',
+    alert:'M12 3L1 21h22zM12 9v5M12 17v1'
+  };
+  function icon(name) {
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    for(const [key,value] of Object.entries({viewBox:'0 0 24 24',width:'17',height:'17',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'pf-action-icon'}))svg.setAttribute(key,value);
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',paths[name]||paths.terminal);svg.append(path);return svg;
+  }
   function mount(parent,options={}) {
     const panel=document.createElement(options.compact?'div':'details');panel.className='pf-live-activity'+(options.compact?' pf-activity-compact':'');panel.open=true;
     if(!options.compact){const heading=document.createElement('summary');heading.textContent='Live activity';panel.append(heading);}
@@ -15,6 +33,7 @@ window.PFActivity = (() => {
         if(steps.size>=100)return;
         const node=document.createElement('details');node.open=!options.compact;
         const label=document.createElement('summary');label.textContent=event.step_name || (id==='process'?'Process activity':id);node.append(label);
+        if(options.compact)label.prepend(icon(/verif|check/i.test(event.step_name||'')?'check':/choos|search/i.test(event.step_name||'')?'search':'terminal'));
         const status=document.createElement('span');status.className='pf-activity-status';label.append(status);
         const work=document.createElement('div');node.append(work);rows.append(node);
         steps.set(id,{node,work,status,summary:'',response:'',sources:new Set(),actions:new Map()});
@@ -36,6 +55,7 @@ window.PFActivity = (() => {
         if(!row){if(s.actions.size>=40)return;row=document.createElement('div');s.work.append(row);s.actions.set(key,row);}
         const action=({search:'Web search',open_page:'Read page',find_in_page:'Find passage'})[event.action] || event.tool || 'Tool';
         row.textContent=action+(event.query?': '+event.query:event.url?': '+event.url:'')+(event.kind==='tool_started'?'…':' · complete');
+        if(options.compact){row.className='pf-tool-action';row.prepend(icon(event.action==='search'?'search':'globe'));}
       }
       if(event.kind==='source' && event.url && !s.sources.has(event.url) && s.sources.size<100) {
         let url;try{url=new URL(event.url);}catch{return;}
@@ -43,8 +63,9 @@ window.PFActivity = (() => {
         s.sources.add(event.url);
         const a=document.createElement('a');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';a.textContent=event.title || url.hostname;
         const line=document.createElement('div');line.className='pf-activity-source';line.append(a);s.work.append(line);
+        if(options.compact)line.prepend(icon('globe'));
       }
     };
   }
-  return {mount};
+  return {mount,icon};
 })();

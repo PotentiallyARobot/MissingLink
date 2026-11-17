@@ -23,6 +23,11 @@ window.PFAutoChat = (() => {
     }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
   }
   const text=(parent,tag,value,className)=>{const node=document.createElement(tag);node.textContent=value;if(className)node.className=className;parent.append(node);return node;};
+  const withIcon=(node,name)=>{const icon=window.PFActivity?.icon?.(name);if(icon)node.prepend(icon);return node;};
+  function copyButton(parent,value) {
+    const button=withIcon(text(parent,'button','','chat-icon-button'),'copy');button.type='button';button.title='Copy response';button.setAttribute('aria-label','Copy response');
+    button.onclick=async()=>{try{await navigator.clipboard.writeText(value);button.title='Copied';button.setAttribute('aria-label','Copied');button.replaceChildren();withIcon(button,'check');}catch{button.title='Select text to copy';}};
+  }
   // Render a deliberately small Markdown subset with DOM text nodes. Model HTML
   // is never executed, and links are restricted to HTTP(S).
   function inline(parent,value) {
@@ -57,29 +62,29 @@ window.PFAutoChat = (() => {
     const rich=(data.outputs||[]).filter(o=>o.kind==='text'&&typeof o.text==='string');
     if(rich.length===(data.outputs||[]).length&&rich.length) {
       for(const output of rich){const article=text(parent,'article','','chat-prose');markdown(article,output.text);}
-      const copy=text(parent,'button','Copy response','chat-text-button');copy.type='button';copy.onclick=async()=>{try{await navigator.clipboard.writeText(rich.map(o=>o.text).join('\n\n'));copy.textContent='Copied';}catch{copy.textContent='Select text to copy';}};
+      copyButton(parent,rich.map(o=>o.text).join('\n\n'));
     } else hooks.outputs({body:parent},data.outputs||[],data.output_kind,data.video_url);
   }
   function workflow(parent,process,temporary) {
-    parent.replaceChildren();const detail=text(parent,'details','','chat-workflow-detail');text(detail,'summary',process.name+' · '+(process.steps||[]).length+' steps'+(temporary?' · draft':''));
+    parent.replaceChildren();const detail=text(parent,'details','','chat-workflow-detail');withIcon(text(detail,'summary',process.name+' · '+(process.steps||[]).length+' steps'+(temporary?' · draft':'')),'workflow');
     const list=document.createElement('ol');detail.append(list);
     for(const step of (process.steps||[]).slice(0,40))text(list,'li',step.name||step.purpose||step.id);
   }
   function verification(parent,value) {
     const box=document.createElement('details');box.className='chat-verification';parent.append(box);
-    text(box,'summary',value.passed?'✓ Output checks passed':'Output needs work');text(box,'p',value.summary||'');
+    withIcon(text(box,'summary',value.passed?'Output checks passed':'Output needs work'),value.passed?'check':'alert');text(box,'p',value.summary||'');
     const list=document.createElement('ul');box.append(list);
     for(const check of value.checks||[])text(list,'li',(check.passed?'✓ ':'✕ ')+(check.name?check.name+': ':'')+check.evidence);
     for(const limit of value.limitations||[])text(box,'p','Not verified: '+limit,'status');
   }
   function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false}={}) {
     if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
-    if(data.action!=='complete'||!data.run?.outputs?.length)markdown(text(parent,'div','','chat-prose chat-answer'),data.answer||'');
+    if(data.action!=='complete'||!data.run?.outputs?.length){markdown(text(parent,'div','','chat-prose chat-answer'),data.answer||'');if(data.answer)copyButton(parent,data.answer);}
     if(data.run&&!outputsAlreadyShown)outputs(parent,data.run,hooks);
     if(data.verification&&!verificationAlreadyShown)verification(parent,data.verification);
     if(data.saved&&data.process) {
-      const row=text(parent,'div','✓ Saved privately','chat-saved');
-      const open=text(row,'button',data.process.name+' ↗','chat-text-button');open.type='button';open.onclick=()=>hooks.open(data.process.id);
+      const row=withIcon(text(parent,'div','Saved privately','chat-saved'),'save');
+      const open=withIcon(text(row,'button',data.process.name,'chat-text-button'),'open');open.type='button';open.onclick=()=>hooks.open(data.process.id);
     }
     if(data.history_warning)text(parent,'p',data.history_warning,'status');
   }
@@ -87,6 +92,8 @@ window.PFAutoChat = (() => {
     assist.el?.classList.add('chat-auto-message');
     const panel=document.createElement('details');panel.className='chat-task';assist.body.append(panel);
     const heading=text(panel,'summary','','chat-task-heading');
+    const statusIcon=text(heading,'span','','chat-status-icon');withIcon(statusIcon,'search');
+    const setIcon=name=>{statusIcon.replaceChildren();withIcon(statusIcon,name);};
     const title=text(heading,'span','Working…');title.setAttribute('role','status');title.setAttribute('aria-live','polite');
     const connection=text(heading,'span','','chat-task-time');
     const trail=text(panel,'div','','chat-task-trail');
@@ -99,9 +106,9 @@ window.PFAutoChat = (() => {
       const follow=hooks.atBottom?.();
       lastSignal=Date.now();
       if(name==='session'){hooks.session(data);cost.textContent='Auto task limit: '+Number(data.limit).toLocaleString()+' credits';}
-      if(name==='stage')title.textContent=data.message||'Working…';
+      if(name==='stage'){title.textContent=data.message||'Working…';setIcon(({matching:'search',search:'search',designing:'design',planning:'design',preparing:'workflow',testing:'terminal',verifying:'check',validating:'check'})[data.stage]||'workflow');}
       if(name==='decision')explanation.textContent=data.message||'Choosing the next action.';
-      if(name==='activity')activity(data);
+      if(name==='activity'){activity(data);if(data.kind==='tool_started'){setIcon('globe');title.textContent=(({search:'Searching the web',open_page:'Reading a page',find_in_page:'Finding a passage'})[data.action]||'Using '+(data.tool||'a tool'))+(data.query?' · '+data.query.slice(0,120):'');}}
       if(name==='workflow')workflow(work,data.process,data.temporary);
       if(name==='quote')cost.textContent='Run '+data.attempt+': '+Number(data.cost.tokens_charged).toLocaleString()+' credits · task limit '+Number(data.limit).toLocaleString();
       if(name==='outputs'){const output=document.createElement('div');output.className='chat-test-output';assist.body.append(output);outputs(output,data,hooks);outputSeen=true;hooks.balance(data.tokens_remaining);}
@@ -113,6 +120,7 @@ window.PFAutoChat = (() => {
       const response=await fetch('/api/promptflow/chat/stream',{method:'POST',body:form,signal});
       const complete=await read(response,event);
       panel.classList.add('chat-task-finished');panel.open=false;
+      setIcon(complete.result?.action==='complete'?'check':['failed','stopped'].includes(complete.result?.action)?'alert':'message');
       title.textContent=({complete:'Completed',answer:'Reviewed request',ask:'Reviewed request',failed:'Stopped',stopped:'Stopped'})[complete.result?.action]||'Finished';
       const follow=hooks.atBottom?.();result(assist.body,complete.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen});hooks.scroll?.(follow);hooks.balance(complete.tokens_remaining);return complete;
     }catch(error) {

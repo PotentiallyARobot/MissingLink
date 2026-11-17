@@ -28,6 +28,24 @@ applicable. They are an AI review, not a guarantee of correctness or a claim tha
 generated applications were exercised in a real browser. Unverified essential
 requirements must fail the review. The transcript records the checks and limitations.
 
+Live validation (2026-11-17): an ideas-only request returned an answer without
+creating or running a workflow. Chat then created Meeting Commitment Ledger with
+two text steps, ran it against supplied meeting notes, independently checked the
+actual ledger, and saved it privately (390 compute credits). A second request in
+Chrome reused that saved workflow with different notes and passed verification
+(1,353 credits under the account's larger output allowance). Both outputs retained
+verbatim evidence and flagged the unassigned action's missing owner and date.
+The saved workflow is committed, unpublished, and not publicly runnable. Repeating
+the creation task ID returned HTTP 409; status recovery returned the saved result
+without another run. The live test caught and fixed an authoring request being
+misrouted into input preparation.
+
+Chat uses a narrow conversation column, subdued background, right-aligned user
+messages, rendered prose/tables, and compact expandable activity with action icons.
+The composer stays aligned with the conversation. Detailed checks and public
+reasoning summaries remain available without surrounding every reply in panels.
+Text is rendered with DOM nodes; generated HTML is not executed by the chat renderer.
+
 Workflow creation defaults to GPT-6 Astra when OpenAI is configured. Existing
 explicit account choices remain respected. GPT-6.1 Sol is the general-purpose
 OpenAI step model; Luna can handle extraction. Model selection and output budgets
