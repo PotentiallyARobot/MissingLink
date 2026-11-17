@@ -11342,6 +11342,7 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 
 </style>
 <link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
+<link rel="stylesheet" href="assets/promptflow-chat.css?v=20261117-5">
 <style>
 .pf-live-activity{margin:12px 0;border:1px solid #333;border-radius:10px;padding:12px 16px;font:13px/1.55 system-ui;color:#c9cbd0;max-width:100%;overflow-wrap:anywhere}.pf-live-activity summary{cursor:pointer;min-height:28px}.pf-live-activity details{margin:8px 0}.pf-live-activity>div{max-height:380px;overflow:auto;overscroll-behavior:contain}.pf-live-activity pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 system-ui;margin:8px 0;padding:10px;background:#141416;border-radius:6px;max-height:220px;overflow:auto}.pf-activity-status{color:#9397a0;font-size:12px}.pf-activity-source a{color:#e8bf64;text-decoration:underline}.pf-activity-source{margin:5px 0}
 .chat-task .pf-activity-compact { border:0; border-radius:0; padding:0; margin:10px 0; color:#a9a9b2; }
@@ -11350,7 +11351,7 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 .chat-task .pf-activity-compact summary { min-height:0; padding:4px 0; }
 .chat-task .pf-activity-compact pre { border-left:1px solid #33333a; background:none; border-radius:0; padding:4px 12px; }
 </style>
-<script src="assets/promptflow-activity.js?v=20261117-3"></script>
+<script src="assets/promptflow-activity.js?v=20261117-5"></script>
 <script src="assets/promptflow-chat.js?v=20261117-4"></script>
 <script src="assets/promptflow-text-models.js?v=20261115-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261114-1"></script>
@@ -11398,6 +11399,8 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 
 <!-- Sidebar folders (left edge) -->
 <nav class="d-sidebar" id="dSidebar">
+  <div class="chat-only chat-sidebar-brand">PromptFlow<sup>™</sup></div>
+  <button type="button" class="chat-only chat-nav-button" id="chatNewBtn" data-chat-icon="design">New chat</button>
   <button class="d-folder" data-folder="system">
     <img src="promptflow_icons_transparent/01_system_folder_monitor.png" alt="">
     <span class="d-label">System</span>
@@ -11426,6 +11429,14 @@ body.pf-chat-mode #textInput:focus { outline:none; }
     <img src="promptflow_icons_transparent/06_agents_folder_robot.png" alt="">
     <span class="d-label">Agents</span>
   </button>
+  <section class="chat-only chat-recents" aria-label="Recent conversations">
+    <div class="chat-recents-label">Recent chats</div>
+    <div id="chatRecentList" class="chat-recent-list"></div>
+  </section>
+  <div class="chat-only chat-sidebar-footer">
+    <button type="button" class="chat-nav-button" id="chatModelsBtn" data-chat-icon="settings">Models &amp; budget</button>
+    <button type="button" class="chat-nav-button" id="chatClearBtn" data-chat-icon="trash" hidden>Clear conversation</button>
+  </div>
 </nav>
 
 <div class="desktop-canvas" id="dCanvas">
@@ -11559,6 +11570,15 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 <main class="chat-wrap">
   <div id="stream" class="stream">
     <div id="empty" class="empty">
+      <div class="chat-only chat-welcome">
+        <h1>What would you like to work on?</h1>
+        <p>Ask a question, or give Chat a task to complete with workflows.</p>
+        <div class="chat-starters">
+          <button type="button" data-chat-prompt="Turn my meeting notes into an action list with owners, deadlines, and missing information: ">Organize meeting notes</button>
+          <button type="button" data-chat-prompt="Research this topic and prepare a brief with sources: ">Research a topic</button>
+          <button type="button" data-chat-prompt="Help me design a reusable workflow for ">Build a workflow</button>
+        </div>
+      </div>
       <!-- New PromptFlow wordmark hero (desktop UI). The existing
            marketing block below is hidden via .empty-marketing rule. -->
       <div class="d-hero">
@@ -11717,6 +11737,7 @@ python -m venv .venv
       </div><!-- /.empty-marketing -->
     </div>
   <div class="input-shell">
+    <button type="button" id="chatJumpBtn" class="chat-jump chat-only" title="Scroll to latest message" aria-label="Scroll to latest message" hidden data-chat-icon="down"></button>
     <div id="attachWrap"></div>
     <!-- Verb action bar — only visible when a contribution attachment
          is staged. Shows the verbs available for the current attachment
@@ -11766,7 +11787,7 @@ python -m venv .venv
         <button type="button" id="interpreterModeBtn" aria-pressed="true">Interpreter</button>
         <button type="button" id="chatModeBtn" aria-pressed="false" title="Automatically find or create workflows, run them, verify results and save successful drafts">Chat <small>Auto</small></button>
       </div>
-      <button type="button" id="clearConversationBtn" class="conversation-clear" hidden>Clear conversation</button>
+      <button type="button" id="clearConversationBtn" class="conversation-clear" title="Clear conversation" aria-label="Clear conversation" hidden>Clear conversation</button>
       <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.zip,.json,.txt,.md" multiple hidden>
       <button class="icon-btn" id="attachBtn" title="Attach files — image/video/audio for processing, or upload a .zip + chat (.md/.txt/.json) to contribute lessons">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -13176,6 +13197,22 @@ promptflow whoami</code></pre>
 
   function paintConversationList() {
     convoList.innerHTML = "";
+    const recentList = document.getElementById('chatRecentList');
+    if (recentList) {
+      recentList.replaceChildren();
+      for (const c of conversationsCache.slice(0,20)) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'chat-recent' + (c.id === currentConversationId ? ' active' : '');
+        button.textContent = c.title || 'Untitled conversation'; button.title = button.textContent;
+        button.disabled = busy || !!loadingConvoId;
+        button.onclick = () => { if(busy || _planInFlight || _sendInProgress)return; document.getElementById('dDockHome')?.click(); closeChatNavigation(); loadConversation(c.id); };
+        recentList.append(button);
+      }
+      if (!conversationsCache.length) {
+        const note = document.createElement('div'); note.className = 'chat-recent-empty';
+        note.textContent = convoLoading ? 'Loading chats…' : 'Your conversations will appear here.'; recentList.append(note);
+      }
+    }
 
     // Empty state — only when first page returned 0 rows AND we're
     // not currently loading.
@@ -13371,10 +13408,39 @@ promptflow whoami</code></pre>
   }
   document.getElementById('interpreterModeBtn')?.addEventListener('click',()=>setComposerMode('interpreter'));
   document.getElementById('chatModeBtn')?.addEventListener('click',()=>setComposerMode('chat'));
+  function closeChatNavigation() {
+    document.getElementById('dSidebar')?.classList.remove('d-sidebar-mobile-open');
+    document.getElementById('dSidebarBackdrop')?.classList.remove('d-show');
+    document.getElementById('dMobileMenuBtn')?.setAttribute('aria-expanded','false');
+  }
+  document.getElementById('chatNewBtn')?.addEventListener('click',()=>{
+    if(busy || _planInFlight || _sendInProgress)return;
+    document.getElementById('dDockHome')?.click(); startNewConversation(); setComposerMode('chat'); closeChatNavigation();
+    textInput.value='';textInput.style.height='auto';textInput.dispatchEvent(new Event('input'));
+    attachedFiles=[];fileInput.value='';paintAttach();updateSend();
+  });
+  document.getElementById('chatModelsBtn')?.addEventListener('click',()=>{document.getElementById('dDockSystem')?.click();closeChatNavigation();});
+  document.getElementById('chatClearBtn')?.addEventListener('click',()=>{closeChatNavigation();clearConversation();});
+  function updateChatScrollControl() {
+    const button=document.getElementById('chatJumpBtn');
+    if(button)button.hidden=composerMode!=='chat'||!stream.querySelector('.msg')||stream.scrollHeight-stream.scrollTop-stream.clientHeight<120;
+  }
+  stream.addEventListener('scroll',updateChatScrollControl,{passive:true});
+  document.getElementById('chatJumpBtn')?.addEventListener('click',()=>{stream.scrollTop=stream.scrollHeight;updateChatScrollControl();});
+  if(window.ResizeObserver)new ResizeObserver(updateChatScrollControl).observe(stream);
+  for(const button of document.querySelectorAll('[data-chat-prompt]'))button.addEventListener('click',()=>{
+    textInput.value=button.dataset.chatPrompt; textInput.dispatchEvent(new Event('input'));textInput.focus();
+  });
+  for(const node of document.querySelectorAll('[data-chat-icon]'))node.prepend(window.PFActivity.icon(node.dataset.chatIcon));
+  for(const button of document.querySelectorAll('#dSidebar .d-folder')) {
+    const icon=window.PFActivity.icon(({system:'terminal',chats:'message',processes:'workflow',graph:'globe',marketplace:'store'})[button.dataset.folder]);
+    icon.classList.add('chat-only');button.prepend(icon);
+  }
+  const chatAttachIcon=window.PFActivity.icon('plus');chatAttachIcon.classList.add('chat-only');document.getElementById('attachBtn')?.append(chatAttachIcon);
   function autoChatHooks() {
     return {outputs:renderOutputs,open:openProcessEditor,
       atBottom:()=>stream.scrollHeight-stream.scrollTop-stream.clientHeight<90,
-      scroll:follow=>{if(follow)requestAnimationFrame(()=>{stream.scrollTop=stream.scrollHeight;});},
+      scroll:follow=>{requestAnimationFrame(()=>{if(follow)stream.scrollTop=stream.scrollHeight;updateChatScrollControl();});},
       session:data=>{currentConversationId=data.conversation_id;setConversationTitle(currentConversationTitle || data.conversation_title);updateComposerHint();},
       balance:tokens=>{if(typeof tokens==='number'&&ME){ME.tokens=tokens;paintAuthUI();}}
     };
@@ -13403,10 +13469,11 @@ promptflow whoami</code></pre>
   }
   function updateComposerHint() {
     document.body.classList.toggle('pf-chat-mode',composerMode === 'chat');
+    updateChatScrollControl();
     const label = document.getElementById("dInputModeLabel");
     const context = activeInterpreterProcess();
     textInput.dataset.mode = composerMode === 'chat' ? 'chat' : context ? "process" : currentConversationId ? "conversation" : "new";
-    textInput.placeholder = composerMode === 'chat' ? 'Describe the result you want. Chat finds, runs, tests and saves workflows…' : context
+    textInput.placeholder = composerMode === 'chat' ? 'Message PromptFlow' : context
       ? 'Ask about "' + context.name + '", run it, or describe a specific change…'
       : 'Ask a question or describe what you want to do…';
     textInput.dispatchEvent(new Event("pf-composer-mode"));
@@ -15567,9 +15634,12 @@ promptflow whoami</code></pre>
   const RUN_ICON  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="6 4"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.4s" repeatCount="indefinite"/></circle></svg>`;
 
   function updateSend() {
-    for(const id of ['interpreterModeBtn','chatModeBtn']) {const button=document.getElementById(id);if(button)button.disabled=busy||_planInFlight||_sendInProgress;}
-    const clearButton = document.getElementById('clearConversationBtn');
-    if (clearButton) { clearButton.hidden = !currentConversationId && !stream.querySelector('.msg'); clearButton.disabled = busy || _planInFlight || _sendInProgress; }
+    for(const id of ['interpreterModeBtn','chatModeBtn','chatNewBtn']) {const button=document.getElementById(id);if(button)button.disabled=busy||_planInFlight||_sendInProgress;}
+    for (const id of ['clearConversationBtn','chatClearBtn']) {
+      const clearButton = document.getElementById(id);
+      if (clearButton) { clearButton.hidden = !currentConversationId && !stream.querySelector('.msg'); clearButton.disabled = busy || _planInFlight || _sendInProgress; }
+    }
+    for(const button of document.querySelectorAll('.chat-recent'))button.disabled=busy||_planInFlight||_sendInProgress||!!loadingConvoId;
     // Three-state button: Send (idle), Stop (busy + cancellable),
     // Running (busy + locked-in process run, no abort possible).
     const hasText = !!textInput.value.trim();

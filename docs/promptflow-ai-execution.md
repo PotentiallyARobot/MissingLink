@@ -46,6 +46,23 @@ The composer stays aligned with the conversation. Detailed checks and public
 reasoning summaries remain available without surrounding every reply in panels.
 Text is rendered with DOM nodes; generated HTML is not executed by the chat renderer.
 
+The 2026-11-17 visual pass was compared against a synthetic conversation on
+chatgpt.com. The remaining problems were the decorative desktop background,
+oversized folder navigation, duplicate bottom dock, floating mode labels, and
+boxed composer controls. Chat now uses a neutral canvas, a 768px reading column,
+compact icon navigation with recent chats, a header mode switch, and a rounded
+composer. Interpreter retains its existing workspace. New chat clears the input
+and attachments; Clear conversation remains a separate confirmed deletion.
+Models & budget is available in the sidebar. A return-to-latest button appears
+when the reader scrolls back, without forcing the stream to follow new output.
+
+UI validation used the synthetic local server: streamed output, expandable
+activity, copy, scroll-to-latest, model settings, cancellation of the clear-chat
+dialog, new-chat input reset, and switching back to Interpreter. At 390px the
+document stays within the viewport and the composer clears the message stream;
+signed-out header controls also fit. All 41 Chat and UX regression tests passed.
+This presentation change does not change provider selection, execution, or billing.
+
 Workflow creation defaults to GPT-6 Astra when OpenAI is configured. Existing
 explicit account choices remain respected. GPT-6.1 Sol is the general-purpose
 OpenAI step model; Luna can handle extraction. Model selection and output budgets

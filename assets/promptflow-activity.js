@@ -2,6 +2,11 @@
 window.PFActivity = (() => {
   const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source']);
   const paths={
+    plus:'M12 5v14M5 12h14',
+    down:'M12 4v16M5 13l7 7 7-7',
+    trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',
+    store:'M3 10h18l-2-7H5zM4 10v11h16V10M9 21v-7h6v7M8 3l-1 7M16 3l1 7',
+    settings:'M4 7h6M14 7h6M4 17h10M18 17h2M10 4v6M14 14v6',
     search:'M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
     globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18',
     workflow:'M3 3h6v6H3zM15 15h6v6h-6zM15 3h6v6h-6zM9 6h6M6 9v9h9',
