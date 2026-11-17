@@ -20,3 +20,13 @@ test('mode choices are keyboard buttons and automatic work precedes interpreter 
   assert.match(send,/composerMode === 'chat'/);assert.match(send,/await sendAutoChat/);
   assert.match(html,/auto_chat_max_tokens: Number\(D\("dMaAutoChatLimit"\)/);
 });
+
+test('chat prose renders tables and emphasis while model HTML stays inert',()=>{
+  class Node {constructor(tag,text=''){this.tagName=tag.toUpperCase();this.textContent=text;this.children=[];}append(...nodes){this.children.push(...nodes);}}
+  c.document={createElement:tag=>new Node(tag),createTextNode:text=>new Node('#text',text)};
+  const root=new Node('div');c.window.PFAutoChat.markdown(root,'## Result\n\n**Checked** <img src=x onerror=alert(1)> [bad](javascript:alert)\n\n| Owner | Due |\n| --- | --- |\n| Maya | Friday |\n\n[Source](https://example.com)');
+  const all=[];const visit=node=>{all.push(node);node.children.forEach(visit);};visit(root);
+  assert.ok(all.some(n=>n.tagName==='TABLE'));assert.ok(all.some(n=>n.tagName==='STRONG'&&n.textContent==='Checked'));
+  assert.equal(all.filter(n=>n.tagName==='A').length,1);assert.equal(all.find(n=>n.tagName==='A').href,'https://example.com');
+  assert.ok(!all.some(n=>n.tagName==='IMG'||n.tagName==='SCRIPT'));assert.ok(all.some(n=>n.textContent.includes('<img')));
+});

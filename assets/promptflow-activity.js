@@ -1,9 +1,9 @@
 // Only explicitly public events are rendered. Legacy thinking is never accepted.
 window.PFActivity = (() => {
   const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source']);
-  function mount(parent) {
-    const panel=document.createElement('details');panel.className='pf-live-activity';panel.open=true;
-    const heading=document.createElement('summary');heading.textContent='Live activity';panel.append(heading);
+  function mount(parent,options={}) {
+    const panel=document.createElement(options.compact?'div':'details');panel.className='pf-live-activity'+(options.compact?' pf-activity-compact':'');panel.open=true;
+    if(!options.compact){const heading=document.createElement('summary');heading.textContent='Live activity';panel.append(heading);}
     const rows=document.createElement('div');panel.append(rows);
     const steps=new Map();let attached=false,timer=null;
     const flush=()=>{timer=null;for(const s of steps.values()) for(const key of ['summary','response']) if(s[key+'Node'] && s[key+'Dirty']) {s[key+'Node'].textContent=s[key];s[key+'Dirty']=false;}};
@@ -13,14 +13,14 @@ window.PFActivity = (() => {
       const id=String(event.step_id || 'process');
       if(!steps.has(id)) {
         if(steps.size>=100)return;
-        const node=document.createElement('details');node.open=true;
+        const node=document.createElement('details');node.open=!options.compact;
         const label=document.createElement('summary');label.textContent=event.step_name || (id==='process'?'Process activity':id);node.append(label);
         const status=document.createElement('span');status.className='pf-activity-status';label.append(status);
         const work=document.createElement('div');node.append(work);rows.append(node);
         steps.set(id,{node,work,status,summary:'',response:'',sources:new Set(),actions:new Map()});
       }
       const s=steps.get(id);
-      if(event.kind.startsWith('step_'))s.status.textContent=' · '+({step_started:'Running',step_completed:'Response complete',step_failed:'Failed'})[event.kind]+(event.model?' · '+event.model:'');
+      if(event.kind.startsWith('step_'))s.status.textContent=' · '+({step_started:'Running',step_completed:'Complete',step_failed:'Failed'})[event.kind]+(event.model?' · '+event.model:'');
       if(event.kind==='response_delta'||event.kind==='reasoning_summary_delta') {
         const key=event.kind==='response_delta'?'response':'summary';
         if(!s[key+'Node']) {

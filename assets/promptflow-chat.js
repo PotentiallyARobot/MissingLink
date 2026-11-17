@@ -23,38 +23,80 @@ window.PFAutoChat = (() => {
     }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
   }
   const text=(parent,tag,value,className)=>{const node=document.createElement(tag);node.textContent=value;if(className)node.className=className;parent.append(node);return node;};
+  // Render a deliberately small Markdown subset with DOM text nodes. Model HTML
+  // is never executed, and links are restricted to HTTP(S).
+  function inline(parent,value) {
+    const pattern=/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;let start=0;
+    for(const match of String(value).matchAll(pattern)) {
+      parent.append(document.createTextNode(value.slice(start,match.index)));const token=match[0];
+      if(token.startsWith('`'))text(parent,'code',token.slice(1,-1));
+      else if(token.startsWith('**'))text(parent,'strong',token.slice(2,-2));
+      else {const parts=token.match(/^\[([^\]]+)\]\((.+)\)$/);const link=text(parent,'a',parts[1]);link.href=parts[2];link.target='_blank';link.rel='noopener noreferrer';}
+      start=match.index+token.length;
+    }
+    parent.append(document.createTextNode(String(value).slice(start)));
+  }
+  function markdown(parent,value) {
+    const lines=String(value||'').split(/\r?\n/);let list=null;
+    const cells=line=>line.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+    for(let i=0;i<lines.length;i++) {
+      const line=lines[i];if(!line.trim()){list=null;continue;}
+      if(line.startsWith('```')){const code=[];while(++i<lines.length&&!lines[i].startsWith('```'))code.push(lines[i]);text(parent,'pre',code.join('\n'));list=null;continue;}
+      if(line.includes('|')&&/^\s*\|?\s*:?-{3}/.test(lines[i+1]||'')) {
+        const wrap=text(parent,'div','','chat-table'),table=text(wrap,'table',''),head=text(table,'thead',''),row=text(head,'tr','');
+        for(const cell of cells(line))inline(text(row,'th',''),cell);i++;const body=text(table,'tbody','');
+        while(i+1<lines.length&&lines[i+1].includes('|')){const tr=text(body,'tr','');for(const cell of cells(lines[++i]))inline(text(tr,'td',''),cell);}list=null;continue;
+      }
+      const heading=line.match(/^(#{1,4})\s+(.+)$/),item=line.match(/^\s*(?:([-*])|\d+[.)])\s+(.+)$/);
+      if(heading){inline(text(parent,'h'+Math.min(4,heading[1].length+1),''),heading[2]);list=null;}
+      else if(item){const kind=item[1]?'ul':'ol';if(!list||list.tagName.toLowerCase()!==kind)list=text(parent,kind,'');inline(text(list,'li',''),item[2]);}
+      else {const paragraph=[line];while(i+1<lines.length&&lines[i+1].trim()&&!/^(?:#{1,4}\s|```|\s*(?:[-*]|\d+[.)])\s)/.test(lines[i+1])&&!lines[i+1].includes('|'))paragraph.push(lines[++i]);inline(text(parent,'p',''),paragraph.join('\n'));list=null;}
+    }
+  }
+  function outputs(parent,data,hooks) {
+    const rich=(data.outputs||[]).filter(o=>o.kind==='text'&&typeof o.text==='string');
+    if(rich.length===(data.outputs||[]).length&&rich.length) {
+      for(const output of rich){const article=text(parent,'article','','chat-prose');markdown(article,output.text);}
+      const copy=text(parent,'button','Copy response','chat-text-button');copy.type='button';copy.onclick=async()=>{try{await navigator.clipboard.writeText(rich.map(o=>o.text).join('\n\n'));copy.textContent='Copied';}catch{copy.textContent='Select text to copy';}};
+    } else hooks.outputs({body:parent},data.outputs||[],data.output_kind,data.video_url);
+  }
   function workflow(parent,process,temporary) {
-    parent.replaceChildren();text(parent,'strong',(temporary?'Testing draft: ':'Using: ')+process.name);
-    const list=document.createElement('ol');parent.append(list);
+    parent.replaceChildren();const detail=text(parent,'details','','chat-workflow-detail');text(detail,'summary',process.name+' · '+(process.steps||[]).length+' steps'+(temporary?' · draft':''));
+    const list=document.createElement('ol');detail.append(list);
     for(const step of (process.steps||[]).slice(0,40))text(list,'li',step.name||step.purpose||step.id);
   }
   function verification(parent,value) {
-    const box=document.createElement('section');box.className='chat-verification';parent.append(box);
-    text(box,'strong',value.passed?'Output checks passed':'Output needs work');text(box,'p',value.summary||'');
+    const box=document.createElement('details');box.className='chat-verification';parent.append(box);
+    text(box,'summary',value.passed?'✓ Output checks passed':'Output needs work');text(box,'p',value.summary||'');
     const list=document.createElement('ul');box.append(list);
     for(const check of value.checks||[])text(list,'li',(check.passed?'✓ ':'✕ ')+(check.name?check.name+': ':'')+check.evidence);
     for(const limit of value.limitations||[])text(box,'p','Not verified: '+limit,'status');
   }
   function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false}={}) {
-    if(!data)return;text(parent,'p',data.answer||'', 'text chat-answer');
+    if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
+    if(data.action!=='complete'||!data.run?.outputs?.length)markdown(text(parent,'div','','chat-prose chat-answer'),data.answer||'');
+    if(data.run&&!outputsAlreadyShown)outputs(parent,data.run,hooks);
     if(data.verification&&!verificationAlreadyShown)verification(parent,data.verification);
-    if(data.run&&!outputsAlreadyShown)hooks.outputs({body:parent},data.run.outputs||[],data.run.output_kind,data.run.video_url);
     if(data.saved&&data.process) {
-      const row=text(parent,'div','Saved to your private library · tested and checked by the agent','chat-saved');
-      const open=text(row,'button','Open workflow','btn');open.type='button';open.onclick=()=>hooks.open(data.process.id);
+      const row=text(parent,'div','✓ Saved privately','chat-saved');
+      const open=text(row,'button',data.process.name+' ↗','chat-text-button');open.type='button';open.onclick=()=>hooks.open(data.process.id);
     }
     if(data.history_warning)text(parent,'p',data.history_warning,'status');
   }
   async function send(form,assist,hooks,signal) {
-    const panel=document.createElement('section');panel.className='chat-task';assist.body.append(panel);
-    const title=text(panel,'strong','Connecting to Chat…');title.setAttribute('role','status');title.setAttribute('aria-live','polite');
-    const connection=text(panel,'span','','chat-task-time');
-    const explanation=text(panel,'p','Auto mode finds or creates a workflow, tests it, and saves successful drafts.','status');
-    const work=document.createElement('div');work.className='chat-workflow';panel.append(work);
-    const cost=text(panel,'p','','status'),activity=window.PFActivity?.mount(panel)||(()=>{});
+    assist.el?.classList.add('chat-auto-message');
+    const panel=document.createElement('details');panel.className='chat-task';assist.body.append(panel);
+    const heading=text(panel,'summary','','chat-task-heading');
+    const title=text(heading,'span','Working…');title.setAttribute('role','status');title.setAttribute('aria-live','polite');
+    const connection=text(heading,'span','','chat-task-time');
+    const trail=text(panel,'div','','chat-task-trail');
+    const explanation=text(trail,'p','','chat-task-note');
+    const work=document.createElement('div');work.className='chat-workflow';trail.append(work);
+    const cost=text(trail,'p','','chat-task-note'),activity=window.PFActivity?.mount(trail,{compact:true})||(()=>{});
     let lastSignal=Date.now(),outputSeen=false,verificationSeen=false;const started=lastSignal;
     const timer=setInterval(()=>{connection.textContent=Math.floor((Date.now()-started)/1000)+'s'+(Date.now()-lastSignal>20000?' · waiting for connection':'');},1000);
     const event=(name,data)=>{
+      const follow=hooks.atBottom?.();
       lastSignal=Date.now();
       if(name==='session'){hooks.session(data);cost.textContent='Auto task limit: '+Number(data.limit).toLocaleString()+' credits';}
       if(name==='stage')title.textContent=data.message||'Working…';
@@ -62,15 +104,17 @@ window.PFAutoChat = (() => {
       if(name==='activity')activity(data);
       if(name==='workflow')workflow(work,data.process,data.temporary);
       if(name==='quote')cost.textContent='Run '+data.attempt+': '+Number(data.cost.tokens_charged).toLocaleString()+' credits · task limit '+Number(data.limit).toLocaleString();
-      if(name==='outputs'){const output=document.createElement('div');output.className='chat-test-output';assist.body.append(output);text(output,'strong','Run output');hooks.outputs({body:output},data.outputs||[],data.output_kind,data.video_url);outputSeen=true;hooks.balance(data.tokens_remaining);}
-      if(name==='verification'){title.textContent=data.passed?'Output checks passed':'Checking improvements';verification(assist.body,data);verificationSeen=true;}
+      if(name==='outputs'){const output=document.createElement('div');output.className='chat-test-output';assist.body.append(output);outputs(output,data,hooks);outputSeen=true;hooks.balance(data.tokens_remaining);}
+      if(name==='verification'){title.textContent=data.passed?'Output checks passed':'Checking improvements';verification(trail,data);verificationSeen=true;}
       if(name==='saved')title.textContent='Verified workflow saved';
+      if(name!=='heartbeat')hooks.scroll?.(follow);
     };
     try {
       const response=await fetch('/api/promptflow/chat/stream',{method:'POST',body:form,signal});
       const complete=await read(response,event);
-      title.textContent=({complete:'Task complete',answer:'Answered',ask:'More information needed',failed:'Task stopped',stopped:'Stopped'})[complete.result?.action]||'Finished';
-      result(assist.body,complete.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen});hooks.balance(complete.tokens_remaining);return complete;
+      panel.classList.add('chat-task-finished');panel.open=false;
+      title.textContent=({complete:'Completed',answer:'Reviewed request',ask:'Reviewed request',failed:'Stopped',stopped:'Stopped'})[complete.result?.action]||'Finished';
+      const follow=hooks.atBottom?.();result(assist.body,complete.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen});hooks.scroll?.(follow);hooks.balance(complete.tokens_remaining);return complete;
     }catch(error) {
       title.textContent=signal.aborted?'Stopping':'Connection interrupted';
       text(assist.body,'p',signal.aborted?'Stopped requesting further work. A provider call already in progress may still finish.':error.message,'status');
@@ -86,5 +130,5 @@ window.PFAutoChat = (() => {
       };
     }finally{clearInterval(timer);connection.textContent=Math.floor((Date.now()-started)/1000)+'s';}
   }
-  return {send,result,read};
+  return {send,result,read,markdown};
 })();

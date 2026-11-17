@@ -58,8 +58,8 @@ const server = http.createServer(async (req,res) => {
   let body={};try{body=JSON.parse(raw);}catch{}
   if(url.pathname==='/api/promptflow/chat/stream') {
     const workflow={...sample,is_draft:false,auto_chat_draft:true,name:'Meeting actions with owner checks'};
-    const verification={passed:true,summary:'All action items have an owner, due date and supporting quote.',checks:[{name:'Required fields',passed:true,evidence:'Three actions contain owners, dates and source quotes.'}],limitations:['Synthetic preview fixture; no provider calls.']};
-    const run={outputs:[{kind:'text',text:'Owner: Maya\nAction: Send the revised proposal\nDue: Friday\nSource: “Maya will send the revised proposal by Friday.”'}],output_kind:'text',tokens_remaining:4960};
+    const verification={passed:true,summary:'The action has an owner, due date and supporting quote.',checks:[{name:'Required fields',passed:true,evidence:'The action contains an owner, date and source quote.'}],limitations:['Synthetic preview fixture; no provider calls.']};
+    const run={outputs:[{kind:'text',text:'## Meeting commitments\n\n| Action | Owner | Due | Evidence |\n| --- | --- | --- | --- |\n| Send the revised proposal | Maya | Friday | “Maya will send the revised proposal by Friday.” |\n\nNo missing owners or dates in the supplied notes.'}],output_kind:'text',tokens_remaining:4960};
     return events([[0,'session',{turn_id:'fixture',conversation_id:'qa-chat',conversation_title:'Meeting actions',limit:5000}],
       [200,'stage',{message:'Matching your request to available workflows'}],
       [200,'decision',{message:'A structured extraction workflow can check every action against the transcript.'}],
