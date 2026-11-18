@@ -66,7 +66,10 @@ const server = http.createServer(async (req,res) => {
       [200,'workflow',{process:workflow,temporary:true}],
       [200,'activity',{kind:'reasoning_summary_delta',text:'I am checking that each action has explicit source evidence and preserving unknown owners rather than guessing.',step_id:'agent',step_name:'Checking the request'}],
       [200,'quote',{cost:{tokens_charged:40},spent:0,limit:5000,attempt:1}],
-      [200,'stage',{message:'Running the workflow'}],[200,'outputs',run],[200,'verification',verification],
+      [200,'stage',{message:'Running the workflow'}],
+      [200,'activity',{kind:'step_started',step_id:'summary',step_name:'Checking meeting commitments'}],
+      [ref.searchParams.has('slow')?15000:500,'activity',{kind:'step_completed',step_id:'summary',step_name:'Checking meeting commitments'}],
+      [200,'outputs',run],[200,'verification',verification],
       [200,'saved',{process_id:workflow.id,name:workflow.name}],
       [0,'done',{ok:true,result:{action:'complete',answer:'The action list is ready.',created:true,saved:true,process:workflow,verification,run},tokens_remaining:4960}]]);
   }
@@ -194,7 +197,7 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});return res.end(html);
   }
   // Only serve public image assets used by this page; never repository files.
-  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js','/assets/promptflow-chat.css'].includes(url.pathname)) {
+  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-files.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js','/assets/promptflow-chat.css'].includes(url.pathname)) {
     res.writeHead(200,{'content-type':url.pathname.endsWith('.css')?'text/css':'text/javascript'});return res.end(await readFile(path.join(root,url.pathname)));
   }
   if(url.pathname==='/promptflow-cli.zip') {res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="promptflow-cli.zip"'});return res.end(await readFile(path.join(root,'promptflow-cli.zip')));}

@@ -205,7 +205,7 @@ test('OpenAI image quote displays its provider calculation before confirmation',
 test('only account-protected PromptFlow files receive the private output label',()=>{
   for(const [url,expected] of [['https://missinglink.build/api/promptflow/image/test.png',true],['https://example.test/api/promptflow/image/test.png',false]]) {
     const notes=[];const body={querySelector:()=>null,appendChild:node=>notes.push(node)};
-    const c=vm.createContext({URL,location:{origin:'https://missinglink.build'},document:{createElement:()=>({style:{}})},renderSingleImage(){}});
+    const c=vm.createContext({window:{},URL,location:{origin:'https://missinglink.build'},document:{createElement:()=>({style:{}})},renderSingleImage(){}});
     vm.runInContext(extract('  function renderOutputs(', '  // Lazy-load model-viewer')+';globalThis.render=renderOutputs;',c);
     c.render({body},[{url}],'image');assert.equal(notes.length,expected?1:0);
     if(expected)assert.match(notes[0].textContent,/only accessible to your account/);

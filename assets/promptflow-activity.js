@@ -1,6 +1,6 @@
 // Only explicitly public events are rendered. Legacy thinking is never accepted.
 window.PFActivity = (() => {
-  const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source']);
+  const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source','artifact','gpu_status']);
   const paths={
     plus:'M12 5v14M5 12h14',
     down:'M12 4v16M5 13l7 7 7-7',
@@ -30,21 +30,27 @@ window.PFActivity = (() => {
     const rows=document.createElement('div');panel.append(rows);
     const steps=new Map();let attached=false,timer=null;
     const flush=()=>{timer=null;for(const s of steps.values()) for(const key of ['summary','response']) if(s[key+'Node'] && s[key+'Dirty']) {s[key+'Node'].textContent=s[key];s[key+'Dirty']=false;}};
-    return event=>{
+    const receive=event=>{
       if(!event || !allowed.has(event.kind))return;
+      if(event.kind==='artifact'){if(options.onArtifact)options.onArtifact(event);else window.PFFiles?.render(parent,[event]);return;}
       if(!attached){parent.append(panel);attached=true;}
       const id=String(event.step_id || 'process');
       if(!steps.has(id)) {
         if(steps.size>=100)return;
         const node=document.createElement('details');node.open=!options.compact;
-        const label=document.createElement('summary');label.textContent=event.step_name || (id==='process'?'Process activity':id);node.append(label);
+        const label=document.createElement('summary');const name=document.createElement('span');name.className='pf-step-label';name.textContent=event.step_name || (id==='process'?'Process activity':id);label.append(name);node.append(label);
         if(options.compact)label.prepend(icon(/verif|check/i.test(event.step_name||'')?'check':/choos|search/i.test(event.step_name||'')?'search':'terminal'));
         const status=document.createElement('span');status.className='pf-activity-status';label.append(status);
         const work=document.createElement('div');node.append(work);rows.append(node);
-        steps.set(id,{node,work,status,summary:'',response:'',sources:new Set(),actions:new Map()});
+        steps.set(id,{node,name,work,status,summary:'',response:'',sources:new Set(),actions:new Map()});
       }
       const s=steps.get(id);
-      if(event.kind.startsWith('step_'))s.status.textContent=' · '+({step_started:'Running',step_completed:'Complete',step_failed:'Failed'})[event.kind]+(event.model?' · '+event.model:'');
+      if(event.kind==='gpu_status') {s.name.textContent=event.text || event.status;s.name.classList.toggle('pf-processing',!['stopped','failed','cancelled'].includes(event.status));s.status.textContent=' · '+(event.gpu || 'L4')+(event.model?' · '+event.model:'');}
+      if(event.kind.startsWith('step_')){
+        s.name.classList.toggle('pf-processing',event.kind==='step_started');
+        s.status.textContent=' · '+({step_started:'Running',step_completed:'Complete',step_failed:'Failed'})[event.kind]+(event.model?' · '+event.model:'');
+        if(event.kind!=='step_started')for(const row of s.actions.values())row.querySelector('.pf-step-label')?.classList.remove('pf-processing');
+      }
       if(event.kind==='response_delta'||event.kind==='reasoning_summary_delta') {
         const key=event.kind==='response_delta'?'response':'summary';
         if(!s[key+'Node']) {
@@ -59,7 +65,7 @@ window.PFActivity = (() => {
         const key=event.call_id || event.tool || 'tool';let row=s.actions.get(key);
         if(!row){if(s.actions.size>=40)return;row=document.createElement('div');s.work.append(row);s.actions.set(key,row);}
         const action=({search:'Web search',open_page:'Read page',find_in_page:'Find passage'})[event.action] || event.tool || 'Tool';
-        row.textContent=action+(event.query?': '+event.query:event.url?': '+event.url:'')+(event.kind==='tool_started'?'…':' · complete');
+        row.replaceChildren();const name=document.createElement('span');name.className='pf-step-label'+(event.kind==='tool_started'?' pf-processing':'');name.textContent=action+(event.query?': '+event.query:event.url?': '+event.url:'')+(event.kind==='tool_started'?'…':' · complete');row.append(name);
         if(options.compact){row.className='pf-tool-action';row.prepend(icon(event.action==='search'?'search':'globe'));}
       }
       if(event.kind==='source' && event.url && !s.sources.has(event.url) && s.sources.size<100) {
@@ -71,6 +77,8 @@ window.PFActivity = (() => {
         if(options.compact)line.prepend(icon('globe'));
       }
     };
+    receive.finish=()=>{if(timer)clearTimeout(timer);flush();for(const node of panel.querySelectorAll('.pf-processing'))node.classList.remove('pf-processing');};
+    return receive;
   }
   return {mount,icon};
 })();

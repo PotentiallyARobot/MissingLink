@@ -59,6 +59,7 @@ window.PFAutoChat = (() => {
     }
   }
   function outputs(parent,data,hooks) {
+    window.PFFiles?.render(parent,(data.outputs||[]).flatMap(o=>o.artifacts||[]));
     const rich=(data.outputs||[]).filter(o=>o.kind==='text'&&typeof o.text==='string');
     if(rich.length===(data.outputs||[]).length&&rich.length) {
       for(const output of rich){const article=text(parent,'article','','chat-prose');markdown(article,output.text);}
@@ -95,12 +96,12 @@ window.PFAutoChat = (() => {
     const heading=text(panel,'summary','','chat-task-heading');
     const statusIcon=text(heading,'span','','chat-status-icon');withIcon(statusIcon,'search');
     const setIcon=name=>{statusIcon.replaceChildren();withIcon(statusIcon,name);};
-    const title=text(heading,'span','Working…');title.setAttribute('role','status');title.setAttribute('aria-live','polite');
+    const title=text(heading,'span','Working…','pf-processing');title.setAttribute('role','status');title.setAttribute('aria-live','polite');
     const connection=text(heading,'span','','chat-task-time');
     const trail=text(panel,'div','','chat-task-trail');
     const explanation=text(trail,'p','','chat-task-note');
     const work=document.createElement('div');work.className='chat-workflow';trail.append(work);
-    const cost=text(trail,'p','','chat-task-note'),activity=window.PFActivity?.mount(trail,{compact:true})||(()=>{});
+    const cost=text(trail,'p','','chat-task-note'),activity=window.PFActivity?.mount(trail,{compact:true,onArtifact:file=>window.PFFiles?.render(assist.body,[file])})||(()=>{});
     let lastSignal=Date.now(),outputSeen=false,verificationSeen=false,lastWorkflow=null;const started=lastSignal;
     const timer=setInterval(()=>{connection.textContent=Math.floor((Date.now()-started)/1000)+'s'+(Date.now()-lastSignal>20000?' · waiting for connection':'');},1000);
     const event=(name,data)=>{
@@ -110,6 +111,7 @@ window.PFAutoChat = (() => {
       if(name==='stage'){title.textContent=data.message||'Working…';setIcon(({matching:'search',search:'search',designing:'design',planning:'design',preparing:'workflow',testing:'terminal',verifying:'check',validating:'check'})[data.stage]||'workflow');}
       if(name==='decision')explanation.textContent=data.message||'Choosing the next action.';
       if(name==='activity'){activity(data);if(data.kind==='tool_started'){setIcon('globe');title.textContent=(({search:'Searching the web',open_page:'Reading a page',find_in_page:'Finding a passage'})[data.action]||'Using '+(data.tool||'a tool'))+(data.query?' · '+data.query.slice(0,120):'');}}
+      if(name==='activity' && data.kind==='gpu_status'){setIcon('terminal');title.textContent=data.text || data.status;}
       if(name==='workflow'){lastWorkflow=data.process;workflow(work,data.process,data.temporary);}
       if(name==='quote')cost.textContent='Run '+data.attempt+': '+Number(data.cost.tokens_charged).toLocaleString()+' credits · task limit '+Number(data.limit).toLocaleString();
       if(name==='outputs'){const output=document.createElement('div');output.className='chat-test-output';assist.body.append(output);outputs(output,data,hooks);outputSeen=true;hooks.balance(data.tokens_remaining);}
@@ -137,7 +139,7 @@ window.PFAutoChat = (() => {
           else title.textContent='The existing task is still finishing. Check again shortly.';
         }catch(e){title.textContent=e.message;}finally{check.disabled=false;}
       };
-    }finally{clearInterval(timer);connection.textContent=Math.floor((Date.now()-started)/1000)+'s';}
+    }finally{clearInterval(timer);title.classList.remove('pf-processing');activity.finish?.();panel.classList.add('chat-task-finished');connection.textContent=Math.floor((Date.now()-started)/1000)+'s';}
   }
   return {send,result,read,markdown};
 })();
