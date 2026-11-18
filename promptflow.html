@@ -5728,6 +5728,8 @@ body.d-desktop-mode .stream {
 .d-ma-panel {
   padding: 0;
 }
+#dModelAccessModal .d-modal-backdrop { backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.65); }
+#dModelAccessModal .d-ma-panel { backdrop-filter:none; -webkit-backdrop-filter:none; background:#18181a; overscroll-behavior:contain; }
 .d-ma-head {
   display: flex;
   align-items: flex-start;
@@ -25826,12 +25828,20 @@ function dDesktopInit(){
     el.textContent = text;
   }
 
-  async function dMaOpen() {
-    await dMaRemoteSettings;
+  let dMaFormRevision = 0;
+  let dMaRemoteReady = false;
+  D('dModelAccessModal').addEventListener('input', () => { dMaFormRevision++; dMaSetStatus('', ''); });
+  function dMaOpen() {
     const s = dMaLoadSettings();
     dMaApplyToForm(s);
-    dMaSetStatus("", "");
     D("dModelAccessModal").hidden = false;
+    dMaSetStatus(dMaRemoteReady ? "" : "Loading account settings… You can keep editing.", "info");
+    const revision = dMaFormRevision;
+    void dMaRemoteSettings.then(() => {
+      if (D("dModelAccessModal").hidden || revision !== dMaFormRevision) return;
+      dMaApplyToForm(dMaLoadSettings());
+      dMaSetStatus("", "");
+    });
   }
   function dMaClose() {
     D("dModelAccessModal").hidden = true;
@@ -25864,14 +25874,14 @@ function dDesktopInit(){
     // loads account choices instead of sending defaults that mask them.
     if (localStorage.getItem(PF_SETTINGS_KEY)) return;
     try {
-      const response = await fetch('/api/promptflow/me/settings');
+      const response = await fetch('/api/promptflow/me/settings', {signal:AbortSignal.timeout(10000)});
       const result = await response.json();
-      if (result.ok && result.settings && (result.settings.models || result.settings.limits)) {
+      if (!localStorage.getItem(PF_SETTINGS_KEY) && result.ok && result.settings && (result.settings.models || result.settings.limits)) {
         localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify({...result.settings,keys:undefined}));
         dMaPublishSettings(dMaLoadSettings());
       }
     } catch { /* deployment defaults remain available */ }
-  })();
+  })().finally(() => { dMaRemoteReady = true; });
 
 
   // Auto-save: every change to any settings field persists immediately
@@ -25879,12 +25889,15 @@ function dDesktopInit(){
   // exists for explicit server-side persistence, but the user no
   // longer has to click it to make their choice take effect locally.
   function dMaAutoSave() {
+    dMaFormRevision++;
     for (const id of ['dMaRunLimit','dMaAutoChatLimit','dMaPlanningLimit','dMaChatLimit','dMaStepLimit']) if (D(id) && !D(id).checkValidity()) return;
     const settings = dMaReadFromForm();
     dMaBudgetSummary(settings);
     dMaQualitySummary(settings);
     try {
-      localStorage.setItem(PF_SETTINGS_KEY, JSON.stringify(settings));
+      const serialized = JSON.stringify(settings);
+      if (localStorage.getItem(PF_SETTINGS_KEY) === serialized) return;
+      localStorage.setItem(PF_SETTINGS_KEY, serialized);
     } catch {}
     dMaPublishSettings(settings);
   }

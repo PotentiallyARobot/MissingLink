@@ -5,6 +5,13 @@ import vm from 'node:vm';
 const html=readFileSync(new URL('../promptflow.html',import.meta.url),'utf8');
 const models=readFileSync(new URL('../assets/promptflow-text-models.js',import.meta.url),'utf8');
 const extract=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
+test('model settings open before remote loading and late results preserve edits',async()=>{
+  let finish; const remote=new Promise(resolve=>{finish=resolve;}); const modal={hidden:true};let applied=0;
+  const c=vm.createContext({D:()=>modal,dMaRemoteReady:false,dMaRemoteSettings:remote,dMaFormRevision:0,dMaLoadSettings:()=>({}),dMaApplyToForm:()=>applied++,dMaSetStatus:()=>{}});
+  vm.runInContext(extract('  function dMaOpen()', '  function dMaClose(')+'\nglobalThis.open=dMaOpen;',c);
+  c.open();assert.equal(modal.hidden,false);assert.equal(applied,1);
+  c.dMaFormRevision++;finish();await remote;await Promise.resolve();assert.equal(applied,1);
+});
 function harness() {
   const nodes=new Map();const D=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,textContent:'',innerHTML:''});return nodes.get(id);};
   const c=vm.createContext({window:{},D,dMaUpdateKeySection(){}});
