@@ -466,6 +466,10 @@ The implementation follows [OpenAI model capabilities](https://developers.openai
 - Generated files have individual open/download cards. Streamed files and final
   results are deduplicated; files already delivered are retained in Chat history
   even if a later step fails. Reports no longer suppress earlier image outputs.
+- Follow-up visual review: oversized file emblems and duplicate action links made
+  attachments too bulky. Cards now use a compact file tile with a clickable name
+  and separate download control. Tables use a solid surface, subdued headers and
+  tighter row spacing so the decorative background does not reduce readability.
 - File packs expose their editable sources individually as well as the ZIP.
   Output routes check ownership, and active HTML/SVG previews use a sandboxed CSP.
 - GPU startup remains open: a minimal L4 function worked, but the full model

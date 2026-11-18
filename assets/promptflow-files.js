@@ -11,15 +11,14 @@ window.PFFiles = (()=>{
     if(['zip','tar','gz','7z'].includes(ext))return {ext,label:'Archive',color:'#d4bd8c'};
     if(['html','css','js','ts','py'].includes(ext))return {ext,label:'Code file',color:'#9bbfd6'};
     if(['glb','gltf','obj','stl'].includes(ext))return {ext,label:'3D model',color:'#a8c4db'};
+    if(ext==='md')return {ext,label:'Markdown',color:'#d8bd7e'};
     return {ext:ext.length<=5?ext:'FILE',label:'Document',color:'#c5c1b5'};
   }
   function fileIcon(type) {
     const icon=document.createElement('span');icon.className='pf-file-icon';icon.setAttribute('aria-hidden','true');icon.style.setProperty('--file-accent',type.color);
-    const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 44 54');
-    const page=document.createElementNS(ns,'path');page.setAttribute('d','M7 1.5h20L41 15v35a2.5 2.5 0 0 1-2.5 2.5h-32A2.5 2.5 0 0 1 4 50V4A2.5 2.5 0 0 1 7 1.5Z');
-    const fold=document.createElementNS(ns,'path');fold.setAttribute('d','M27 2v10.5a2.5 2.5 0 0 0 2.5 2.5H40');fold.setAttribute('class','pf-file-fold');
-    svg.append(page,fold);icon.append(svg);
-    const badge=document.createElement('span');badge.className='pf-file-ext';badge.textContent=type.ext.toUpperCase().slice(0,5);icon.append(badge);return icon;
+    const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');
+    const page=document.createElementNS(ns,'path');page.setAttribute('d','M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z M14 2v6h6 M8 13h8 M8 17h5');
+    svg.append(page);icon.append(svg);return icon;
   }
   function render(parent,files) {
     const root=parent.closest?.('.msg') || parent;
@@ -31,15 +30,17 @@ window.PFFiles = (()=>{
       if(tray && [...tray.children].some(node=>node.dataset.file===url.href))continue;
       if(!tray){tray=document.createElement('div');tray.className='pf-files';tray.setAttribute('aria-label','Workflow files');parent.append(tray);}
       const card=document.createElement('div');card.className='pf-file';card.dataset.file=url.href;
-      const type=fileType(file);card.append(fileIcon(type));
+      const type=fileType(file);
+      const open=document.createElement('a');open.className='pf-file-open';open.href=url.href;open.target='_blank';open.rel='noopener noreferrer';
+      const filename=file.filename || url.pathname.split('/').pop();open.setAttribute('aria-label','Open '+filename);open.title='Open '+filename;
+      open.append(fileIcon(type));
       const info=document.createElement('div');info.className='pf-file-info';
-      const open=document.createElement('a');open.href=url.href;open.target='_blank';open.rel='noopener noreferrer';open.textContent=file.filename || url.pathname.split('/').pop();open.title='Open '+open.textContent;
+      const name=document.createElement('span');name.className='pf-file-name';name.textContent=filename;
       const meta=document.createElement('small'),size=Number(file.size_bytes);meta.textContent=type.label+(Number.isFinite(size)?' · '+(size<1024?size+' B':size<1048576?(size/1024).toFixed(1)+' KB':(size/1048576).toFixed(1)+' MB'):'');
-      info.append(open,meta);card.append(info);
-      const actions=document.createElement('div');actions.className='pf-file-actions';
-      const view=document.createElement('a');view.href=open.href;view.target='_blank';view.rel='noopener noreferrer';view.textContent='Open';view.setAttribute('aria-label','Open '+open.textContent);actions.append(view);
-      const download=document.createElement('a');url.searchParams.set('download','1');download.href=url.href;download.download=file.filename || '';download.setAttribute('aria-label','Download '+open.textContent);download.title='Download';download.className='pf-file-download';
-      const icon=window.PFActivity?.icon('down');if(icon)download.append(icon);download.append(document.createTextNode('Download'));actions.append(download);info.append(actions);tray.append(card);
+      info.append(name,meta);open.append(info);card.append(open);
+      const download=document.createElement('a');url.searchParams.set('download','1');download.href=url.href;download.download=file.filename || '';download.setAttribute('aria-label','Download '+filename);download.title='Download '+filename;download.className='pf-file-download';
+      const ns='http://www.w3.org/2000/svg',glyph=document.createElementNS(ns,'svg');glyph.setAttribute('viewBox','0 0 24 24');glyph.setAttribute('aria-hidden','true');
+      const arrow=document.createElementNS(ns,'path');arrow.setAttribute('d','M12 3v12 M7 10l5 5 5-5 M5 17v3h14v-3');glyph.append(arrow);download.append(glyph);card.append(download);tray.append(card);
     }
   }
   return {render};
