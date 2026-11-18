@@ -81,6 +81,7 @@ window.PFAutoChat = (() => {
   }
   function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false}={}) {
     if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
+    window.PFFiles?.render(parent,data.artifacts||[]);
     if(data.action!=='complete'||!data.run?.outputs?.length){markdown(text(parent,'div','','chat-prose chat-answer'),data.answer||'');if(data.answer)copyButton(parent,data.answer);}
     if(data.run&&!outputsAlreadyShown)outputs(parent,data.run,hooks);
     if(data.verification&&!verificationAlreadyShown)verification(parent,data.verification);

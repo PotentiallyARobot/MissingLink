@@ -20,6 +20,28 @@ from rich.console import Console
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_gpu_files_and_lifecycle_are_portable(self):
+        step={'id':'gpu','type':'recipe','recipe_id':'modal_gpu','params':{'model':'minilm-embeddings','texts':['one','two']}}
+        runner=self.runner([step]);calls=[]
+        def request(url,headers,payload):
+            calls.append(payload['action'])
+            if payload['action']=='status': return {'status':'stopped','released':True,'events':[{'status':'loading'},{'status':'stopped'}],'files':[{'filename':'embeddings.json','base64':'e30='},{'filename':'generation.json','base64':'e30='}]}
+            return {}
+        with patch.dict(os.environ,{'PROMPTFLOW_GPU_URL':'https://gpu.example.test','PROMPTFLOW_GPU_KEY':'test'},clear=True),patch.object(runtime,'request_json',side_effect=request):
+            runner.preflight();result=runner.execute({'text':'Example'})
+        self.assertEqual(calls,['start','status','ack']);self.assertEqual(len(result['gpu']['artifacts']),2)
+        for file in result['gpu']['artifacts']:self.assertTrue(Path(file['path']).exists())
+
+    def test_gpu_failure_requests_shutdown(self):
+        runner=self.runner([{'id':'gpu','type':'recipe','recipe_id':'modal_gpu','params':{'model':'sd-turbo','prompt':'Blue cube'}}]);calls=[]
+        def request(url,headers,payload):
+            calls.append(payload['action'])
+            if payload['action']=='status':raise runtime.RunError('Disconnected')
+            return {}
+        with patch.dict(os.environ,{'PROMPTFLOW_GPU_URL':'https://gpu.example.test','PROMPTFLOW_GPU_KEY':'test'},clear=True),patch.object(runtime,'request_json',side_effect=request):
+            with self.assertRaises(runtime.RunError):runner.execute({'text':'Example'})
+        self.assertEqual(calls,['start','status','cancel'])
+
     def test_saved_reasoning_search_and_public_stream_are_portable(self):
         step={'id':'research','type':'claude','text_model':'gpt-6-astra','reasoning_effort':'xhigh','verbosity':'high','web_search':{'enabled':True,'max_calls':5,'context_size':'high','allowed_domains':['example.com']},'user_prompt':'Find a fact'}
         r=self.runner([step]);result={'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':'Verified fact','annotations':[{'type':'url_citation','url':'https://example.com','title':'Source'}]}]}]}

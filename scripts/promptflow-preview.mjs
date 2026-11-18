@@ -56,6 +56,10 @@ const server = http.createServer(async (req,res) => {
   };
   let raw=''; for await (const chunk of req) raw+=chunk;
   let body={};try{body=JSON.parse(raw);}catch{}
+  const sampleFiles=[{filename:'meeting-actions.csv',media_type:'text/csv',content:'action,owner,due\nSend proposal,Maya,Friday\n',url:'http://127.0.0.1:4173/api/promptflow/outputs/qa-actions.csv'},
+    {filename:'evidence.json',media_type:'application/json',content:'{"owner":"Maya","due":"Friday"}',url:'http://127.0.0.1:4173/api/promptflow/outputs/qa-evidence.json'}].map(f=>({...f,size_bytes:Buffer.byteLength(f.content)}));
+  const sampleFile=sampleFiles.find(f=>new URL(f.url).pathname===url.pathname);
+  if(sampleFile){res.writeHead(200,{'content-type':sampleFile.media_type,...(url.searchParams.has('download')?{'content-disposition':'attachment; filename="'+sampleFile.filename+'"'}:{})});return res.end(sampleFile.content);}
   if(url.pathname==='/api/promptflow/chat/stream') {
     const workflow={...sample,is_draft:false,auto_chat_draft:true,name:'Meeting actions with owner checks'};
     const verification={passed:true,summary:'The action has an owner, due date and supporting quote.',checks:[{name:'Required fields',passed:true,evidence:'The action contains an owner, date and source quote.'}],limitations:['Synthetic preview fixture; no provider calls.']};
@@ -69,7 +73,8 @@ const server = http.createServer(async (req,res) => {
       [200,'stage',{message:'Running the workflow'}],
       [200,'activity',{kind:'step_started',step_id:'summary',step_name:'Checking meeting commitments'}],
       [ref.searchParams.has('slow')?15000:500,'activity',{kind:'step_completed',step_id:'summary',step_name:'Checking meeting commitments'}],
-      [200,'outputs',run],[200,'verification',verification],
+      [200,'activity',{kind:'artifact',...sampleFiles[0]}],
+      [200,'outputs',{...run,outputs:run.outputs.map(o=>({...o,artifacts:sampleFiles}))}],[200,'verification',verification],
       [200,'saved',{process_id:workflow.id,name:workflow.name}],
       [0,'done',{ok:true,result:{action:'complete',answer:'The action list is ready.',created:true,saved:true,process:workflow,verification,run},tokens_remaining:4960}]]);
   }

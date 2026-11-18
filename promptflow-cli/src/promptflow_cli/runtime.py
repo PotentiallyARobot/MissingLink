@@ -28,9 +28,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen, url2pathname
 import zipfile
+import uuid
 
 
-PARALLEL_RECIPES = {'__promptflow_value','brave_web_search','brave_news_search','brave_image_search','gpt_image_2','assemble_document','assemble_website','assemble_files'}
+PARALLEL_RECIPES = {'__promptflow_value','brave_web_search','brave_news_search','brave_image_search','gpt_image_2','modal_gpu','assemble_document','assemble_website','assemble_files'}
 
 # Kept in parity with backend promptflow_report.ts; no third-party rendering code.
 REPORT_STYLE = '*{box-sizing:border-box}body{margin:0 auto;max-width:1040px;padding:48px 36px 64px;background:#fff;color:#202b35;font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}header{border-bottom:2px solid #243d49;padding-bottom:24px;margin-bottom:32px}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;margin:0 0 12px}h2{font-size:22px;line-height:1.3;margin:32px 0 12px}h3,h4{font-size:17px;line-height:1.4;margin:24px 0 8px}p{margin:0 0 16px}a{color:#15566e;text-underline-offset:3px}ul,ol{padding-left:24px;margin:12px 0 20px}li{margin:5px 0}section{margin-bottom:36px}.filename,.report-meta,summary{font:13px/1.5 system-ui;color:#596670}.filename{margin-top:-4px;margin-bottom:18px}pre{padding:18px;background:#f4f6f7;border:1px solid #dde3e6;white-space:pre-wrap;font:13px/1.6 ui-monospace,Consolas,monospace}code{font-size:.9em;background:#f4f6f7;padding:2px 4px}.table-wrap{overflow:auto;margin:16px 0 24px}table{border-collapse:collapse;width:100%;font-size:14px}th{text-align:left;background:#edf2f4;font-weight:600;text-transform:capitalize;overflow-wrap:normal}th,td{min-width:90px;overflow-wrap:break-word;padding:12px 14px;border:1px solid #dce3e7;vertical-align:top}tbody tr:nth-child(even){background:#fafbfc}details{border:1px solid #dce3e7;padding:14px 18px;margin:18px 0}summary{cursor:pointer;font-weight:600}img{max-width:100%;height:auto}footer{border-top:1px solid #dce3e7;margin-top:40px;padding-top:16px;color:#596670;font-size:12px}@media(max-width:600px){body{padding:28px 20px}h1{font-size:27px}.table-wrap{margin-left:-4px;margin-right:-4px}}@media print{body{max-width:none;padding:0;font-size:11pt}h1,h2,h3,h4{break-after:avoid}tr,figure{break-inside:avoid}.doc-section{break-inside:auto}.table-wrap{overflow:visible}a{color:inherit}summary{display:none}details>pre{display:block}@page{margin:18mm}}'
@@ -384,6 +385,7 @@ class Runtime:
                         safe_path(self.root, self.custom[recipe]['module']).read_text('utf-8')
                     elif recipe.startswith('brave_') and recipe.endswith('_search'): needs.add('BRAVE_API_KEY')
                     elif recipe == 'gpt_image_2': needs.add('OPENAI_API_KEY')
+                    elif recipe == 'modal_gpu': needs.update(['PROMPTFLOW_GPU_URL','PROMPTFLOW_GPU_KEY'])
                     elif recipe in ('assemble_document', 'assemble_website', 'assemble_files', '__promptflow_value'): pass
                     elif step.get('endpoint') or '/' in step.get('model', ''):
                         needs.add('FAL_KEY')
@@ -621,6 +623,38 @@ class Runtime:
         rid = step.get('recipe_id','')
         params = resolve(step.get('params',{}), scope, self.root)
         if rid == '__promptflow_value': return params.get('value')
+        if rid == 'modal_gpu':
+            endpoint=os.environ['PROMPTFLOW_GPU_URL']
+            if urlsplit(endpoint).scheme!='https': raise RunError('GPU service requires HTTPS.')
+            job=uuid.uuid4().hex
+            def call(action, **extra):
+                return request_json(endpoint, {'Authorization':'Bearer '+os.environ['PROMPTFLOW_GPU_KEY']}, {'action':action,'job_id':job,'owner':'local-cli',**extra})
+            done=False;files=[];seen=set();event_count=0
+            try:
+                call('start',params=params)
+                deadline=time.monotonic()+min(600,max(60,int(params.get('timeout_seconds',300))))+120
+                while time.monotonic()<deadline:
+                    state=call('status')
+                    for event in state.get('events',[])[event_count:]: progress('L4 · '+params['model']+' · '+event['status'])
+                    event_count=len(state.get('events',[]))
+                    for file in state.get('files',[]):
+                        name=file['filename']
+                        if name in seen: continue
+                        if not re.fullmatch(r'[a-zA-Z0-9_-]+\.(png|json)',name) or len(file.get('base64',''))>44*1024*1024: raise RunError('Invalid GPU output file.')
+                        path=self.artifact(step['id']+'-'+name.rsplit('.',1)[0],'.'+name.rsplit('.',1)[1],base64.b64decode(file['base64'],validate=True))
+                        files.append({'filename':name,'url':path.as_uri(),'path':str(path),'size_bytes':path.stat().st_size});seen.add(name);progress('File ready: '+str(path))
+                    if state.get('status') in ('stopped','failed','cancelled'):
+                        done=True
+                        try: call('ack')
+                        except Exception: pass  # Service also purges after two minutes.
+                        if state['status']!='stopped' or not state.get('released'): raise RunError(state.get('error','GPU task did not complete.'))
+                        return {'artifacts':files,'image_url':next((f['url'] for f in files if f['filename'].endswith('.png')),None),'gpu':{'released':True,'model':params['model']}}
+                    time.sleep(2)
+                raise RunError('GPU runtime limit reached.')
+            finally:
+                if not done:
+                    try: call('cancel');progress('L4 shutdown requested; hard timeout remains active.')
+                    except Exception: progress('Could not confirm GPU shutdown; hard timeout remains active.')
         if rid in self.custom:
             path = safe_path(self.root, self.custom[rid]['module'])
             spec = importlib.util.spec_from_file_location('pf_recipe_' + re.sub(r'\W','_',rid), path)
@@ -681,7 +715,11 @@ class Runtime:
                 archive.writestr('report.html',body)
             path=self.artifact(step['id'],'.zip',data.getvalue())
             preview=self.artifact(step['id'],'.html',body.encode('utf-8'))
-            return {'html_url':preview.as_uri(),'download_url':path.as_uri(),'download_name':'workflow-files.zip','download_label':'Download files (.zip)','path':str(path)}
+            artifacts=[]
+            for name,content in entries.items():
+                file=self.artifact(step['id']+'-'+name.rsplit('.',1)[0],'.'+name.rsplit('.',1)[1],content.encode('utf-8'))
+                artifacts.append({'filename':name,'url':file.as_uri(),'path':str(file),'size_bytes':file.stat().st_size});progress('File ready: '+str(file))
+            return {'artifacts':artifacts,'html_url':preview.as_uri(),'download_url':path.as_uri(),'download_name':'workflow-files.zip','download_label':'Download files (.zip)','path':str(path)}
         if rid == 'assemble_website':
             source = re.sub(r'^```(?:html)?\s*|\s*```$', '', str(params.get('html', '')), flags=re.I)
             if len(source) < 100 or len(source) > 300000 or not re.search(r'<html[\s>]',source,re.I) or not re.search(r'<head[\s>]',source,re.I):

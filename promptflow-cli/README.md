@@ -1,7 +1,16 @@
-# PromptFlow™ CLI and interpreter 0.4.2
+# PromptFlow™ CLI and interpreter 0.5.1
 
 PromptFlow™ is a programming language for prompting neural networks. This
 download contains the CLI, interpreter and `examples/text-summary.promptflow`.
+Version 0.5.1 adds individual file-pack outputs and an experimental L4 GPU adapter.
+The hosted GPU service is not enabled: full-model container startup validation
+is still pending. Local GPU recipes require your own tested service: set
+`PROMPTFLOW_GPU_URL` and `PROMPTFLOW_GPU_KEY` in your local environment. The
+platform's credentials are never included in workflow downloads. The interpreter
+prints GPU startup, model loading, inference and shutdown events and saves each
+returned file in the run's output directory. Interrupting a run requests GPU
+termination; each restricted, single-use GPU container has a fixed runtime limit.
+
 Version 0.4.2 adds output contracts and multi-image review steps. The interpreter
 checks required fields, exact source excerpts and evidence counts before passing
 results downstream. Image reviews receive the declared original and generated

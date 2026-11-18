@@ -453,3 +453,21 @@ The implementation follows [OpenAI model capabilities](https://developers.openai
 - **PF-106, P2:** Generic prompts and unreviewed media produced repetitive copy and unverified illustrations. Added task-specific evidence and scope rules, actual image reviews, one bounded instruction-card correction, and a separate website/game code review. Real tests caught and corrected schema failures and excessive qualification. Remaining image defects are recorded rather than labeled approved.
 
 [Full quality matrix, real-provider evidence and remaining recommendations](promptflow-workflow-quality.md). PF-083 remains open: the panorama test completes but does not achieve calibrated geometry.
+
+## Chat theme, responsiveness and file delivery — 18 November 2026
+
+- Chat now shares the home screen's charcoal and gold palette, including the
+  navigation, active mode, composer focus and send button. The background remains
+  subtle behind readable messages. Desktop and 390px layouts were checked in Chrome.
+- Models & budget opens immediately from local settings. Remote settings load
+  afterward without replacing edits. Expensive backdrop blur was removed.
+- Active step labels use a small animated gradient. Completed, stopped and failed
+  work stops animating; reduced-motion and forced-color preferences are respected.
+- Generated files have individual open/download cards. Streamed files and final
+  results are deduplicated; files already delivered are retained in Chat history
+  even if a later step fails. Reports no longer suppress earlier image outputs.
+- File packs expose their editable sources individually as well as the ZIP.
+  Output routes check ownership, and active HTML/SVG previews use a sandboxed CSP.
+- GPU startup remains open: a minimal L4 function worked, but the full model
+  container did not start reliably. The test service was stopped and hosted GPU
+  execution remains disabled pending successful live lifecycle tests.
