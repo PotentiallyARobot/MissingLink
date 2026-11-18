@@ -131,12 +131,18 @@ window.PFAutoChat = (() => {
       title.textContent=signal.aborted?'Stopping':'Connection interrupted';
       text(assist.body,'p',signal.aborted?'Stopped requesting further work. A provider call already in progress may still finish.':error.message,'status');
       const check=text(assist.body,'button','Check existing task','btn');check.type='button';
+      let recovered;
       check.onclick=async()=>{
         check.disabled=true;
         try {
           const response=await fetch('/api/promptflow/chat/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({turn_id:form.get('turn_id')}),signal:AbortSignal.timeout(30000)});
           const saved=await response.json();if(!response.ok||!saved.ok)throw new Error('This task could not be found.');
-          if(saved.result){result(assist.body,saved.result,hooks);title.textContent='Task result recovered';check.remove();}
+          if(saved.result){
+            if(!recovered){recovered=document.createElement('div');assist.body.append(recovered);}recovered.replaceChildren();
+            result(recovered,saved.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen});
+            title.textContent=saved.result.action==='review_pending'?'Output recovered · review pending':'Task result recovered';
+            if(saved.status==='chat_complete')check.remove();else check.textContent='Refresh review status';
+          }
           else title.textContent='The existing task is still finishing. Check again shortly.';
         }catch(e){title.textContent=e.message;}finally{check.disabled=false;}
       };
