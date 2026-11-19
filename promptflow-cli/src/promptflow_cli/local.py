@@ -146,7 +146,7 @@ def register(app: typer.Typer, console, err) -> None:
         raise typer.Exit(execute_bundle(process_file, [], text, dry_run))
 
 
-def execute_bundle(process_file, inputs=None, text=None, check=False, output_dir="promptflow-output", model=None, instructions=None, name=None, yes=False, max_output_tokens=4096, override_step_limits=False):
+def execute_bundle(process_file, inputs=None, text=None, check=False, output_dir="promptflow-output", model=None, instructions=None, name=None, yes=False, max_output_tokens=4096, override_step_limits=False, test=False, test_fixture=None):
     """Use a child process so Ctrl+C, output streams, and working paths behave normally."""
     from promptflow_cli import runtime
     p = Path(process_file).expanduser().resolve()
@@ -160,6 +160,8 @@ def execute_bundle(process_file, inputs=None, text=None, check=False, output_dir
     for item in inputs or []: cmd.extend(["--input",item])
     if text is not None: cmd.extend(["--text",text])
     if check: cmd.append("--check")
+    if test: cmd.append('--test')
+    if test_fixture: cmd.extend(['--test-fixture',str(test_fixture)])
     if model: cmd.extend(["--model",model])
     if instructions: cmd.extend(["--instructions",instructions])
     if name: cmd.extend(["--name",name])

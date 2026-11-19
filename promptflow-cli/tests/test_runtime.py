@@ -20,6 +20,22 @@ from rich.console import Console
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_tests_require_an_isolated_runner(self):
+        with patch.object(runtime.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(runtime.RunError, 'Docker'):
+                runtime.run_isolated_tests('import unittest', {})
+
+    def test_saved_test_command_persists_report_without_provider_calls(self):
+        runner=self.runner([{'id':'echo','type':'recipe','recipe_id':'__promptflow_value','params':{'value':'ready'}}])
+        tests=runner.root/'tests';tests.mkdir()
+        (tests/'test_workflow.py').write_text('import unittest\nclass Checks(unittest.TestCase):\n def test_value(self): self.assertTrue(True)',encoding='utf-8')
+        (tests/'fixture.json').write_text('{"outputs":["ready"]}',encoding='utf-8')
+        with patch.object(runtime,'run_isolated_tests',return_value={'passed':True,'tests_run':1}) as execute, patch.object(runtime,'request_json',side_effect=AssertionError('No provider calls')):
+            result=runtime.main(bundle=str(runner.root),argv=['--test','--output-dir',str(runner.output)])
+        self.assertEqual(result,0)
+        self.assertEqual(execute.call_args.args[1]['outputs'],['ready'])
+        self.assertTrue((runner.output/'test-report.json').is_file())
+
     def test_gpu_files_and_lifecycle_are_portable(self):
         step={'id':'gpu','type':'recipe','recipe_id':'modal_gpu','params':{'model':'minilm-embeddings','texts':['one','two']}}
         runner=self.runner([step]);calls=[]
@@ -287,6 +303,21 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(uploads,[str(photo)])
         self.assertEqual(calls[0][1]['image_url'],'https://fixture.invalid/image.png')
         self.assertEqual(result['media']['url'],'https://fixture.invalid/result.png')
+
+    def test_code_requires_docker_and_rejects_path_traversal(self):
+        with patch.object(runtime.shutil,'which',return_value=None):
+            with self.assertRaisesRegex(runtime.RunError,'Docker'): runtime.run_isolated_code({'command':'true'})
+        with patch.object(runtime.shutil,'which',return_value='docker'):
+            for path in ('../escape','/absolute','C:/secret','dir/../escape'):
+                with self.assertRaisesRegex(runtime.RunError,'relative paths'): runtime.run_isolated_code({'command':'true','files':[{'path':path,'content':'x'}]})
+
+    def test_code_result_retains_failure_and_exports_real_files(self):
+        r=self.runner([{'id':'code','type':'recipe','recipe_id':'execute_code','params':{'command':'python app.py'}}])
+        with patch.object(runtime.shutil,'which',return_value='docker'), patch.object(runtime,'run_isolated_code',return_value={'exit_code':1,'output':'failed assertion','files':[{'filename':'result.txt','base64':'dGVzdA=='}]}):
+            result=r.execute({'text':'test'})['code']
+        self.assertEqual(result['exit_code'],1)
+        self.assertEqual(result['output'],'failed assertion')
+        self.assertEqual(len(result['artifacts']),1)
 
     def test_document_result_contains_saved_html_and_escaped_content(self):
         r=self.runner([{'id':'doc','type':'recipe','recipe_id':'assemble_document','params':{'title':'Research','sections':[{'heading':'Result','body':'{{user_text}}'}]}}])

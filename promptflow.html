@@ -11345,8 +11345,8 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 </style>
 <link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
 <link rel="stylesheet" href="assets/promptflow-chat.css?v=20261119-1">
-<link rel="stylesheet" href="assets/promptflow-budget.css?v=20261119-1">
-<script defer src="assets/promptflow-budget.js?v=20261119-1"></script>
+<link rel="stylesheet" href="assets/promptflow-budget.css?v=20261119-3">
+<script defer src="assets/promptflow-budget.js?v=20261119-3"></script>
 <style>
 .pf-live-activity{margin:12px 0;border:1px solid #333;border-radius:10px;padding:12px 16px;font:13px/1.55 system-ui;color:#c9cbd0;max-width:100%;overflow-wrap:anywhere}.pf-live-activity summary{cursor:pointer;min-height:28px}.pf-live-activity details{margin:8px 0}.pf-live-activity>div{max-height:380px;overflow:auto;overscroll-behavior:contain}.pf-live-activity pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 system-ui;margin:8px 0;padding:10px;background:#141416;border-radius:6px;max-height:220px;overflow:auto}.pf-activity-status{color:#9397a0;font-size:12px}.pf-activity-source a{color:#e8bf64;text-decoration:underline}.pf-activity-source{margin:5px 0}
 .chat-task .pf-activity-compact { border:0; border-radius:0; padding:0; margin:10px 0; color:#a9a9b2; }
@@ -11357,11 +11357,12 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 </style>
 <script src="assets/promptflow-files.js?v=20261118-4"></script>
 <script src="assets/promptflow-input-files.js?v=20261119-1"></script>
-<script src="assets/promptflow-activity.js?v=20261118-1"></script>
-<script src="assets/promptflow-chat.js?v=20261119-2"></script>
+<script src="assets/promptflow-activity.js?v=20261119-4"></script>
+<script src="assets/promptflow-chat.js?v=20261119-4"></script>
 <script src="assets/promptflow-text-models.js?v=20261115-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261114-1"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
+<link rel="stylesheet" href="/assets/promptflow-actions.css?v=20261119-4"><script src="/assets/promptflow-actions.js?v=20261119-4"></script>
 </head>
 <body class="d-desktop-mode">
 
@@ -11405,7 +11406,8 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 
 <!-- Sidebar folders (left edge) -->
 <nav class="d-sidebar" id="dSidebar">
-  <div class="chat-only chat-sidebar-brand">PromptFlow<sup>™</sup></div>
+      <div class="chat-only chat-sidebar-brand">PromptFlow<sup>™</sup></div>
+      <a class="chat-only chat-multiagent-link" href="/promptflow/multiagent" style="align-items:center;gap:10px;padding:10px 14px;color:#d8bd7e;text-decoration:none;font-size:13px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 8a3 3 0 1 0 6 0 3 3 0 0 0-6 0ZM6 21v-3a6 6 0 0 1 12 0v3M3 10a2 2 0 1 0 0 4M21 10a2 2 0 1 1 0 4M1 21v-2a4 4 0 0 1 4-4M23 21v-2a4 4 0 0 0-4-4"/></svg>Multi-agent Chat</a>
   <button type="button" class="chat-only chat-nav-button" id="chatNewBtn" data-chat-icon="design">New chat</button>
   <button class="d-folder" data-folder="system">
     <img src="promptflow_icons_transparent/01_system_folder_monitor.png" alt="">
@@ -13407,7 +13409,7 @@ promptflow whoami</code></pre>
   // The composer placeholder gives a hint about whether attaching an
   // image is required. In a fresh conversation we need an image; in
   // an existing one a text-only refinement is fine.
-  var composerMode = 'interpreter';
+  var composerMode = new URL(location.href).searchParams.get('mode') === 'chat' ? 'chat' : 'interpreter';
   function setComposerMode(mode) {
     if(busy || _planInFlight || _sendInProgress)return;
     composerMode=mode==='chat'?'chat':'interpreter';
@@ -13415,6 +13417,7 @@ promptflow whoami</code></pre>
   }
   document.getElementById('interpreterModeBtn')?.addEventListener('click',()=>setComposerMode('interpreter'));
   document.getElementById('chatModeBtn')?.addEventListener('click',()=>setComposerMode('chat'));
+  window.addEventListener('load',()=>{if(new URL(location.href).searchParams.get('mode')==='chat')setComposerMode('chat');},{once:true});
   function closeChatNavigation() {
     document.getElementById('dSidebar')?.classList.remove('d-sidebar-mobile-open');
     document.getElementById('dSidebarBackdrop')?.classList.remove('d-show');
@@ -13452,6 +13455,26 @@ promptflow whoami</code></pre>
       balance:tokens=>{if(typeof tokens==='number'&&ME){ME.tokens=tokens;paintAuthUI();}}
     };
   }
+  var activeAutoTurn = null, guidanceSending = false;
+  async function sendChatGuidance() {
+    if(!activeAutoTurn || guidanceSending)return;
+    const message=textInput.value.trim();if(!message)return;
+    if(attachedFiles.length){setError(addAssistMsg(),'Send this update as text. Keep attachments for the next task.');return;}
+    guidanceSending=true;updateSend();
+    try {
+      const id=crypto.randomUUID();
+      const response=await fetch('/api/promptflow/chat/guidance',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({turn_id:activeAutoTurn,id,text:message})});
+      const data=await response.json();if(!response.ok)throw new Error(data.message||'Could not deliver your update.');
+      const bubble=addUserMsg(message);bubble.classList.add('chat-auto-message');
+      const status=document.createElement('small');status.dataset.guidanceId=id;status.className='status';status.textContent='Queued · current work continues';bubble.querySelector('.body').append(status);
+      if(textInput.value.trim()===message){textInput.value='';textInput.dispatchEvent(new Event('input'));}
+    }catch(error){setError(addAssistMsg(),error.message);}
+    finally{guidanceSending=false;updateSend();}
+  }
+  window.addEventListener('pf-chat-guidance',event=>{
+    const node=[...stream.querySelectorAll('[data-guidance-id]')].find(n=>n.dataset.guidanceId===event.detail.id);
+    if(node)node.textContent=event.detail.delivery==='received'?'Received · continuing with your update':'Not applied · send as a follow-up';
+  });
   async function sendAutoChat(userText) {
     if(!window.PFAutoChat) {setError(addAssistMsg(),'Chat could not load. Refresh the page and try again.');return;}
     if(pendingContrib?.zip) {const note=addAssistMsg();setError(note,'Use Interpreter to contribute this ZIP, or remove it before starting a Chat task.');return;}
@@ -13459,6 +13482,7 @@ promptflow whoami</code></pre>
     const files=attachedFiles.slice(),selected=activeInterpreterProcess();
     if(userText.length>4000) {setError(addAssistMsg(),'Keep your message under 4,000 characters and attach longer text as a file.');return;}
     const form=new FormData();form.set('text',userText);form.set('turn_id','chat_'+crypto.randomUUID());
+    activeAutoTurn=form.get('turn_id');
     if(currentConversationId)form.set('conversation_id',currentConversationId);
     if(selected?.id)form.set('process_id',selected.id);
     form.set('conversation_history',JSON.stringify(history));
@@ -13481,7 +13505,7 @@ promptflow whoami</code></pre>
       }
       if(completed?.result?.process?.id)interpreterProcessContext={id:completed.result.process.id,name:completed.result.process.name};
       refreshConversations();refreshProcesses();
-    } finally {busy=false;currentRunCancellable=false;currentAbortController=null;updateSend();updateComposerHint();}
+    } finally {activeAutoTurn=null;busy=false;currentRunCancellable=false;currentAbortController=null;updateSend();updateComposerHint();}
   }
   function updateComposerHint() {
     document.body.classList.toggle('pf-chat-mode',composerMode === 'chat');
@@ -13620,6 +13644,7 @@ promptflow whoami</code></pre>
     const assist = addAssistMsg();
     if(turn.plan?.intent === 'auto_chat') {
       userMessage.classList.add('chat-auto-message');assist.el.classList.add('chat-auto-message');
+      for(const item of turn.plan.guidance||[]){const update=addUserMsg(item.text);const note=document.createElement('small');note.className='status';note.textContent=item.status==='received'?'Guidance received':'Guidance not applied';update.querySelector('.body').append(note);}
       if(turn.plan.result) window.PFAutoChat.result(assist.body,turn.plan.result,autoChatHooks());
       else { const note=document.createElement('p');note.textContent='This Chat task has not recorded a final result yet.';assist.body.append(note); }
       return;
@@ -15674,6 +15699,9 @@ promptflow whoami</code></pre>
   const RUN_ICON  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="6 4"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.4s" repeatCount="indefinite"/></circle></svg>`;
 
   function updateSend() {
+    let stop=document.getElementById('chatContinueStop');
+    if(!stop){stop=document.createElement('button');stop.id='chatContinueStop';stop.type='button';stop.className='icon-btn';stop.title='Stop current task';stop.setAttribute('aria-label','Stop current task');stop.innerHTML='<span aria-hidden="true">■</span>';stop.onclick=()=>currentAbortController?.abort();sendBtn.before(stop);}
+    stop.hidden=!(activeAutoTurn&&busy);stop.style.display=stop.hidden?'none':'';
     for(const id of ['interpreterModeBtn','chatModeBtn','chatNewBtn']) {const button=document.getElementById(id);if(button)button.disabled=busy||_planInFlight||_sendInProgress;}
     for (const id of ['clearConversationBtn','chatClearBtn']) {
       const clearButton = document.getElementById(id);
@@ -15683,6 +15711,10 @@ promptflow whoami</code></pre>
     // Three-state button: Send (idle), Stop (busy + cancellable),
     // Running (busy + locked-in process run, no abort possible).
     const hasText = !!textInput.value.trim();
+    if(activeAutoTurn&&busy){
+      sendBtn.disabled=!hasText||guidanceSending;sendBtn.classList.remove('stop','running');sendBtn.innerHTML=SEND_ICON;
+      sendBtn.title='Send guidance · current work continues';return;
+    }
     if (busy) {
       if (currentRunCancellable) {
         sendBtn.disabled = false;
@@ -15747,6 +15779,7 @@ promptflow whoami</code></pre>
 
   // ── Send / generate (two-phase: plan → confirm → execute) ─────
   async function send() {
+    if(activeAutoTurn&&busy){await sendChatGuidance();return;}
     // Concurrency guard. Block a second send while a turn is genuinely
     // in flight so a new user message can't be stacked beneath a
     // running plan/run. Two signals:
@@ -17392,6 +17425,7 @@ promptflow whoami</code></pre>
   // (process run), the button is :disabled so this never fires.
   // Otherwise, send the message.
   sendBtn.onclick = () => {
+    if(activeAutoTurn&&busy){void sendChatGuidance();return;}
     // Trust the button's visual state, not the `busy` global. If
     // these two drift apart (which can happen if a code path sets
     // busy=true without calling updateSend immediately after), the

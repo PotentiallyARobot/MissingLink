@@ -6,6 +6,8 @@ Progress describes observable work, never private model reasoning or credentials
 from __future__ import annotations
 
 import argparse
+import subprocess
+import shutil
 import csv
 import io
 import base64
@@ -31,7 +33,107 @@ import zipfile
 import uuid
 
 
-PARALLEL_RECIPES = {'__promptflow_value','brave_web_search','brave_news_search','brave_image_search','gpt_image_2','modal_gpu','assemble_document','assemble_website','assemble_files'}
+PARALLEL_RECIPES = {'__promptflow_value','brave_web_search','brave_news_search','brave_image_search','gpt_image_2','modal_gpu','assemble_document','assemble_website','assemble_files','run_tests','execute_code'}
+
+LOCAL_TEST_RUNNER = '''import io,json,unittest,contextlib
+stream=io.StringIO()
+with contextlib.redirect_stdout(stream),contextlib.redirect_stderr(stream):
+ result=unittest.TextTestRunner(stream=stream,verbosity=2).run(unittest.defaultTestLoader.discover('.',pattern='test_workflow.py'))
+report=dict(passed=result.wasSuccessful() and result.testsRun>0 and not result.skipped,tests_run=result.testsRun,failures=len(result.failures),errors=len(result.errors),skipped=len(result.skipped),log=stream.getvalue()[-30000:])
+print('PROMPTFLOW_TEST_REPORT='+json.dumps(report))
+raise SystemExit(0 if report['passed'] else 1)
+'''
+
+def prepare_code_image():
+    image='promptflow-tests:0.6'
+    available=subprocess.run(['docker','image','inspect',image],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+    if available.returncode:
+        progress('Preparing the isolated test image (first run only): Python and Node. This may take a few minutes.')
+        definition='FROM python:3.11-slim\nRUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*\n'
+        built=subprocess.run(['docker','build','-t',image,'-'],input=definition.encode('utf-8'),timeout=600)
+        if built.returncode: raise RunError('Could not prepare the isolated test image. No tests ran.')
+    return image
+
+
+LOCAL_CODE_RUNNER = r'''import base64,json,pathlib,subprocess
+root=pathlib.Path('/workspace'); root.mkdir(exist_ok=True); (root/'output').mkdir(exist_ok=True)
+params=json.loads(pathlib.Path('/inputs/input.json').read_text())
+for file in params.get('files',[]):
+ p=root/file['path']; p.parent.mkdir(parents=True,exist_ok=True); p.write_text(file['content'],encoding='utf-8')
+with open('/tmp/command.log','wb') as log:
+ try: result=subprocess.run(['bash','-lc',params['command']],cwd=root,stdout=log,stderr=subprocess.STDOUT,timeout=120); code=result.returncode
+ except subprocess.TimeoutExpired: code=124
+with open('/tmp/command.log','rb') as log:
+ log.seek(0,2); size=log.tell(); log.seek(max(0,size-48000)); output=log.read().decode('utf-8','replace')
+files=[]; total=0
+for p in sorted((root/'output').rglob('*')):
+ if len(files)>=30: break
+ if p.is_symlink() or not p.is_file() or not p.resolve().is_relative_to(root/'output'): continue
+ size=p.stat().st_size
+ if size>10*1024*1024 or total+size>10*1024*1024: continue
+ data=p.read_bytes(); total+=len(data); files.append(dict(filename=p.name,base64=base64.b64encode(data).decode()))
+print('PROMPTFLOW_CODE_RESULT='+json.dumps(dict(exit_code=code,output=output,files=files)))
+'''
+
+
+def run_isolated_code(params):
+    """Local code gets a temporary Docker filesystem, no network or credentials."""
+    if not shutil.which('docker'): raise RunError('Docker is required for isolated code execution. No code ran.')
+    command=params.get('command'); files=params.get('files',[])
+    if not isinstance(command,str) or not 1<=len(command)<=100000: raise RunError('Provide a shell command under 100,000 characters.')
+    if not isinstance(files,list) or len(files)>50: raise RunError('Provide at most 50 source files.')
+    names=set(); size=0
+    for file in files:
+        name=file.get('path',''); content=file.get('content')
+        if not isinstance(name,str) or len(name)>240 or not name or re.search(r'[\\:\x00-\x1f]',name) or any(p in ('','.','..') for p in name.split('/')) or name in names or not isinstance(content,str): raise RunError('Source files need unique relative paths and text content.')
+        names.add(name); size+=len(content.encode('utf-8'))
+    if size>500000: raise RunError('Source files exceed 500 KB.')
+    image=prepare_code_image()
+    progress('Executing in an isolated container (local code has no network): '+command.splitlines()[0][:200])
+    with tempfile.TemporaryDirectory(prefix='promptflow-code-') as folder:
+        root=Path(folder); root.chmod(0o755)
+        for name,content in {'input.json':json.dumps(params),'runner.py':LOCAL_CODE_RUNNER}.items():
+            (root/name).write_text(content,encoding='utf-8'); (root/name).chmod(0o644)
+        container='promptflow-code-'+uuid.uuid4().hex
+        try:
+            with tempfile.TemporaryFile() as log:
+                result=subprocess.run(['docker','run','--rm','--name',container,'--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','64','--memory','512m','--cpus','1','--user','65534:65534','--tmpfs','/tmp:rw,nosuid,size=64m','--tmpfs','/workspace:rw,nosuid,size=128m','-v',str(root.resolve())+':/inputs:ro',image,'python','-B','/inputs/runner.py'],stdout=log,stderr=subprocess.STDOUT,timeout=150)
+                if log.tell()>15000000: raise RunError('Code output exceeded the transfer limit.')
+                log.seek(0); output=log.read().decode('utf-8','replace')
+        except subprocess.TimeoutExpired:
+            raise RunError('Code exceeded the execution timeout. The container was stopped.')
+        finally:
+            subprocess.run(['docker','rm','-f',container],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+        line=next((v for v in output.splitlines() if v.startswith('PROMPTFLOW_CODE_RESULT=')),None)
+        if result.returncode or not line: raise RunError('Code sandbox returned no valid result: '+output[-1000:])
+        report=json.loads(line.split('=',1)[1]); progress('Command exited '+str(report.get('exit_code')))
+        if report.get('output'): progress(report['output'][-4000:])
+        return report
+
+
+def run_isolated_tests(source, fixture):
+    """Generated tests get no provider keys, network, or host filesystem access."""
+    if not shutil.which('docker'): raise RunError('Tests require Docker for isolated code execution. Install/start Docker, then rerun --test. Tests have not run.')
+    if not isinstance(source,str) or len(source)>60000: raise RunError('Test source must be at most 60 KB.')
+    image=prepare_code_image()
+    with tempfile.TemporaryDirectory(prefix='promptflow-test-') as folder:
+        root=Path(folder); root.chmod(0o755)
+        for name,content in {'test_workflow.py':source,'fixture.json':json.dumps(fixture),'run_tests.py':LOCAL_TEST_RUNNER}.items():
+            (root/name).write_text(content,encoding='utf-8'); (root/name).chmod(0o644)
+        container='promptflow-tests-'+uuid.uuid4().hex
+        try:
+            with tempfile.TemporaryFile() as log:
+                result=subprocess.run(['docker','run','--rm','--name',container,'--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','64','--memory','512m','--cpus','1','--user','65534:65534','--tmpfs','/tmp:rw,noexec,nosuid,size=64m','-v',str(root.resolve())+':/tests:ro','-w','/tests',image,'python','-B','run_tests.py'],stdout=log,stderr=subprocess.STDOUT,timeout=150)
+                log.seek(0,2);log.seek(max(0,log.tell()-65000));output=log.read().decode('utf-8','replace')
+        except subprocess.TimeoutExpired:
+            raise RunError('Tests exceeded the execution timeout. The test container was stopped.')
+        finally:
+            subprocess.run(['docker','rm','-f',container],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+        line=next((v for v in output.splitlines() if v.startswith('PROMPTFLOW_TEST_REPORT=')),None)
+        if not line: raise RunError('No test report was produced. Check that Docker is running: '+output[-1000:])
+        report=json.loads(line.split('=',1)[1]);report['passed']=result.returncode==0 and report.get('passed') is True
+        report['status']='passed' if report['passed'] else 'failed'
+        return report
 
 # Kept in parity with backend promptflow_report.ts; no third-party rendering code.
 REPORT_STYLE = '*{box-sizing:border-box}body{margin:0 auto;max-width:1040px;padding:48px 36px 64px;background:#fff;color:#202b35;font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}header{border-bottom:2px solid #243d49;padding-bottom:24px;margin-bottom:32px}h1{font-size:32px;line-height:1.2;letter-spacing:-.025em;margin:0 0 12px}h2{font-size:22px;line-height:1.3;margin:32px 0 12px}h3,h4{font-size:17px;line-height:1.4;margin:24px 0 8px}p{margin:0 0 16px}a{color:#15566e;text-underline-offset:3px}ul,ol{padding-left:24px;margin:12px 0 20px}li{margin:5px 0}section{margin-bottom:36px}.filename,.report-meta,summary{font:13px/1.5 system-ui;color:#596670}.filename{margin-top:-4px;margin-bottom:18px}pre{padding:18px;background:#f4f6f7;border:1px solid #dde3e6;white-space:pre-wrap;font:13px/1.6 ui-monospace,Consolas,monospace}code{font-size:.9em;background:#f4f6f7;padding:2px 4px}.table-wrap{overflow:auto;margin:16px 0 24px}table{border-collapse:collapse;width:100%;font-size:14px}th{text-align:left;background:#edf2f4;font-weight:600;text-transform:capitalize;overflow-wrap:normal}th,td{min-width:90px;overflow-wrap:break-word;padding:12px 14px;border:1px solid #dce3e7;vertical-align:top}tbody tr:nth-child(even){background:#fafbfc}details{border:1px solid #dce3e7;padding:14px 18px;margin:18px 0}summary{cursor:pointer;font-weight:600}img{max-width:100%;height:auto}footer{border-top:1px solid #dce3e7;margin-top:40px;padding-top:16px;color:#596670;font-size:12px}@media(max-width:600px){body{padding:28px 20px}h1{font-size:27px}.table-wrap{margin-left:-4px;margin-right:-4px}}@media print{body{max-width:none;padding:0;font-size:11pt}h1,h2,h3,h4{break-after:avoid}tr,figure{break-inside:avoid}.doc-section{break-inside:auto}.table-wrap{overflow:visible}a{color:inherit}summary{display:none}details>pre{display:block}@page{margin:18mm}}'
@@ -387,6 +489,8 @@ class Runtime:
                     elif recipe == 'gpt_image_2': needs.add('OPENAI_API_KEY')
                     elif recipe == 'modal_gpu': needs.update(['PROMPTFLOW_GPU_URL','PROMPTFLOW_GPU_KEY'])
                     elif recipe in ('assemble_document', 'assemble_website', 'assemble_files', '__promptflow_value'): pass
+                    elif recipe in ('run_tests','execute_code'):
+                        if not shutil.which('docker'): raise RunError('Docker is required for isolated unit tests.')
                     elif step.get('endpoint') or '/' in step.get('model', ''):
                         needs.add('FAL_KEY')
                         if importlib.util.find_spec('fal_client') is None:
@@ -680,6 +784,21 @@ class Runtime:
                          'width':r.get('properties',{}).get('width'), 'height':r.get('properties',{}).get('height')} for r in rows]
             text = '\n\n'.join(as_text(r.get('title','')) + '\n' + as_text(r.get('image_url',r.get('url',''))) + '\n' + as_text(r.get('description','')) for r in rows)
             return {'results':rows, 'query':query, 'text':text or f'No results for "{query}".'}
+        if rid == 'execute_code':
+            result=run_isolated_code(params)
+            artifacts=[]
+            for file in result.pop('files',[]):
+                name=Path(file['filename']).name
+                if name!=file['filename'] or name in ('.','..') or not re.fullmatch(r'[\w .-]{1,160}',name): continue
+                data=base64.b64decode(file['base64'],validate=True)
+                if len(data)>10*1024*1024: continue
+                artifacts.append(self.artifact(Path(name).stem,Path(name).suffix,data))
+            result['artifacts']=artifacts
+            return result
+        if rid == 'run_tests':
+            report=run_isolated_tests(params.get('source'),params.get('fixture',{}))
+            self.artifact('test-report','.json',json.dumps(report,indent=2).encode('utf-8'))
+            return report
         if rid == 'assemble_files':
             files=params.get('files',[])
             if not isinstance(files,list) or not 1<=len(files)<=16: raise RunError('A file pack needs 1–16 files.')
@@ -862,6 +981,8 @@ def main(bundle=None, argv=None):
     parser.add_argument('--override-step-limits', action='store_true', help='Use the selected token allowance instead of saved step limits')
     parser.add_argument('--yes', action='store_true', help='Accept the generated input-preparation plan without prompting')
     parser.add_argument('--check', action='store_true',help='Check inputs, keys, and dependencies without calling providers')
+    parser.add_argument('--test', action='store_true',help='Run the persisted unit tests in Docker without provider calls')
+    parser.add_argument('--test-fixture',help='JSON fixture to use instead of the saved test fixture')
     args = parser.parse_args(argv)
     try:
         inputs = {}
@@ -873,6 +994,14 @@ def main(bundle=None, argv=None):
             inputs[key] = value
         if args.text is not None: inputs['text'] = args.text
         with bundle_root(bundle or args.bundle) as root:
+            if args.test:
+                tests=root/'tests'
+                if not (tests/'test_workflow.py').exists(): raise RunError('This download has no saved test suite yet.')
+                fixture=Path(args.test_fixture) if args.test_fixture else tests/'fixture.json'
+                report=run_isolated_tests((tests/'test_workflow.py').read_text('utf-8'),json.loads(fixture.read_text('utf-8')))
+                destination=Path(args.output_dir);destination.mkdir(parents=True,exist_ok=True)
+                (destination/'test-report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+                print(json.dumps(report,indent=2));return 0 if report['passed'] else 1
             if not 256 <= args.max_output_tokens <= 128000: raise RunError('--max-output-tokens must be between 256 and 128000.')
             runtime = Runtime(root, args.output_dir, args.model or os.environ.get('PROMPTFLOW_TEXT_MODEL'), max_output_tokens=args.max_output_tokens, override_step_limits=args.override_step_limits)
             progress('Checking bundle, required credentials, and dependencies')

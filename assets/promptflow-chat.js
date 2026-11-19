@@ -78,9 +78,11 @@ window.PFAutoChat = (() => {
     const list=document.createElement('ul');box.append(list);
     for(const check of value.checks||[])text(list,'li',(check.passed?'✓ ':'✕ ')+(check.name?check.name+': ':'')+check.evidence);
     for(const limit of value.limitations||[])text(box,'p','Not verified: '+limit,'status');
+    if(value.tests){text(box,'p',value.tests.tests_run+' executable tests · '+value.tests.status);text(box,'pre',value.tests.log||'');window.PFFiles?.render(box,value.tests.artifacts||[]);}
   }
-  function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false}={}) {
+  function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false,activityAlreadyShown=false}={}) {
     if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
+    if(data.activity?.length&&!activityAlreadyShown){const panel=text(parent,'details','','chat-task chat-task-finished');withIcon(text(panel,'summary','Commands and file changes'),'terminal');const receive=window.PFActions?.mount(panel);for(const e of data.activity)receive?.(e);receive?.finish?.();}
     window.PFFiles?.render(parent,data.artifacts||[]);
     if(data.action!=='complete'||!data.run?.outputs?.length){const answer=String(data.answer||'').replace(/^run_budget_exceeded:\s*/,'');markdown(text(parent,'div','','chat-prose chat-answer'),answer);window.PFRunBudget?.mountError(parent,data.answer);if(data.answer)copyButton(parent,data.answer);}
     if(data.run&&!outputsAlreadyShown)outputs(parent,data.run,hooks);
@@ -109,14 +111,18 @@ window.PFAutoChat = (() => {
       const follow=hooks.atBottom?.();
       lastSignal=Date.now();
       if(name==='session'){hooks.session(data);cost.textContent='Auto task limit: '+Number(data.limit).toLocaleString()+' credits';}
+      if(name==='guidance')window.dispatchEvent(new CustomEvent('pf-chat-guidance',{detail:data}));
       if(name==='stage'){title.textContent=data.message||'Working…';setIcon(({matching:'search',search:'search',designing:'design',planning:'design',preparing:'workflow',testing:'terminal',verifying:'check',validating:'check'})[data.stage]||'workflow');}
       if(name==='decision')explanation.textContent=data.message||'Choosing the next action.';
       if(name==='activity'){activity(data);if(data.kind==='tool_started'){setIcon('globe');title.textContent=(({search:'Searching the web',open_page:'Reading a page',find_in_page:'Finding a passage'})[data.action]||'Using '+(data.tool||'a tool'))+(data.query?' · '+data.query.slice(0,120):'');}}
+      if(name==='activity' && data.kind==='command_started'){setIcon('terminal');title.textContent='Running '+String(data.command||'command').split('\n')[0].slice(0,100);}
+      if(name==='activity' && data.kind==='file_changed'){setIcon('design');title.textContent='Editing '+data.path;}
       if(name==='activity' && data.kind==='gpu_status'){setIcon('terminal');title.textContent=data.text || data.status;}
       if(name==='workflow'){lastWorkflow=data.process;workflow(work,data.process,data.temporary);}
       if(name==='quote')cost.textContent='Run '+data.attempt+': '+Number(data.cost.tokens_charged).toLocaleString()+' credits · task limit '+Number(data.limit).toLocaleString();
       if(name==='outputs'){const output=document.createElement('div');output.className='chat-test-output';assist.body.append(output);outputs(output,data,hooks);outputSeen=true;hooks.balance(data.tokens_remaining);}
       if(name==='verification'){title.textContent=data.passed?'Output checks passed':'Checking improvements';verification(trail,data);verificationSeen=true;}
+      if(name==='tests'){title.textContent=data.tests_run+' tests · '+data.status;window.PFFiles?.render(assist.body,data.artifacts||[]);}
       if(name==='saved'){title.textContent='Verified workflow saved';if(lastWorkflow)workflow(work,lastWorkflow,false);}
       if(name!=='heartbeat')hooks.scroll?.(follow);
     };
@@ -130,10 +136,11 @@ window.PFAutoChat = (() => {
         return {not_started:true};
       }
       const complete=await read(response,event);
+      for(const item of complete.guidance||[])window.dispatchEvent(new CustomEvent('pf-chat-guidance',{detail:{...item,delivery:item.status}}));
       panel.classList.add('chat-task-finished');panel.open=false;
       setIcon(complete.result?.action==='complete'?'check':['failed','stopped'].includes(complete.result?.action)?'alert':'message');
       title.textContent=({complete:'Completed',answer:'Reviewed request',ask:'Reviewed request',failed:'Stopped',stopped:'Stopped'})[complete.result?.action]||'Finished';
-      const follow=hooks.atBottom?.();result(assist.body,complete.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen});hooks.scroll?.(follow);hooks.balance(complete.tokens_remaining);return complete;
+      const follow=hooks.atBottom?.();result(assist.body,complete.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen,activityAlreadyShown:true});hooks.scroll?.(follow);hooks.balance(complete.tokens_remaining);return complete;
     }catch(error) {
       title.textContent=signal.aborted?'Stopping':'Connection interrupted';
       text(assist.body,'p',signal.aborted?'Stopped requesting further work. A provider call already in progress may still finish.':error.message,'status');
@@ -147,7 +154,7 @@ window.PFAutoChat = (() => {
           const saved=await response.json();if(!response.ok||!saved.ok)throw new Error('This task could not be found.');
           if(saved.result){
             if(!recovered){recovered=document.createElement('div');assist.body.append(recovered);}recovered.replaceChildren();
-            result(recovered,saved.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen});
+            result(recovered,saved.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen,activityAlreadyShown:true});
             title.textContent=saved.result.action==='review_pending'?'Output recovered · review pending':'Task result recovered';
             if(saved.status==='chat_complete')check.remove();else check.textContent='Refresh review status';
           }

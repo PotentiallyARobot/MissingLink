@@ -1,6 +1,6 @@
 // Only explicitly public events are rendered. Legacy thinking is never accepted.
 window.PFActivity = (() => {
-  const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source','artifact','gpu_status']);
+  const allowed=new Set(['step_started','step_completed','step_failed','response_delta','reasoning_summary_delta','tool_started','tool_completed','source','artifact','gpu_status','command_started','command_completed','file_changed']);
   const paths={
     plus:'M12 5v14M5 12h14',
     down:'M12 4v16M5 13l7 7 7-7',
@@ -28,12 +28,14 @@ window.PFActivity = (() => {
     const panel=document.createElement(options.compact?'div':'details');panel.className='pf-live-activity'+(options.compact?' pf-activity-compact':'');panel.open=true;
     if(!options.compact){const heading=document.createElement('summary');heading.textContent='Live activity';panel.append(heading);}
     const rows=document.createElement('div');panel.append(rows);
+    const actions=window.PFActions?.mount(rows);
     const steps=new Map();let attached=false,timer=null;
     const flush=()=>{timer=null;for(const s of steps.values()) for(const key of ['summary','response']) if(s[key+'Node'] && s[key+'Dirty']) {s[key+'Node'].textContent=s[key];s[key+'Dirty']=false;}};
     const receive=event=>{
       if(!event || !allowed.has(event.kind))return;
       if(event.kind==='artifact'){if(options.onArtifact)options.onArtifact(event);else window.PFFiles?.render(parent,[event]);return;}
       if(!attached){parent.append(panel);attached=true;}
+      if(actions?.(event))return;
       const id=String(event.step_id || 'process');
       if(!steps.has(id)) {
         if(steps.size>=100)return;
@@ -77,7 +79,7 @@ window.PFActivity = (() => {
         if(options.compact)line.prepend(icon('globe'));
       }
     };
-    receive.finish=()=>{if(timer)clearTimeout(timer);flush();for(const node of panel.querySelectorAll('.pf-processing'))node.classList.remove('pf-processing');};
+    receive.finish=()=>{actions?.finish?.();if(timer)clearTimeout(timer);flush();for(const node of panel.querySelectorAll('.pf-processing'))node.classList.remove('pf-processing');};
     return receive;
   }
   return {mount,icon};

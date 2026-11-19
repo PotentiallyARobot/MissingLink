@@ -60,6 +60,7 @@ const server = http.createServer(async (req,res) => {
     {filename:'evidence.json',media_type:'application/json',content:'{"owner":"Maya","due":"Friday"}',url:'http://127.0.0.1:4173/api/promptflow/outputs/qa-evidence.json'}].map(f=>({...f,size_bytes:Buffer.byteLength(f.content)}));
   const sampleFile=sampleFiles.find(f=>new URL(f.url).pathname===url.pathname);
   if(sampleFile){res.writeHead(200,{'content-type':sampleFile.media_type,...(url.searchParams.has('download')?{'content-disposition':'attachment; filename="'+sampleFile.filename+'"'}:{})});return res.end(sampleFile.content);}
+  if(url.pathname==='/api/promptflow/chat/guidance')return send({ok:true,id:body.id,delivery:'queued'});
   if(url.pathname==='/api/promptflow/chat/stream') {
     if(ref.searchParams.has('budget_error'))return events([[0,'session',{turn_id:'budget-fixture',conversation_id:'qa-budget',limit:5000}],[100,'done',{ok:false,result:{action:'failed',answer:'run_budget_exceeded: This run costs 5810 PromptFlow credits; your limit is 5000. Reduce the work or raise the limit before running.'}}]]);
     if(ref.searchParams.has('chat_reject'))return send({ok:false,message:'Synthetic rejection: your draft was preserved.'},422);
@@ -75,6 +76,9 @@ const server = http.createServer(async (req,res) => {
       [200,'stage',{message:'Running the workflow'}],
       [200,'activity',{kind:'step_started',step_id:'summary',step_name:'Checking meeting commitments'}],
       [ref.searchParams.has('slow')?15000:500,'activity',{kind:'step_completed',step_id:'summary',step_name:'Checking meeting commitments'}],
+      [100,'activity',{kind:'command_started',call_id:'qa-cmd',command:'python validate_actions.py'}],
+      [250,'activity',{kind:'command_completed',call_id:'qa-cmd',command:'python validate_actions.py',exit_code:0,duration_ms:417,text:'Validated 1 action. Owner, date and source quote are present.\n2 tests passed.'}],
+      [100,'activity',{kind:'file_changed',call_id:'qa-cmd',path:'output/meeting-actions.csv',change:'created',added:2,removed:0,diff:'--- a/output/meeting-actions.csv\n+++ b/output/meeting-actions.csv\n@@ -0,0 +1,2 @@\n+action,owner,due\n+Send proposal,Maya,Friday'}],
       [200,'activity',{kind:'artifact',...sampleFiles[0]}],
       [200,'outputs',{...run,outputs:run.outputs.map(o=>({...o,artifacts:sampleFiles}))}],[200,'verification',verification],
       [200,'saved',{process_id:workflow.id,name:workflow.name}],
@@ -204,7 +208,7 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});return res.end(html);
   }
   // Only serve public image assets used by this page; never repository files.
-  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-files.js','/assets/promptflow-input-files.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js','/assets/promptflow-chat.css','/assets/promptflow-budget.js','/assets/promptflow-budget.css'].includes(url.pathname)) {
+  if(['/assets/promptflow-actions.js','/assets/promptflow-actions.css','/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-files.js','/assets/promptflow-input-files.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js','/assets/promptflow-chat.css','/assets/promptflow-budget.js','/assets/promptflow-budget.css'].includes(url.pathname)) {
     res.writeHead(200,{'content-type':url.pathname.endsWith('.css')?'text/css':'text/javascript'});return res.end(await readFile(path.join(root,url.pathname)));
   }
   if(url.pathname==='/promptflow-cli.zip') {res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="promptflow-cli.zip"'});return res.end(await readFile(path.join(root,'promptflow-cli.zip')));}

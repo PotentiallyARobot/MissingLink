@@ -908,6 +908,8 @@ def run(
     name: str = typer.Option(None, "--name", help="Descriptive name for this run."),
     max_run_tokens: int = typer.Option(None, "--max-run-tokens", min=0, max=1000000, help="Maximum hosted compute credits; excludes creator fees and provider bills."),
     max_output_tokens: int = typer.Option(4096, "--max-output-tokens", min=256, max=128000, help="Output-token limit per local AI call."),
+    test: bool = typer.Option(False, "--test", help="Run the saved unit tests in Docker, without provider calls."),
+    test_fixture: str = typer.Option(None, "--test-fixture", help="JSON fixture for the saved tests."),
     override_step_limits: bool = typer.Option(False, "--override-step-limits", help="Use this output allowance instead of saved step limits."),
     yes: bool = typer.Option(
         False, "--yes", "-y",
@@ -929,8 +931,8 @@ def run(
     target = Path(process_id).expanduser()
     if target.exists() or process_id.lower().endswith(".promptflow"):
         if max_run_tokens is not None: raise typer.BadParameter("--max-run-tokens caps hosted credits. Local runs use provider billing; use --model and --max-output-tokens.")
-        raise typer.Exit(execute_bundle(target, input or [], text, check, output_dir, model, instructions, name, yes, max_output_tokens, override_step_limits))
-    if check or output_dir != "promptflow-output" or max_output_tokens != 4096 or override_step_limits:
+        raise typer.Exit(execute_bundle(target, input or [], text, check, output_dir, model, instructions, name, yes, max_output_tokens, override_step_limits, test, test_fixture))
+    if check or test or test_fixture or output_dir != "promptflow-output" or max_output_tokens != 4096 or override_step_limits:
         raise typer.BadParameter("--check, --max-output-tokens and --output-dir apply to downloaded bundles. Hosted output limits are set in Model & API access.")
     input = list(input or [])
     if text is not None: input.append("text=" + text)
