@@ -82,7 +82,7 @@ window.PFAutoChat = (() => {
   function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false}={}) {
     if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
     window.PFFiles?.render(parent,data.artifacts||[]);
-    if(data.action!=='complete'||!data.run?.outputs?.length){markdown(text(parent,'div','','chat-prose chat-answer'),data.answer||'');if(data.answer)copyButton(parent,data.answer);}
+    if(data.action!=='complete'||!data.run?.outputs?.length){const answer=String(data.answer||'').replace(/^run_budget_exceeded:\s*/,'');markdown(text(parent,'div','','chat-prose chat-answer'),answer);window.PFRunBudget?.mountError(parent,data.answer);if(data.answer)copyButton(parent,data.answer);}
     if(data.run&&!outputsAlreadyShown)outputs(parent,data.run,hooks);
     if(data.verification&&!verificationAlreadyShown)verification(parent,data.verification);
     if(data.saved&&data.process) {
@@ -126,6 +126,7 @@ window.PFAutoChat = (() => {
         const error=await response.json().catch(()=>({}));
         title.textContent='Couldn’t send';setIcon('alert');
         text(assist.body,'p',error.message || (response.status===401?'Please sign in to use Chat.':'Chat could not start. Your message and attachments are still in the composer.'),'status');
+        window.PFRunBudget?.mountError(assist.body,error.message);
         return {not_started:true};
       }
       const complete=await read(response,event);
@@ -136,6 +137,7 @@ window.PFAutoChat = (() => {
     }catch(error) {
       title.textContent=signal.aborted?'Stopping':'Connection interrupted';
       text(assist.body,'p',signal.aborted?'Stopped requesting further work. A provider call already in progress may still finish.':error.message,'status');
+      if(!signal.aborted)window.PFRunBudget?.mountError(assist.body,error.message);
       const check=text(assist.body,'button','Check existing task','btn');check.type='button';
       let recovered;
       check.onclick=async()=>{

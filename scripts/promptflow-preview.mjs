@@ -61,6 +61,7 @@ const server = http.createServer(async (req,res) => {
   const sampleFile=sampleFiles.find(f=>new URL(f.url).pathname===url.pathname);
   if(sampleFile){res.writeHead(200,{'content-type':sampleFile.media_type,...(url.searchParams.has('download')?{'content-disposition':'attachment; filename="'+sampleFile.filename+'"'}:{})});return res.end(sampleFile.content);}
   if(url.pathname==='/api/promptflow/chat/stream') {
+    if(ref.searchParams.has('budget_error'))return events([[0,'session',{turn_id:'budget-fixture',conversation_id:'qa-budget',limit:5000}],[100,'done',{ok:false,result:{action:'failed',answer:'run_budget_exceeded: This run costs 5810 PromptFlow credits; your limit is 5000. Reduce the work or raise the limit before running.'}}]]);
     if(ref.searchParams.has('chat_reject'))return send({ok:false,message:'Synthetic rejection: your draft was preserved.'},422);
     const workflow={...sample,is_draft:false,auto_chat_draft:true,name:'Meeting actions with owner checks'};
     const verification={passed:true,summary:'The action has an owner, due date and supporting quote.',checks:[{name:'Required fields',passed:true,evidence:'The action contains an owner, date and source quote.'}],limitations:['Synthetic preview fixture; no provider calls.']};
@@ -203,7 +204,7 @@ const server = http.createServer(async (req,res) => {
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});return res.end(html);
   }
   // Only serve public image assets used by this page; never repository files.
-  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-files.js','/assets/promptflow-input-files.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js','/assets/promptflow-chat.css'].includes(url.pathname)) {
+  if(['/assets/promptflow-marketplace.css','/assets/promptflow-marketplace.js','/assets/promptflow-text-models.js','/assets/promptflow-files.js','/assets/promptflow-input-files.js','/assets/promptflow-activity.js','/assets/promptflow-chat.js','/assets/promptflow-chat.css','/assets/promptflow-budget.js','/assets/promptflow-budget.css'].includes(url.pathname)) {
     res.writeHead(200,{'content-type':url.pathname.endsWith('.css')?'text/css':'text/javascript'});return res.end(await readFile(path.join(root,url.pathname)));
   }
   if(url.pathname==='/promptflow-cli.zip') {res.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="promptflow-cli.zip"'});return res.end(await readFile(path.join(root,'promptflow-cli.zip')));}
