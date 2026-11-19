@@ -475,3 +475,22 @@ The implementation follows [OpenAI model capabilities](https://developers.openai
 - GPU startup remains open: a minimal L4 function worked, but the full model
   container did not start reliably. The test service was stopped and hosted GPU
   execution remains disabled pending successful live lifecycle tests.
+
+### Large pasted text attachments — 2026-11-19
+
+- Fixed: pasting code or a long document filled the composer and then hit Chat's
+  4,000-character message limit. Pastes of 2,000 characters or 30 lines now become
+  removable `Pasted text.txt` cards inside the composer. Short pastes stay inline.
+- The typed request stays separate. Multiple pastes receive distinct filenames;
+  cards offer a plain-text preview and download before and after sending.
+- Chat sends the complete UTF-8 files to the agent and workflow inputs, retains
+  them in owner-scoped conversation history, and never creates a public file URL.
+  Text files are limited to eight and 200 KB total per message, with explicit
+  errors instead of silent truncation. File-only Chat messages ask what to do.
+- Validation failures restore the request and attachments. Interrupted or
+  duplicate tasks retain recovery controls rather than automatically resubmitting.
+- Validation: 44 frontend and 34 backend checks passed, including multipart
+  fidelity, Unicode, final-file markers, limits, persistence and run preparation.
+  Worker build passed. Browser checks covered paste, preview, removal, sending,
+  rejected-send recovery and a 390px layout with no page overflow. Synthetic
+  local fixtures were used; these checks did not spend provider credits.

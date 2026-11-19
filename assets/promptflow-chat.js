@@ -122,6 +122,12 @@ window.PFAutoChat = (() => {
     };
     try {
       const response=await fetch('/api/promptflow/chat/stream',{method:'POST',body:form,signal});
+      if([400,401,402,403,404,413,415,422].includes(response.status)) {
+        const error=await response.json().catch(()=>({}));
+        title.textContent='Couldn’t send';setIcon('alert');
+        text(assist.body,'p',error.message || (response.status===401?'Please sign in to use Chat.':'Chat could not start. Your message and attachments are still in the composer.'),'status');
+        return {not_started:true};
+      }
       const complete=await read(response,event);
       panel.classList.add('chat-task-finished');panel.open=false;
       setIcon(complete.result?.action==='complete'?'check':['failed','stopped'].includes(complete.result?.action)?'alert':'message');

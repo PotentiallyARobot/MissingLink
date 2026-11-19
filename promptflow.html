@@ -11344,7 +11344,7 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 
 </style>
 <link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
-<link rel="stylesheet" href="assets/promptflow-chat.css?v=20261118-4">
+<link rel="stylesheet" href="assets/promptflow-chat.css?v=20261119-1">
 <style>
 .pf-live-activity{margin:12px 0;border:1px solid #333;border-radius:10px;padding:12px 16px;font:13px/1.55 system-ui;color:#c9cbd0;max-width:100%;overflow-wrap:anywhere}.pf-live-activity summary{cursor:pointer;min-height:28px}.pf-live-activity details{margin:8px 0}.pf-live-activity>div{max-height:380px;overflow:auto;overscroll-behavior:contain}.pf-live-activity pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 system-ui;margin:8px 0;padding:10px;background:#141416;border-radius:6px;max-height:220px;overflow:auto}.pf-activity-status{color:#9397a0;font-size:12px}.pf-activity-source a{color:#e8bf64;text-decoration:underline}.pf-activity-source{margin:5px 0}
 .chat-task .pf-activity-compact { border:0; border-radius:0; padding:0; margin:10px 0; color:#a9a9b2; }
@@ -11354,8 +11354,9 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 .chat-task .pf-activity-compact pre { border-left:1px solid #33333a; background:none; border-radius:0; padding:4px 12px; }
 </style>
 <script src="assets/promptflow-files.js?v=20261118-4"></script>
+<script src="assets/promptflow-input-files.js?v=20261119-1"></script>
 <script src="assets/promptflow-activity.js?v=20261118-1"></script>
-<script src="assets/promptflow-chat.js?v=20261118-3"></script>
+<script src="assets/promptflow-chat.js?v=20261119-1"></script>
 <script src="assets/promptflow-text-models.js?v=20261115-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261114-1"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
@@ -11741,7 +11742,7 @@ python -m venv .venv
     </div>
   <div class="input-shell">
     <button type="button" id="chatJumpBtn" class="chat-jump chat-only" title="Scroll to latest message" aria-label="Scroll to latest message" hidden data-chat-icon="down"></button>
-    <div id="attachWrap"></div>
+    <div id="pasteStatus" class="pf-paste-status" role="status" aria-live="polite"></div>
     <!-- Verb action bar — only visible when a contribution attachment
          is staged. Shows the verbs available for the current attachment
          set ("Extract lessons", "Adapt into new process"). Click → fires
@@ -11782,6 +11783,7 @@ python -m venv .venv
     <div id="cmdSuggest" class="cmd-suggest" style="display:none" role="listbox"></div>
 
     <div class="input-bar">
+      <div id="attachWrap" aria-label="Attachments"></div>
       <!-- "Interpreter" label — absolutely positioned overlay
            sitting just above the input bar's top-left edge.
            Doesn't affect the layout of the bar's children since
@@ -13453,19 +13455,28 @@ promptflow whoami</code></pre>
     if(pendingContrib?.zip) {const note=addAssistMsg();setError(note,'Use Interpreter to contribute this ZIP, or remove it before starting a Chat task.');return;}
     const history=buildConversationHistoryForRefine(true);
     const files=attachedFiles.slice(),selected=activeInterpreterProcess();
+    if(userText.length>4000) {setError(addAssistMsg(),'Keep your message under 4,000 characters and attach longer text as a file.');return;}
     const form=new FormData();form.set('text',userText);form.set('turn_id','chat_'+crypto.randomUUID());
     if(currentConversationId)form.set('conversation_id',currentConversationId);
     if(selected?.id)form.set('process_id',selected.id);
     form.set('conversation_history',JSON.stringify(history));
     const preferences=getActiveGenPrefs();if(preferences?.ids?.length)form.set('process_overrides',JSON.stringify(preferences));consumeGenPrefsOverride();
     let images=0;for(const file of files) {const key=file.kind==='image'?(++images===1?'image':'image_'+images):file.kind;if(['image','video','audio'].includes(file.kind))form.append(key,file.file);}
-    addUserMsg(userText,files.find(f=>f.kind==='image')?.dataUrl || null,null,[]).classList.add('chat-auto-message');
+    window.PFInputFiles.append(form,files);
+    const userMessage=addUserMsg(userText,files.find(f=>f.kind==='image')?.dataUrl || null,null,[]);userMessage.classList.add('chat-auto-message');
+    window.PFInputFiles.render(userMessage.querySelector('.body'),files.filter(f=>f.kind==='text'));
     const assist=addAssistMsg();
     const controller=new AbortController();currentAbortController=controller;currentRunCancellable=true;
     busy=true;textInput.value='';textInput.style.height='auto';textInput.dispatchEvent(new Event('input'));attachedFiles=[];fileInput.value='';paintAttach();updateSend();
     armBusyWatchdog(21*60*1000);
     try {
       const completed=await window.PFAutoChat.send(form,assist,autoChatHooks(),controller.signal);
+      if(completed?.not_started) {
+        userMessage.remove();
+        attachedFiles=[...files,...attachedFiles];
+        if(!textInput.value)textInput.value=userText;
+        paintAttach();textInput.dispatchEvent(new Event('input'));return;
+      }
       if(completed?.result?.process?.id)interpreterProcessContext={id:completed.result.process.id,name:completed.result.process.name};
       refreshConversations();refreshProcesses();
     } finally {busy=false;currentRunCancellable=false;currentAbortController=null;updateSend();updateComposerHint();}
@@ -13602,6 +13613,7 @@ promptflow whoami</code></pre>
   // controls and the polling state machine.
   function renderHistoricalTurn(turn) {
     const userMessage=addUserMsg(turn.user_text || "", turn.image_public_url || null, null);
+    window.PFInputFiles.render(userMessage.querySelector('.body'),turn.plan?.text_attachments || []);
 
     const assist = addAssistMsg();
     if(turn.plan?.intent === 'auto_chat') {
@@ -14999,18 +15011,27 @@ promptflow whoami</code></pre>
   // The chat history thus contains a record of the contribution.
   let pendingContrib = { zip: null, chat: null };
 
-  fileInput.onchange = () => {
+  fileInput.onchange = async () => {
     const files = Array.from(fileInput.files || []);
+    const textFileErrors=[];
+    if(composerMode==='chat') {
+      for(const file of files.filter(file=>/\.(txt|md|markdown|json)$/i.test(file.name))) {
+        try {
+          if(file.size>200*1024)throw new Error('Text attachments can total up to 200 KB per message.');
+          const entry=window.PFInputFiles.fromPaste(await file.text(),attachedFiles);entry.file=file;entry.source='file';entry.title=file.name;attachedFiles.push(entry);
+        }catch(error){textFileErrors.push(error.message);}
+      }
+    }
     // Identify zip and chat-shaped files
     const zipFile  = files.find(f => /\.zip$/i.test(f.name));
-    const chatFile = files.find(f =>
+    const chatFile = composerMode==='chat' ? null : files.find(f =>
       /\.(md|markdown|json|txt)$/i.test(f.name) && f.size > 200
     );
     if (zipFile)  pendingContrib.zip  = zipFile;
     if (chatFile) pendingContrib.chat = chatFile;
     // Non-contribution files (image/video/audio) flow into attachedFiles
     // as before.
-    const otherFiles = files.filter(f => f !== zipFile && f !== chatFile);
+    const otherFiles = files.filter(f => f !== zipFile && f !== chatFile && !(composerMode==='chat' && /\.(txt|md|markdown|json)$/i.test(f.name)));
     for (const f of otherFiles) {
       let kind = null;
       let limit = 12 * 1024 * 1024;
@@ -15042,15 +15063,18 @@ promptflow whoami</code></pre>
     fileInput.value = "";
     paintAttach();
     updateSend();
+    if(textFileErrors.length)announcePaste(textFileErrors.join(' '),true);
   };
 
   function paintAttach() {
+    document.getElementById('pasteStatus').textContent='';
     // Build chips for both regular attachments AND pending contribution
     // files. Contribution chips render in a distinct gold style so the
     // user knows pressing Send will route to the contribution pipeline,
     // not the regular planner.
     const chipsHtml = [];
     attachedFiles.forEach((entry, idx) => {
+      if(entry.kind==='text')return;
       const thumb = entry.kind === "image" && entry.dataUrl
         ? `<img src="${entry.dataUrl}" alt="">`
         : `<span class="kind-tag">${entry.kind.toUpperCase()}</span>`;
@@ -15078,6 +15102,9 @@ promptflow whoami</code></pre>
         </span>`);
     }
     attachWrap.innerHTML = chipsHtml.join("");
+    window.PFInputFiles.render(attachWrap,attachedFiles.filter(entry=>entry.kind==='text'),entry=>{
+      attachedFiles=attachedFiles.filter(item=>item!==entry);paintAttach();updateSend();textInput.focus();
+    });
     attachWrap.querySelectorAll(".detach-btn").forEach(btn => {
       btn.onclick = () => {
         if (btn.dataset.contribClear) {
@@ -15119,7 +15146,7 @@ promptflow whoami</code></pre>
       const hasZip       = !!pendingContrib.zip;
       const hasChat      = !!pendingContrib.chat;
       const hasContrib   = hasZip || hasChat;
-      const hasAttachment = hasContrib || attachedFiles.length > 0;
+      const hasAttachment = hasContrib || attachedFiles.some(entry=>entry.kind!=='text');
       // Suppress the verb bar when the user is staging inputs for a
       // forced run (clicked Run on a process card → opened the run-card
       // → uploaded files). The verb is already chosen — Run — and
@@ -15134,7 +15161,7 @@ promptflow whoami</code></pre>
       // "learn" route to the same /upload/extract pipeline; the label
       // change is purely about expectation-setting.
       const zipOnly = hasZip && !hasChat;
-      if (hasAttachment && !isStagingForcedRun) {
+      if (hasAttachment && !isStagingForcedRun && composerMode !== 'chat') {
         verbBar.hidden = false;
         const chips = hasContrib
           ? [
@@ -15550,6 +15577,14 @@ promptflow whoami</code></pre>
     updateCommandSuggestions();
     updateSend();
   });
+  window.PFInputFiles.bind(textInput,{
+    getEntries:()=>attachedFiles,
+    add:entry=>{attachedFiles.push(entry);paintAttach();updateSend();announcePaste('Pasted text attached. Add your instructions, then send.');},
+    onError:message=>announcePaste(message,true)
+  });
+  function announcePaste(message,error=false) {
+    const status=document.getElementById('pasteStatus');status.classList.toggle('pf-paste-error',error);status.textContent=message;
+  }
   textInput.addEventListener("keydown", (e) => {
     // Suggestion-aware keys take priority when the dropdown is open
     // — but ONLY for keys that explicitly target the dropdown. Enter
@@ -15666,7 +15701,7 @@ promptflow whoami</code></pre>
       // the API but we let the user submit and the modal-less flow
       // will show a clear error inline if chat is missing).
       const hasContrib = !!(pendingContrib && pendingContrib.zip);
-      sendBtn.disabled = !(hasText || hasContrib);
+      sendBtn.disabled = !(hasText || hasContrib || attachedFiles.some(file=>file.kind==='text'));
       sendBtn.classList.remove("stop", "running");
       sendBtn.title = "Send (Enter) — Shift+Enter for newline";
       sendBtn.innerHTML = SEND_ICON;
@@ -15737,7 +15772,8 @@ promptflow whoami</code></pre>
     // Cleared at every busy=true commit (busy/_planInFlight take over
     // from there) and at the no-op early returns below.
     _sendInProgress = true;
-    const userText = textInput.value.trim();
+    const hasTextFiles=attachedFiles.some(file=>file.kind==='text');
+    const userText = textInput.value.trim() || (hasTextFiles && composerMode!=='chat' ? 'What can you help me do with this attached text?' : '');
     if (userText) lastUserText = userText;
 
     // Dismiss the command-suggestions panel the instant Enter is
@@ -15750,16 +15786,16 @@ promptflow whoami</code></pre>
 
     if (composerMode === 'chat' && !window._forceRunProcessId) {
       _sendInProgress = false;
-      if(userText) await sendAutoChat(userText);
+      if(userText || attachedFiles.some(file=>file.kind==='text')) await sendAutoChat(userText);
       return;
     }
     const earlyIntent = interpreterMessageIntent(userText, !!activeInterpreterProcess()?.id);
-    if (!window._forceRunProcessId && earlyIntent === "retry") {
+    if (!hasTextFiles && !window._forceRunProcessId && earlyIntent === "retry") {
       _sendInProgress = false;
       await reviewPreviousRun(userText, activeInterpreterProcess());
       return;
     }
-    if (!window._forceRunProcessId && earlyIntent === "clarify" && !pendingContrib?.zip) {
+    if (!hasTextFiles && !window._forceRunProcessId && earlyIntent === "clarify" && !pendingContrib?.zip) {
       _sendInProgress = false;
       clarifyInterpreterMessage(userText, activeInterpreterProcess());
       return;
@@ -16037,7 +16073,7 @@ promptflow whoami</code></pre>
       }
       busy = false; updateSend();
     }
-    if (!window._forceRunProcessId && targetProcess?.id) {
+    if (!attachedFiles.some(file=>file.kind==='text') && !window._forceRunProcessId && targetProcess?.id) {
       if (messageIntent === "run") {
         if (runUsesSelectedProcess(userText,targetProcess)) {
           window._forceRunProcessId = targetProcess.id;
@@ -16124,7 +16160,8 @@ promptflow whoami</code></pre>
     // would duplicate the input and land out of order).
     const runShowsOwnInputs = !!(window._runCardBubble && window._runInputsInline);
     if (!isChooserContinuation && !runShowsOwnInputs) {
-      addUserMsg(userText, userImg, userImgName, extraThumbs);
+      const userMessage=addUserMsg(userText, userImg, userImgName, extraThumbs);
+      window.PFInputFiles.render(userMessage.querySelector('.body'),filesToSend.filter(file=>file.kind==='text'));
     }
     window._runInputsInline = false;   // one-shot
 
@@ -16474,6 +16511,7 @@ promptflow whoami</code></pre>
     // ── Phase 1: /plan (no charge) ─────────────────────────────
     const fd = new FormData();
     fd.append("text", userText);
+    window.PFInputFiles.append(fd,filesToSend);
     if (primaryImage) fd.append("image", primaryImage.file);
     if (primaryVideo) fd.append("video", primaryVideo.file);
     if (primaryAudio) fd.append("audio", primaryAudio.file);
