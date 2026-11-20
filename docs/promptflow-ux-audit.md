@@ -494,3 +494,8 @@ The implementation follows [OpenAI model capabilities](https://developers.openai
   Worker build passed. Browser checks covered paste, preview, removal, sending,
   rejected-send recovery and a 390px layout with no page overflow. Synthetic
   local fixtures were used; these checks did not spend provider credits.
+
+
+### Conversation activity indicators — 2026-11-20
+
+Conversation names now show a compact spinner while work is active in normal Chat/Interpreter and multi-agent Chat. New active conversations appear in recents immediately. Multi-agent room summaries and streamed messages include aggregate activity so another conversation's sidebar indicator updates without opening it; one teammate finishing cannot clear it while others run. Idle indicators have no animation, reduced-motion preferences are respected, and accessible labels include “Working”. Verified with synthetic browser runs (start/stop, background team completion) and controller regressions for parallel agents, failures and restart recovery.

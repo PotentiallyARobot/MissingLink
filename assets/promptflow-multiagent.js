@@ -12,13 +12,19 @@
   const initials=name=>name.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();
   function selectedRoom(next){state=next;nodes.clear();$('#thread').replaceChildren();render();if(state.room)history.replaceState(null,'','/promptflow/multiagent?room='+state.room.id);}
   function render(){
-    $('#roomTitle').textContent=state.room?.title||'Your team, one conversation';$('#rooms').replaceChildren();
-    for(const r of state.rooms){const b=node($('#rooms'),'button',r.title,r.id===state.room?.id?'selected':'');b.title=r.title;b.onclick=()=>call('state?room='+r.id).then(selectedRoom).then(()=>document.body.classList.remove('show-sidebar')).catch(fail);}
+    $('#rooms').replaceChildren();
+    for(const r of state.rooms){const b=node($('#rooms'),'button',r.title,r.id===state.room?.id?'selected':'');b.dataset.roomId=r.id;window.PFConversationStatus.set(b,r.title,r.busy);b.onclick=()=>call('state?room='+r.id).then(selectedRoom).then(()=>document.body.classList.remove('show-sidebar')).catch(fail);}
+    syncConversationNames();
     $('#keyStatus').textContent=Object.keys(state.keys).length?'Your API keys · connected':'Optional · use credits without a key';$('#billingStatus').textContent=state.room?.billing==='byok'?'Using your API keys':Number(state.credits||0).toLocaleString()+' credits';
     const current=$('#target').value;$('#target').replaceChildren(new Option('Whole team',''));
     for(const a of state.room?.agents||[])$('#target').append(new Option(a.name,a.id));$('#target').value=[...$('#target').options].some(o=>o.value===current)?current:'';
     renderAgents();
     if(!state.room?.messages.length)empty();else for(const m of state.room.messages)renderMessage(m);
+  }
+  function syncConversationNames(){
+    const current=state.rooms.find(r=>r.id===state.room?.id);
+    window.PFConversationStatus.set($('#roomTitle'),state.room?.title||'Your team, one conversation',current?.busy||state.room?.messages.some(m=>m.status==='running'));
+    for(const button of $('#rooms').querySelectorAll('[data-room-id]')){const room=state.rooms.find(r=>r.id===button.dataset.roomId);if(room)window.PFConversationStatus.set(button,room.title,room.busy);}
   }
   function empty(){if($('#thread .empty'))return;$('#thread').replaceChildren();const wrap=node($('#thread'),'section','','empty'),emblem=node(wrap,'div','','team-emblem');icon(emblem,'workflow');node(wrap,'h2','Who do you need on your team?');node(wrap,'p','Describe your task and the specialists you want. Create their roles and prompts together, then start the work.');const create=node(wrap,'button','Create a team','primary empty-create');create.onclick=()=>openTeamCreator();const examples=node(wrap,'div','','suggestions');for(const [label,text]of teamPatterns){const b=node(examples,'button',label);b.onclick=()=>openTeamCreator(text);}}
   const teamPatterns=[
@@ -74,8 +80,8 @@
   }
   function schedule(m){dirty.add(m.id);if(!paintTimer)paintTimer=setTimeout(()=>{paintTimer=null;for(const id of dirty){const m=state.room?.messages.find(m=>m.id===id);if(m)renderMessage(m);}dirty.clear();},100);}
   function connect(){stream?.close();stream=new EventSource(api+'events');stream.addEventListener('connected',()=>{if(state.room)call('state?room='+state.room.id).then(data=>{state=data;render();}).catch(fail);});
-    stream.addEventListener('message',event=>{const data=JSON.parse(event.data);if(data.room_id!==state.room?.id)return;const i=state.room.messages.findIndex(m=>m.id===data.message.id);if(i<0)state.room.messages.push(data.message);else state.room.messages[i]=data.message;schedule(data.message);renderAgents();if(data.message.role==='assistant'&&data.message.status!=='running')call('state?room='+state.room.id).then(s=>{if(s.room.id===state.room?.id){state=s;render();}}).catch(fail);});
-    stream.addEventListener('team',event=>{const e=JSON.parse(event.data);if(e.room_id===state.room?.id){state.room.agents=e.agents;if(e.title){state.room.title=e.title;const entry=state.rooms.find(r=>r.id===state.room.id);if(entry)entry.title=e.title;}if(e.team_brief)state.room.team_brief=e.team_brief;render();}});
+    stream.addEventListener('message',event=>{const data=JSON.parse(event.data);const listed=state.rooms.find(r=>r.id===data.room_id);if(listed&&typeof data.busy==='boolean')listed.busy=data.busy;if(data.room_id!==state.room?.id){syncConversationNames();return;}const i=state.room.messages.findIndex(m=>m.id===data.message.id);if(i<0)state.room.messages.push(data.message);else state.room.messages[i]=data.message;schedule(data.message);renderAgents();syncConversationNames();if(data.message.role==='assistant'&&data.message.status!=='running')call('state?room='+state.room.id).then(s=>{if(s.room.id===state.room?.id){state=s;render();}}).catch(fail);});
+    stream.addEventListener('team',event=>{const e=JSON.parse(event.data);const listed=state.rooms.find(r=>r.id===e.room_id);if(listed&&e.title)listed.title=e.title;syncConversationNames();if(e.room_id===state.room?.id){state.room.agents=e.agents;if(e.title){state.room.title=e.title;const entry=state.rooms.find(r=>r.id===state.room.id);if(entry)entry.title=e.title;}if(e.team_brief)state.room.team_brief=e.team_brief;render();}});
     stream.addEventListener('delta',event=>{const e=JSON.parse(event.data);if(e.room_id!==state.room?.id)return;const m=state.room.messages.find(m=>m.id===e.message_id);if(!m)return;if(e.kind==='text')m.text+=e.text||'';if(e.kind==='summary')m.summary+=e.text||'';if(e.kind==='activity')m.activity.push({...e,kind:e.activity_kind});if(e.kind==='artifact')m.artifacts.push(e);if(e.kind==='source'&&!m.sources.some(s=>s.url===e.url))m.sources.push(e);schedule(m);});
     stream.onerror=()=>notice('Reconnecting to your team… Work is stopped if the connection stays closed.');stream.onopen=()=>notice('');
   }

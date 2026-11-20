@@ -11345,6 +11345,8 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 </style>
 <link rel="stylesheet" href="assets/promptflow-marketplace.css?v=20261112-5">
 <link rel="stylesheet" href="assets/promptflow-chat.css?v=20261119-1">
+<link rel="stylesheet" href="assets/promptflow-conversations.css?v=20261120-1">
+<script src="assets/promptflow-conversations.js?v=20261120-1"></script>
 <link rel="stylesheet" href="assets/promptflow-budget.css?v=20261119-3">
 <script defer src="assets/promptflow-budget.js?v=20261119-3"></script>
 <style>
@@ -13204,20 +13206,33 @@ promptflow whoami</code></pre>
     }
   }
 
+  function syncConversationBusy() {
+    if(!window.PFConversationStatus)return;
+    const working=busy || _planInFlight;
+    window.PFConversationStatus.set(document.getElementById('conversationTitle'),currentConversationTitle,working);
+    for(const label of document.querySelectorAll('[data-working-conversation]')){
+      const active=label.dataset.workingConversation===currentConversationId;
+      window.PFConversationStatus.set(label,active&&currentConversationTitle?currentConversationTitle:label.dataset.conversationName,active&&working);
+    }
+  }
   function paintConversationList() {
+    const listed=currentConversationId&&currentConversationTitle&&!conversationsCache.some(c=>c.id===currentConversationId)
+      ? [{id:currentConversationId,title:currentConversationTitle},...conversationsCache] : conversationsCache;
     convoList.innerHTML = "";
     const recentList = document.getElementById('chatRecentList');
     if (recentList) {
       recentList.replaceChildren();
-      for (const c of conversationsCache.slice(0,20)) {
+      for (const c of listed.slice(0,20)) {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'chat-recent' + (c.id === currentConversationId ? ' active' : '');
         button.textContent = c.title || 'Untitled conversation'; button.title = button.textContent;
+        button.dataset.workingConversation=c.id;button.dataset.conversationName=button.textContent;
+        window.PFConversationStatus?.set(button,button.textContent,c.id===currentConversationId&&(busy||_planInFlight));
         button.disabled = busy || !!loadingConvoId;
         button.onclick = () => { if(busy || _planInFlight || _sendInProgress)return; document.getElementById('dDockHome')?.click(); closeChatNavigation(); loadConversation(c.id); };
         recentList.append(button);
       }
-      if (!conversationsCache.length) {
+      if (!listed.length) {
         const note = document.createElement('div'); note.className = 'chat-recent-empty';
         note.textContent = convoLoading ? 'Loading chats…' : 'Your conversations will appear here.'; recentList.append(note);
       }
@@ -13225,7 +13240,7 @@ promptflow whoami</code></pre>
 
     // Empty state — only when first page returned 0 rows AND we're
     // not currently loading.
-    if (conversationsCache.length === 0 && !convoLoading) {
+    if (listed.length === 0 && !convoLoading) {
       const empty = document.createElement("div");
       empty.className = "convo-empty";
       empty.textContent = "No conversations yet. Start one below.";
@@ -13234,7 +13249,7 @@ promptflow whoami</code></pre>
       return;
     }
 
-    for (const c of conversationsCache) {
+    for (const c of listed) {
       const btn = document.createElement("button");
       btn.className = "convo-row";
       if (c.id === currentConversationId) btn.classList.add("active");
@@ -13248,7 +13263,9 @@ promptflow whoami</code></pre>
         <span class="convo-meta"></span>
         <span class="convo-spinner"></span>
       `;
-      btn.querySelector(".convo-title").textContent = title;
+      const nameLabel=btn.querySelector(".convo-title");nameLabel.textContent=title;
+      nameLabel.dataset.workingConversation=c.id;nameLabel.dataset.conversationName=title;
+      window.PFConversationStatus?.set(nameLabel,title,c.id===currentConversationId&&(busy||_planInFlight));
       btn.querySelector(".convo-meta").textContent =
         `${turns} turn${turns === 1 ? "" : "s"} · ${ago}`;
       btn.onclick = () => loadConversation(c.id);
@@ -13333,6 +13350,7 @@ promptflow whoami</code></pre>
       label.title = currentConversationTitle;
       label.hidden = !currentConversationTitle;
     }
+    if(window.PFConversationStatus){syncConversationBusy();if(currentConversationId)paintConversationList();}
     document.title = currentConversationTitle ? currentConversationTitle + " · PromptFlow" : "PromptFlow";
   }
   window.updateActiveConversationTitle = (id, title) => {
@@ -15699,6 +15717,7 @@ promptflow whoami</code></pre>
   const RUN_ICON  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="6 4"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1.4s" repeatCount="indefinite"/></circle></svg>`;
 
   function updateSend() {
+    syncConversationBusy();
     let stop=document.getElementById('chatContinueStop');
     if(!stop){stop=document.createElement('button');stop.id='chatContinueStop';stop.type='button';stop.className='icon-btn';stop.title='Stop current task';stop.setAttribute('aria-label','Stop current task');stop.innerHTML='<span aria-hidden="true">■</span>';stop.onclick=()=>currentAbortController?.abort();sendBtn.before(stop);}
     stop.hidden=!(activeAutoTurn&&busy);stop.style.display=stop.hidden?'none':'';
