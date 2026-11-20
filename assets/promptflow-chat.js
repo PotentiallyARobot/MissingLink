@@ -84,7 +84,8 @@ window.PFAutoChat = (() => {
     if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
     if(data.activity?.length&&!activityAlreadyShown){const panel=text(parent,'details','','chat-task chat-task-finished');withIcon(text(panel,'summary','Commands and file changes'),'terminal');const receive=window.PFActions?.mount(panel);for(const e of data.activity)receive?.(e);receive?.finish?.();}
     window.PFFiles?.render(parent,data.artifacts||[]);
-    if(data.action!=='complete'||!data.run?.outputs?.length){const answer=String(data.answer||'').replace(/^run_budget_exceeded:\s*/,'');markdown(text(parent,'div','','chat-prose chat-answer'),answer);window.PFRunBudget?.mountError(parent,data.answer);if(data.answer)copyButton(parent,data.answer);}
+    if(data.partial_answer){text(parent,'p','Partial answer · response limit reached','status');markdown(text(parent,'div','','chat-prose chat-answer'),data.partial_answer);copyButton(parent,data.partial_answer);}
+    if(data.action!=='complete'||!data.run?.outputs?.length){const answer=String(data.answer||'').replace(/^run_budget_exceeded:\s*/,'');markdown(text(parent,'div','','chat-prose chat-answer'),answer);window.PFRunBudget?.mountError(parent,data.answer,data.output_limit);if(data.answer)copyButton(parent,data.answer);}
     if(data.run&&!outputsAlreadyShown)outputs(parent,data.run,hooks);
     if(data.verification&&!verificationAlreadyShown)verification(parent,data.verification);
     if(data.saved&&data.process) {

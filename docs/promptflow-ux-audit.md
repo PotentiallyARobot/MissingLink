@@ -499,3 +499,29 @@ The implementation follows [OpenAI model capabilities](https://developers.openai
 ### Conversation activity indicators — 2026-11-20
 
 Conversation names now show a compact spinner while work is active in normal Chat/Interpreter and multi-agent Chat. New active conversations appear in recents immediately. Multi-agent room summaries and streamed messages include aggregate activity so another conversation's sidebar indicator updates without opening it; one teammate finishing cannot clear it while others run. Idle indicators have no animation, reduced-motion preferences are respected, and accessible labels include “Working”. Verified with synthetic browser runs (start/stop, background team completion) and controller regressions for parallel agents, failures and restart recovery.
+
+
+### Chat output-limit failures — 2026-11-20
+
+- Cause: Chat's workflow selector inherited deep reasoning and web tools, with a
+  separate default 4,096-token response limit. Internal calls also imposed hidden
+  8,192/16,000-token caps even when the user selected more. Raising a credit budget
+  did not raise these response allowances; reasoning consumes the same allowance.
+- Fixed: lightweight routing with no web search, followed by substantive work at
+  the user's selected output limit and quality. Direct questions get a separate
+  answer call with web tools. Only a truncated routing decision can retry once,
+  at the same allowance; research and workflow execution are not silently replayed.
+- Fixed: terminal failures identify the model, stage and actual response limit,
+  preserve partial answers, and provide an Adjust response limit button. The
+  composer budget dialog now edits credits and response tokens independently,
+  with 16k/32k/64k/model-maximum choices. Existing saved errors get the button too.
+- Quality presets now reserve reasoning headroom (32k high, 64k maximum) without
+  reducing larger allowances or increasing spending caps. Manual limits remain
+  editable. This is a ceiling, not a request to generate that much text.
+- Validation: real OpenAI routing of the reported research request selected the
+  research workflow in one call, 5 seconds, 139 output tokens, and no searches,
+  with a 4,096-token cap and maximum quality configured for substantive work.
+  This was a routing probe, not a full hosted research run. Browser fixtures
+  verified error recovery, partial output, independent controls and reload
+  persistence. Regression tests cover truncation, cancellation, bounded retries,
+  selected limits, persistence and no duplicate execution.

@@ -19,8 +19,8 @@ window.PFTextModels = (() => {
   const qualityPresets = {
     draft:{name:'Fast draft',tier:0,effort:'low',description:'Quick drafts and routine extraction. Lowest model cost and less reasoning.'},
     everyday:{name:'Everyday',tier:1,effort:'medium',description:'General writing, analysis and everyday workflows. Moderate cost and reasoning.'},
-    high:{name:'High quality',tier:2,effort:'high',description:'Stronger models and deeper reasoning for difficult work. Higher cost and latency.'},
-    maximum:{name:'Maximum quality',tier:2,effort:'max',description:'Strongest listed models at maximum reasoning effort. Highest potential cost and latency; results still need review.'},
+    high:{name:'High quality',tier:2,effort:'high',description:'Stronger models and deeper reasoning for difficult work. Raises small response allowances to 32k tokens. Higher cost and latency.'},
+    maximum:{name:'Maximum quality',tier:2,effort:'max',description:'Strongest listed models at maximum reasoning effort. Raises small response allowances to 64k tokens. Highest potential cost and latency; results still need review.'},
   };
   const find = id=>models.find(m=>m.id === String(id || '').replace(/^(anthropic|openai):/,''));
   function options(prefixed=true) {
@@ -40,7 +40,10 @@ window.PFTextModels = (() => {
     provider=provider==='openai'?'openai':'anthropic';
     const family=provider==='openai'?['gpt-6-luna','gpt-6.1-sol','gpt-6-astra']:['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5'];
     const model=provider+':'+family[p.tier];
+    const allowance=({draft:2048,everyday:8192,high:32000,maximum:64000})[key];
     return {...settings,reasoning_effort:p.effort,override_step_models:true,
+      limits:{...settings.limits,chat_output_tokens:Math.max(settings.limits?.chat_output_tokens||0,allowance),
+        planning_output_tokens:Math.max(settings.limits?.planning_output_tokens||0,allowance),step_output_tokens:Math.max(settings.limits?.step_output_tokens||0,allowance)},
       models:{...settings.models,generate:model,chat:model,adapt:model,run:model,learn:model,search:provider+':'+family[0]}};
   }
   function selectedQuality(settings) {

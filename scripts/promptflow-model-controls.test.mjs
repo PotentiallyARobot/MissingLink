@@ -46,18 +46,22 @@ test('saved OpenAI choices survive the actual storage loader and the reopened fo
 });
 test('home-page list requests enter streaming discussion before recipe planning',async()=>{
   for(const userText of ['generate a list of processes that are extremely usefu;','create five useful workflow ideas','suggest useful workflows','Question only, do not build or run a workflow: in two sentences, explain why a higher reasoning effort can help check a CSV for inconsistent totals without requiring a longer final answer.','Quick question: explain how to run a workflow','Just a question: what does this step do']) {
-    const calls=[];const c=vm.createContext({userText,window:{},attachedFiles:[],pendingContrib:null,pendingParentProcess:null,refineBoundProcessId:null,currentEditorProcessId:null,interpreterProcessContext:null,activeInterpreterProcess:()=>null,streamDiscussAnswer:t=>calls.push(t)});
+    const calls=[];const c=vm.createContext({userText,window:{},hasTextFiles:false,attachedFiles:[],pendingContrib:null,pendingParentProcess:null,refineBoundProcessId:null,currentEditorProcessId:null,interpreterProcessContext:null,activeInterpreterProcess:()=>null,streamDiscussAnswer:t=>calls.push(t)});
     vm.runInContext(extract('  function interpreterMessageIntent(', '  function activeInterpreterProcess(')+'\nglobalThis.route=async()=>{'+extract('    const earlyIntent = interpreterMessageIntent(', '    // ── Verb dispatcher')+'};',c);
     await c.route();assert.deepEqual(calls,[userText]);
   }
 });
 
-test('quality presets change models and effort while preserving every output and spending limit',()=>{
+test('quality presets reserve reasoning headroom without lowering larger limits or changing spending caps',()=>{
   const {c,D}=harness();
   for(const provider of ['anthropic','openai']) for(const key of ['draft','everyday','high','maximum']) {
     const before={keys:{},models:{chat:'claude-sonnet-5-5'},limits:{chat_output_tokens:64000,planning_output_tokens:32000,step_output_tokens:8192,max_run_tokens:500,max_loop_items:5,override_step_limits:false}};
     const preset=c.window.PFTextModels.qualityPreset(before,key,provider);
-    assert.deepEqual(preset.limits,before.limits);
+    assert.equal(preset.limits.max_run_tokens,before.limits.max_run_tokens);
+    assert.equal(preset.limits.override_step_limits,false);
+    for(const field of ['chat_output_tokens','planning_output_tokens','step_output_tokens'])assert.ok(preset.limits[field]>=before.limits[field]);
+    if(key==='maximum')assert.equal(preset.limits.step_output_tokens,64000);
+    if(key==='high')assert.equal(preset.limits.step_output_tokens,32000);
     c.apply(preset); const read=c.read();
     assert.equal(read.reasoning_effort,c.window.PFTextModels.qualityPresets[key].effort);
     assert.equal(read.override_step_models,true);assert.equal(read.limits.chat_output_tokens,64000);
@@ -78,4 +82,9 @@ test('quality survives storage and is sent with live requests without keys',()=>
   vm.runInContext(extract('  (function installSettingsFetchHeader()', '  async function dMaSave('),c);
   c.window.fetch('/api/promptflow/discuss/stream',{});
   assert.equal(sent.reasoning_effort,'max');assert.equal(sent.override_step_models,true);assert.equal(sent.keys,undefined);
+});
+
+test('maximum quality cannot accidentally retain the old 4k reasoning allowance',()=>{
+  const {c}=harness();const p=c.window.PFTextModels.qualityPreset({limits:{chat_output_tokens:4096,max_run_tokens:50000}},'maximum','openai');
+  assert.equal(p.limits.chat_output_tokens,64000);assert.equal(p.limits.max_run_tokens,50000);
 });

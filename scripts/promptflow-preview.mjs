@@ -62,6 +62,8 @@ const server = http.createServer(async (req,res) => {
   if(sampleFile){res.writeHead(200,{'content-type':sampleFile.media_type,...(url.searchParams.has('download')?{'content-disposition':'attachment; filename="'+sampleFile.filename+'"'}:{})});return res.end(sampleFile.content);}
   if(url.pathname==='/api/promptflow/chat/guidance')return send({ok:true,id:body.id,delivery:'queued'});
   if(url.pathname==='/api/promptflow/chat/stream') {
+    if(ref.searchParams.has('output_error'))return events([[0,'session',{turn_id:'output-fixture',conversation_id:'qa-output',limit:50000}],[100,'done',{ok:true,result:{action:'failed',answer:'Preparing the answer reached the 4,096-token response limit for gpt-6-astra. This allowance includes reasoning and is separate from your credit budget. Increase the response limit to allow more output.',partial_answer:'## Research brief\nA partial answer is retained here.',output_limit:{code:'chat_output_limit',stage:'Preparing the answer',model:'gpt-6-astra',limit:4096}}}]]);
+
     if(ref.searchParams.has('budget_error'))return events([[0,'session',{turn_id:'budget-fixture',conversation_id:'qa-budget',limit:5000}],[100,'done',{ok:false,result:{action:'failed',answer:'run_budget_exceeded: This run costs 5810 PromptFlow credits; your limit is 5000. Reduce the work or raise the limit before running.'}}]]);
     if(ref.searchParams.has('chat_reject'))return send({ok:false,message:'Synthetic rejection: your draft was preserved.'},422);
     const workflow={...sample,is_draft:false,auto_chat_draft:true,name:'Meeting actions with owner checks'};

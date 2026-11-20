@@ -11347,8 +11347,8 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 <link rel="stylesheet" href="assets/promptflow-chat.css?v=20261119-1">
 <link rel="stylesheet" href="assets/promptflow-conversations.css?v=20261120-1">
 <script src="assets/promptflow-conversations.js?v=20261120-1"></script>
-<link rel="stylesheet" href="assets/promptflow-budget.css?v=20261119-3">
-<script defer src="assets/promptflow-budget.js?v=20261119-3"></script>
+<link rel="stylesheet" href="assets/promptflow-budget.css?v=20261120-output-1">
+<script defer src="assets/promptflow-budget.js?v=20261120-output-1"></script>
 <style>
 .pf-live-activity{margin:12px 0;border:1px solid #333;border-radius:10px;padding:12px 16px;font:13px/1.55 system-ui;color:#c9cbd0;max-width:100%;overflow-wrap:anywhere}.pf-live-activity summary{cursor:pointer;min-height:28px}.pf-live-activity details{margin:8px 0}.pf-live-activity>div{max-height:380px;overflow:auto;overscroll-behavior:contain}.pf-live-activity pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 system-ui;margin:8px 0;padding:10px;background:#141416;border-radius:6px;max-height:220px;overflow:auto}.pf-activity-status{color:#9397a0;font-size:12px}.pf-activity-source a{color:#e8bf64;text-decoration:underline}.pf-activity-source{margin:5px 0}
 .chat-task .pf-activity-compact { border:0; border-radius:0; padding:0; margin:10px 0; color:#a9a9b2; }
@@ -11360,8 +11360,8 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 <script src="assets/promptflow-files.js?v=20261118-4"></script>
 <script src="assets/promptflow-input-files.js?v=20261119-1"></script>
 <script src="assets/promptflow-activity.js?v=20261119-4"></script>
-<script src="assets/promptflow-chat.js?v=20261119-4"></script>
-<script src="assets/promptflow-text-models.js?v=20261115-1"></script>
+<script src="assets/promptflow-chat.js?v=20261120-output-1"></script>
+<script src="assets/promptflow-text-models.js?v=20261120-output-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261114-1"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
 <link rel="stylesheet" href="/assets/promptflow-actions.css?v=20261119-4"><script src="/assets/promptflow-actions.js?v=20261119-4"></script>
@@ -25863,7 +25863,7 @@ function dDesktopInit(){
     const key=window.PFTextModels.selectedQuality(settings);
     if (D('dMaQualityPreset')) D('dMaQualityPreset').value=key;
     if (D('dMaQualitySummary')) D('dMaQualitySummary').textContent=key
-      ? window.PFTextModels.qualityPresets[key].description+' Your output allowances and spending caps stay unchanged.'
+      ? window.PFTextModels.qualityPresets[key].description+' Larger existing response allowances and your spending caps stay unchanged.'
       : 'Custom model and reasoning settings. Quality presets select models and reasoning effort; output length and spending caps are separate.';
   }
 
@@ -25965,11 +25965,15 @@ function dDesktopInit(){
     window.dispatchEvent(new CustomEvent("pf-settings-changed", { detail: settings }));
   }
 
-  window.pfSetQuickBudget = async amount => {
+  window.pfSetQuickBudget = async (amount,responseLimit) => {
     if(!Number.isInteger(amount)||amount<1||amount>1000000)throw new Error('Choose a credit limit from 1 to 1,000,000.');
+    const maxOutput=window.PFTextModels?.find(window.pfSettings?.models?.chat)?.max||128000;
+    if(responseLimit!==undefined&&(!Number.isInteger(responseLimit)||responseLimit<256||responseLimit>maxOutput))throw new Error('Choose a response limit from 256 to '+maxOutput.toLocaleString()+' tokens.');
     const settings={...(window.pfSettings||dMaLoadSettings()),limits:{...(window.pfSettings?.limits||dMaLoadSettings().limits),max_run_tokens:amount,auto_chat_max_tokens:amount}};
+    if(responseLimit!==undefined)settings.limits.chat_output_tokens=responseLimit;
     localStorage.setItem(PF_SETTINGS_KEY,JSON.stringify(settings));dMaPublishSettings(settings);dMaFormRevision++;
     if(D('dMaRunLimit'))D('dMaRunLimit').value=amount;if(D('dMaAutoChatLimit'))D('dMaAutoChatLimit').value=amount;
+    if(responseLimit!==undefined&&D('dMaChatLimit'))D('dMaChatLimit').value=responseLimit;
     try{const response=await fetch('/api/promptflow/me/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...settings,keys:undefined}),signal:AbortSignal.timeout(10000)});return {synced:response.ok};}catch{return {synced:false};}
   };
 
