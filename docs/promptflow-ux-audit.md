@@ -582,3 +582,13 @@ Conversation names now show a compact spinner while work is active in normal Cha
   tests, a README and a generated JSON report. The earlier parallel run proved
   delegation but exhausted small session allowances; hosted reservations were
   increased to avoid interrupting file creation repeatedly.
+# Multi-agent files and handoff recovery — November 24, 2026
+
+- Fixed a coordinator handoff failure: a rejected tool result can coincide with the hosted session reaching its allowance. The transport checks the current session, reserves the next authorized allowance, and retries the same submission with an idempotency key. Function work is not rerun. Queued idle/budget events no longer submit duplicate continuation messages after automatic provider resumption. Conflict retries are bounded and remain cancellable.
+- Added **Download outputs as ZIP** to responses with deliverables. This archive contains that response's output files, excludes working checkpoints, and never bundles the entire team workspace. ZIP generation streams private objects and retains folder paths.
+- Added a **Files** panel for the persistent, private team workspace, with search, versions, file previews and individual downloads. Source files render as text; untrusted HTML/SVG does not execute in previews.
+- Every agent has a workspace tool to list/read files and save checkpoints across runs. OpenAI sandboxes restore small files under `/workspace/shared`, with a complete manifest; larger files remain available through chunked reads. Writes check the expected version so concurrent edits do not silently replace each other. Completed hosted output files are saved automatically before sandbox shutdown.
+- Existing attachments are retained under `earlier-runs` because old exports discarded directory paths. Duplicate filenames are preserved separately; existing generated archives still contain their original directory structures.
+- Recovery is available through **Continue with saved files** on failed responses. No automatic rerun is started by opening a conversation.
+- Validation: 197 backend tests passed, one existing skip; 61 frontend tests passed. Regression cases include HTTP 409 retries, stale budget events, single execution of handoffs, owner/room isolation, persisted versions, chunked reads, and ZIP integrity/response-only scope. Browser checks covered file previews and downloading a result ZIP.
+
