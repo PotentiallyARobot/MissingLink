@@ -328,7 +328,8 @@ test('late discovery responses cannot replace the newest search',async()=>{
 });
 
 test('opening a conversation clears the previous process refinement target',async()=>{
-  const context=vm.createContext({busy:false,loadingConvoId:null,fetch:async()=>({json:async()=>({ok:true,turns:[]})}),
+  const context=vm.createContext({busy:false,loadingConvoId:null,fetch:async()=>({json:async()=>({ok:true,conversation:{id:'different-chat'},turns:[]})}),
+    window:{PFMessageEdit:{history(){}}},document:{getElementById(){return {}; }},
     currentEditorProcessId:'old-process',currentEditorProcess:{id:'old-process'},currentGraphProcessId:'old-process',
     refineBoundProcessId:'old-process',refineBoundProcessName:'Old process',
     empty:{style:{}},stream:{scrollHeight:0},

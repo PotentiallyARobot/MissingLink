@@ -11360,7 +11360,9 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 <script src="assets/promptflow-files.js?v=20261118-4"></script>
 <script src="assets/promptflow-input-files.js?v=20261119-1"></script>
 <script src="assets/promptflow-activity.js?v=20261119-4"></script>
-<script src="assets/promptflow-chat.js?v=20261124-console-1"></script>
+<script src="assets/promptflow-chat.js?v=20261124-branches-1"></script>
+<link rel="stylesheet" href="assets/promptflow-message-edit.css?v=20261124-1">
+<script src="assets/promptflow-message-edit.js?v=20261124-1"></script>
 <script src="assets/promptflow-text-models.js?v=20261124-models-1"></script>
 <script defer src="assets/promptflow-marketplace.js?v=20261114-1"></script>
 <style>.d-pg-card-metadata{display:flex;flex-wrap:wrap;gap:6px 12px;color:#aaaab3;font-size:11px;line-height:1.6;margin:12px 0}.d-pg-card-metadata span{overflow-wrap:anywhere}</style>
@@ -11390,7 +11392,7 @@ body.pf-chat-mode #textInput:focus { outline:none; }
 <div class="d-sidebar-backdrop" id="dSidebarBackdrop"></div>
 
 <!-- Topbar (top right) -->
-<div id="conversationTitle" class="conversation-title" hidden aria-label="Conversation name"></div>
+<div id="conversationTitle" class="conversation-title" hidden aria-label="Conversation name"></div><div id="chatHistoryVersions" class="pf-history-switch" hidden></div>
 <div class="d-topbar">
   <button class="d-topbar-search" id="dTopbarSearch" title="Search (⌘K)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
@@ -13365,6 +13367,7 @@ promptflow whoami</code></pre>
   function startNewConversation() {
     interpreterProcessContext = null;
     currentConversationId = null;
+    document.getElementById('chatHistoryVersions')?.replaceChildren();
     currentEditorProcessId = null;
     currentEditorProcess = null;
     currentGraphProcessId = null;
@@ -13493,11 +13496,33 @@ promptflow whoami</code></pre>
     const node=[...stream.querySelectorAll('[data-guidance-id]')].find(n=>n.dataset.guidanceId===event.detail.id);
     if(node)node.textContent=event.detail.delivery==='received'?'Received · continuing with your update':'Not applied · send as a follow-up';
   });
-  async function sendAutoChat(userText) {
+  let currentAutoDone=null;
+  async function stopForHistoryEdit(){
+    if(_planInFlight || (busy&&!activeAutoTurn))throw new Error('Finish or stop the current Interpreter run before changing history.');
+    const pending=currentAutoDone;currentAbortController?.abort();if(pending)await pending;
+  }
+  async function historyRequest(action,body){
+    const response=await fetch('/api/promptflow/conversation/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.message||'Could not save this history.');return data;
+  }
+  function editChatMessage(element,turnId,text,liveFiles){
+    element.dataset.turnId=turnId;
+    window.PFMessageEdit.mount(element.querySelector('.body'),{text,onSave:async value=>{
+      if(!currentConversationId)throw new Error('Wait for this message to be saved, then try again.');
+      await stopForHistoryEdit();
+      const fork=await historyRequest('edit',{conversation_id:currentConversationId,turn_id:turnId});
+      await loadConversation(fork.conversation_id);interpreterProcessContext=null;composerMode='chat';updateComposerHint();
+      const restored=liveFiles||fork.text_attachments.map(f=>({...f,kind:'text',file:new File([f.content],f.filename,{type:'text/plain'})}));
+      // Once the edit is saved, failure to start keeps its text in the composer.
+      textInput.value=value;textInput.dispatchEvent(new Event('input'));
+      void sendAutoChat(value,restored).catch(e=>setError(addAssistMsg(),e.message));
+    }});
+  }
+  async function sendAutoChat(userText,overrideFiles) {
     if(!window.PFAutoChat) {setError(addAssistMsg(),'Chat could not load. Refresh the page and try again.');return;}
     if(pendingContrib?.zip) {const note=addAssistMsg();setError(note,'Use Interpreter to contribute this ZIP, or remove it before starting a Chat task.');return;}
     const history=buildConversationHistoryForRefine(true);
-    const files=attachedFiles.slice(),selected=activeInterpreterProcess();
+    const files=overrideFiles||attachedFiles.slice(),selected=activeInterpreterProcess();
     if(userText.length>4000) {setError(addAssistMsg(),'Keep your message under 4,000 characters and attach longer text as a file.');return;}
     const form=new FormData();form.set('text',userText);form.set('turn_id','chat_'+crypto.randomUUID());
     activeAutoTurn=form.get('turn_id');
@@ -13507,11 +13532,12 @@ promptflow whoami</code></pre>
     const preferences=getActiveGenPrefs();if(preferences?.ids?.length)form.set('process_overrides',JSON.stringify(preferences));consumeGenPrefsOverride();
     let images=0;for(const file of files) {const key=file.kind==='image'?(++images===1?'image':'image_'+images):file.kind;if(['image','video','audio'].includes(file.kind))form.append(key,file.file);}
     window.PFInputFiles.append(form,files);
-    const userMessage=addUserMsg(userText,files.find(f=>f.kind==='image')?.dataUrl || null,null,[]);userMessage.classList.add('chat-auto-message');
+    const userMessage=addUserMsg(userText,files.find(f=>f.kind==='image')?.dataUrl || null,null,[]);userMessage.classList.add('chat-auto-message');editChatMessage(userMessage,form.get('turn_id'),userText,files);
     window.PFInputFiles.render(userMessage.querySelector('.body'),files.filter(f=>f.kind==='text'));
     const assist=addAssistMsg();
     const controller=new AbortController();currentAbortController=controller;currentRunCancellable=true;
     busy=true;textInput.value='';textInput.style.height='auto';textInput.dispatchEvent(new Event('input'));attachedFiles=[];fileInput.value='';paintAttach();updateSend();
+    let finishAuto;currentAutoDone=new Promise(resolve=>finishAuto=resolve);
     armBusyWatchdog(21*60*1000);
     try {
       const completed=await window.PFAutoChat.send(form,assist,autoChatHooks(),controller.signal);
@@ -13523,7 +13549,7 @@ promptflow whoami</code></pre>
       }
       if(completed?.result?.process?.id)interpreterProcessContext={id:completed.result.process.id,name:completed.result.process.name};
       refreshConversations();refreshProcesses();
-    } finally {activeAutoTurn=null;busy=false;currentRunCancellable=false;currentAbortController=null;updateSend();updateComposerHint();}
+    } finally {activeAutoTurn=null;busy=false;currentRunCancellable=false;currentAbortController=null;updateSend();updateComposerHint();finishAuto();currentAutoDone=null;}
   }
   function updateComposerHint() {
     document.body.classList.toggle('pf-chat-mode',composerMode === 'chat');
@@ -13570,7 +13596,10 @@ promptflow whoami</code></pre>
     hideStreamLoadingOverlay();
     if (!resp?.ok) { paintConversationList(); return; }
 
-    currentConversationId = cid;
+    currentConversationId = resp.conversation.id;
+    window.PFMessageEdit.history(document.getElementById('chatHistoryVersions'),resp.branches||[],currentConversationId,async branch=>{
+      await stopForHistoryEdit();const data=await historyRequest('branch',{conversation_id:currentConversationId,branch_id:branch});await loadConversation(data.conversation_id);refreshConversations();
+    });
     composerMode = resp.turns?.some(turn=>turn.plan?.intent==='auto_chat') ? 'chat' : 'interpreter';
     currentEditorProcessId = null;
     currentEditorProcess = null;
@@ -13661,6 +13690,7 @@ promptflow whoami</code></pre>
 
     const assist = addAssistMsg();
     if(turn.plan?.intent === 'auto_chat') {
+      editChatMessage(userMessage,turn.plan_id,turn.user_text||'');
       userMessage.classList.add('chat-auto-message');assist.el.classList.add('chat-auto-message');
       for(const item of turn.plan.guidance||[]){const update=addUserMsg(item.text);const note=document.createElement('small');note.className='status';note.textContent=item.status==='received'?'Guidance received':'Guidance not applied';update.querySelector('.body').append(note);}
       if(turn.plan.result) window.PFAutoChat.result(assist.body,turn.plan.result,autoChatHooks());
@@ -13795,6 +13825,7 @@ promptflow whoami</code></pre>
     ME = null; paintAuthUI();
     conversationsCache = [];
     currentConversationId = null;
+    document.getElementById('chatHistoryVersions')?.replaceChildren();
     paintConversationList();
     clearStream();
   };
@@ -24746,6 +24777,7 @@ new process. Compare its output to the current one before replacing.
       }
       currentGraphProcessId = pid;
       currentConversationId = null;
+    document.getElementById('chatHistoryVersions')?.replaceChildren();
       currentEditorProcessId = null;
       currentEditorProcess = null;
       paintGraph(j.process);
