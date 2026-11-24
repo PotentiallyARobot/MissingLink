@@ -51,3 +51,43 @@ window.PFActions=(()=>{
   }
   return {mount,kinds};
 })();
+
+// An execution console belongs to the reply, outside its collapsed activity
+// trail. Only measured command events enter this panel; logs are inert text.
+window.PFDebugConsole=(()=>{
+  const el=(p,tag,text='',cls='')=>{const n=document.createElement(tag);n.textContent=text;n.className=cls;p.append(n);return n;};
+  function mount(parent){
+    const rows=new Map();let root;
+    const receive=e=>{
+      if(!['command_started','command_output','command_completed'].includes(e?.kind))return false;
+      if(!root){root=el(parent,'section','','pf-debug-console');root.setAttribute('aria-label','Execution debug output');}
+      const id=String(e.call_id||e.step_id||'command');let row=rows.get(id);
+      if(!row){
+        const box=el(root,'details','','pf-debug-command');box.open=true;
+        const head=el(box,'summary');const icon=window.PFActivity?.icon('terminal');if(icon)head.append(icon);
+        el(head,'span','Execution output');const status=el(head,'span','Running','pf-debug-status');status.setAttribute('role','status');
+        const command=el(box,'pre','','pf-debug-code');
+        const log=el(box,'pre','Waiting for output…','pf-debug-log');log.tabIndex=0;log.setAttribute('aria-label','Command output');
+        const footer=el(box,'div','','pf-debug-footer');const note=el(footer,'span','stdout + stderr');
+        const copy=el(footer,'button','Copy log');copy.type='button';
+        row={box,status,command,log,note,value:'',ended:false};rows.set(id,row);
+        copy.onclick=async()=>{try{await navigator.clipboard.writeText(row.command.textContent+'\n'+row.value);copy.textContent='Copied';}catch{copy.textContent='Select output to copy';}};
+      }
+      if(e.command)row.command.textContent=e.command;
+      const follow=row.log.scrollHeight-row.log.scrollTop-row.log.clientHeight<60;
+      if(e.kind==='command_output'&&!row.ended)row.value=(row.value+String(e.text||'')).slice(-48000);
+      if(e.kind==='command_completed'){
+        row.ended=true;row.value=String(e.text||row.value||'').slice(-48000);
+        row.status.textContent=Number.isInteger(e.exit_code)?'Exit '+e.exit_code+(Number.isFinite(e.duration_ms)?' · '+(e.duration_ms/1000).toFixed(1)+'s':''):'Stopped';
+        row.status.classList.toggle('failed',e.exit_code!==0);
+      }
+      row.log.textContent=row.value||(row.ended?'Command finished without output.':'Waiting for output…');
+      if(e.truncated)row.note.textContent='Output preview truncated';
+      if(follow)row.log.scrollTop=row.log.scrollHeight;
+      return true;
+    };
+    receive.finish=()=>{for(const row of rows.values())if(!row.ended){row.ended=true;row.status.textContent='No exit status received';row.status.classList.toggle('failed',true);}};
+    return receive;
+  }
+  return {mount};
+})();

@@ -82,7 +82,7 @@ window.PFAutoChat = (() => {
   }
   function result(parent,data,hooks,{outputsAlreadyShown=false,verificationAlreadyShown=false,activityAlreadyShown=false}={}) {
     if(!data)return;parent.closest('.msg')?.classList.add('chat-auto-message');
-    if(data.activity?.length&&!activityAlreadyShown){const panel=text(parent,'details','','chat-task chat-task-finished');withIcon(text(panel,'summary','Commands and file changes'),'terminal');const receive=window.PFActions?.mount(panel);for(const e of data.activity)receive?.(e);receive?.finish?.();}
+    if(data.activity?.length&&!activityAlreadyShown){const panel=text(parent,'details','','chat-task chat-task-finished');withIcon(text(panel,'summary','Commands and file changes'),'terminal');const receive=window.PFActions?.mount(panel),consoleOutput=window.PFDebugConsole?.mount(parent);for(const e of data.activity){receive?.(e);consoleOutput?.(e);}receive?.finish?.();consoleOutput?.finish?.();}
     window.PFFiles?.render(parent,data.artifacts||[]);
     if(data.partial_answer){text(parent,'p','Partial answer · response limit reached','status');markdown(text(parent,'div','','chat-prose chat-answer'),data.partial_answer);copyButton(parent,data.partial_answer);}
     if(data.action!=='complete'||!data.run?.outputs?.length){const answer=String(data.answer||'').replace(/^run_budget_exceeded:\s*/,'');markdown(text(parent,'div','','chat-prose chat-answer'),answer);window.PFRunBudget?.mountError(parent,data.answer,data.output_limit);if(data.answer)copyButton(parent,data.answer);}
@@ -106,6 +106,7 @@ window.PFAutoChat = (() => {
     const explanation=text(trail,'p','','chat-task-note');
     const work=document.createElement('div');work.className='chat-workflow';trail.append(work);
     const cost=text(trail,'p','','chat-task-note'),activity=window.PFActivity?.mount(trail,{compact:true,onArtifact:file=>window.PFFiles?.render(assist.body,[file])})||(()=>{});
+    const consoleOutput=window.PFDebugConsole?.mount(assist.body);
     let lastSignal=Date.now(),outputSeen=false,verificationSeen=false,lastWorkflow=null;const started=lastSignal;
     const timer=setInterval(()=>{connection.textContent=Math.floor((Date.now()-started)/1000)+'s'+(Date.now()-lastSignal>20000?' · waiting for connection':'');},1000);
     const event=(name,data)=>{
@@ -115,7 +116,7 @@ window.PFAutoChat = (() => {
       if(name==='guidance')window.dispatchEvent(new CustomEvent('pf-chat-guidance',{detail:data}));
       if(name==='stage'){title.textContent=data.message||'Working…';setIcon(({matching:'search',search:'search',designing:'design',planning:'design',preparing:'workflow',testing:'terminal',verifying:'check',validating:'check'})[data.stage]||'workflow');}
       if(name==='decision')explanation.textContent=data.message||'Choosing the next action.';
-      if(name==='activity'){activity(data);if(data.kind==='tool_started'){setIcon('globe');title.textContent=(({search:'Searching the web',open_page:'Reading a page',find_in_page:'Finding a passage'})[data.action]||'Using '+(data.tool||'a tool'))+(data.query?' · '+data.query.slice(0,120):'');}}
+      if(name==='activity'){consoleOutput?.(data);activity(data);if(data.kind==='tool_started'){setIcon('globe');title.textContent=(({search:'Searching the web',open_page:'Reading a page',find_in_page:'Finding a passage'})[data.action]||'Using '+(data.tool||'a tool'))+(data.query?' · '+data.query.slice(0,120):'');}}
       if(name==='activity' && data.kind==='command_started'){setIcon('terminal');title.textContent='Running '+String(data.command||'command').split('\n')[0].slice(0,100);}
       if(name==='activity' && data.kind==='file_changed'){setIcon('design');title.textContent='Editing '+data.path;}
       if(name==='activity' && data.kind==='gpu_status'){setIcon('terminal');title.textContent=data.text || data.status;}
@@ -162,7 +163,7 @@ window.PFAutoChat = (() => {
           else title.textContent='The existing task is still finishing. Check again shortly.';
         }catch(e){title.textContent=e.message;}finally{check.disabled=false;}
       };
-    }finally{clearInterval(timer);title.classList.remove('pf-processing');activity.finish?.();panel.classList.add('chat-task-finished');connection.textContent=Math.floor((Date.now()-started)/1000)+'s';}
+    }finally{clearInterval(timer);title.classList.remove('pf-processing');activity.finish?.();consoleOutput?.finish?.();panel.classList.add('chat-task-finished');connection.textContent=Math.floor((Date.now()-started)/1000)+'s';}
   }
   return {send,result,read,markdown};
 })();
