@@ -573,3 +573,12 @@ Conversation names now show a compact spinner while work is active in normal Cha
 - Validation: status regression tests cover concurrent agents, tool lifecycles,
   approvals, delegation and errors. Billing tests cover unlimited tasks retaining
   balance enforcement and persistence while active.
+
+- Live verification exposed a stale stream after deployment and a completion/
+  shutdown persistence gap. The client now reattaches after submitting work and
+  reconciles silent active streams; provider-confirmed completion persists before
+  artifact transfer/shutdown and survives recovery. Incomplete work stays stopped.
+- The live engineer delivered a ZIP with 182 lines of Python, six executed unit
+  tests, a README and a generated JSON report. The earlier parallel run proved
+  delegation but exhausted small session allowances; hosted reservations were
+  increased to avoid interrupting file creation repeatedly.
