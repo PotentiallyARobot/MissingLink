@@ -525,3 +525,35 @@ Conversation names now show a compact spinner while work is active in normal Cha
   verified error recovery, partial output, independent controls and reload
   persistence. Regression tests cover truncation, cancellation, bounded retries,
   selected limits, persistence and no duplicate execution.
+## 2026-11-24 — Multi-agent execution and budget recovery
+
+- Reproduced the failed evaluation-harness room: missing Modal sandbox configuration,
+  repeated failed execution attempts, a command left marked Running, then a shared
+  budget failure. No code had executed in that failed attempt.
+- OpenAI team agents now use OpenAI's managed Agents API through its official SDK:
+  an isolated shell, optional cloud browser, web search, public activity events,
+  delegation to the configured teammates, and guidance sent into an active session.
+  This is the hosted Agents API, not a claim that the separate Agents SDK supplies
+  a browser by itself. Claude retains the existing Modal execution path.
+- A composer Budget button offers 5k/10k/20k/50k/100k and custom limits. The task
+  budget can be raised while work runs; changing it does not restart work.
+- Real command output and exit codes reach activity cards. Failed and interrupted
+  commands terminate visibly, including old failed conversations. Provider private
+  reasoning is excluded; public reasoning summaries and actions remain visible.
+- Hosted usage uses a shared, atomic credit reservation and reported session spend.
+  Allowances can extend within the selected task limit. Unused reservations return
+  to the account. BYOK has no PromptFlow credit cap. Hosted environment costs are
+  included in reported spend; a credit budget is distinct from response tokens.
+- Output files are imported into owner-protected storage and can be shared with
+  teammates in the same conversation. Agents retain source/tests as output files.
+  Cancel explicitly stops the server-side session; closing an SSE connection alone
+  does not. Session IDs and reservations persist for restart cleanup and accounting.
+- Browser origin access is an explicit chat action. Browser credential requests
+  are cancelled; API keys never enter agent prompts or execution environments.
+- Validation: a real hosted agent searched Python's official documentation, used
+  the cloud browser on example.com, ran three Python unit tests, produced source
+  and test-log attachments, resumed through a deliberately tiny session allowance,
+  and shut down. Local UI verified budget persistence and per-agent tool controls.
+- Remaining limits: hosted outputs publish at turn completion; maximum attachment
+  size is 32 MB. Transfer recovery retries three times before reporting failure.
+  A full arbitrary MCP/connector configuration UI is outside this repair.
