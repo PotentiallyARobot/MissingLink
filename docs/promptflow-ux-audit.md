@@ -592,3 +592,5 @@ Conversation names now show a compact spinner while work is active in normal Cha
 - Recovery is available through **Continue with saved files** on failed responses. No automatic rerun is started by opening a conversation.
 - Validation: 197 backend tests passed, one existing skip; 61 frontend tests passed. Regression cases include HTTP 409 retries, stale budget events, single execution of handoffs, owner/room isolation, persisted versions, chunked reads, and ZIP integrity/response-only scope. Browser checks covered file previews and downloading a result ZIP.
 
+
+- Live recovery verification: coordinator delegated the existing archive to the reviewer; all 32 tests passed unchanged. The coordinator read the reviewer-published log through the workspace tool and saved a final report. The downloaded response ZIP passed Python ZIP integrity checks and contained only recovery/test-log.txt, recovery/result.md and recovery/status.json. Working checkpoint versions are kept in Files, without duplicate cards in the result.

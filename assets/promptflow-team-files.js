@@ -2,6 +2,7 @@
 window.PFTeamFiles=(()=>{
   const make=(parent,tag,text='',cls='')=>{const e=document.createElement(tag);e.textContent=text;e.className=cls;parent.append(e);return e;};
   function mount({button,getRoom,call}){
+    button.disabled=!getRoom();
     const dialog=make(document.body,'dialog','','team-files-dialog'),head=make(dialog,'header');
     const title=make(head,'div');make(title,'h2','Team files');make(title,'p','Private files shared with every agent in this team.','muted');
     const close=make(head,'button','×','icon-button');close.setAttribute('aria-label','Close team files');close.onclick=()=>dialog.close();
@@ -42,8 +43,8 @@ window.PFTeamFiles=(()=>{
     return {refresh(){button.disabled=!getRoom();if(dialog.open)refresh();},open};
   }
   async function downloadOutputs(roomId,messageId,button){
-    const original=button.textContent;button.disabled=true;button.textContent='Preparing ZIP…';
-    try{const response=await fetch('/api/promptflow/multiagent/outputs.zip?room='+encodeURIComponent(roomId)+'&message='+encodeURIComponent(messageId),{credentials:'same-origin'});if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.message||'Could not download output files.');}const url=URL.createObjectURL(await response.blob()),a=make(document.body,'a');a.href=url;a.download='outputs.zip';a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}finally{button.disabled=false;button.textContent=original;}
+    const original=[...button.childNodes];button.disabled=true;button.textContent='Preparing ZIP…';
+    try{const response=await fetch('/api/promptflow/multiagent/outputs.zip?room='+encodeURIComponent(roomId)+'&message='+encodeURIComponent(messageId),{credentials:'same-origin'});if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.message||'Could not download output files.');}const url=URL.createObjectURL(await response.blob()),a=make(document.body,'a');a.href=url;a.download='outputs.zip';a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}finally{button.disabled=false;button.replaceChildren(...original);}
   }
   return {mount,downloadOutputs};
 })();
