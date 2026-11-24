@@ -594,3 +594,7 @@ Conversation names now show a compact spinner while work is active in normal Cha
 
 
 - Live recovery verification: coordinator delegated the existing archive to the reviewer; all 32 tests passed unchanged. The coordinator read the reviewer-published log through the workspace tool and saved a final report. The downloaded response ZIP passed Python ZIP integrity checks and contained only recovery/test-log.txt, recovery/result.md and recovery/status.json. Working checkpoint versions are kept in Files, without duplicate cards in the result.
+
+## GPT-6.2 model selection — November 24, 2026
+
+The platform catalog was missing GPT-6.2 Astra and Sol although BYOK accepted their IDs. Both are now listed with their current documented prices and 128k output limits; new platform teams prefer GPT-6.2 Astra. Existing teams retain their model choices. OpenAI quality presets now select the 6.2 family. Maximum reasoning is passed through to hosted agents along with web search, a network-enabled private sandbox and cloud browser. Account model access was verified; 65 backend and eight frontend model/control tests passed.

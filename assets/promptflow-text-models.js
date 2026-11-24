@@ -1,4 +1,4 @@
-// Interactive API limits verified against provider documentation, 2026-11-14.
+// Interactive API limits; GPT-6.2 verified against provider documentation, 2026-11-24.
 window.PFTextModels = (() => {
   const models = [
     {id:'claude-haiku-5-5',provider:'anthropic',name:'Claude Haiku 5.5',max:128000,output:0.5},
@@ -8,6 +8,8 @@ window.PFTextModels = (() => {
     {id:'gpt-6.1-terra',provider:'openai',name:'GPT-6.1 Terra',max:128000,output:5},
     {id:'gpt-6.1-sol',provider:'openai',name:'GPT-6.1 Sol',max:128000,output:10},
     {id:'gpt-6-astra',provider:'openai',name:'GPT-6 Astra',max:128000,output:50},
+    {id:'gpt-6.2-sol',provider:'openai',name:'GPT-6.2 Sol',max:128000,output:10},
+    {id:'gpt-6.2-astra',provider:'openai',name:'GPT-6.2 Astra',max:128000,output:40},
   ];
   const presets = {
     economy:{name:'Economy',planning:8192,chat:2048,step:2048,tier:0},
@@ -28,7 +30,7 @@ window.PFTextModels = (() => {
   }
   function preset(settings,key,provider) {
     const p=presets[key]; if (!p) return settings;
-    const family=provider === 'openai' ? ['gpt-6-luna','gpt-6.1-sol','gpt-6-astra'] : ['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5'];
+    const family=provider === 'openai' ? ['gpt-6-luna','gpt-6.2-sol','gpt-6.2-astra'] : ['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5'];
     const main=provider+':'+family[p.tier], cheap=provider+':'+family[0];
     if (key === 'maximum') return {...settings,limits:{...settings.limits,
       planning_output_tokens:p.planning,chat_output_tokens:p.chat,step_output_tokens:p.step,override_step_limits:true}};
@@ -38,7 +40,7 @@ window.PFTextModels = (() => {
   function qualityPreset(settings,key,provider) {
     const p=qualityPresets[key]; if (!p) return settings;
     provider=provider==='openai'?'openai':'anthropic';
-    const family=provider==='openai'?['gpt-6-luna','gpt-6.1-sol','gpt-6-astra']:['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5'];
+    const family=provider==='openai'?['gpt-6-luna','gpt-6.2-sol','gpt-6.2-astra']:['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5'];
     const model=provider+':'+family[p.tier];
     const allowance=({draft:2048,everyday:8192,high:32000,maximum:64000})[key];
     return {...settings,reasoning_effort:p.effort,override_step_models:true,
