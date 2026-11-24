@@ -76,18 +76,25 @@ print('PROMPTFLOW_CODE_RESULT='+json.dumps(dict(exit_code=code,output=output,fil
 '''
 
 
+def normalize_code_files(files):
+    if not isinstance(files,list) or len(files)>50: raise RunError('Provide at most 50 source files.')
+    names=set(); size=0; normalized=[]
+    for file in files:
+        if not isinstance(file,dict): raise RunError('Source files must have a path and text content.')
+        name=file.get('path',''); content=file.get('content')
+        if isinstance(name,str) and name.startswith('/workspace/'): name=name[len('/workspace/'):]
+        if not isinstance(name,str) or len(name)>240 or not name or re.search(r'[\\:\x00-\x1f]',name) or any(p in ('','.','..') for p in name.split('/')) or name in names or not isinstance(content,str): raise RunError('Source files need unique relative paths and text content.')
+        names.add(name); size+=len(content.encode('utf-8')); normalized.append({'path':name,'content':content})
+    if size>500000: raise RunError('Source files exceed 500 KB.')
+    return normalized
+
+
 def run_isolated_code(params):
     """Local code gets a temporary Docker filesystem, no network or credentials."""
     if not shutil.which('docker'): raise RunError('Docker is required for isolated code execution. No code ran.')
-    command=params.get('command'); files=params.get('files',[])
+    command=params.get('command'); files=normalize_code_files(params.get('files',[]))
     if not isinstance(command,str) or not 1<=len(command)<=100000: raise RunError('Provide a shell command under 100,000 characters.')
-    if not isinstance(files,list) or len(files)>50: raise RunError('Provide at most 50 source files.')
-    names=set(); size=0
-    for file in files:
-        name=file.get('path',''); content=file.get('content')
-        if not isinstance(name,str) or len(name)>240 or not name or re.search(r'[\\:\x00-\x1f]',name) or any(p in ('','.','..') for p in name.split('/')) or name in names or not isinstance(content,str): raise RunError('Source files need unique relative paths and text content.')
-        names.add(name); size+=len(content.encode('utf-8'))
-    if size>500000: raise RunError('Source files exceed 500 KB.')
+    params={**params,'files':files}
     image=prepare_code_image()
     progress('Executing in an isolated container (local code has no network): '+command.splitlines()[0][:200])
     with tempfile.TemporaryDirectory(prefix='promptflow-code-') as folder:
