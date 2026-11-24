@@ -99,7 +99,7 @@
     }
     if(m.role==='assistant'){
       const delegated=(m.activity||[]).filter(a=>/^Delegated to /.test(a.text||''));
-      if(delegated.length){const exchanges=node(el,'details','','delegation-notes');node(exchanges,'summary',m.agent_name+' → '+[...new Set(delegated.map(a=>a.text.split(':')[0].replace('Delegated to ','')))].join(', '));for(const a of delegated)node(exchanges,'p',a.text);}
+      if(delegated.length){const exchanges=node(el,'details','','delegation-notes');node(exchanges,'summary',m.agent_name+' → '+[...new Set(delegated.map(a=>a.text.split(':')[0].replace('Delegated to ','')))].join(', '));for(const a of delegated)node(exchanges,'p',a.text);el.insertBefore(exchanges,el.querySelector('details.activity'));}
       if(viewAgent&&m.agent_id!==viewAgent){const content=[...el.childNodes];const reply=node(el,'details','','teammate-reply');reply.open=replyOpen;node(reply,'summary',m.agent_name+' → '+window.PFTeamThread.name(window.PFTeamThread.recipient(m,state.room.messages,state.room.agents),state.room.agents)+' · '+(m.status==='running'?'Working…':'Reply'));const body=node(reply,'div','','teammate-reply-body');body.append(...content);}
     }
     el.querySelectorAll('.pf-action-detail').forEach((n,i)=>{n.open=!!expanded[i];});
