@@ -63,7 +63,7 @@ window.PFDebugConsole=(()=>{
       if(!root){root=el(parent,'section','','pf-debug-console');root.setAttribute('aria-label','Execution debug output');}
       const id=String(e.call_id||e.step_id||'command');let row=rows.get(id);
       if(!row){
-        const box=el(root,'details','','pf-debug-command');box.open=true;
+        const box=el(root,'details','','pf-debug-command');box.open=true;box.setAttribute('data-call-id',id);
         const head=el(box,'summary');const icon=window.PFActivity?.icon('terminal');if(icon)head.append(icon);
         el(head,'span','Execution output');const status=el(head,'span','Running','pf-debug-status');status.setAttribute('role','status');
         const command=el(box,'pre','','pf-debug-code');

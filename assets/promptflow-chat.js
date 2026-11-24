@@ -155,6 +155,7 @@ window.PFAutoChat = (() => {
           const response=await fetch('/api/promptflow/chat/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({turn_id:form.get('turn_id')}),signal:AbortSignal.timeout(30000)});
           const saved=await response.json();if(!response.ok||!saved.ok)throw new Error('This task could not be found.');
           if(saved.result){
+            for(const item of saved.result.activity||[])consoleOutput?.(item);
             if(!recovered){recovered=document.createElement('div');assist.body.append(recovered);}recovered.replaceChildren();
             result(recovered,saved.result,hooks,{outputsAlreadyShown:outputSeen,verificationAlreadyShown:verificationSeen,activityAlreadyShown:true});
             title.textContent=saved.result.action==='review_pending'?'Output recovered · review pending':'Task result recovered';
