@@ -557,3 +557,19 @@ Conversation names now show a compact spinner while work is active in normal Cha
 - Remaining limits: hosted outputs publish at turn completion; maximum attachment
   size is 32 MB. Transfer recovery retries three times before reporting failure.
   A full arbitrary MCP/connector configuration UI is outside this repair.
+
+### Multi-agent status cards and unlimited task budget — 2026-11-24
+
+- Fixed: agent cards previously showed only Ready/Working. They now show real
+  commands, web searches, browser work, provisioning, teammate waits, completion,
+  interruptions and errors. Status updates are batched with streamed activity.
+- Fixed: native scrollbars distracted from the team and chat. All multi-agent
+  scroll surfaces retain overflow/keyboard scrolling with the scrollbar hidden.
+  Card widths are bounded and long role names truncate with full-name tooltips.
+- Fixed: quick budget selection had no slider. The slider and Max button now end
+  at Unlimited (stored as zero), with an exact amount field and finite presets.
+  Unlimited removes the shared task cap, while atomic account-balance checks and
+  measured usage charges remain enforced. It never starts or restarts a task.
+- Validation: status regression tests cover concurrent agents, tool lifecycles,
+  approvals, delegation and errors. Billing tests cover unlimited tasks retaining
+  balance enforcement and persistence while active.
